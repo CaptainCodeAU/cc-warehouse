@@ -23,7 +23,7 @@ def report(config: Config, event: NotifyEvent) -> None:
 
 
 def append_log(config: Config, record: dict[str, object]) -> None:
-    """Append one JSON line to logs/capture.jsonl (O_APPEND; sanctioned non-atomic write)."""
+    """Append one JSON line to logs/capture.jsonl (O_APPEND; sanctioned write exception)."""
     raise NotImplementedError
 
 

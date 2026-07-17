@@ -32,5 +32,5 @@ def plan_relocate(config: Config, repo_path: Path, new_path: Path) -> RelocatePl
 
 
 def apply_relocate(config: Config, plan: RelocatePlan, *, backup_dir: Path) -> BatchReport:
-    """Backup every file to be touched, then apply atomically per item, verify, report."""
+    """Backup every file to be touched, then apply item by item, verify, report."""
     raise NotImplementedError

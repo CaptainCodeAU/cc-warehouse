@@ -28,6 +28,7 @@ testpaths = ["tests"]
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["tests"]
 typeCheckingMode = "strict"
 
 [tool.ruff]
@@ -36,3 +37,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cc_warehouse", "conftest"]
