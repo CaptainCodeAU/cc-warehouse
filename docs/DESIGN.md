@@ -350,7 +350,9 @@ is logged, never raised (capture must survive notification infrastructure).
 8. Shares and highlight.js: inline it into shared pages (true self-containment,
    bigger files) vs keep the CDN reference (privacy note in the share report).
    Personal projections keep the CDN + fallback either way (exporter parity).
-9. License: Apache-2.0 vs MIT; decided at `git init` (Phase 2).
+9. License: DECIDED 2026-07-18 (principal, Phase 2 bootstrap): PolyForm
+   Noncommercial 1.0.0 (source-available; supersedes the Apache-2.0 vs MIT
+   framing this item originally carried).
 
 Decided during Phase 1 review (recorded, no longer open): Python floor is 3.12+
 (assumption stated in-session and unobjected, 2026-07-17; revisit only if an

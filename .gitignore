@@ -1,0 +1,9 @@
+.DS_Store
+temp/
+Plans/
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
