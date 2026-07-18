@@ -39,3 +39,37 @@ variants; build_manifest(data, options) answers "did we lose anything".
 
 Standard loop (HARNESS section 2); /tdd inside the implementer; reviewers get
 diff + excerpts + the ADJACENT list only.
+
+## DONE 2026-07-19
+
+Slice 07 COMPLETE through the full harness loop. Implementer diff green on first gate
+pass (9 oracle tests); render.py only (no parser change needed). The HTML emitter
+reuses the slice-6 markdown fragments as the copy-as-md single source of truth (base64
+data-copy-src decodes to a byte-exact transcript.md fragment, R9/F8); an in-house
+stdlib markdown-to-HTML renderer; content-hashed unique anchors (fixing the specimen
+make_msg_id collision); commit-card links; and build_manifest wiring the
+conversation-model counts + store.sha256_hex. render_markdown stayed byte-identical (18
+slice-6 md tests green). Reviewers A/B + /code-review Standards+Spec; this slice had
+REAL bugs and the lenses converged. Operator triage: 5 CONFIRMED clusters fixed in 1
+fixer round (of 3):
+- C-PASSTHROUGH (F6): _md_to_html passed <details>/<summary> through unescaped for USER
+  text too (a "<details>" prompt broke the page; reachable since the slice-6 C-TURN fix
+  made <-prefixed prompts real conversation); now provenance-based -- structural HTML
+  passes only for emitter-authored fragments (header/reminder/continuation).
+- C-SHA-DUP (R9): anchor hashing reuses store.sha256_hex, not a second hashlib site.
+- C-COMMIT-REPO (F6): a multi-repo session mislinked a sha to the first repo; now the
+  sha links to its own result's repo, the session repo as fallback.
+- C-CDN-COUNT (DESIGN-6): dropped the second external cdnjs reference (theme CSS); the
+  highlight.js script stays the one permitted external reference.
+- C-R8-DOCSTRING (R8): docstrings now name their proving tests.
+Deferred (principal): the exporter visual chrome (collapsible turns, sticky toolbar,
+width/font toggles, research phases, Catppuccin palette) -- not oracle-required, later
+polish. Accepted: the _turn_html/_render_turn walk duplication (fragments shared, no
+markdown drift). Rejected: C-RENDER-LOSS (manifest loss is the frozen skipped_lines key).
+
+Contract-derived regression tests (this ticket owns them by citation, HARNESS section
+4 precedent): tests/test_render_html_regressions.py (6 tests). Operator black-box
+verified 10/10 on the five clusters, independent of the fixer self-report; copy-as-md
+byte equality reconfirmed (all 13 payloads are transcript.md substrings). Gates: 9
+oracle + 6 regression + 43 other render/parser/fence tests green, pyright strict 0,
+ruff clean; full suite 38 failed / 127 passed, red for the right reason.

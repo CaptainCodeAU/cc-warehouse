@@ -301,6 +301,40 @@ order may depend on a later slice's code.
   failed / 112 passed, red for the right reason. Milestone tag slice-06 at completion.
   Next: ticket 07 (HTML emitters + manifest).
 
+- 2026-07-19: Slice 07 (HTML emitters full + compact, + manifest) COMPLETE through the
+  full loop. Implementer green on first gate pass (9 oracle tests); render.py only. The
+  HTML reuses the slice-6 markdown fragments as the copy-as-md single source of truth
+  (base64 data-copy-src == a byte-exact transcript.md fragment, R9/F8), adds an in-house
+  stdlib markdown-to-HTML renderer, content-hashed unique anchors (fixing the specimen
+  make_msg_id collision), commit-card links, and a manifest wiring the conversation-model
+  counts + store.sha256_hex; render_markdown stayed byte-identical (18 slice-6 md tests
+  green). Reviewers A/B in parallel plus /code-review Standards+Spec; like slice 06 this
+  slice had REAL bugs and the lenses converged. Operator verified the load-bearing
+  findings with white-box probes. Triage: after principal confirmation, 5 CONFIRMED
+  clusters fixed in 1 fixer round (of 3): C-PASSTHROUGH (the md-to-HTML passed
+  <details>/<summary> through unescaped for USER text -- a "<details>" prompt broke the
+  page, reachable since the slice-6 C-TURN fix made <-prefixed prompts real conversation;
+  fix is provenance-based, structural HTML only for emitter-authored fragments, F6),
+  C-SHA-DUP (anchor hashing now reuses store.sha256_hex, R9), C-COMMIT-REPO (a multi-repo
+  session mislinked a sha to the first repo; now links to its own result's repo, F6),
+  C-CDN-COUNT (dropped the second external cdnjs reference, the theme CSS, to honor
+  DESIGN-6's ONE permitted external reference), C-R8-DOCSTRING (docstrings name their
+  proving tests). Deferred (principal): the exporter visual chrome (collapsible turns,
+  sticky toolbar, width/font toggles, research phases, Catppuccin palette) -- not
+  oracle-required, later polish. Accepted: the _turn_html/_render_turn walk duplication
+  (fragments shared, no markdown drift). Rejected: C-RENDER-LOSS (manifest loss = the
+  frozen skipped_lines key). 6 contract-derived regression tests added
+  (tests/test_render_html_regressions.py, cited on ticket 07). Operator black-box
+  verified 10/10 on the five clusters independent of the fixer self-report; copy-as-md
+  byte equality reconfirmed (13 payloads). Ops note: the Engineer implementer/fixer ran
+  in auto-created worktrees; the deliverable landed on the main tree (the fixer via a
+  controlled exact-match apply script) and the worktrees were removed before commit; the
+  operator regression file was ruff-clean before the fixer round (the slice-06 lesson).
+  Fix the prompt: not needed. Round count 1 (target <= 2). Gates: 58 render/parser/fence
+  tests green, pyright strict 0, ruff clean; full suite 38 failed / 127 passed, red for
+  the right reason. Milestone tag slice-07 at completion. Next: ticket 08 (build/render
+  orchestration).
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

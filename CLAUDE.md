@@ -77,8 +77,16 @@ reviewer clusters (turn-grouping demotion, fence corruption/injection, reminder
 fail-open leak, commit tool_result text loss, R8 honesty) plus a tool-coverage add,
 2 rejected; 10 contract-derived regression tests
 (tests/test_render_md_regressions.py); operator black-box verified 18/18; retro in
-HARNESS section 8. Milestone tags slice-01..06. Next: ticket 07 (HTML emitters +
-manifest).
+HARNESS section 8. Milestone tags slice-01..06. Slice 07 (HTML emitters full +
+compact, + manifest) COMPLETE 2026-07-19: an in-house stdlib markdown-to-HTML
+renderer + HTML page emitter + build_manifest in render.py, reusing the slice-6
+markdown fragments as the copy-as-md single source of truth (R9/F8); fixer round 1
+(of 3) resolved 5 confirmed reviewer clusters (HTML passthrough injection, duplicate
+sha256, multi-repo commit mislink, second CDN reference, R8 docstrings), 1 rejected,
+visual chrome deferred; 6 contract-derived regression tests
+(tests/test_render_html_regressions.py); operator black-box verified 10/10; retro in
+HARNESS section 8. Milestone tags slice-01..07. Next: ticket 08 (build/render
+orchestration).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
