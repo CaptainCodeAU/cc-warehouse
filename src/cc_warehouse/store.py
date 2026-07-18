@@ -56,13 +56,23 @@ def atomic_write(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def is_sha256_hex(value: str) -> bool:
+    """True when value is exactly 64 lowercase hex chars (a sha256 digest).
+
+    The one sha256-format check in the package (R9/F8): object_path and
+    catalog.add_session both validate through this predicate, so identity never
+    fractures on a case or length quirk (F1).
+    """
+    return _SHA256_RE.fullmatch(value) is not None
+
+
 def object_path(root: Path, sha256: str, ext: str = ".jsonl") -> Path:
     """objects/<hh>/<sha256><ext> under the warehouse root.
 
     Both address parts are validated before the path is built: a malformed hash
     or ext raises ValueError rather than reaching the filesystem (F4/F9).
     """
-    if not _SHA256_RE.fullmatch(sha256):
+    if not is_sha256_hex(sha256):
         raise ValueError(f"not a sha256 hex digest: {sha256!r}")
     if not _EXT_RE.fullmatch(ext):
         raise ValueError(f"not a valid object extension: {ext!r}")
