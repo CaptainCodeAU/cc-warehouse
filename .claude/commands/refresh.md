@@ -53,6 +53,7 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - Suite shape (cheap counts; the REAL gate run happens in Phase 1): !`R=$(git rev-parse --show-toplevel); echo "test files: $(ls "$R"/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ') | test functions: $(grep -h 'def test_' "$R"/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ') | tickets: $(ls "$R"/harness/tickets/*.md 2>/dev/null | wc -l | tr -d ' ')"`
 - Stub inventory = slice progress (a module at 0 with functions is implemented; nonzero = still stubbed): !`R=$(git rev-parse --show-toplevel); for f in "$R"/src/cc_warehouse/*.py; do n=$(grep -c 'raise NotImplementedError' "$f"); [ "$n" -gt 0 ] && echo "$(basename "$f"): $n stubs"; done; echo "(no lines above = zero stubs left anywhere)"`
 - Slice DONE annotations (Phase 3 cross-checks each against zero stubs + green ticket tests): !`R=$(git rev-parse --show-toplevel); D=""; for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && D="$D $(basename "$t")"; done; [ -n "$D" ] && echo "DONE-annotated:$D" || echo "(no DONE annotations yet)"`
+- Tag parity (every DONE-annotated slice must carry its milestone tag; added 2026-07-18 after this drift recurred): !`R=$(git rev-parse --show-toplevel); M=""; for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" || continue; n=$(basename "$t" | grep -oE '^[0-9]+'); [ -n "$n" ] || continue; git -C "$R" rev-parse -q --verify "refs/tags/slice-$n" >/dev/null 2>&1 || M="$M slice-$n"; done; [ -n "$M" ] && echo "MISSING milestone tag(s):$M (DONE slice, no tag)" || echo "(every DONE-annotated slice carries its milestone tag)"`
 - Ticket-to-test wiring (every test file a ticket names must exist; every test file must be owned by some ticket): !`R=$(git rev-parse --show-toplevel); for t in $(grep -rhoE 'tests/test_[a-z_]+\.py' "$R"/harness/tickets/*.md 2>/dev/null | sort -u); do [ -f "$R/$t" ] || echo "MISSING (a ticket cites it): $t"; done; for f in "$R"/tests/test_*.py; do b="tests/$(basename "$f")"; grep -rq "$b" "$R"/harness/tickets/ 2>/dev/null || echo "UNOWNED (no ticket cites it): $b"; done; echo "(no lines above = wiring intact)"`
 - Em-dash ban (CLAUDE.md hard rule; the char is built via printf so this file itself stays clean): !`R=$(git rev-parse --show-toplevel); EM=$(printf '\342\200\224'); H=$(git -C "$R" grep -rlI "$EM" -- ':!temp' 2>/dev/null); [ -n "$H" ] && echo "EM-DASH in: $H" || echo "(no em-dashes in tracked text)"`
 - Personal-data leak scan (public repo; username + hostname derived live, never written here): !`R=$(git rev-parse --show-toplevel); U=$(id -un); HN=$(hostname -s); H=$(git -C "$R" grep -rlI -e "$U" -e "$HN" 2>/dev/null); [ -n "$H" ] && echo "LEAK candidate in: $H" || echo "(no username/hostname in tracked files)"`
@@ -144,7 +145,8 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
   three-way agreement: a dated DONE annotation on the ticket, zero stubs in its module(s), and
   that ticket's oracle tests green; any one present without the others is drift to reconcile. A
   landed slice is also expected to carry an annotated milestone tag (current practice, e.g.
-  slice-NN); a missing tag is a report-tier note in Phase 8, not a fourth completion gate.
+  slice-NN); a missing tag is surfaced by the tag-parity live signal and reported as a
+  report-tier note in Phase 8, not a fourth completion gate.
   Third state: a slice legitimately MID-LOOP (uncommitted implementation in the working tree,
   harness loop not closed) carries a dated IN PROGRESS annotation instead of DONE.
 - **Moving counts/claims:** any written test count, ticket count, slice number, "suite is red"
@@ -152,7 +154,10 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
   paragraph must match the live build stage and red/green reality.
 - **Ticket wiring:** every ORACLE TESTS entry cites test files (and ids, where named) that exist
   under the live names; ADJACENT BEHAVIORS entries name functions that exist in src; a ticket for a
-  finished slice carries a dated DONE annotation rather than reading as pending work.
+  finished slice carries a dated DONE annotation rather than reading as pending work. A contract-
+  derived regression-test file (added post-slice per the HARNESS precedent, e.g.
+  tests/test_capture_regressions.py) is a category distinct from a ticket's ORACLE TESTS; it stays
+  owned by being cited in its slice's ticket, so the wiring probe never reads it as UNOWNED.
 - **Superseded terms:** for each Phase-2 OLD term, grep and classify every hit per Guardrail 3
   (fix current-guidance, leave dated history).
 - **Hygiene:** the em-dash and personal-data probes above must be clean; any hit is a finding with
@@ -213,9 +218,10 @@ the final GROUND TRUTH (branch · HEAD · ruff/pyright · pytest failed/passed +
 stub inventory · ticket count). In `audit`, the same content as a to-do list with no edits made.
 **Self-improving guard:** if this run found drift a cheap probe SHOULD have caught, propose the
 concrete new probe line for this command; when a probe-catchable drift recurs, ADD the probe
-instead of re-proposing it. Proposed this run, not yet added per that discipline: a tag-parity
-probe flagging a DONE-annotated slice whose milestone tag is absent (milestone tagging began
-2026-07-18, so it is proposed now and added only if the drift recurs).
+instead of re-proposing it. ADDED 2026-07-18 per that discipline: the tag-parity live signal
+(a DONE-annotated slice whose milestone tag is absent). It was proposed the prior run; the drift
+then recurred (slice-01's milestone tag was absent until backfilled), so the probe graduated from
+proposed to added, exactly as this guard prescribes.
 
 ---
 
@@ -244,7 +250,8 @@ probe flagging a DONE-annotated slice whose milestone tag is absent (milestone t
 - **Milestone tags and immediate push are the standing practice (dated 2026-07-18).** The repo pushes
   each logical commit right away and tags slice/milestone completions (annotated, noreply identity).
   The Phase-7 push conditional stays self-adapting: this list records the practice, it does not
-  hardcode always-push. A landed slice missing its milestone tag is a report-tier note, not a gate.
+  hardcode always-push. A landed slice missing its milestone tag is surfaced by the tag-parity
+  live signal and reported as a report-tier note, not a gate.
 
 ## Canonical file map (stable structure; update only when the layout changes)
 
