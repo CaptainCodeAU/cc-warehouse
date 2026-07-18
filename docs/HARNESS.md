@@ -176,6 +176,32 @@ order may depend on a later slice's code.
   loss for lossy input). Operator verified all nine dispositions with black-box
   temp-dir probes (9/9), independent of the fixer self-report. Gates: 34 slice
   tests, pyright strict 0, ruff clean; full suite 96 red for the right reason.
+- 2026-07-18: Slice 03 (parser + conversation model) COMPLETE through the full
+  loop. Implementer diff green on first gate pass (13 oracle tests). Reviewers A/B
+  in parallel (A 4 conformance, B 6 adversary; overlap 2, A1==B4 and A2==B3, so
+  both lenses earned their seats: A uniquely caught the whitespace-summary hiding
+  gap and the docstring overclaim, B uniquely caught the RecursionError crash, the
+  BOM misroute, the isMeta type-truthiness, and the timestamp-order question).
+  Operator triage: 8 clusters, 7 CONFIRMED, 1 REJECTED (C8 first/last-ts as
+  file-order not chronological min/max: rejected because append-only JSONL makes
+  file order chronological and the oracle test pins it; min/max would mask
+  corruption and add scope). Principal confirmed the clusters and chose to add
+  contract-derived regression coverage. Six operator-written oracle tests (from
+  SPEC 6 / FINDINGS F6, not the code) pinned the silent-loss and crash classes red,
+  then 1 fixer round (of 3) turned them green: a present-but-non-list loglines value
+  counted not zeroed (C1); a valid-JSON non-object line counted skipped consistently
+  across the JSONL and loglines paths, blanks still uncounted (C2); a whitespace-only
+  summary falls to (no summary)/hidden (C3); RecursionError caught alongside
+  JSONDecodeError at both parse sites so deep nesting never crashes (C4); a leading
+  UTF-8 BOM stripped before routing via utf-8-sig (C5); the parse_session docstring
+  softened off an unprovable "never misrouted" guarantee (C6, R8); isMeta honored
+  only as boolean True (C7). Operator black-box verified 12/12 with fresh inputs in
+  a temp dir, independent of the fixer self-report. The C2 accounting clarification
+  landed on ticket 03 in the same commit as the code (HARNESS section 4). Fix the
+  prompt: not needed this slice (implementer and fixer both honored their rules; no
+  role misbehavior, so no prompt edit, recorded here as considered). Round count 1
+  (target <= 2). Gates: 19 slice tests, pyright strict 0, ruff clean; full suite 83
+  red for the right reason.
 
 ---
 

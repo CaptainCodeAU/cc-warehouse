@@ -56,8 +56,11 @@ right reason), and the 13 tickets in `harness/tickets/`. HARNESS trial run (tick
 section 8; slice 01 tests green, remaining suite red for the right reason. Main
 build under way per DESIGN section 16. Slice 02 (catalog + registry) COMPLETE
 2026-07-18: fixer round 1 (of 3) resolved 9 confirmed reviewer clusters,
-operator-verified via black-box probes; retro in HARNESS section 8. Next: ticket
-03 (parser + conversation model).
+operator-verified via black-box probes; retro in HARNESS section 8. Slice 03
+(parser + conversation model) COMPLETE 2026-07-18: fixer round 1 (of 3) resolved
+7 confirmed reviewer clusters (silent-loss / crash / overclaim), 6 contract-derived
+regression tests added (HARNESS section 4) and operator black-box verified 12/12;
+retro in HARNESS section 8. Next: ticket 04 (capture hook + notify).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
