@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, capture, catalog, notify, registry, store, sweep
+from cc_warehouse import build, capture, catalog, notify, registry, status, store, sweep
 from cc_warehouse.config import Config, load_config
 from cc_warehouse.render import RenderOptions
 
@@ -418,6 +418,35 @@ def _run_project(args: Sequence[str]) -> int:
     return 0
 
 
+def _run_status() -> int:
+    """`ccw status`: recent captures, counts, store size, last errors (DESIGN section 7).
+
+    A pure read surface: it prints status.status_text, which reads the catalog only and
+    opens no stored payload under objects/ (R6/F5). Always exits 0; this verb reports the
+    warehouse, it does not judge it."""
+    config = load_config()
+    print(status.status_text(config))
+    return 0
+
+
+def _run_verify() -> int:
+    """`ccw verify`: re-hash objects against their names and cross-check the catalog.
+
+    status.verify wraps store.verify_walk (the one hashing implementation, R9/F8) and
+    reports corrupted objects, orphan objects (left in place, R4), and catalog rows whose
+    object is missing. Each finding is named by its short hash on stderr so the digest is
+    visible in the output; the verb exits non-zero when the store has any finding and 0
+    when it is intact and cross-consistent. verify writes and removes nothing (R4)."""
+    config = load_config()
+    report = status.verify(config)
+    findings = report.outcomes
+    for outcome in findings:
+        print(f"verify: {outcome.action} {outcome.item}: {outcome.detail}", file=sys.stderr)
+    if not findings:
+        print("verify: store intact and cross-consistent")
+    return 1 if findings else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch one ccw invocation; returns the process exit code."""
     args = list(argv) if argv is not None else sys.argv[1:]
@@ -434,4 +463,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_render(args)
     if verb == "project":
         return _run_project(args)
+    if verb == "status":
+        return _run_status()
+    if verb == "verify":
+        return _run_verify()
     return _stub()
