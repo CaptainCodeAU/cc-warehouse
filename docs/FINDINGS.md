@@ -162,11 +162,14 @@ achieve it by construction (hashes, IDs, atomic writes, idempotent operations).*
 - **Rule:** cc-warehouse has no delete primitive at all in its store layer: objects are
   immutable, catalog rows are never hard-deleted (soft flags only), and the only file
   removal in the entire codebase is projection rebuild (delete + regenerate inside the
-  projections directory, which is disposable by definition). `rm`-class calls against
-  the store or source transcripts are forbidden tokens.
+  projections directory, which is disposable by definition) plus the O_EXCL lock
+  helpers removing their own lock files (DESIGN section 13 closed list). `rm`-class
+  calls against the store or source transcripts are forbidden tokens.
 - **Verification:** static gate: `shutil.rmtree` / `os.remove` / `unlink` allowed ONLY
-  under the projections module, enforced by a fence test like the specimen's zero-dep
-  fence; oracle test: migrate and import never modify or remove their sources.
+  under the projections module and the store module's O_EXCL lock helpers (DESIGN
+  section 13 closed list; function-scoped carve-out decided at slice-01 triage,
+  2026-07-18), enforced by a fence test like the specimen's zero-dep fence; oracle
+  test: migrate and import never modify or remove their sources.
 
 ## F10. Non-interactive input is treated as consent
 

@@ -16,6 +16,15 @@ from conftest import SRC_ROOT, TESTS_ROOT
 # (DESIGN R4: the projections/shares rebuild module).
 DELETE_SANCTIONED = {"build.py", "share.py"}
 
+# The O_EXCL lock helpers in store.py may remove lock files: DESIGN section 13's
+# closed list sanctions lock files "created/removed with O_EXCL semantics" and
+# DESIGN R4's closed list names lock release. Function-scoped so the store's
+# object/catalog surface stays delete-free. Decided at slice-01 triage,
+# 2026-07-18 (principal).
+LOCK_DELETE_SANCTIONED: dict[str, set[str]] = {
+    "store.py": {"acquire_lock", "release_lock"},
+}
+
 # Modules sanctioned to open file handles for writing: store.py owns the write
 # primitive (tmp + os.replace) and the O_EXCL locks; notify.py owns the
 # O_APPEND audit log (DESIGN section 13 closed list).
@@ -79,14 +88,21 @@ def _is_delete_call(node: ast.Call) -> str | None:
 
 
 def test_no_deletion_primitives_outside_rebuild_modules() -> None:
-    """DESIGN R4 / FINDINGS F9: the store layer has no delete primitive at all;
-    file removal exists only in the projections/shares rebuild modules."""
+    """DESIGN R4 / FINDINGS F9: the store's object/catalog surface has no delete
+    primitive; file removal exists only in the projections/shares rebuild modules
+    and the O_EXCL lock helpers (DESIGN section 13 closed list)."""
     offenders: list[str] = []
     for path in runtime_files():
         if path.name in DELETE_SANCTIONED:
             continue
-        for node in ast.walk(parse(path)):
-            if isinstance(node, ast.Call):
+        tree = parse(path)
+        sanctioned_funcs = LOCK_DELETE_SANCTIONED.get(path.name, set())
+        skip_lines: set[int] = set()
+        for top in tree.body:
+            if isinstance(top, ast.FunctionDef) and top.name in sanctioned_funcs:
+                skip_lines.update(range(top.lineno, (top.end_lineno or top.lineno) + 1))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and node.lineno not in skip_lines:
                 hit = _is_delete_call(node)
                 if hit:
                     offenders.append(f"{path.name}:{node.lineno} {hit}")

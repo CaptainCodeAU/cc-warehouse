@@ -366,7 +366,10 @@ tree follows label renames on incremental build; hidden sessions not rendered by
 default; retirement name `_RETIRED_<date>_<name>`; packaging dist/module/scripts
 locked with the `cc-warehouse` alias; share secrets block-and-report; capture wired
 through BOTH plugin wrapper and settings.json with duplicate-notification
-suppression.
+suppression. Slice-01 triage, 2026-07-18 (principal): the delete fence carries a
+function-scoped carve-out sanctioning lock-file removal inside store.py's O_EXCL
+lock helpers (acquire takeover, release), matching the section 13/R4 closed
+lists; lock release performs real removal, not a rename-aside.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
