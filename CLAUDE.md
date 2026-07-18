@@ -63,7 +63,8 @@ regression tests added (HARNESS section 4) and operator black-box verified 12/12
 retro in HARNESS section 8. Slice 04 (capture hook + notify) COMPLETE 2026-07-18:
 fixer round 1 (of 3) resolved 6 confirmed reviewer clusters (detached notify helper
 off the hook critical path, best-effort sinks, the SPEC-3 _unresolved rung), 3
-rejected; operator black-box verified 21/21; retro in HARNESS section 8. Next:
+rejected; 3 contract-derived regression tests; operator black-box verified 21/21;
+retro in HARNESS section 8. Milestone tags backfilled to slice-01..04. Next:
 ticket 05 (sweep).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory

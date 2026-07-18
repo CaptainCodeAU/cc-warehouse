@@ -232,9 +232,13 @@ order may depend on a later slice's code.
   (slice 13). Fix the prompt: not needed (implementer and both reviewers honored
   their rules; recorded as considered). Round count 1 (target <= 2). Gates: 19
   slice tests, pyright strict 0, ruff clean; full suite 60 red for the right
-  reason. Ops finding: the slice-01 milestone tag is ABSENT (tags present:
-  slice-02, slice-03); flagged to the principal for backfill, the tag-parity drift
-  the /refresh self-improving guard anticipated.
+  reason. Post-slice hardening (principal chose to add): 3 contract-derived
+  regression tests (tests/test_capture_regressions.py: C1 off-path via a blocking
+  sink, C5 _unresolved stored-not-dropped, C2 best-effort broken log), full suite
+  now 85 passed. Deferred to follow-ups: the encoded-alias + registry.move_project
+  claim (D1), desktop/voice sinks and full config layering (slice 13). The absent
+  slice-01 milestone tag (the tag-parity drift the /refresh self-improving guard
+  anticipated) was backfilled at 75b9b68; tags now slice-01..04.
 
 ---
 

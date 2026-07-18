@@ -2,8 +2,9 @@
 
 STATUS: DONE 2026-07-18 (full harness loop; 1 fixer round of 3; 6 confirmed
 reviewer clusters resolved, 3 rejected; C1 detached notify helper off the hook
-critical path + C5 the SPEC-3 _unresolved rung; operator black-box verified 21/21;
-retro in HARNESS section 8).
+critical path + C5 the SPEC-3 _unresolved rung; 3 contract-derived regression tests
+(tests/test_capture_regressions.py); operator black-box verified 21/21; retro in
+HARNESS section 8).
 
 Slice 4 of 13. Depends on: 01, 02, 03. The render child stays a STUB until
 slice 8: the oracle tests assert the spawn contract (argv, detachment), never
