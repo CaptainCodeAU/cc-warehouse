@@ -1,5 +1,10 @@
 # Ticket 02: catalog + registry
 
+**IN PROGRESS 2026-07-18.** Mid-loop: implementer diff green (uncommitted in
+the working tree), reviewers A+B done, operator triage recommendations
+recorded; fixer round pending. Cold-pickup plan: local
+Plans/slice-02-fix-plan.md (untracked by design).
+
 Slice 2 of 13. Depends on: 01 (store hashes are the identity the catalog keys).
 
 Tracer bullet: catalog.sqlite with the frozen DDL, session rows with short

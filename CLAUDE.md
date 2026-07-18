@@ -54,7 +54,9 @@ Phase 1 (contract docs) complete 2026-07-17. Phase 2 complete 2026-07-18: bootst
 right reason), and the 13 tickets in `harness/tickets/`. HARNESS trial run (ticket
 01, store module) complete 2026-07-18 through the full loop; retro in HARNESS
 section 8; slice 01 tests green, remaining suite red for the right reason. Main
-build under way per DESIGN section 16 (next: ticket 02, catalog + registry).
+build under way per DESIGN section 16. Slice 02 (catalog + registry) is
+mid-loop as of 2026-07-18: implementer diff green and reviewed, operator triage
+recorded, fixer round pending (cold-pickup plan in local Plans/, untracked).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.

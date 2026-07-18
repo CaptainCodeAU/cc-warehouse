@@ -141,6 +141,8 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
   trial ran. The phase note must say where the project ACTUALLY is. Slice completion is a
   three-way agreement: a dated DONE annotation on the ticket, zero stubs in its module(s), and
   that ticket's oracle tests green; any one present without the others is drift to reconcile.
+  Third state: a slice legitimately MID-LOOP (uncommitted implementation in the working tree,
+  harness loop not closed) carries a dated IN PROGRESS annotation instead of DONE.
 - **Moving counts/claims:** any written test count, ticket count, slice number, "suite is red"
   claim, gate command, or "N stubs" statement that disagrees with Phase 1. README's status
   paragraph must match the live build stage and red/green reality.
@@ -221,7 +223,9 @@ instead of re-proposing it.
 - **Slice progress is the stub inventory + that ticket's tests going green**, never a prose claim.
   A ticket's dated DONE annotation is itself a claim: it must agree three ways with zero stubs and
   green ticket tests, and the check runs in both directions (annotation without evidence, or
-  evidence without annotation, are both findings).
+  evidence without annotation, are both findings). Mid-loop is the sanctioned third state: green
+  evidence with an uncommitted working-tree diff takes a dated IN PROGRESS annotation, never DONE,
+  and the sweep must not stage or commit that in-flight diff.
 - **The em-dash and personal-data bans apply to /refresh's own edits first.** This file builds the
   em-dash via printf precisely so it never contains one; keep it that way.
 - **Probes must stay backtick-free inside their commands** (a literal backtick inside an inline
