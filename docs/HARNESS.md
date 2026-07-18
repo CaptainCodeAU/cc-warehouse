@@ -335,6 +335,37 @@ order may depend on a later slice's code.
   the right reason. Milestone tag slice-07 at completion. Next: ticket 08 (build/render
   orchestration).
 
+- 2026-07-19: Slice 08 (build/render orchestration; un-stubs the render child) COMPLETE
+  through the full loop. Implementer green on first gate pass (6 in-scope build + 2
+  render-adhoc oracle tests). One shared projection-writing routine + dir-path function
+  serve build, `ccw render --session`, and ad-hoc `ccw render <path>` (R9); catalog-driven
+  selection (R6); content-compare incremental (F1-safe); disposable-by-construction prune
+  (the sanctioned R4 deletion in build.py); every write via store.atomic_write (R2 fence);
+  `ccw project rename` wires the existing registry.rename_project (operator expanded
+  TOUCHES for the label-rename test). Un-stubbing the render child kept the slice-4
+  capture suite green. Reviewers A/B in parallel plus /code-review Standards+Spec; this
+  slice had REAL bugs and the lenses converged, headlined by a PERMANENT data-loss path.
+  Operator verified the load-bearing findings with white-box probes (B1: a failed head's
+  build pruned the last-good dir to zero -> verified). Triage: after principal confirmation,
+  6 CONFIRMED clusters + C-CHILD-NOTIFY fixed in 1 fixer round (of 3): C-PRUNE-LOSS (prune
+  only on a clean build, F7/F9), C-PRUNE-CRASH (best-effort prune, R5), C-BUILD-LOCK
+  (locks/build O_EXCL, R14/DESIGN-13), C-ADHOC-GUARD (--out under objects/projections
+  refused, F9), C-RENAME-NOID (unknown id errors, F7), C-RENDER-HEAD (render --session
+  projects only a head via a shared query, R9), C-CHILD-NOTIFY (the child notifies error
+  + opt-in folder reveal, DESIGN-4). Rejected: A1 rename-no-commit (refuted -- rename_project
+  commits via writing(); the oracle test passes). Accepted: C-HIDDEN-CHURN (by design),
+  the "N built" cosmetic miscount. Documented residual: the build-vs-detached-child
+  stale-snapshot race is regenerable (the next build reconciles). 5 contract-derived
+  regression tests added (tests/test_build_regressions.py, cited on ticket 08). Operator
+  black-box: 25/27 real-subprocess checks + a CLEAN 6/6 catalog-seed re-verify (the 2
+  non-green were the async render child racing the probe, not code bugs). Ops note: the
+  Engineer implementer/fixer ran in auto-created worktrees; the deliverable landed on the
+  main tree and the worktrees were removed before commit; the operator regression file
+  was ruff-clean before the fixer round. Fix the prompt: not needed. Round count 1
+  (target <= 2). Gates: 6 build + 5 regression + capture + fences green, pyright strict 0,
+  ruff clean; full suite 30 failed / 140 passed, red for the right reason. Milestone tag
+  slice-08 at completion. Next: ticket 09 (status + ccw verify).
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

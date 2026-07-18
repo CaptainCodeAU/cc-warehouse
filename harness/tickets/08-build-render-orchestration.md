@@ -45,3 +45,39 @@ path form). This module owns the ONLY sanctioned deletions besides share
 
 Standard loop (HARNESS section 2); /tdd inside the implementer; reviewers get
 diff + excerpts + the ADJACENT list only.
+
+## DONE 2026-07-19
+
+Slice 08 COMPLETE through the full harness loop. Implementer diff green on first gate
+pass (6 in-scope build + 2 render-adhoc oracle tests; the 7th, test_recent_listing...,
+is slice 9). One shared projection-writing routine + dir-path function serve build,
+`ccw render --session`, and ad-hoc `ccw render <path>` (R9); catalog-driven selection
+(R6); content-compare incremental (mtime-stable, F1); disposable-by-construction prune
+(the sanctioned R4 deletion, build.py only); every write via store.atomic_write (R2
+fence). `ccw project rename` wires the existing registry.rename_project (TOUCHES
+expanded by the operator for the label-rename oracle test). Un-stubbing the render
+child kept the slice-4 capture suite green. Reviewers A/B + /code-review Standards+Spec;
+this slice had REAL bugs (a permanent data-loss path) and the lenses converged. Operator
+triage: 6 CONFIRMED clusters + C-CHILD-NOTIFY fixed in 1 fixer round (of 3):
+- C-PRUNE-LOSS (F7/F9): a build where the new head failed to render deleted the
+  predecessor dir -> ZERO projections (verified); prune now runs only on a clean build.
+- C-PRUNE-CRASH (R5): the unguarded prune crashed the build on a concurrent/FS error;
+  now best-effort.
+- C-BUILD-LOCK (R14/DESIGN-13): build now takes a locks/build O_EXCL lock; a live
+  holder refuses.
+- C-ADHOC-GUARD (F9): ad-hoc render --out under objects/ or projections/ is refused.
+- C-RENAME-NOID (F7): project rename of an unknown id errors.
+- C-RENDER-HEAD (R9): render --session projects only a current head (a superseded short
+  is a no-op), via a shared head-by-short query.
+- C-CHILD-NOTIFY (DESIGN-4): the detached child notifies error on failure + opt-in
+  folder reveal.
+Rejected: A1 rename-no-commit (refuted: rename_project commits via writing()). Accepted:
+C-HIDDEN-CHURN (by design), the "N built" cosmetic miscount. Documented residual: the
+build-vs-detached-child stale-snapshot race is regenerable (the next build reconciles).
+
+Contract-derived regression tests (this ticket owns them by citation, HARNESS section
+4 precedent): tests/test_build_regressions.py (5 tests). Operator black-box verified the
+fixes in fresh temp dirs (25/27 subprocess checks; the 2 non-green were the async render
+child racing the probe, re-verified CLEAN 6/6 on a catalog seed). Gates: 6 build + 5
+regression + capture 19 + fences 6 green, pyright strict 0, ruff clean; full suite 30
+failed / 140 passed, red for the right reason.

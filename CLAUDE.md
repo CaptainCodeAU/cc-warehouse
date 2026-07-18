@@ -85,8 +85,17 @@ markdown fragments as the copy-as-md single source of truth (R9/F8); fixer round
 sha256, multi-repo commit mislink, second CDN reference, R8 docstrings), 1 rejected,
 visual chrome deferred; 6 contract-derived regression tests
 (tests/test_render_html_regressions.py); operator black-box verified 10/10; retro in
-HARNESS section 8. Milestone tags slice-01..07. Next: ticket 08 (build/render
-orchestration).
+HARNESS section 8. Milestone tags slice-01..07. Slice 08 (build/render orchestration;
+un-stubs the render child) COMPLETE 2026-07-19: `ccw build` projects the catalog into
+projections/<label>/<date>_<slug>_s-<hash12>/ (4 files + manifest), `ccw render`
+(--session child + ad-hoc) and `ccw project rename` land, all writes via
+store.atomic_write and the only sanctioned deletions in build.py; fixer round 1 (of 3)
+resolved 6 confirmed reviewer clusters + the render-child error-notify (a permanent
+prune-on-failure data-loss path, an unguarded prune crash, the missing locks/build
+lock, the ad-hoc --out guard, silent rename-noid, head-only render), 1 rejected; 5
+contract-derived regression tests (tests/test_build_regressions.py); operator black-box
+verified; retro in HARNESS section 8. Milestone tags slice-01..08. Next: ticket 09
+(status + ccw verify).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
