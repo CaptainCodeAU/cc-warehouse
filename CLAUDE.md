@@ -94,8 +94,15 @@ resolved 6 confirmed reviewer clusters + the render-child error-notify (a perman
 prune-on-failure data-loss path, an unguarded prune crash, the missing locks/build
 lock, the ad-hoc --out guard, silent rename-noid, head-only render), 1 rejected; 5
 contract-derived regression tests (tests/test_build_regressions.py); operator black-box
-verified; retro in HARNESS section 8. Milestone tags slice-01..08. Next: ticket 09
-(status + ccw verify).
+verified; retro in HARNESS section 8. Milestone tags slice-01..08. Slice 09 (status + ccw verify CLI)
+COMPLETE 2026-07-19: `ccw status` reads the catalog only (F5 zero object opens);
+`ccw verify` wraps store.verify_walk and cross-checks the catalog against the objects
+both directions (corrupted / orphan-never-deleted / missing), read-only (R4); fixer
+round 1 (of 3) resolved 2 confirmed reviewer clusters (verify crashing on a
+malformed/NULL catalog hash, an unreadable-object label), 2 refuted; 3 contract-derived
+regression tests (tests/test_status_verify_regressions.py); operator black-box verified
+7/7; retro in HARNESS section 8. Milestone tags slice-01..09. Next: ticket 10 (migrate
++ retire).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.

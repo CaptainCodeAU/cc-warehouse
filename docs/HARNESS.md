@@ -366,6 +366,35 @@ order may depend on a later slice's code.
   ruff clean; full suite 30 failed / 140 passed, red for the right reason. Milestone tag
   slice-08 at completion. Next: ticket 09 (status + ccw verify).
 
+- 2026-07-19: Slice 09 (status + ccw verify CLI) COMPLETE through the full loop.
+  Implementer green on first gate pass (6 status_verify + the F5
+  test_recent_listing_opens_zero_stored_payloads, the one build test slice 8 left red).
+  status reads the catalog only (F5/R6: counts + SUM(size_bytes) + last errors, zero
+  object opens); verify WRAPS store.verify_walk (R9, no re-implemented hashing) and
+  cross-checks the catalog against the objects in BOTH directions -- corrupted,
+  orphan-reported-never-deleted, and the missing-object direction the walk cannot see (a
+  catalog hash with no object) -- read-only (R4). status.py stays out of the write/delete
+  fence sets. A CLEAN slice: Reviewer A found no findings; the two-lens value came from
+  Reviewer B + /code-review. Operator verified the one real edge with a probe. Triage: 2
+  CONFIRMED clusters fixed in 1 fixer round (of 3): C-VERIFY-CRASH (verify crashed on a
+  malformed/NULL catalog session.hash -- non-hex ValueError, NULL TypeError in sorted() --
+  suppressing every finding on exactly the suspect store it inspects; now validates each
+  hash before store.has and reports a malformed row, report-and-continue, F7/R5),
+  C-UNREADABLE-LABEL (an unreadable object is now labeled "unreadable", not a content
+  mismatch, R8-spirit). Refuted: B3 (the "bytes stored" dedup double-count -- session PK
+  is the hash, one row per object, SUM accurate), B5 (nondeterministic order --
+  verify_walk yields in sorted path order). Accepted: litter not surfaced (out of scope),
+  the logical store-size label, and the ext=".jsonl" missing-direction asymmetry (a v1.1
+  follow-up for web_export). 3 contract-derived regression tests added
+  (tests/test_status_verify_regressions.py, cited on ticket 09). Operator black-box
+  verified 7/7 via real ccw subprocesses + a re-probe of the crash fix. Ops note: the
+  Engineer implementer/fixer ran in auto-created worktrees; the deliverable landed on the
+  main tree and the worktrees were removed before commit; the operator regression file
+  was ruff-clean before the fixer round. Fix the prompt: not needed. Round count 1
+  (target <= 2). Gates: 6 oracle + 3 regression + 7 build + 6 fences green, pyright strict
+  0, ruff clean; full suite 24 failed / 149 passed, red for the right reason. Milestone
+  tag slice-09 at completion. Next: ticket 10 (migrate + retire).
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
