@@ -4,9 +4,12 @@ Content-addressed, immutable warehouse for AI conversation sessions (Claude Code
 claude.ai exports, future sources), projected into uniform markdown/HTML files.
 CLI: `ccw`.
 
-Status: pre-implementation. The contract lives in `docs/` (BRAINSTORM, SPEC,
-DESIGN, FINDINGS, HARNESS); the oracle test suite in `tests/` is written before
-the implementation and is expected to be red until the build lands.
+Status: main build in progress, slice by slice per DESIGN section 16 (the
+harness trial run, slice 01: store, landed 2026-07-18). The contract lives in
+`docs/` (BRAINSTORM, SPEC, DESIGN, FINDINGS, HARNESS); the oracle suite in
+`tests/` was written before the implementation; each slice's tests go green as
+it lands, and the rest stay red for the right reason (missing implementation)
+until theirs does.
 
 ## Development
 

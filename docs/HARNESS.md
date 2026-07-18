@@ -149,6 +149,13 @@ order may depend on a later slice's code.
   lesson: one writer per TOUCHES; confirm a lost-looking role spawn is dead
   before issuing a replacement (a duplicate implementer converged on store.py;
   no corruption, the second wrote nothing). Main build fans out per section 7.
+- 2026-07-18: /refresh hardened post-slice-01 (operator sweep of the command
+  itself): red-reason classifier width-proofed (pytest truncates its short
+  summary to the terminal width; the old probe binned unusable fragments),
+  phase-note probe widened to the full section, a DONE-annotation probe added,
+  and slice completion defined as a three-way agreement (dated ticket DONE
+  line, zero stubs, green ticket tests) in Phase 3 and the deviation guard.
+  README status prose moved off pre-implementation in the same sweep.
 
 ---
 

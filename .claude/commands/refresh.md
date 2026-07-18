@@ -52,10 +52,11 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - Git state (branch, HEAD, uncommitted, remote delta if a remote exists): !`R=$(git rev-parse --show-toplevel); echo "branch $(git -C "$R" branch --show-current) | HEAD $(git -C "$R" log --oneline -1) | uncommitted $(git -C "$R" status --porcelain | wc -l | tr -d ' ') | $(git -C "$R" rev-list --left-right --count @{u}...HEAD 2>/dev/null || echo 'no upstream')"`
 - Suite shape (cheap counts; the REAL gate run happens in Phase 1): !`R=$(git rev-parse --show-toplevel); echo "test files: $(ls "$R"/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ') | test functions: $(grep -h 'def test_' "$R"/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ') | tickets: $(ls "$R"/harness/tickets/*.md 2>/dev/null | wc -l | tr -d ' ')"`
 - Stub inventory = slice progress (a module at 0 with functions is implemented; nonzero = still stubbed): !`R=$(git rev-parse --show-toplevel); for f in "$R"/src/cc_warehouse/*.py; do n=$(grep -c 'raise NotImplementedError' "$f"); [ "$n" -gt 0 ] && echo "$(basename "$f"): $n stubs"; done; echo "(no lines above = zero stubs left anywhere)"`
+- Slice DONE annotations (Phase 3 cross-checks each against zero stubs + green ticket tests): !`R=$(git rev-parse --show-toplevel); D=""; for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && D="$D $(basename "$t")"; done; [ -n "$D" ] && echo "DONE-annotated:$D" || echo "(no DONE annotations yet)"`
 - Ticket-to-test wiring (every test file a ticket names must exist; every test file must be owned by some ticket): !`R=$(git rev-parse --show-toplevel); for t in $(grep -rhoE 'tests/test_[a-z_]+\.py' "$R"/harness/tickets/*.md 2>/dev/null | sort -u); do [ -f "$R/$t" ] || echo "MISSING (a ticket cites it): $t"; done; for f in "$R"/tests/test_*.py; do b="tests/$(basename "$f")"; grep -rq "$b" "$R"/harness/tickets/ 2>/dev/null || echo "UNOWNED (no ticket cites it): $b"; done; echo "(no lines above = wiring intact)"`
 - Em-dash ban (CLAUDE.md hard rule; the char is built via printf so this file itself stays clean): !`R=$(git rev-parse --show-toplevel); EM=$(printf '\342\200\224'); H=$(git -C "$R" grep -rlI "$EM" -- ':!temp' 2>/dev/null); [ -n "$H" ] && echo "EM-DASH in: $H" || echo "(no em-dashes in tracked text)"`
 - Personal-data leak scan (public repo; username + hostname derived live, never written here): !`R=$(git rev-parse --show-toplevel); U=$(id -un); HN=$(hostname -s); H=$(git -C "$R" grep -rlI -e "$U" -e "$HN" 2>/dev/null); [ -n "$H" ] && echo "LEAK candidate in: $H" || echo "(no username/hostname in tracked files)"`
-- Phase note vs reality (the currency of CLAUDE.md's "Current phase" is judged in Phase 3 against the counts above): !`R=$(git rev-parse --show-toplevel); sed -n '/^## Current phase/,/^## /p' "$R/CLAUDE.md" | head -6`
+- Phase note vs reality (the currency of CLAUDE.md's "Current phase" is judged in Phase 3 against the counts above): !`R=$(git rev-parse --show-toplevel); sed -n '/^## Current phase/,/^## /p' "$R/CLAUDE.md" | head -12`
 - Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] || echo "DANGLING [[${l}]]"; done; fi`
 
 ---
@@ -108,7 +109,10 @@ uv --directory "$R" run ruff check
 uv --directory "$R" run pyright | tail -2
 uv --directory "$R" run pytest -q 2>&1 | tail -3          # the counts: X failed, Y passed
 # RED-REASON classification (Golden Rule 2): every failure cause must be the stub tier.
-uv --directory "$R" run pytest -q 2>&1 | grep -E '^(E|FAILED|ERROR)' | sort | uniq -c | sort -rn | head -15
+# COLUMNS=400 matters: pytest truncates its short summary to the terminal width, and
+# the un-widened output bins as unusable fragments (found 2026-07-18, guard below).
+COLUMNS=400 uv --directory "$R" run pytest -q --tb=no 2>&1 | grep -E '^(FAILED|ERROR)' \
+  | grep -oE ' - .*' | sed 's/ - //' | cut -c1-70 | sort | uniq -c | sort -rn | head -15
 ```
 
 Hold as truth: ruff/pyright green or the exact errors (a red ruff/pyright is BLOCKING, report it);
@@ -134,10 +138,12 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
 - **Phase currency:** CLAUDE.md's "Current phase" section vs reality (Phase 1 counts + git log).
   Tickets exist = Phase 2 happened; a module with zero stubs and its ticket's oracle tests green =
   that slice is plausibly DONE; the trial-run retro line in HARNESS section 8 tells you whether the
-  trial ran. The phase note must say where the project ACTUALLY is.
+  trial ran. The phase note must say where the project ACTUALLY is. Slice completion is a
+  three-way agreement: a dated DONE annotation on the ticket, zero stubs in its module(s), and
+  that ticket's oracle tests green; any one present without the others is drift to reconcile.
 - **Moving counts/claims:** any written test count, ticket count, slice number, "suite is red"
   claim, gate command, or "N stubs" statement that disagrees with Phase 1. README's status
-  paragraph ("pre-implementation ... expected to be red") must match the live red/green reality.
+  paragraph must match the live build stage and red/green reality.
 - **Ticket wiring:** every ORACLE TESTS entry cites test files (and ids, where named) that exist
   under the live names; ADJACENT BEHAVIORS entries name functions that exist in src; a ticket for a
   finished slice carries a dated DONE annotation rather than reading as pending work.
@@ -213,6 +219,9 @@ instead of re-proposing it.
   classification. The three vacuous-green classes (fence tests, negative-invariant tests, the
   stub's `Error:` contract) are expected pre-implementation greens, not evidence a slice is done.
 - **Slice progress is the stub inventory + that ticket's tests going green**, never a prose claim.
+  A ticket's dated DONE annotation is itself a claim: it must agree three ways with zero stubs and
+  green ticket tests, and the check runs in both directions (annotation without evidence, or
+  evidence without annotation, are both findings).
 - **The em-dash and personal-data bans apply to /refresh's own edits first.** This file builds the
   em-dash via printf precisely so it never contains one; keep it that way.
 - **Probes must stay backtick-free inside their commands** (a literal backtick inside an inline
