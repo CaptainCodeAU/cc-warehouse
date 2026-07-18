@@ -1,5 +1,8 @@
 # Ticket 01: store module (THE TRIAL RUN)
 
+**DONE 2026-07-18** through the full harness loop (1 fixer round; commit
+75b9b68; retro recorded in HARNESS section 8).
+
 Slice 1 of 13. Depends on: nothing. This slice runs the FULL harness loop as
 the trial run (HARNESS section 6); judge the harness on it, record the retro
 in HARNESS.md's changelog before fanning out.

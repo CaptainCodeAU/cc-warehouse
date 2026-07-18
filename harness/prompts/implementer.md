@@ -31,8 +31,10 @@ the contract.
    "never deletes"), the oracle suite must already prove that word; if it does not,
    do not write the word (R8).
 8. pyright --strict and ruff must pass. Type errors are your work queue, not noise.
-9. Make the oracle tests pass WITHOUT editing them. If a test looks wrong, STOP and
-   return a written objection instead of code; the operator arbitrates.
+9. Make the oracle tests pass WITHOUT editing them. If a test looks wrong, or any
+   two contract lines conflict (a test vs a contract doc, or one contract line vs
+   another), STOP and return a written objection instead of code; never resolve a
+   contract conflict silently with a workaround. The operator arbitrates.
 10. ASCII punctuation only in code tokens; match existing file style; smallest diff
     that satisfies the tests; no drive-by refactors outside TOUCHES.
 
@@ -45,4 +47,7 @@ anything you deliberately did NOT do. No prose beyond that.
 ---
 Prompt changelog: 2026-07-17 v1. Same day v1.1: ADJACENT BEHAVIORS field added to the
 work-order template (makes R9 reviewable diff-only); rule 1 amended to permit pytest
-in tests (Phase 1 coherence review, findings 5 and 12).
+in tests (Phase 1 coherence review, findings 5 and 12). 2026-07-18 v1.2: rule 9
+extended to require an objection on test-vs-contract or contract-vs-contract
+conflicts (slice-01 retro: the implementer worked around the delete-fence vs
+release-removes-the-file conflict with a rename-aside instead of objecting).

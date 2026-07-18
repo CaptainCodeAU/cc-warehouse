@@ -133,6 +133,22 @@ order may depend on a later slice's code.
   Gate note: the pyright CLI has no --strict flag; the strict gate runs as
   `uv run pyright` with typeCheckingMode=strict in pyproject (where this doc
   says "pyright --strict", read "pyright in strict mode"). Trial run not started.
+- 2026-07-18: Trial run (slice 01, store) COMPLETE through the full loop, commit
+  75b9b68: implementer diff green on first gate pass; reviewers A/B in parallel
+  (A 4 findings, B 9, overlap 2: both lenses earned their seat); triage confirmed
+  T1-T8, rejected T9 (parent-dir fsync: beyond the stated crash model); 1 fixer
+  round to done (limit 3). The T3 contract defect (delete fence vs the
+  release-removes-the-file frozen decision) was patched in the same commit as the
+  code fix per section 4: function-scoped fence carve-out for store.py's O_EXCL
+  lock helpers (principal decision at triage). Retro: gates made no unique catch
+  but kept reviewers on green code; fix-the-prompt applied once (implementer
+  rule 9 now demands an objection on contract-vs-contract conflicts, v1.2);
+  /tdd not literally invoked, red-green followed procedurally. Accepted residual
+  (operator): a theoretical ABA window in stale-lock takeover requiring three-way
+  microsecond interleaving; revisit at slice 5 if sweep raises the stakes. Ops
+  lesson: one writer per TOUCHES; confirm a lost-looking role spawn is dead
+  before issuing a replacement (a duplicate implementer converged on store.py;
+  no corruption, the second wrote nothing). Main build fans out per section 7.
 
 ---
 
