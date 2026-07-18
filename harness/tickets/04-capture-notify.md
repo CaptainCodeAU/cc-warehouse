@@ -4,6 +4,12 @@ Slice 4 of 13. Depends on: 01, 02, 03. The render child stays a STUB until
 slice 8: the oracle tests assert the spawn contract (argv, detachment), never
 the child's output.
 
+NOTE (slice 02 fixer round 1, 2026-07-18): the cwd encoder lands in this slice.
+When it does, extend registry.move_project (slice 02) so it also claims the
+ENCODED form of new_path; that claim was deferred from slice 02 because the
+encoder did not yet exist, so a cwd-less capture at a moved location currently
+splits into a new project instead of following the move.
+
 Tracer bullet: `ccw hook` reads the SessionEnd payload from stdin and does the
 whole DESIGN section 4 pipeline in milliseconds: hash, idempotent store,
 project resolution, transactional catalog row + event, notifications, and a

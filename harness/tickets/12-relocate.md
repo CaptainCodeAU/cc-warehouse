@@ -2,6 +2,12 @@
 
 Slice 12 of 13. Depends on: 02 (registry aliases), 04 (config subset).
 
+NOTE (slice 02 fixer round 1, 2026-07-18): registry.move_project claims only the
+raw cwd form of new_path today, not its ENCODED form (deferred until the cwd
+encoder ships with slices 03/04). A relocate of a project first captured without
+a cwd must re-claim the encoded form here, or it will resolve to a stale project
+after the move.
+
 THE RISKIEST V1 SURFACE (BRAINSTORM lock): this slice gets the heaviest
 adversarial review. Both reviewers should budget double attention; FINDINGS
 F2/F7/F9/F10 apply doubly here.

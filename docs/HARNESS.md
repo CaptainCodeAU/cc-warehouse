@@ -156,6 +156,26 @@ order may depend on a later slice's code.
   and slice completion defined as a three-way agreement (dated ticket DONE
   line, zero stubs, green ticket tests) in Phase 3 and the deviation guard.
   README status prose moved off pre-implementation in the same sweep.
+- 2026-07-18: Slice 02 (catalog + registry) COMPLETE through the full loop.
+  Implementer diff green on first gate pass; reviewers A/B in parallel (A 6
+  conformance findings, B 11 adversary) triaged into 9 clusters, all confirmed
+  and fixed in 1 fixer round (limit 3). Fixes: one BEGIN IMMEDIATE / busy_timeout
+  transaction discipline for every read-decide-write, add_session idempotent by
+  content hash (U1); merge repoints alias claims onto keep, not just sessions, so
+  a future capture at a merged path never resolves back to the retired row (U2);
+  move_project raises instead of silent no-op on a claimed new_path or non-owned
+  old_path (U3); version recency from payload last_ts, not warehouse capture
+  order (U4); blank/whitespace cwd treated as absent, no catch-all label-'' bucket
+  (U6); session/project/alias indexes plus a sargable short-key prefix range (U7);
+  a single store.is_sha256_hex validator that catalog.add_session and
+  store.object_path both call (U8, R9/F8); merge_projects id validation (U9).
+  Split rulings: U3's encoded-form new_path claim DEFERRED to the cwd encoder
+  (noted on tickets 04/12); B10 (captured_at format attack) REJECTED because our
+  own capture generates captured_at, pinned at slice 4; U5 scoped to a docstring
+  fix with the encoded_dir best-effort behavior kept (SPEC section 3, deliberate
+  loss for lossy input). Operator verified all nine dispositions with black-box
+  temp-dir probes (9/9), independent of the fixer self-report. Gates: 34 slice
+  tests, pyright strict 0, ruff clean; full suite 96 red for the right reason.
 
 ---
 

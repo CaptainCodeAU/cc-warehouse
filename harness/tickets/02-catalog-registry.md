@@ -1,9 +1,10 @@
 # Ticket 02: catalog + registry
 
-**IN PROGRESS 2026-07-18.** Mid-loop: implementer diff green (uncommitted in
-the working tree), reviewers A+B done, operator triage recommendations
-recorded; fixer round pending. Cold-pickup plan: local
-Plans/slice-02-fix-plan.md (untracked by design).
+**DONE 2026-07-18.** Implementer diff plus fixer round 1 (of 3) committed.
+Reviewers A+B triaged into 9 clusters, all confirmed and fixed; operator
+verified each disposition with black-box temp-dir probes (9/9). Gates green (34
+slice tests, pyright strict 0, ruff clean); full suite red for the right reason.
+Retro in HARNESS section 8.
 
 Slice 2 of 13. Depends on: 01 (store hashes are the identity the catalog keys).
 
@@ -36,8 +37,12 @@ aliases, mutable labels).
 - resolve_project: alias hit wins; miss creates project + alias rows (kinds
   cwd / encoded_dir) stamped first_seen/last_seen; distinct cwds NEVER merge
   through a shared encoded_dir (F4).
-- rename = label edit only; move = new alias rows, old kept as history;
-  merge = repoint sessions, soft-retire the merged row.
+- rename = label edit only; move = new alias rows, old kept as history, and it
+  refuses (ValueError) rather than silently no-op on a claimed new_path or a
+  non-owned old_path (fixer round 1); merge = repoint sessions AND the merged
+  project's alias claims onto keep, then soft-retire the merged row (fixer round
+  1: aliases must repoint too, or a future capture at a merged path resolves back
+  to the retired project).
 
 ## Process
 
