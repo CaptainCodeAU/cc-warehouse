@@ -1,19 +1,24 @@
 """Command-line entry point for ccw / cc-warehouse (DESIGN section 7).
 
-Slice 4 wires the `hook` verb through the shared capture pipeline plus a `render` stub
-(the projection renderer lands in slice 8). Every other verb keeps its Phase-2 stub
-behavior (Error on stderr, exit 1) until its slice lands.
+Slice 8 wires the `build`, `render`, and `project rename` verbs onto the shared
+build orchestration (build.write_projection / build.projection_dir are the single
+projection implementation, R9). Every not-yet-landed verb keeps its Phase-2 stub
+behavior (Error on stderr, exit 1) until its slice lands. This module holds no write
+handle and removes nothing itself: build.py owns projection removal and the store
+owns the one write primitive (R2/R4 fences).
 """
 
 import json
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import capture, notify, sweep
+from cc_warehouse import build, capture, catalog, notify, registry, store, sweep
 from cc_warehouse.config import Config, load_config
+from cc_warehouse.render import RenderOptions
 
 
 def _stub() -> int:
@@ -209,6 +214,210 @@ def _run_notify(args: Sequence[str]) -> int:
     return 0
 
 
+def _run_build(args: Sequence[str]) -> int:
+    """`ccw build`: project the catalog into projections/ (DESIGN sections 1, 6).
+
+    Incremental by default; --rebuild regenerates every file, --include-hidden also
+    projects warmup/no-summary sessions. A live locks/build holder makes build refuse
+    without projecting anything (R14). Otherwise prints a one-line report and names any
+    failed item (R10); exits non-zero when the build was refused or an item failed."""
+    rest = args[1:]
+    rebuild = "--rebuild" in rest
+    include_hidden = "--include-hidden" in rest
+    config = load_config()
+    report = build.build(config, rebuild=rebuild, include_hidden=include_hidden)
+    if any(outcome.action == build.BUILD_LOCK_HELD for outcome in report.outcomes):
+        print("build refused: lock held by a live holder", file=sys.stderr)
+        return 2
+    built = sum(1 for outcome in report.outcomes if outcome.action == "built")
+    failures = report.failures
+    for outcome in failures:
+        print(f"build failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
+    print(f"build: {len(report.outcomes)} sessions, {built} built, {len(failures)} failed")
+    return 1 if failures else 0
+
+
+def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | None]:
+    """Split `ccw render` args into (session_key, out_dir, source_path).
+
+    `--session s:<key>` selects the catalog form; a bare positional selects the ad-hoc
+    form; `--out DIR` names the ad-hoc destination. Deliberately minimal (no argparse);
+    the full flag layering lands in slice 13."""
+    session: str | None = None
+    out: str | None = None
+    source: str | None = None
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--session":
+            session = rest[i + 1] if i + 1 < len(rest) else None
+            i += 2
+        elif arg.startswith("--session="):
+            session = arg[len("--session=") :]
+            i += 1
+        elif arg == "--out":
+            out = rest[i + 1] if i + 1 < len(rest) else None
+            i += 2
+        elif arg.startswith("--out="):
+            out = arg[len("--out=") :]
+            i += 1
+        else:
+            if source is None and not arg.startswith("-"):
+                source = arg
+            i += 1
+    return session, out, source
+
+
+def _render_session(session_key: str) -> int:
+    """`ccw render --session s:<key>`: (re)project one stored session, the hook's
+    detached child (DESIGN section 4). Projects only a CURRENT head through the shared
+    build helper (build.head_for_short, R9/F8): a short with no catalog row is the
+    error contract (exit 1), but a short that exists yet is superseded or hidden is a
+    clean no-op (return 0) that lays down no orphan dir the next build would prune.
+
+    As the hook's detached child this is the last surviving signal on failure (DESIGN
+    section 4): a render error emits a best-effort error notification (never raising)
+    and exits non-zero, and a successful render honors the open-folder opt-in. A
+    superseded/hidden no-op is not a failure, so it stays silent."""
+    short = session_key[2:] if session_key.startswith("s:") else session_key
+    config = load_config()
+    conn = catalog.open_catalog(config.root)
+    try:
+        exists = (
+            conn.execute("SELECT 1 FROM session WHERE short = ?", (short,)).fetchone()
+            is not None
+        )
+        head = build.head_for_short(conn, short) if exists else None
+    finally:
+        conn.close()
+    if not exists:
+        print(f"Error: no stored session for s:{short}", file=sys.stderr)
+        return 1
+    if head is None:  # exists but superseded or hidden: clean no-op, no dir laid down
+        return 0
+    directory = build.projection_dir(
+        config.root / "projections", head.label, head.first_ts, head.slug, head.short
+    )
+    try:
+        data = store.get(config.root, head.hash)
+        build.write_projection(directory, data, build.render_options(config), force=False)
+    except Exception as exc:  # the detached child's only surviving signal (DESIGN 4)
+        try:
+            notify.report(config, notify.NotifyEvent("error", short, None, repr(exc), None))
+        except Exception:
+            pass
+        return 1
+    if config.open_folder:
+        try:
+            notify.open_folder(config, str(directory))
+        except Exception:
+            pass
+    return 0
+
+
+def _render_options() -> RenderOptions:
+    """Ad-hoc render honors the personal render config when a warehouse is configured,
+    and falls back to defaults otherwise; it never opens the catalog or the store."""
+    try:
+        return build.render_options(load_config())
+    except Exception:
+        return RenderOptions()
+
+
+def _out_under_warehouse(out: str) -> bool:
+    """True when an ad-hoc --out resolves inside the warehouse store or projections.
+
+    Guarded only when a warehouse root is configured; with none configured there is
+    nothing to protect and the caller renders freely. The target and each guarded root
+    are resolved before the ancestor check, so a symlinked or relative --out cannot slip
+    an ad-hoc render's write into objects/ or projections/ and clobber the store (F9)."""
+    try:
+        config = load_config()
+    except Exception:
+        return False
+    target = Path(out).resolve()
+    for guarded in (config.root / "objects", config.root / "projections"):
+        anchor = guarded.resolve()
+        if target == anchor or anchor in target.parents:
+            return True
+    return False
+
+
+def _render_adhoc(source: str, out: str | None) -> int:
+    """`ccw render <path> [--out DIR]`: render a transcript outside the store to a
+    directory, without touching the catalog (DESIGN section 7). With no --out the target
+    is a fresh temp dir (outside projections) whose path is printed. A user --out is
+    rejected when it resolves inside the warehouse store or projections, so an ad-hoc
+    render cannot clobber them (F9). A missing or unreadable source is the CLI error
+    contract: `Error: <msg>` on stderr, exit 1."""
+    try:
+        data = Path(source).read_bytes()
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if out is not None and _out_under_warehouse(out):
+        print(
+            "Error: --out must not be inside the warehouse store or projections",
+            file=sys.stderr,
+        )
+        return 1
+    directory = Path(out) if out is not None else Path(tempfile.mkdtemp(prefix="ccw-render-"))
+    build.write_projection(directory, data, _render_options(), force=False)
+    if out is None:
+        print(str(directory))
+    return 0
+
+
+def _run_render(args: Sequence[str]) -> int:
+    """`ccw render`: dispatch the --session (catalog) and ad-hoc (path) forms."""
+    session, out, source = _render_flags(args[1:])
+    if session is not None:
+        return _render_session(session)
+    if source is not None:
+        return _render_adhoc(source, out)
+    print("Error: render requires --session s:<key> or a transcript path", file=sys.stderr)
+    return 1
+
+
+def _run_project(args: Sequence[str]) -> int:
+    """`ccw project rename <id> <label>`: a label edit (DESIGN section 2); nothing on
+    disk moves here, the next `ccw build` relocates the projection dirs. The wider
+    project verb surface (list/show/move/merge) lands in later slices."""
+    rest = args[1:]
+    if not rest:
+        print("Error: project requires a subcommand (rename)", file=sys.stderr)
+        return 1
+    if rest[0] != "rename":
+        print(f"Error: unknown project subcommand {rest[0]!r}", file=sys.stderr)
+        return 1
+    if len(rest) < 3:
+        print("Error: project rename requires <id> <label>", file=sys.stderr)
+        return 1
+    id_str, label = rest[1], rest[2]
+    try:
+        project_id = int(id_str)
+    except ValueError:
+        print(f"Error: project id must be an integer, got {id_str!r}", file=sys.stderr)
+        return 1
+    if not label.strip():
+        print("Error: project rename requires a non-empty label", file=sys.stderr)
+        return 1
+    config = load_config()
+    conn = catalog.open_catalog(config.root)
+    try:
+        exists = (
+            conn.execute("SELECT 1 FROM project WHERE id = ?", (project_id,)).fetchone()
+            is not None
+        )
+        if not exists:  # renaming a project that does not exist is an error, not a no-op
+            print(f"Error: no project with id {project_id}", file=sys.stderr)
+            return 1
+        registry.rename_project(conn, project_id, label)
+    finally:
+        conn.close()
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch one ccw invocation; returns the process exit code."""
     args = list(argv) if argv is not None else sys.argv[1:]
@@ -219,9 +428,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_notify(args)
     if verb == "sweep":
         return _run_sweep(args)
+    if verb == "build":
+        return _run_build(args)
     if verb == "render":
-        # Ad-hoc / detached projection renderer lands in slice 8; until then it behaves
-        # like every other unimplemented verb so the rest of the suite stays red for the
-        # stub reason, and the detached child spawned by capture is a harmless no-op.
-        return _stub()
+        return _run_render(args)
+    if verb == "project":
+        return _run_project(args)
     return _stub()
