@@ -269,6 +269,38 @@ order may depend on a later slice's code.
   in a git worktree; the deliverable was replayed onto the main tree and the
   ephemeral worktrees removed before commit. Milestone tag slice-05 at completion.
 
+- 2026-07-18: Slice 06 (transcript.md emitters, full + compact) COMPLETE through the
+  full loop. Implementer green on first gate pass (8 oracle tests); adds the normalized
+  conversation model (turns/typed blocks, reminder split) to parser.py plus a single
+  policy-parameterized markdown emitter to render.py (full and compact from one _render
+  core + _Policy, no F8), reusing extract_text/detect_commits/detect_github_repo and a
+  new shared _extract_entries routing (parse_session refactored, 19 parser tests still
+  green). Reviewers A/B in parallel plus /code-review Standards+Spec; unlike slices
+  01-05 this slice had REAL bugs and the two lenses converged hard. Operator verified
+  every finding with a white-box probe. Triage: after principal confirmation, 5
+  CONFIRMED clusters + a tool-coverage add fixed in 1 fixer round (of 3): C-TURN (the
+  SPEC-8 <-prefix + a substring task-notification search had leaked into SPEC-6
+  turn-starting, demoting real prompts to machinery; both removed, only a whole-message
+  task-notification/stop-hook/isMeta/empty is machinery), C-FENCE (fence-aware
+  orphan-strip + a safe-fence helper so arbitrary tool/thinking/reminder content
+  containing a code fence cannot break out, and a balanced nested fence is never
+  corrupted), C-REMINDER-LEAK (an unknown reminders_* value fell open and leaked the
+  reminder; now fails closed, F7), C-TOOLRESULT-LOSS (a commit tool_result dropped its
+  other text; now keeps both, F6), C-R8 (honest docstrings + proving tests for
+  determinism and pre-first-prompt preservation), C-TOOLCOVERAGE (Write/TodoWrite/Edit
+  replace_all specialized per SPEC 7, which slice-7 copy-as-md depends on). Rejected: A5
+  (refuted: ParsedSession.session_uuid + the (no summary) sentinel verified present), B8
+  (resolved by C-TURN). Accepted edges (documented): C-USERLIST, promptless-session
+  compact. 10 contract-derived regression tests added (tests/test_render_md_regressions.py,
+  cited on ticket 06). Operator black-box verified 18/18 on the six clusters independent
+  of the fixer self-report. Ops note: the Engineer implementer/fixer ran in auto-created
+  worktrees; the deliverable was landed on the main tree and the worktrees removed before
+  commit (the slice-05 lesson, instructed up front this time). Fix the prompt: not needed
+  (roles honored their rules; recorded as considered). Round count 1 (target <= 2). Gates:
+  37 slice+regression+parser tests green, pyright strict 0, ruff clean; full suite 47
+  failed / 112 passed, red for the right reason. Milestone tag slice-06 at completion.
+  Next: ticket 07 (HTML emitters + manifest).
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

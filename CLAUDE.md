@@ -70,7 +70,15 @@ os.walk onerror, malformed --source refused conservatively, lock-held distinct
 refusal), 4 rejected; 3 contract-derived regression tests
 (tests/test_sweep_regressions.py); operator black-box verified 31/31; sweep reuses
 capture.capture_transcript verbatim (R9/F8); retro in HARNESS section 8. Milestone
-tags slice-01..05. Next: ticket 06 (transcript.md emitters).
+tags slice-01..05. Slice 06 (transcript.md emitters, full + compact) COMPLETE
+2026-07-18: adds the normalized conversation model (turns/blocks) to parser.py and a
+single-core markdown emitter to render.py; fixer round 1 (of 3) resolved 5 confirmed
+reviewer clusters (turn-grouping demotion, fence corruption/injection, reminder
+fail-open leak, commit tool_result text loss, R8 honesty) plus a tool-coverage add,
+2 rejected; 10 contract-derived regression tests
+(tests/test_render_md_regressions.py); operator black-box verified 18/18; retro in
+HARNESS section 8. Milestone tags slice-01..06. Next: ticket 07 (HTML emitters +
+manifest).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
