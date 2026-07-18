@@ -64,8 +64,13 @@ retro in HARNESS section 8. Slice 04 (capture hook + notify) COMPLETE 2026-07-18
 fixer round 1 (of 3) resolved 6 confirmed reviewer clusters (detached notify helper
 off the hook critical path, best-effort sinks, the SPEC-3 _unresolved rung), 3
 rejected; 3 contract-derived regression tests; operator black-box verified 21/21;
-retro in HARNESS section 8. Milestone tags backfilled to slice-01..04. Next:
-ticket 05 (sweep).
+retro in HARNESS section 8. Slice 05 (sweep) COMPLETE 2026-07-18: fixer round 1
+(of 3) resolved 3 confirmed reviewer clusters (unreadable-source-subdir named via
+os.walk onerror, malformed --source refused conservatively, lock-held distinct
+refusal), 4 rejected; 3 contract-derived regression tests
+(tests/test_sweep_regressions.py); operator black-box verified 31/31; sweep reuses
+capture.capture_transcript verbatim (R9/F8); retro in HARNESS section 8. Milestone
+tags slice-01..05. Next: ticket 06 (transcript.md emitters).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.

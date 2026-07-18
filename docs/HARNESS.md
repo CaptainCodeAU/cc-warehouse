@@ -240,6 +240,35 @@ order may depend on a later slice's code.
   slice-01 milestone tag (the tag-parity drift the /refresh self-improving guard
   anticipated) was backfilled at 75b9b68; tags now slice-01..04.
 
+- 2026-07-18: Slice 05 (sweep) COMPLETE through the full loop. Implementer diff
+  green on first gate pass (7 oracle tests); sweep reuses capture.capture_transcript
+  verbatim per file (R9/F8), store.acquire_lock/release_lock for a locks/sweep lock
+  (R14), and reports.BatchReport/ItemOutcome (the shared batch shape migrate slice 10
+  reuses). Reviewers A/B in parallel (A 2 conformance, B 4 adversary) plus the
+  /code-review Standards+Spec third lens. Operator verified every finding
+  (Guardrail 9) with empirical probes for the two load-bearing ones: rglob silently
+  drops an unreadable subdirectory (proven), and the store's dot-prefixed
+  atomic-write tmp is not orphan-adoptable (proven, refuting a torn-write finding).
+  Triage: 7 clusters, 3 CONFIRMED + fixed in 1 fixer round (of 3), 4 REJECTED. C1
+  (R5/F7): os.walk(onerror) replaces rglob so an unreadable source subdirectory is a
+  named failure with a non-zero exit, never a silent under-capture. C2 (R5): a
+  malformed --source fails conservatively instead of sweeping the default tree; the
+  =form is supported. C3 (R8-spirit): lock-held is a distinct refusal action, not a
+  phantom batch item. Rejections (recorded): C4 orphan filename-vs-content = ccw
+  verify's domain (slice 9); C5 cwd=None attribution refuted (capture resolves from
+  the source path); C6 in-progress two-rows = intended supersedes
+  (test_grown_transcript); C7 swept-no-render = batch tool, render is build's
+  incremental job. D1 (forward cwd encoder + registry.move_project claim) confirmed
+  as a follow-up, does not ride slice 5 (principal). 3 contract-derived regression
+  tests added (tests/test_sweep_regressions.py, cited on ticket 05). Operator
+  black-box verified 31/31 in temp dirs independent of the fixer self-report. Fix
+  the prompt: not needed (implementer, both reviewers, and fixer honored their
+  rules; recorded as considered). Round count 1 (target <= 2). Gates: 11
+  slice+regression tests green, pyright strict 0, ruff clean; full suite 55 failed /
+  94 passed, red for the right reason. Ops note: the Engineer implementer/fixer ran
+  in a git worktree; the deliverable was replayed onto the main tree and the
+  ephemeral worktrees removed before commit. Milestone tag slice-05 at completion.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
