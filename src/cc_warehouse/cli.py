@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import capture, notify
+from cc_warehouse import capture, notify, sweep
 from cc_warehouse.config import Config, load_config
 
 
@@ -125,6 +125,58 @@ def _run_hook() -> int:
     return 0
 
 
+def _sweep_source(args: Sequence[str]) -> tuple[Path | None, str | None]:
+    """Resolve the optional `--source DIR` / `--source=DIR` override for `ccw sweep`.
+
+    Returns (source, error). No `--source` at all yields (None, None): the sweep uses the
+    default ~/.claude/projects. A `--source` present but with a MISSING, EMPTY, or flag-like
+    (starts with "-") value yields (None, message): the caller reports the usage error and
+    refuses to sweep rather than silently targeting a tree the operator did not name (R5).
+    This is deliberately minimal (no argparse); the full flag layering lands in slice 13."""
+    raw: str | None = None
+    seen = False
+    for i, arg in enumerate(args):
+        if arg == "--source":
+            raw = args[i + 1] if i + 1 < len(args) else None
+            seen = True
+            break
+        if arg.startswith("--source="):
+            raw = arg[len("--source=") :]
+            seen = True
+            break
+    if not seen:
+        return None, None
+    if raw is None:
+        return None, "sweep: --source requires a directory (no value given)"
+    if not raw or raw.startswith("-"):
+        return None, f"sweep: --source requires a directory, got {raw!r}"
+    return Path(raw), None
+
+
+def _run_sweep(args: Sequence[str]) -> int:
+    """`ccw sweep`: capture transcripts the hook missed under a locks/sweep lock.
+
+    A malformed `--source` is a usage error that refuses to sweep (R5). A live lock holder
+    is a distinct refusal that is NOT counted as a batch item. Otherwise prints an end
+    report naming every failed item (R10) and returns non-zero when any item failed, 0
+    otherwise (R5/R10)."""
+    source, source_error = _sweep_source(args)
+    if source_error is not None:
+        print(source_error, file=sys.stderr)
+        return 2
+    config = load_config()
+    report = sweep.sweep(config, source)
+    if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
+        print("sweep refused: lock held by a live holder", file=sys.stderr)
+        return 2
+    failures = report.failures
+    for outcome in failures:
+        print(f"sweep failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
+    stored = sum(1 for outcome in report.outcomes if outcome.action == "stored")
+    print(f"sweep: {len(report.outcomes)} items, {stored} stored, {len(failures)} failed")
+    return 1 if failures else 0
+
+
 def _parse_notify_record(args: Sequence[str]) -> dict[str, object] | None:
     """Extract the `--record <json>` event handed to the detached notify helper."""
     try:
@@ -165,6 +217,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_hook()
     if verb == "notify":
         return _run_notify(args)
+    if verb == "sweep":
+        return _run_sweep(args)
     if verb == "render":
         # Ad-hoc / detached projection renderer lands in slice 8; until then it behaves
         # like every other unimplemented verb so the rest of the suite stays red for the
