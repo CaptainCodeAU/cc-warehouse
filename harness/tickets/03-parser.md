@@ -1,5 +1,9 @@
 # Ticket 03: parser + conversation model
 
+STATUS: DONE 2026-07-18 (full harness loop; 1 fixer round of 3; 7 confirmed
+reviewer clusters resolved, 1 rejected; 6 contract-derived regression tests;
+operator black-box verified 12/12; retro in HARNESS section 8).
+
 Slice 3 of 13. Depends on: nothing at runtime (pure functions); ordered here
 so slice 4 can call it (the hook's metadata extraction lives in this slice).
 
@@ -25,6 +29,14 @@ tests; its observable semantics are pinned via the emitters later.
 
 - line_count = total raw lines; skipped_lines = unparseable lines only
   (a parseable summary-type line is filtered, not skipped).
+- Slice-03 reviewer round (2026-07-18) refines the bullet above: skipped_lines
+  counts every non-blank line/item that yields no usable entry dict, which
+  includes a valid-JSON-but-non-object line (consistent across the JSONL and
+  loglines paths); a genuinely blank line stays uncounted. A `loglines` value
+  present but not a list is a malformed payload (counted, never zeroed); a
+  leading UTF-8 BOM is stripped before routing; deeply nested input is counted
+  as skipped, never allowed to crash. Six regression tests in
+  tests/test_parser.py pin these (added per HARNESS section 4).
 - JSON files with a `loglines` key parse like JSONL (SPEC KEEP).
 - Summary priority: first summary-type line, else first user text not
   starting with `<` (task notifications and command output are machine text),

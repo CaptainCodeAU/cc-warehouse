@@ -150,3 +150,78 @@ def test_github_repo_detection_from_push_output() -> None:
     )
     assert parser.detect_github_repo(text) == "alice/widget"
     assert parser.detect_github_repo("nothing relevant here") is None
+
+
+# ---------------------------------------------------------------------------
+# Malformed-input accounting regressions (slice-03 reviewer round, 2026-07-18).
+# Derived from SPEC section 6 (CHANGE: malformed lines counted, never silent)
+# and FINDINGS F6, added by operator triage per HARNESS section 4 after
+# reviewers A/B surfaced silent-loss and crash classes the original oracle
+# tests did not cover. Contract-derived, not code-derived: they pin the
+# "never silently dropped, never crash" guarantee the parser's docstring makes
+# (R8). Each is red against the pre-fix parser and green after the fix.
+# ---------------------------------------------------------------------------
+
+
+def test_loglines_present_but_not_a_list_is_accounted_not_silently_zeroed() -> None:
+    """F6: a corrupted `loglines` value (present but not a list) must not read as
+    an empty session; the malformed payload is counted, never silently zeroed."""
+    parsed = parser.parse_session(json.dumps({"loglines": "corrupted"}).encode())
+    assert parsed.skipped_lines >= 1
+    assert parsed.summary == "(no summary)"
+    assert parsed.hidden is True
+
+
+def test_valid_json_non_object_line_is_counted_as_skipped() -> None:
+    """F6: a line that parses as JSON but is not an object yields no entry, so it
+    is counted as skipped (unparseable as an entry), never dropped untracked."""
+    data = jsonl(
+        entry("user", "real prompt", "2026-01-05T10:00:00.000Z"),
+        "42",
+        entry("assistant", "reply", "2026-01-05T10:00:05.000Z"),
+    )
+    parsed = parser.parse_session(data)
+    assert parsed.line_count == 3
+    assert parsed.skipped_lines == 1
+    assert parsed.summary == "real prompt"
+
+
+def test_whitespace_only_summary_is_treated_as_no_summary() -> None:
+    """SPEC 8: a summary-type line whose summary field is only whitespace is not a
+    usable summary; the session falls to the hidden `(no summary)` placeholder."""
+    parsed = parser.parse_session(jsonl({"type": "summary", "summary": "   "}))
+    assert parsed.summary == "(no summary)"
+    assert parsed.hidden is True
+
+
+def test_deeply_nested_json_does_not_crash_the_parser() -> None:
+    """F6/R5: hostile deeply-nested input must be counted as skipped, never raise
+    (RecursionError is not a JSONDecodeError, so a naive catch lets it escape)."""
+    payload = b'{"a":' * 100000 + b"1" + b"}" * 100000
+    parsed = parser.parse_session(payload)  # must not raise
+    assert parsed.skipped_lines >= 1
+
+
+def test_bom_prefixed_loglines_payload_is_not_misrouted() -> None:
+    """F6: a UTF-8 BOM must not knock a `loglines` payload out of its branch into
+    the JSONL path, which would silently lose the whole session."""
+    payload = (
+        "\ufeff"
+        + json.dumps(
+            {"loglines": [entry("user", "hi via bom", "2026-01-05T10:00:00.000Z")]}
+        )
+    ).encode("utf-8")
+    parsed = parser.parse_session(payload)
+    assert parsed.summary == "hi via bom"
+    assert parsed.session_uuid == DEFAULT_UUID
+
+
+def test_ismeta_is_honored_only_as_a_true_boolean() -> None:
+    """F6: a non-boolean `isMeta` (e.g. the string "false", which is truthy in
+    Python) must not skip a genuine user message; only isMeta True marks meta."""
+    data = jsonl(
+        entry("user", "real hello", "2026-01-05T10:00:00.000Z", isMeta="false"),
+    )
+    parsed = parser.parse_session(data)
+    assert parsed.summary == "real hello"
+    assert parsed.hidden is False
