@@ -1,6 +1,6 @@
 ---
 name: refresh
-description: Currency + consistency + gap sweep for cc-warehouse. Reconcile the phase/status surface (CLAUDE.md current-phase, README, doc status headers, HARNESS changelog), the ticket-to-test wiring, and the project memory to LIVE ground truth (git, the three gates, the red-for-the-right-reason check, stub inventory) so a future session cannot act on a stale phase note or a broken suite it believes is "red for the right reason". NEVER relitigates a locked contract decision; contradictions are flagged to the principal, not fixed. Computes every moving fact live, so the command itself never goes stale. Manual only.
+description: Currency + consistency + gap sweep for cc-warehouse. Reconcile the phase/status surface (CLAUDE.md current-phase, README, doc status headers, HARNESS changelog), the ticket-to-test wiring, and the project memory to LIVE ground truth (git incl. tags, the three gates, the red-for-the-right-reason check, stub inventory) so a future session cannot act on a stale phase note or a broken suite it believes is "red for the right reason". NEVER relitigates a locked contract decision; contradictions are flagged to the principal, not fixed. Computes every moving fact live, so the command itself never goes stale. Manual only.
 argument-hint: "[all(default) | audit(report-only) | docs | tickets | memory | gates | claude | fix \"<old-term>\"]"
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Task
@@ -49,7 +49,7 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 ## Live signals (auto-probed at invocation - already the truth; files that disagree are stale)
 
 - Now (UTC): !`date -u`
-- Git state (branch, HEAD, uncommitted, remote delta if a remote exists): !`R=$(git rev-parse --show-toplevel); echo "branch $(git -C "$R" branch --show-current) | HEAD $(git -C "$R" log --oneline -1) | uncommitted $(git -C "$R" status --porcelain | wc -l | tr -d ' ') | $(git -C "$R" rev-list --left-right --count @{u}...HEAD 2>/dev/null || echo 'no upstream')"`
+- Git state (branch, HEAD, uncommitted, remote delta if a remote exists, latest tag): !`R=$(git rev-parse --show-toplevel); echo "branch $(git -C "$R" branch --show-current) | HEAD $(git -C "$R" log --oneline -1) | uncommitted $(git -C "$R" status --porcelain | wc -l | tr -d ' ') | $(git -C "$R" rev-list --left-right --count @{u}...HEAD 2>/dev/null || echo 'no upstream') | tag $(git -C "$R" for-each-ref --sort=-creatordate --format='%(refname:short)' --count=1 refs/tags 2>/dev/null | grep -m1 . || echo none)"`
 - Suite shape (cheap counts; the REAL gate run happens in Phase 1): !`R=$(git rev-parse --show-toplevel); echo "test files: $(ls "$R"/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ') | test functions: $(grep -h 'def test_' "$R"/tests/test_*.py 2>/dev/null | wc -l | tr -d ' ') | tickets: $(ls "$R"/harness/tickets/*.md 2>/dev/null | wc -l | tr -d ' ')"`
 - Stub inventory = slice progress (a module at 0 with functions is implemented; nonzero = still stubbed): !`R=$(git rev-parse --show-toplevel); for f in "$R"/src/cc_warehouse/*.py; do n=$(grep -c 'raise NotImplementedError' "$f"); [ "$n" -gt 0 ] && echo "$(basename "$f"): $n stubs"; done; echo "(no lines above = zero stubs left anywhere)"`
 - Slice DONE annotations (Phase 3 cross-checks each against zero stubs + green ticket tests): !`R=$(git rev-parse --show-toplevel); D=""; for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && D="$D $(basename "$t")"; done; [ -n "$D" ] && echo "DONE-annotated:$D" || echo "(no DONE annotations yet)"`
@@ -93,7 +93,9 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 8. **Git: stage BY NAME, noreply identity, memory never committed.** `git status` first; never
    `git add -A`/`.` (a parallel session may share the tree). Commit as
    `git -c user.name='CaptainCodeAU' -c user.email='69835039+CaptainCodeAU@users.noreply.github.com'`,
-   end messages with the `Claude-Session:` trailer (hooks stamp the `C-` trailers; never hand-add).
+   end messages with the `Claude-Session:` trailer (hooks stamp the `C-` trailers; never hand-add). Standing practice as of 2026-07-18: frequent logical
+   commits, each followed by an immediate push, and an annotated tag at slice or
+   milestone completion (the Phase-7 push conditional below still decides push).
 9. **Verify every finding yourself.** If a subagent reports drift, re-check it with a direct
    grep/command before fixing; drop what does not survive; note any rejected claim in the report.
 
@@ -140,7 +142,9 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
   that slice is plausibly DONE; the trial-run retro line in HARNESS section 8 tells you whether the
   trial ran. The phase note must say where the project ACTUALLY is. Slice completion is a
   three-way agreement: a dated DONE annotation on the ticket, zero stubs in its module(s), and
-  that ticket's oracle tests green; any one present without the others is drift to reconcile.
+  that ticket's oracle tests green; any one present without the others is drift to reconcile. A
+  landed slice is also expected to carry an annotated milestone tag (current practice, e.g.
+  slice-NN); a missing tag is a report-tier note in Phase 8, not a fourth completion gate.
   Third state: a slice legitimately MID-LOOP (uncommitted implementation in the working tree,
   harness loop not closed) carries a dated IN PROGRESS annotation instead of DONE.
 - **Moving counts/claims:** any written test count, ticket count, slice number, "suite is red"
@@ -196,7 +200,9 @@ em-dash and personal-data probes over the files you touched: both clean.
 Stage the changed tracked files BY NAME; group into logical commits (`docs(refresh): ...`,
 `chore(refresh): ...`); noreply identity per Guardrail 8; end each message with the
 `Claude-Session:` trailer. Memory is outside the repo - nothing of it is ever staged. Push only if
-a remote exists and pushing is the repo's standing practice at that time.
+a remote exists and pushing is the repo's standing practice at that time (as of 2026-07-18 it is:
+push each logical commit immediately). When this run tagged a milestone, push the annotated tag
+alongside the branch (git push <remote> <branch> <tag>, or --follow-tags).
 
 ## Phase 8 - report (compact) + self-improving guard
 
@@ -207,7 +213,9 @@ the final GROUND TRUTH (branch · HEAD · ruff/pyright · pytest failed/passed +
 stub inventory · ticket count). In `audit`, the same content as a to-do list with no edits made.
 **Self-improving guard:** if this run found drift a cheap probe SHOULD have caught, propose the
 concrete new probe line for this command; when a probe-catchable drift recurs, ADD the probe
-instead of re-proposing it.
+instead of re-proposing it. Proposed this run, not yet added per that discipline: a tag-parity
+probe flagging a DONE-annotated slice whose milestone tag is absent (milestone tagging began
+2026-07-18, so it is proposed now and added only if the drift recurs).
 
 ---
 
@@ -233,6 +241,10 @@ instead of re-proposing it.
 - **The specimen repo and the warehouse data root are permanently out of sweep scope.**
 - **Commit identity is the GitHub noreply, always** - a default-identity commit in this public repo
   is itself a finding (fix with amend only if unpushed, otherwise flag).
+- **Milestone tags and immediate push are the standing practice (dated 2026-07-18).** The repo pushes
+  each logical commit right away and tags slice/milestone completions (annotated, noreply identity).
+  The Phase-7 push conditional stays self-adapting: this list records the practice, it does not
+  hardcode always-push. A landed slice missing its milestone tag is a report-tier note, not a gate.
 
 ## Canonical file map (stable structure; update only when the layout changes)
 
