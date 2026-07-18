@@ -6,9 +6,10 @@ compact markdown variants are one implementation, not two near-verbatim copies
 (F8/R9). The emitters take the raw payload so tests stay black-box.
 """
 
+import base64
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import cast
 
 from cc_warehouse.parser import (
@@ -22,6 +23,7 @@ from cc_warehouse.parser import (
     parse_session,
     split_reminder,
 )
+from cc_warehouse.store import sha256_hex
 
 
 @dataclass(frozen=True)
@@ -377,11 +379,369 @@ def render_markdown(data: bytes, options: RenderOptions) -> tuple[str, str]:
     return full, compact
 
 
+# --------------------------------------------------------------------------
+# In-house markdown -> HTML (slice 7). Scope: the markdown WE emit plus the
+# SPEC-7 hardening; stdlib only (R7), no third-party renderer. User TEXT is
+# escaped; our own block-level HTML (<details>/<summary>) passes through.
+# --------------------------------------------------------------------------
+
+_MD_HEADING_RE = re.compile(r"^(#{1,6}) +(.*)$")
+_MD_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +(.*)$")
+# Only the block-level HTML we emit ourselves passes through unescaped.
+_MD_PASSTHROUGH_RE = re.compile(r"^(?:<details>|</details>|<summary>[^<]*</summary>)$")
+_MD_INLINE_RE = re.compile(
+    r"(?P<code>`[^`\n]+`)"
+    r"|(?P<link>\[[^\]\n]+\]\([^)\n]+\))"
+    r"|(?P<bold>\*\*.+?\*\*)"
+)
+
+
+def _escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _escape_attr(text: str) -> str:
+    return _escape(text).replace('"', "&quot;")
+
+
+def _inline(text: str) -> str:
+    """Inline markdown: bold, inline code, and links; all other text escaped."""
+    out: list[str] = []
+    pos = 0
+    for match in _MD_INLINE_RE.finditer(text):
+        out.append(_escape(text[pos : match.start()]))
+        code = match.group("code")
+        link = match.group("link")
+        if code is not None:
+            out.append(f"<code>{_escape(code[1:-1])}</code>")
+        elif link is not None:
+            label, _, tail = link[1:].partition("](")
+            out.append(f'<a href="{_escape_attr(tail[:-1])}">{_escape(label)}</a>')
+        else:
+            bold = match.group("bold") or ""
+            out.append(f"<strong>{_escape(bold[2:-2])}</strong>")
+        pos = match.end()
+    out.append(_escape(text[pos:]))
+    return "".join(out)
+
+
+def _paragraph_html(lines: list[str]) -> str:
+    return f"<p>{_inline(chr(10).join(lines))}</p>"
+
+
+def _list_html(items: list[str]) -> str:
+    body = "".join(f"<li>{_inline(item)}</li>" for item in items)
+    return f"<ul>{body}</ul>"
+
+
+def _code_block_html(lines: list[str], lang: str) -> str:
+    opener = f'<code class="language-{lang}">' if lang else "<code>"
+    return f"<pre>{opener}{_escape(chr(10).join(lines))}</code></pre>"
+
+
+def _md_to_html(md: str, allow_block_html: bool) -> str:
+    """Render the markdown WE emit to HTML.
+
+    Headings, paragraphs, loose lists, balanced code fences, and inline
+    bold/code/links. Block-level <details>/<summary> lines pass through
+    literally ONLY when allow_block_html is True (fragments WE authored: the
+    header card, the reminder collapse, continuation blocks); with it False --
+    USER prompt text and every other block -- such a line is ordinary text
+    whose angle brackets are escaped, so user content can never inject page
+    markup. A fence still open at end-of-input is closed defensively, so a
+    page can never carry an unbalanced <pre> (SPEC 7 hardening;
+    test_trailing_orphan_fence_is_stripped).
+    """
+    out: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+    fence: list[str] | None = None
+    fence_open = ("", 0)
+    fence_lang = ""
+
+    def flush() -> None:
+        if para:
+            out.append(_paragraph_html(para))
+            para.clear()
+        if items:
+            out.append(_list_html(items))
+            items.clear()
+
+    for line in md.split("\n"):
+        if fence is not None:
+            marker = _fence_marker(line)
+            if (
+                marker is not None
+                and marker[0] == fence_open[0]
+                and marker[1] >= fence_open[1]
+                and not marker[2]
+            ):
+                out.append(_code_block_html(fence, fence_lang))
+                fence = None
+            else:
+                fence.append(line)
+            continue
+
+        marker = _fence_marker(line)
+        if marker is not None:
+            flush()
+            fence = []
+            fence_open = (marker[0], marker[1])
+            fence_lang = re.sub(r"[^A-Za-z0-9_-]", "", marker[2])
+            continue
+
+        if allow_block_html and _MD_PASSTHROUGH_RE.match(line):
+            flush()
+            out.append(line)
+            continue
+
+        heading = _MD_HEADING_RE.match(line)
+        if heading is not None:
+            flush()
+            level = len(heading.group(1))
+            out.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
+            continue
+
+        item = _MD_LIST_ITEM_RE.match(line)
+        if item is not None:
+            if para:
+                out.append(_paragraph_html(para))
+                para.clear()
+            items.append(item.group(1))
+            continue
+
+        if not line.strip():
+            flush()
+            continue
+
+        if items:
+            out.append(_list_html(items))
+            items.clear()
+        para.append(line)
+
+    if fence is not None:
+        out.append(_code_block_html(fence, fence_lang))
+    flush()
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
+# HTML page emitter (slice 7). Per-block markdown fragments are the SINGLE
+# source of truth: render_markdown joins them, render_html wraps each in a
+# data-copy-src that carries the RAW markdown (base64) beside the rendered
+# body, so a copied fragment reproduces its transcript.md source verbatim
+# (DESIGN section 6; proven by test_copy_as_markdown_payloads_equal_transcript_fragments).
+# --------------------------------------------------------------------------
+
+_HLJS_BASE = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0"
+_HLJS_SCRIPT = (
+    f'<script src="{_HLJS_BASE}/highlight.min.js" '
+    'onload="hljs.highlightAll()" onerror="void 0"></script>'
+)
+# Double-click a block to copy its exact transcript.md markdown from the
+# base64 data-copy-src payload. Best-effort; the page renders without it.
+_COPY_SCRIPT = (
+    "<script>\n"
+    "(function () {\n"
+    "  function decode(value) {\n"
+    "    var binary = atob(value);\n"
+    "    var bytes = new Uint8Array(binary.length);\n"
+    "    for (var i = 0; i < binary.length; i += 1) {\n"
+    "      bytes[i] = binary.charCodeAt(i);\n"
+    "    }\n"
+    '    return new TextDecoder("utf-8").decode(bytes);\n'
+    "  }\n"
+    '  document.addEventListener("dblclick", function (event) {\n'
+    '    var node = event.target.closest("[data-copy-src]");\n'
+    "    if (!node || !navigator.clipboard) {\n"
+    "      return;\n"
+    "    }\n"
+    '    navigator.clipboard.writeText(decode(node.getAttribute("data-copy-src")));\n'
+    "  });\n"
+    "})();\n"
+    "</script>"
+)
+_CSS = (
+    ":root { color-scheme: light dark; }\n"
+    "body { font: 16px/1.55 -apple-system, system-ui, sans-serif; margin: 0; }\n"
+    "main.transcript { max-width: 52rem; margin: 0 auto; padding: 2rem 1rem; }\n"
+    "section.turn { border-top: 1px solid rgba(128, 128, 128, 0.3); "
+    "margin-top: 1.5rem; padding-top: 0.5rem; }\n"
+    "h1, h2 { line-height: 1.2; }\n"
+    "pre { overflow-x: auto; padding: 0.75rem; border-radius: 6px; "
+    "background: rgba(128, 128, 128, 0.12); }\n"
+    "p code, li code { padding: 0.1em 0.3em; border-radius: 4px; "
+    "background: rgba(128, 128, 128, 0.15); }\n"
+    "[data-copy-src] { cursor: copy; }\n"
+    "summary { cursor: pointer; }\n"
+    "a { color: #2563eb; }\n"
+)
+
+
+class _AnchorAllocator:
+    """Content-derived, collision-free anchor ids (DESIGN section 6).
+
+    An id is the turn ordinal plus a short hash of the block content; a numeric
+    suffix disambiguates the rare content collision. Never derived from a
+    timestamp, so entries that share a timestamp still get distinct anchors
+    (test_message_anchors_are_unique_despite_equal_timestamps).
+    """
+
+    def __init__(self) -> None:
+        self._used: set[str] = set()
+
+    def allocate(self, ordinal: int, content: str) -> str:
+        digest = sha256_hex(content.encode("utf-8"))[:8]
+        base = f"turn-{ordinal}-{digest}"
+        anchor = base
+        suffix = 2
+        while anchor in self._used:
+            anchor = f"{base}-{suffix}"
+            suffix += 1
+        self._used.add(anchor)
+        return anchor
+
+
+def _document_head(title: str) -> list[str]:
+    return [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>{_escape(title)}</title>",
+        f"<style>\n{_CSS}</style>",
+        "</head>",
+        "<body>",
+    ]
+
+
+def _strip_separators(lines: list[str]) -> list[str]:
+    """Drop the structural blank lines bracketing a block so the copy payload is
+    the block's own markdown, still a verbatim substring of transcript.md."""
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return lines[start:end]
+
+
+def _copy_block(
+    anchors: _AnchorAllocator, ordinal: int, css: str, fragment: str, body: str
+) -> str:
+    anchor = anchors.allocate(ordinal, fragment)
+    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    return f'<div class="{css}" id="{anchor}" data-copy-src="{payload}">{body}</div>'
+
+
+def _session_repo(conv: Conversation) -> str | None:
+    """The GitHub owner/repo detected anywhere in the session's tool results;
+    commit shas in any result link against it (SPEC 7 commit cards)."""
+    for turn in conv.turns:
+        for block in turn.blocks:
+            if block.kind == "tool_result":
+                repo = detect_github_repo(block.text)
+                if repo is not None:
+                    return repo
+    return None
+
+
+def _linkify_commits(body: str, text: str, repo: str) -> str:
+    """Anchor each commit sha in a rendered result to its GitHub commit URL. The
+    data-copy-src fragment stays the plain markdown; only the body gains links."""
+    for commit in detect_commits(text):
+        needle = f"<code>{_escape(commit.sha)}</code>"
+        href = _escape_attr(f"https://github.com/{repo}/commit/{commit.sha}")
+        body = body.replace(needle, f'<a href="{href}">{needle}</a>', 1)
+    return body
+
+
+def _block_html(
+    block: Block, policy: _Policy, repo: str | None, ordinal: int, anchors: _AnchorAllocator
+) -> str | None:
+    lines = _strip_separators(_render_block(block, policy))
+    if not lines:
+        return None
+    fragment = "\n".join(lines)
+    body = _md_to_html(fragment, allow_block_html=block.kind == "continuation")
+    if block.kind == "tool_result":
+        result_repo = detect_github_repo(block.text) or repo
+        if result_repo is not None:
+            body = _linkify_commits(body, block.text, result_repo)
+    return _copy_block(anchors, ordinal, f"block block-{block.kind}", fragment, body)
+
+
+def _turn_html(
+    turn: Turn, policy: _Policy, repo: str | None, anchors: _AnchorAllocator
+) -> list[str]:
+    if turn.synthetic and not policy.include_machinery:
+        return []
+    section_id = anchors.allocate(turn.ordinal, f"turn:{turn.ordinal}:{turn.prompt}")
+    heading = "Pre-conversation entries" if turn.synthetic else f"Turn {turn.ordinal}"
+    out = [f'<section class="turn" id="{section_id}">', f"<h2>{_escape(heading)}</h2>"]
+    if turn.prompt:
+        fragment = _harden(turn.prompt)
+        body = _md_to_html(fragment, allow_block_html=False)
+        out.append(_copy_block(anchors, turn.ordinal, "prompt", fragment, body))
+    for reminder in turn.reminders:
+        lines = _strip_separators(_render_reminder(reminder, policy.reminder_mode))
+        if lines:
+            fragment = "\n".join(lines)
+            body = _md_to_html(fragment, allow_block_html=True)
+            out.append(_copy_block(anchors, turn.ordinal, "reminder", fragment, body))
+    for block in turn.blocks:
+        block_html = _block_html(block, policy, repo, turn.ordinal, anchors)
+        if block_html is not None:
+            out.append(block_html)
+    out.append("</section>")
+    return out
+
+
+def _render_page(
+    conv: Conversation, meta: ParsedSession, policy: _Policy, repo: str | None
+) -> str:
+    anchors = _AnchorAllocator()
+    parts = _document_head(_title(meta))
+    parts.append('<main class="transcript">')
+    parts.append(_md_to_html("\n".join(_header(meta, policy)), allow_block_html=True))
+    for turn in conv.turns:
+        parts.extend(_turn_html(turn, policy, repo, anchors))
+    parts.extend(["</main>", _HLJS_SCRIPT, _COPY_SCRIPT, "</body>", "</html>"])
+    return "\n".join(parts) + "\n"
+
+
 def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
-    """Return (conversation.html, conversation.compact.html) contents."""
-    raise NotImplementedError
+    """Return (conversation.html, conversation.compact.html) contents.
+
+    Both variants are complete single pages built from the shared conversation
+    model. The per-block markdown fragments render_markdown joins are the single
+    source of truth here too: each is wrapped in a data-copy-src carrying the
+    RAW markdown (base64) beside its rendered body, so a copied fragment
+    reproduces its transcript.md source verbatim (DESIGN section 6; proven by
+    test_copy_as_markdown_payloads_equal_transcript_fragments). The compact
+    variant reuses the policy that strips thinking, tools, machinery, reminders.
+    """
+    conv = build_conversation(data)
+    meta = parse_session(data)
+    repo = _session_repo(conv)
+    full = _render_page(conv, meta, _full_policy(options), repo)
+    compact = _render_page(conv, meta, _compact_policy(options), repo)
+    return full, compact
 
 
 def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
-    """Per-session render manifest: config used, counts, loss telemetry, source hash."""
-    raise NotImplementedError
+    """Per-session render manifest: source hash, counts, loss telemetry, config.
+
+    Frozen keys (DESIGN section 6): source_hash (the payload's sha256),
+    counts.prompts / counts.tool_calls, loss.skipped_lines (a malformed line is
+    loss, never a silent drop, F6), and config (the RenderOptions used).
+    """
+    conv = build_conversation(data)
+    manifest: dict[str, object] = {
+        "source_hash": sha256_hex(data),
+        "counts": {"prompts": conv.prompt_count, "tool_calls": conv.tool_call_count},
+        "loss": {"skipped_lines": conv.skipped_lines},
+        "config": asdict(options),
+    }
+    return manifest
