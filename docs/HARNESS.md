@@ -202,6 +202,39 @@ order may depend on a later slice's code.
   role misbehavior, so no prompt edit, recorded here as considered). Round count 1
   (target <= 2). Gates: 19 slice tests, pyright strict 0, ruff clean; full suite 83
   red for the right reason.
+- 2026-07-18: Slice 04 (capture hook + notify) COMPLETE through the full loop.
+  Implementer diff green on first gate pass (19 oracle tests: 14 capture + 5
+  notify). Reviewers A/B in parallel (A 5 conformance, B 7 adversary) plus the
+  sanctioned /code-review third lens (Standards + Spec). Operator triage: 12 raw
+  findings clustered, each re-verified against the slice-1/2/3 code the diff-only
+  reviewers could not see. 6 CONFIRMED and fixed in 1 fixer round (of 3): C1
+  webhook POSTs moved OFF the hook critical path into a detached notify-only helper
+  (DESIGN 12; a 3s sink no longer stalls the hook), C2 every sink best-effort with
+  the render child spawned INDEPENDENT of notify (a log failure never suppresses
+  rendering), C3 looped os.write against a partial-write torn log + honest R8
+  docstring, C4 render-spawn best-effort (a Popen failure never emits a
+  contradictory second error for a stored capture), C5 the SPEC-3 _unresolved rung
+  stores a keyless capture rather than error-dropping it, C6 trimmed an unemitted
+  action label. Two principal decisions at triage: C1 fixed now (not deferred to
+  slice 8), C5 implemented now. 3 REJECTED, each refuted by adjacent code the
+  reviewers were blind to: concurrent different-session project split (catalog
+  BEGIN IMMEDIATE + busy_timeout serializes resolve_project), stale-lock poisoning
+  (store.acquire_lock reaps dead-PID locks and capture self-completes), supersedes
+  never built (add_session derives it; test_grown_transcript proves the link). 2
+  accepted residuals: the add_session/record_event crash window (row + object
+  survive so build renders from the catalog) and a missing-CCW_ROOT silent no-op
+  (nowhere to log without a root; the slice-13 default root moots it). Operator
+  black-box verified 21/21 in temp dirs independent of the fixer self-report,
+  including the C1 off-path proof (hook returns 0.06s under a 3s sink; the POST
+  still lands at +3.09s via the helper). Deferred to follow-ups: contract-derived
+  regression tests for C1/C5/C2 (slice-03 precedent), the encoded-alias +
+  registry.move_project claim (D1), desktop/voice sinks and full config layering
+  (slice 13). Fix the prompt: not needed (implementer and both reviewers honored
+  their rules; recorded as considered). Round count 1 (target <= 2). Gates: 19
+  slice tests, pyright strict 0, ruff clean; full suite 60 red for the right
+  reason. Ops finding: the slice-01 milestone tag is ABSENT (tags present:
+  slice-02, slice-03); flagged to the principal for backfill, the tag-parity drift
+  the /refresh self-improving guard anticipated.
 
 ---
 

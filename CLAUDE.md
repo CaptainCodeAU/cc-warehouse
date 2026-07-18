@@ -60,7 +60,11 @@ operator-verified via black-box probes; retro in HARNESS section 8. Slice 03
 (parser + conversation model) COMPLETE 2026-07-18: fixer round 1 (of 3) resolved
 7 confirmed reviewer clusters (silent-loss / crash / overclaim), 6 contract-derived
 regression tests added (HARNESS section 4) and operator black-box verified 12/12;
-retro in HARNESS section 8. Next: ticket 04 (capture hook + notify).
+retro in HARNESS section 8. Slice 04 (capture hook + notify) COMPLETE 2026-07-18:
+fixer round 1 (of 3) resolved 6 confirmed reviewer clusters (detached notify helper
+off the hook critical path, best-effort sinks, the SPEC-3 _unresolved rung), 3
+rejected; operator black-box verified 21/21; retro in HARNESS section 8. Next:
+ticket 05 (sweep).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
