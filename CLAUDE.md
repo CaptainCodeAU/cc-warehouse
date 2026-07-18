@@ -47,7 +47,10 @@ edits to the principal instead.
 
 ## Current phase
 
-Phase 1 (contract docs) complete 2026-07-17. Next, when the principal asks: Phase 2
-oracle tests + gates, then the HARNESS trial run on the store module, then the main
-build per DESIGN section 16. Cross-project context lives in the claude-code-transcripts
-project memory (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
+Phase 1 (contract docs) complete 2026-07-17. Phase 2 complete 2026-07-18: bootstrap
+(license PolyForm Noncommercial 1.0.0, gates wired), the oracle suite (red for the
+right reason), and the 13 tickets in `harness/tickets/`. Next, when the principal
+asks: the HARNESS trial run (ticket 01, store module), then the main build per
+DESIGN section 16. `/refresh` (in `.claude/commands/`) is the currency sweep.
+Cross-project context lives in the claude-code-transcripts project memory
+(`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
