@@ -22,7 +22,9 @@ edits to the principal instead.
   third-party.
 - **Oracle tests before implementation.** Never port tests from the specimen suite.
 - `uv` for everything (`uv run pytest`, `uv run pyright`, `uv run ruff check`).
-  pyright --strict + ruff are merge gates from commit one.
+  pyright strict + ruff are merge gates from commit one. Strict mode is enforced via
+  `typeCheckingMode = "strict"` in pyproject; the pyright CLI has no `--strict` flag,
+  so where contract docs say "pyright --strict" read "pyright in strict mode".
 - Every file write is tmp-file + `os.replace` (DESIGN R2). No deletes outside the
   projections/shares rebuild module (R4). Sources and stored objects are read-only.
 - Session/transcript data is NEVER deleted or mutated by anything, ever.

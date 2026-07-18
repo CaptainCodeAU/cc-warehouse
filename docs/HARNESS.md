@@ -126,6 +126,13 @@ order may depend on a later slice's code.
   code (parser before hook, render child stubbed until slice 8); verify split into
   walk primitive (slice 1) + CLI (slice 9); prompts bumped to v1.1. The harness
   reviewed its own contract before its first run, which is exactly the point.
+- 2026-07-18: Phase 2 complete: repo bootstrap (license PolyForm Noncommercial
+  1.0.0 per the principal; gates wired from commit one), the oracle suite (136
+  tests: 124 red for the right reason, 12 by-design pre-implementation greens:
+  6 fences + 6 negative invariants), and the 13 ticket files per sections 7/9.
+  Gate note: the pyright CLI has no --strict flag; the strict gate runs as
+  `uv run pyright` with typeCheckingMode=strict in pyproject (where this doc
+  says "pyright --strict", read "pyright in strict mode"). Trial run not started.
 
 ---
 
