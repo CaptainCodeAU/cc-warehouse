@@ -58,6 +58,7 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - Em-dash ban (CLAUDE.md hard rule; the char is built via printf so this file itself stays clean): !`R=$(git rev-parse --show-toplevel); EM=$(printf '\342\200\224'); H=$(git -C "$R" grep -rlI "$EM" -- ':!temp' 2>/dev/null); [ -n "$H" ] && echo "EM-DASH in: $H" || echo "(no em-dashes in tracked text)"`
 - Personal-data leak scan (public repo; username + hostname derived live, never written here): !`R=$(git rev-parse --show-toplevel); U=$(id -un); HN=$(hostname -s); H=$(git -C "$R" grep -rlI -e "$U" -e "$HN" 2>/dev/null); [ -n "$H" ] && echo "LEAK candidate in: $H" || echo "(no username/hostname in tracked files)"`
 - Phase note vs reality (the currency of CLAUDE.md's "Current phase" is judged in Phase 3 against the counts above): !`R=$(git rev-parse --show-toplevel); sed -n '/^## Current phase/,/^## /p' "$R/CLAUDE.md" | head -12`
+- README currency (README's status prose must name the live max slice; added 2026-07-19 after this drift recurred; keys on the slice-01..NN token README carries): !`R=$(git rev-parse --show-toplevel); LM=$(for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && basename "$t" | grep -oE '^[0-9]+'; done | sort -n | tail -1); RM=$(grep -oiE 'slice[- ]?0*[0-9]{1,2}(\.\.0*[0-9]{1,2}|-0*[0-9]{1,2})?' "$R/README.md" | grep -oE '[0-9]{1,2}' | sort -n | tail -1); if [ -n "$LM" ] && [ -n "$RM" ] && [ "$((10#$RM))" -lt "$((10#$LM))" ]; then echo "README STALE: names slice $RM, live max DONE slice is $LM"; else echo "README names slice ${RM:-none}; live max DONE slice ${LM:-none} (currency OK)"; fi`
 - Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] || echo "DANGLING [[${l}]]"; done; fi`
 
 ---
@@ -173,9 +174,13 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
 - **.claude/ coherence:** every file in `.claude/commands/` does what its frontmatter says and is
   current; settings files carry no secrets or machine-specific values; if a README/index ever
   enumerates the commands, it matches reality.
-- **Memory:** index parity and dangling links (probe above); dead refs - a memory naming a file,
-  function, or flag is verified against the live tree (`test -e` / grep); stale current-state
-  claims fixed, dated history left; frontmatter `description:` lines still accurate.
+- **Memory:** the store follows the two-level convention (a thin SECTIONED `MEMORY.md` index of
+  one-line hooks + one atomic fact per Level-2 file; safety rules never behind a hop); the parity
+  probe above IS its closed-world check (every Level-2 file has an index line, every index line
+  resolves, no fact lives only in the index). Plus dangling links (probe above); dead refs - a
+  memory naming a file, function, or flag is verified against the live tree (`test -e` / grep);
+  stale current-state claims fixed, dated history left; frontmatter `description:` lines still
+  accurate.
 - **Gap discipline:** any gap/inconsistency THIS sweep uncovers is surfaced in the report AND, when
   it is harness-process-relevant, appended as a dated line to HARNESS section 8 in the same run.
   There is no G-register in this repo; the report + HARNESS changelog are where gaps live.
@@ -221,7 +226,12 @@ concrete new probe line for this command; when a probe-catchable drift recurs, A
 instead of re-proposing it. ADDED 2026-07-18 per that discipline: the tag-parity live signal
 (a DONE-annotated slice whose milestone tag is absent). It was proposed the prior run; the drift
 then recurred (slice-01's milestone tag was absent until backfilled), so the probe graduated from
-proposed to added, exactly as this guard prescribes.
+proposed to added, exactly as this guard prescribes. ADDED 2026-07-19 by the same
+discipline: the README-currency live signal (README's status prose named an older slice
+than the live max DONE ticket). It was implicitly proposed the prior run, then recurred
+this run (README was frozen at slice 04 while the build had reached slice 09), so it
+graduated from proposed to added. It keys on the slice-01..NN token README carries, so
+keep that token in README's status paragraph.
 
 ---
 
