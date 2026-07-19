@@ -1,4 +1,17 @@
-# Ticket 12: relocate
+# Ticket 12: relocate (SUPERSEDED 2026-07-19 by 12a + 12b)
+
+RE-SCOPED. This ticket is kept for its loop record and its escalation diagnosis; the
+work itself is now split into `12a-relocate-containers.md` (repo move, encoded-dir
+renames, registry claims) and `12b-relocate-content.md` (memory and inventory content
+rewriting, backup, scan scope). The split IS the section-4 remedy: the loop did not
+converge because one slice carried two operations with different risk profiles and
+different contracts, so every fix to one surfaced a hole in the other.
+
+The landed implementation (43432e4, edb5268, 4241c45) and its 20 regression tests stay
+on master as a working checkpoint. They are not DONE and carry no milestone tag; 12a and
+12b each list the findings still open in that code as work they must close.
+
+
 
 Slice 12 of 13. Depends on: 02 (registry aliases), 04 (config subset).
 
