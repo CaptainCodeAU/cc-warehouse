@@ -42,8 +42,10 @@ edits to the principal instead.
 
 - `docs/` the five contract documents + `docs/diagrams/` | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
-  (gitignored once git init lands). CLAUDE.md stays at repo root: Claude Code only
-  auto-loads it from here.
+  (gitignored once git init lands) | `cc-warehouse-architecture/` the code-architecture
+  review board (SOURCE.md is canonical, index.html is rendered from it by
+  `/architecture`; owned by that command, outside `/refresh`'s sweep scope).
+  CLAUDE.md stays at repo root: Claude Code only auto-loads it from here.
 - Warehouse DATA lives outside this repo (default `~/cc-warehouse-data`); code and
   data never share a directory.
 
