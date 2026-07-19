@@ -24,6 +24,7 @@ from cc_warehouse import (
     migrate,
     notify,
     registry,
+    relocate,
     share,
     status,
     store,
@@ -430,22 +431,27 @@ def _run_project(args: Sequence[str]) -> int:
     return 0
 
 
-def _retire_consented(assume_yes: bool) -> bool:
-    """Gate the one sanctioned old-world write behind an explicit yes (R13/F10).
+def _consented(assume_yes: bool, prompt: str) -> bool:
+    """Gate an apply-class external-world write behind an explicit yes (R13/F10).
 
     --yes is consent. Otherwise a real interactive terminal is prompted once for [y/N].
     A non-TTY stdin (a pipe, a here-string, a cron job) is NOT consent: it returns False
-    so the caller aborts having changed nothing (F10). An unreadable stdin also refuses."""
+    so the caller aborts having changed nothing (F10). An unreadable stdin also refuses.
+    One implementation shared by every apply-class verb (R9)."""
     if assume_yes:
         return True
     if not sys.stdin.isatty():
         return False
-    print("Rename the source root to _RETIRED_...? [y/N] ", end="", file=sys.stderr)
+    print(prompt, end="", file=sys.stderr)
     try:
         answer = sys.stdin.readline()
     except (OSError, EOFError):
         return False
     return answer.strip().lower() in ("y", "yes")
+
+
+def _retire_consented(assume_yes: bool) -> bool:
+    return _consented(assume_yes, "Rename the source root to _RETIRED_...? [y/N] ")
 
 
 def _run_migrate(args: Sequence[str]) -> int:
@@ -523,6 +529,92 @@ def _run_verify() -> int:
     if not findings:
         print("verify: store intact and cross-consistent")
     return 1 if findings else 0
+
+
+def _run_relocate(args: Sequence[str]) -> int:
+    """`ccw relocate <repo> --to <new> [--apply] [--yes]` (DESIGN section 11).
+
+    Dry-run is the DEFAULT: without --apply it prints the plan (including the target
+    path) and mutates nothing outside the warehouse; it reads the catalog only when one
+    already exists, so a dry-run never materializes state. --apply is gated behind an
+    explicit yes (--yes or an
+    interactive prompt); a non-TTY stdin without --yes aborts having changed nothing
+    (R13/F10). A refusal from the pre-flight (existing target, cross-device, unwritable
+    inventory) names the item on stderr with the Error: contract and exits 1 having
+    mutated nothing; a content-rewrite failure halts the container renames (F7)."""
+    rest = args[1:]
+    do_apply = "--apply" in rest
+    assume_yes = "--yes" in rest
+    claim_ambiguous = "--claim-ambiguous" in rest
+    # Track which tokens a flag consumed so --to's operand can never be mistaken for the
+    # positional <repo> (a mixed-up plan would collect consent for the wrong operation).
+    new_str: str | None = None
+    positionals: list[str] = []
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--to":
+            if i + 1 >= len(rest) or rest[i + 1].startswith("-"):
+                print("Error: --to requires a path", file=sys.stderr)
+                return 2
+            new_str = rest[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--to="):
+            new_str = arg[len("--to=") :]
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        i += 1
+    if not positionals:
+        print("Error: relocate requires <repo>", file=sys.stderr)
+        return 2
+    if not new_str:
+        print("Error: relocate requires --to <new-path>", file=sys.stderr)
+        return 2
+    repo_str = positionals[0]
+    config = load_config()
+    repo_path, new_path = Path(repo_str), Path(new_str)
+    plan = relocate.plan_relocate(config, repo_path, new_path, claim_ambiguous=claim_ambiguous)
+    if not do_apply:
+        print(f"relocate (dry-run): {repo_path} -> {new_path}")
+        for edit in plan.edits:
+            print(f"  {edit.kind}: {edit.target}: {edit.detail}")
+        print(f"{len(plan.edits)} edits planned; re-run with --apply to execute")
+        return 0
+    if not _consented(assume_yes, f"Relocate {repo_path} to {new_path}? [y/N] "):
+        print("relocate aborted: no consent (use --yes)", file=sys.stderr)
+        return 2
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+    backup_dir = config.root / "backups" / stamp
+    try:
+        report = relocate.apply_relocate(
+            config, plan, backup_dir=backup_dir, claim_ambiguous=claim_ambiguous
+        )
+    except Exception as exc:  # never a traceback over a partly-mutated world (R5/F7)
+        print(f"Error: relocate failed: {exc}", file=sys.stderr)
+        print(f"backups and journal (if written): {backup_dir}", file=sys.stderr)
+        return 1
+    if any(outcome.action == relocate.LOCK_HELD_ACTION for outcome in report.outcomes):
+        print("relocate refused: lock held by a live holder", file=sys.stderr)
+        return 2
+    for outcome in report.outcomes:
+        if outcome.action == "skipped":
+            print(f"relocate skipped: {outcome.item}: {outcome.detail}", file=sys.stderr)
+    failures = report.failures
+    for outcome in failures:
+        print(f"Error: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
+    if failures:
+        # Say what WAS already changed and where the originals are, so a halted run is
+        # recoverable by hand instead of leaving the operator to guess (F6/R10).
+        rewritten = [o for o in report.outcomes if o.action in ("rewritten", "moved", "renamed")]
+        if rewritten:
+            print(f"relocate halted after {len(rewritten)} change(s):", file=sys.stderr)
+            for outcome in rewritten:
+                print(f"  {outcome.action}: {outcome.item}", file=sys.stderr)
+            print(f"originals and journal: {backup_dir}", file=sys.stderr)
+        return 1
+    print(f"relocate: {repo_path} -> {new_path} ({len(report.outcomes)} changes)")
+    return 0
 
 
 def _share_flags(rest: Sequence[str]) -> tuple[list[str], str | None, bool]:
@@ -630,4 +722,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_verify()
     if verb == "share":
         return _run_share(args)
+    if verb == "relocate":
+        return _run_relocate(args)
     return _stub()

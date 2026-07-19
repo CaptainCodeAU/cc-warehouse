@@ -3,6 +3,7 @@
 Slice 2. DESIGN section 2; rules R3, R4; FINDINGS F4.
 """
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import cast
@@ -124,6 +125,39 @@ def rename_project(conn: sqlite3.Connection, project_id: int, label: str) -> Non
         conn.execute("UPDATE project SET label = ? WHERE id = ?", (label, project_id))
 
 
+def project_for_path(conn: sqlite3.Connection, path: str, kind: str) -> int | None:
+    """The project claiming `path` under `kind`, or None. The one alias-resolution
+    implementation (R9); callers outside the registry use this instead of their own SQL."""
+    return _alias_project(conn, path, kind)
+
+
+def cwd_for_encoded_dir(conn: sqlite3.Connection, encoded_name: str) -> str | None:
+    """The cwd claim of whichever project owns `encoded_name`, or None.
+
+    Lets a caller tell a repo SUBDIRECTORY's encoded dir from an unrelated SIBLING repo's:
+    the encoding collapses `/`, `_` and `.` to `-`, so the names alone are ambiguous (F4).
+    """
+    row = cast(
+        "tuple[object, ...] | None",
+        conn.execute(
+            "SELECT cwd.path FROM project_alias enc"
+            " JOIN project_alias cwd ON cwd.project_id = enc.project_id AND cwd.kind = 'cwd'"
+            " WHERE enc.path = ? AND enc.kind = 'encoded_dir'",
+            (encoded_name,),
+        ).fetchone(),
+    )
+    return cast(str, row[0]) if row is not None else None
+
+
+def encode_cwd(path: str) -> str:
+    """Claude Code's cwd -> encoded-dir-name mapping: `/`, `_`, `.` become `-`.
+
+    SPEC section 3. The one implementation of this encoding (R9); relocate reuses it
+    for boundary-guarded encoded-dir matching.
+    """
+    return re.sub(r"[/_.]", "-", path)
+
+
 def move_project(
     conn: sqlite3.Connection, project_id: int, old_path: str, new_path: str, now: str
 ) -> None:
@@ -132,8 +166,9 @@ def move_project(
     Refuses rather than silently recording nothing (R5): old_path must be this
     project's cwd claim, and new_path must be free or already this project's, so
     a move onto another project's claim raises instead of no-op'ing on the
-    UNIQUE(path, kind) index. Claiming the ENCODED form of new_path waits for the
-    cwd encoder that ships with the parser/capture slices (04/12).
+    UNIQUE(path, kind) index. Also claims the ENCODED form of new_path (slice 12),
+    so a project first captured without a cwd still resolves after the move instead
+    of matching a stale encoded_dir alias (F4).
     """
     with writing(conn):
         if _alias_project(conn, old_path, "cwd") != project_id:
@@ -159,6 +194,25 @@ def move_project(
             "UPDATE project_alias SET last_seen = ?"
             " WHERE project_id = ? AND path = ? AND kind = 'cwd'",
             (now, project_id, new_path),
+        )
+        encoded = encode_cwd(new_path)
+        encoded_owner = _alias_project(conn, encoded, "encoded_dir")
+        if encoded_owner is not None and encoded_owner != project_id:
+            # Two different cwds can encode identically (`my_repo` and `my.repo` both
+            # become `my-repo`), so refuse rather than let INSERT OR IGNORE silently do
+            # nothing while the caller reports the claim as made (F4/F6).
+            raise ValueError(
+                f"encoded form {encoded!r} is already a claim of project {encoded_owner}"
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO project_alias (project_id, path, kind, first_seen, last_seen)"
+            " VALUES (?, ?, 'encoded_dir', ?, ?)",
+            (project_id, encoded, now, now),
+        )
+        conn.execute(
+            "UPDATE project_alias SET last_seen = ?"
+            " WHERE project_id = ? AND path = ? AND kind = 'encoded_dir'",
+            (now, project_id, encoded),
         )
 
 
