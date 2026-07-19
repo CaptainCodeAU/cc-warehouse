@@ -13,10 +13,11 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, capture, catalog, notify, registry, status, store, sweep
+from cc_warehouse import build, capture, catalog, migrate, notify, registry, status, store, sweep
 from cc_warehouse.config import Config, load_config
 from cc_warehouse.render import RenderOptions
 
@@ -418,6 +419,72 @@ def _run_project(args: Sequence[str]) -> int:
     return 0
 
 
+def _retire_consented(assume_yes: bool) -> bool:
+    """Gate the one sanctioned old-world write behind an explicit yes (R13/F10).
+
+    --yes is consent. Otherwise a real interactive terminal is prompted once for [y/N].
+    A non-TTY stdin (a pipe, a here-string, a cron job) is NOT consent: it returns False
+    so the caller aborts having changed nothing (F10). An unreadable stdin also refuses."""
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    print("Rename the source root to _RETIRED_...? [y/N] ", end="", file=sys.stderr)
+    try:
+        answer = sys.stdin.readline()
+    except (OSError, EOFError):
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _run_migrate(args: Sequence[str]) -> int:
+    """`ccw migrate <old-root>`: import a legacy archive through the shared capture
+    routine (DESIGN section 10). Plain migrate imports only; `--retire` is a SEPARATE
+    explicit step that renames the source root and does NOT import.
+
+    A missing source is a usage error (exit 2); a source that is not a directory is
+    refused conservatively (exit 2, R5). `--retire` is gated behind an explicit yes
+    (--yes or an interactive prompt); a non-TTY stdin without --yes aborts having
+    changed nothing (R13/F10). A plain migrate prints a one-line report, names any
+    failed item on stderr (R10), and exits non-zero when any item failed."""
+    rest = args[1:]
+    retire = "--retire" in rest
+    assume_yes = "--yes" in rest
+    src_str = next((arg for arg in rest if not arg.startswith("-")), None)
+    if src_str is None:
+        print("Error: migrate requires <old-root>", file=sys.stderr)
+        return 2
+    src = Path(src_str)
+    if not src.is_dir():
+        print(f"Error: migrate source is not a directory: {src}", file=sys.stderr)
+        return 2
+    if retire:
+        if not _retire_consented(assume_yes):
+            print("migrate --retire aborted: no consent (use --yes)", file=sys.stderr)
+            return 2
+        try:
+            new_path = migrate.retire(src, year_month=datetime.now(UTC).strftime("%Y-%m"))
+        except OSError as exc:  # existing target or a failed rename: report, do not crash (R5)
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        print(str(new_path))
+        return 0
+    config = load_config()
+    report = migrate.migrate(config, src)
+    if any(outcome.action == migrate.LOCK_HELD_ACTION for outcome in report.outcomes):
+        print("migrate refused: lock held by a live holder", file=sys.stderr)
+        return 2
+    failures = report.failures
+    for outcome in failures:
+        print(
+            f"migrate failed: {outcome.item}: {outcome.detail or outcome.action}",
+            file=sys.stderr,
+        )
+    stored = sum(1 for outcome in report.outcomes if outcome.action == "stored")
+    print(f"migrate: {len(report.outcomes)} items, {stored} stored, {len(failures)} failed")
+    return 1 if failures else 0
+
+
 def _run_status() -> int:
     """`ccw status`: recent captures, counts, store size, last errors (DESIGN section 7).
 
@@ -463,6 +530,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_render(args)
     if verb == "project":
         return _run_project(args)
+    if verb == "migrate":
+        return _run_migrate(args)
     if verb == "status":
         return _run_status()
     if verb == "verify":
