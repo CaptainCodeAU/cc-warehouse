@@ -6,6 +6,7 @@ Slice 1 (the trial run). DESIGN sections 1-2 and 13; rules R1, R2, R4, R14.
 import hashlib
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -47,12 +48,23 @@ def sha256_hex(data: bytes) -> str:
 
 
 def atomic_write(path: Path, data: bytes) -> None:
-    """The one sanctioned file-write primitive: tmp file in the same dir, then os.replace."""
+    """The one sanctioned file-write primitive: tmp file in the same dir, then os.replace.
+
+    Overwriting PRESERVES the target's mode (decided 2026-07-19, principal): os.replace
+    substitutes a new inode, and mkstemp creates it 0600, so without this an existing
+    file silently changed permissions on every rewrite (an executable lost +x, a
+    group-readable memory file became owner-only). A brand-new file keeps mkstemp's
+    restrictive default; only an existing target's mode is carried over.
+    """
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     with os.fdopen(fd, "wb") as fh:
         fh.write(data)
         fh.flush()
         os.fsync(fh.fileno())
+    try:
+        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
+    except OSError:
+        pass  # no existing target (or an unreadable one): keep the safe default
     os.replace(tmp, path)
 
 

@@ -265,9 +265,11 @@ visibly-retired decision.
 move/rename, in the specimen-taught order (SPEC section 10.2): PLAN (enumerate every
 edit: registry alias, `~/.claude/projects` encoded dir renames, memory file content
 rewrites in markdown AND JSON with JSON-aware editing, PAI-side roots from the
-config-driven inventory) -> show the full plan -> BACKUP (copy every file to be
-touched into a timestamped backup dir) -> APPLY (atomic per file) -> VERIFY (re-scan:
-no old-path references remain in the inventory scope; renamed dirs exist) -> REPORT
+config-driven inventory) -> show the full plan -> BACKUP (copy every file whose CONTENTS
+this run rewrites into a timestamped backup dir; containers are moved by same-device
+rename, which loses nothing, and a cross-device move is refused outright because R4
+sanctions no copy+delete) -> APPLY (atomic per file) -> VERIFY (re-scan: no old-path
+references remain in the inventory scope; renamed dirs exist) -> REPORT
 (manifest of every change, like the share redaction report). Dry-run is the default;
 `--apply` executes. Refuses non-empty targets. Item failure aborts THAT item and
 reports; it never falls through to a rename with un-rewritten contents. Two details
@@ -275,6 +277,25 @@ inherited from the specimen's migrate script (SPEC 10.2): contents are rewritten
 containers are renamed, and encoded-dir matching uses the boundary-guarded prefix rule
 (the remainder after the prefix must be empty or start with `-`, so `...-foo` never
 matches `...-foobar`).
+
+JSON-aware editing rewrites every string in the decoded document, KEYS INCLUDED, because
+real project config is keyed BY absolute path; the boundary guard means only a whole path
+component is ever replaced (decided 2026-07-19, principal; slice-12 round 2).
+
+The boundary rule is necessary but NOT sufficient (decided 2026-07-19, principal; this
+CORRECTS the specimen rule SPEC 10.2 records): the encoding collapses `/`, `_` and `.`
+to `-`, so `<repo>/two` and `<repo>-two` encode identically, and the rule alone renames
+an unrelated sibling's transcript dir. A hyphen-remainder candidate is renamed only when
+PROVEN to belong to the repo (the catalog attributes it to a cwd at or under the repo, or
+exactly one real directory encodes to that name and it lies under the repo); an unproven
+candidate is skipped and NAMED, and `--claim-ambiguous` is the only way to take it.
+
+Content rewriting of encoded-dir names tracks exactly the directories this run renames,
+one literal old->new pair per rename, so a reference is updated when and only when its
+directory actually moved. Content rewriting never descends into the warehouse root (a
+stored object rewritten in place no longer hashes to its address) nor into
+`~/.claude/projects` (captured transcripts are sources, read-only forever); both are
+repaired by renaming their containers, never by editing their contents.
 
 ## 12. Notifications
 
@@ -369,7 +390,18 @@ through BOTH plugin wrapper and settings.json with duplicate-notification
 suppression. Slice-01 triage, 2026-07-18 (principal): the delete fence carries a
 function-scoped carve-out sanctioning lock-file removal inside store.py's O_EXCL
 lock helpers (acquire takeover, release), matching the section 13/R4 closed
-lists; lock release performs real removal, not a rename-aside.
+lists; lock release performs real removal, not a rename-aside. Slice-12 escalation,
+2026-07-19 (principal): relocate refuses a cross-device move outright (os.rename cannot
+cross filesystems and R4 sanctions no copy+delete); content-phase atomicity is
+pre-flight validation then per-file `atomic_write`, with a content failure halting all
+container renames; the rename TOCTOU residual is accepted because stdlib exposes no
+RENAME_NOREPLACE, mitigated by a re-check at the point of action plus the locks/relocate
+lock; there is deliberately NO automatic undo or resume, the journal and manifest being
+an operator record only; backup covers the files whose contents are rewritten, since
+containers move by same-device rename; `registry.move_project` also claims the encoded
+form of the new path; and `atomic_write` PRESERVES an existing target's mode, because
+replacing the inode was silently changing permissions on every rewrite (section 11 and
+the section 11 boundary-rule correction record the relocate-specific halves of this).
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 

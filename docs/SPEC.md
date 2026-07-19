@@ -309,6 +309,14 @@ different mechanics (difference stated inline) | `DROP` not carried (reason inli
 - **DROP the script; KEEP the hard-learned mechanics** for `ccw relocate`: contents
   before containers; full plan first; refuse non-empty targets; boundary-guarded
   prefix matching; dry-run default posture (DESIGN section 11).
+- CORRECTION to the boundary-guard mechanic (decided 2026-07-19, principal; slice-12
+  round 2 proved it by execution): the specimen's prefix + boundary rule is necessary
+  but NOT sufficient. Its own encoder collapses `/`, `_` and `.` to `-`, so a repo
+  SUBDIRECTORY and an unrelated SIBLING repo encode to the same name (`<repo>/two` and
+  `<repo>-two` both give `...-two`), and the rule as written renames the sibling's
+  transcript dir onto the relocated project. cc-warehouse keeps the boundary rule as a
+  filter but requires PROOF of ownership before renaming; see DESIGN section 11. This is
+  a deliberate divergence from the specimen, not a port of it.
 
 ## 11. Tests and CI posture (specimen facts that matter to Phase 2)
 
