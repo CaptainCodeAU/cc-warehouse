@@ -52,3 +52,55 @@ default; --apply executes.
 Standard loop (HARNESS section 2); /tdd inside the implementer; reviewers get
 diff + excerpts + the ADJACENT list only. Consider the optional /code-review
 third lens at slice close (HARNESS section 9); it feeds the same triage.
+
+## IN PROGRESS 2026-07-19 - ESCALATED (HARNESS section 4)
+
+NOT done. Gates are green and the implementation is landed and pushed (43432e4,
+edb5268, 4241c45), but the review loop did not converge and the operator escalated
+early rather than spend the third round. No milestone tag.
+
+Loop record. Round 1: 27 findings (12 conformance + 15 adversary), 22 clusters
+confirmed, 1 rejected (encode_cwd R9: verified no earlier encoder exists, capture
+reads transcript_path.parent.name and never encodes). Fixer round 1 landed all 22.
+Operator verification then caught a defect BOTH reviewers missed and the round-1 fix
+had introduced: relocate was content-rewriting captured transcripts, violating the
+locked "source transcripts are never modified by anything, ever" and SPEC 10.2
+("nothing outside the memory roots is ever string-edited; dirs are renamed instead").
+The F1 static fence separately caught a stat().st_size comparison; the CODE changed
+to a bounded read, never the test. Round 2: 21 findings, FIVE of them defects the
+round-1 fixes introduced or missed. Fixer round 2 landed only those five (tier 1),
+each pinned by a regression test confirmed to FAIL against the pre-fix code:
+contested-sibling encoded proof, every-cwd-claim attribution, JSON path KEYS,
+verify-follows-moved-targets, and content refs to dirs the run itself renames.
+
+Diagnosis per section 4 (bad slice boundary or contradictory contract line): BOTH.
+The slice bundles two operations with different risk profiles and different contracts
+- rewriting content across arbitrary user-configured roots, and renaming containers -
+and DESIGN section 11 is silent on several decisions the implementation is forced to
+make. Findings did not converge (22 then 21) because each fix had to invent an
+unstated rule. A re-scope that splits container renaming from content rewriting, plus
+the contract clarifications below, is the recommended restart.
+
+Operator decisions taken during the loop (do not relitigate): TOUCHES expanded to
+registry.py; cross-device refused; content atomicity = pre-flight then per-file
+atomic_write; TOCTOU residual accepted (stdlib has no RENAME_NOREPLACE); no automatic
+undo or resume, the journal and manifest are an operator record; backup narrowed to
+destructively-rewritten files; encoded-dir policy is prove-then-rename with
+--claim-ambiguous as the opt-in.
+
+OUTSTANDING for the principal, not addressed in code (tier 2, real and verified):
+- store.atomic_write is mkstemp + os.replace and does NOT preserve the target's mode,
+  so every rewritten memory file comes back 0600 and an executable loses +x. Fixing it
+  means changing store.py, used by every slice; needs a principal decision.
+- The warehouse and source exclusions compare UNRESOLVED paths, so a symlinked root or
+  CCW_ROOT defeats them and stored objects become rewrite targets again.
+- HOME unset (cron/launchd) makes the source-transcript exclusion inert.
+- Path.read_text() is locale-dependent, so a non-UTF-8 locale writes mojibake AND backs
+  up the same mojibake, leaving no recoverable pre-image.
+- A --to whose parent is a regular file or dangling symlink passes pre-flight, then
+  fails after every content file has been rewritten.
+Tier 3 (reporting and design): the plan is advisory because apply recomputes rather
+than consuming plan.edits, so consent is collected against a set that may differ; the
+dry-run and success lines count SKIPPED entries as edits/changes; JSON rewriting
+reformats the whole file, destroying hand-maintained layout; roots are fully scanned
+twice per apply.

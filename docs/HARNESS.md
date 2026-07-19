@@ -475,6 +475,32 @@ order may depend on a later slice's code.
   slice-13, test_relocate 3 is slice-12). Milestone tag slice-11 at completion. Next:
   ticket 12 (relocate).
 
+- 2026-07-19: Slice 12 (relocate) ESCALATED under section 4, NOT done, no milestone tag;
+  full record on ticket 12. The first non-converging loop of the build: round 1 produced
+  27 findings (22 clusters confirmed, 1 rejected), round 2 produced 21 MORE, five of them
+  defects the round-1 fixes had introduced or missed. The operator escalated after fixer
+  round 2 rather than spend the third round, on the grounds that the trend (22 then 21)
+  was the signal the limit exists to detect. Three process lessons worth carrying:
+  (a) OPERATOR VERIFICATION EARNS ITS SEAT INDEPENDENTLY OF THE REVIEWERS. The black-box
+  probe caught a locked-rule violation both reviewers missed and the round-1 fix itself
+  had introduced (relocate was content-rewriting captured transcripts, against BRAINSTORM's
+  "source transcripts are never modified by anything, ever" and SPEC 10.2). A green diff
+  plus two clean-ish reviewer tables is not evidence; running the thing is.
+  (b) A REGRESSION TEST THAT PASSES BEFORE THE FIX PINS NOTHING. All five tier-1 pins were
+  run against the pre-fix code and required to FAIL first; one of them passed both ways,
+  proving it did not exercise the bug at all, and was replaced with one that does. Adopt
+  this as standing practice for contract-derived regression tests.
+  (c) THE OPERATOR'S OWN RECOMMENDATION NEEDS THE SAME SCRUTINY AS A REVIEWER'S. The
+  round-1 encoded-dir fix was recommended over the principal's stated preference on the
+  reasoning that forward encoding is exact; round 2 proved `<repo>/two` and `<repo>-two`
+  encode identically, so the proof proved the wrong proposition. Verify what you advocate,
+  not only what you are shown.
+  Section 4 diagnosis: bad slice boundary AND contract silence. Relocate bundles content
+  rewriting across arbitrary user roots with container renaming, and DESIGN section 11 is
+  silent on several rules the implementation must invent (JSON key handling, the encoded-
+  form content rule, file-mode preservation, scan scope). Recommended restart: split the
+  two operations and land the contract clarifications first.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
