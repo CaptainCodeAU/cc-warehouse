@@ -17,7 +17,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, capture, catalog, migrate, notify, registry, status, store, sweep
+from cc_warehouse import (
+    build,
+    capture,
+    catalog,
+    migrate,
+    notify,
+    registry,
+    share,
+    status,
+    store,
+    sweep,
+)
 from cc_warehouse.config import Config, load_config
 from cc_warehouse.render import RenderOptions
 
@@ -514,6 +525,87 @@ def _run_verify() -> int:
     return 1 if findings else 0
 
 
+def _share_flags(rest: Sequence[str]) -> tuple[list[str], str | None, bool]:
+    """Split `ccw share` args into (session_keys, out_dir, allow_findings).
+
+    Positional non-flag args are s:<key> session keys; `--out DIR` names the destination;
+    `--allow-findings` ships secret-shaped content verbatim. Deliberately minimal (no
+    argparse); the full flag layering lands in slice 13."""
+    sessions: list[str] = []
+    out: str | None = None
+    allow = False
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--out":
+            out = rest[i + 1] if i + 1 < len(rest) else None
+            i += 2
+        elif arg.startswith("--out="):
+            out = arg[len("--out=") :]
+            i += 1
+        elif arg == "--allow-findings":
+            allow = True
+            i += 1
+        elif not arg.startswith("-"):
+            sessions.append(arg)
+            i += 1
+        else:
+            i += 1
+    return sessions, out, allow
+
+
+def _run_share(args: Sequence[str]) -> int:
+    """`ccw share s:<key> ... --out DIR [--allow-findings]`: sanitized static-site export.
+
+    Redaction runs on copies only; the store and personal projections stay full fidelity
+    (R4). A secret-shaped finding aborts the whole share (nothing written) and exits
+    non-zero unless --allow-findings ships it verbatim (DESIGN section 9). A short with no
+    current/visible head is skipped and named, and makes the exit non-zero (R10), while
+    the resolvable sessions are still shared."""
+    sessions, out, allow = _share_flags(args[1:])
+    if not out:
+        print("Error: ccw share requires --out DIR", file=sys.stderr)
+        return 2
+    if not sessions:
+        print("Error: ccw share requires at least one s:<key>", file=sys.stderr)
+        return 2
+    out_path = Path(out)
+    if out_path.exists() and not out_path.is_dir():
+        print(f"Error: --out {out_path} exists and is not a directory", file=sys.stderr)
+        return 2
+    # Refuse to write into a populated dir we do not recognize as a prior share, so a
+    # stray --out never overwrites unrelated files (F9-conservative; the export deletes
+    # nothing, but it does overwrite its own filenames).
+    if (
+        out_path.is_dir()
+        and any(out_path.iterdir())
+        and not (out_path / "redaction-report.json").exists()
+    ):
+        print(
+            f"Error: --out {out_path} is not empty and is not a prior share; "
+            "point --out at a new or previously-shared directory",
+            file=sys.stderr,
+        )
+        return 2
+    config = load_config()
+    report = share.share(config, tuple(sessions), out_path, allow_findings=allow)
+    if report.findings and not allow:
+        for finding in report.findings:
+            print(
+                f"share: secret-shaped {finding.pattern} in {finding.file} line "
+                f"{finding.line}; nothing written. Re-run with --allow-findings to ship it.",
+                file=sys.stderr,
+            )
+        return 1
+    for key in report.skipped:
+        print(f"share: skipped {key}: no current session", file=sys.stderr)
+    for key in report.errored:
+        print(f"share: error on {key}: could not read or write session", file=sys.stderr)
+    shared = len(sessions) - len(report.skipped) - len(report.errored)
+    print(f"share: {shared} sessions, {len(report.hits)} redactions -> {report.out_dir}")
+    return 1 if (report.skipped or report.errored) else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch one ccw invocation; returns the process exit code."""
     args = list(argv) if argv is not None else sys.argv[1:]
@@ -536,4 +628,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_status()
     if verb == "verify":
         return _run_verify()
+    if verb == "share":
+        return _run_share(args)
     return _stub()
