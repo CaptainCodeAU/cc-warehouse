@@ -433,6 +433,47 @@ order may depend on a later slice's code.
   green, pyright strict 0, ruff clean; full suite 20 failed / 156 passed, red for the
   right reason. Milestone tag slice-10 at completion. Next: ticket 11 (share +
   redaction).
+- 2026-07-19: Slice 11 (share + redaction) COMPLETE through the full loop. Implementer
+  green on first gate pass (4 oracle tests). The load-bearing design choice, verified
+  against render.py before coding: redaction runs on the payload BEFORE the shared
+  renderer, because the HTML emitter base64-embeds each block's raw markdown in a
+  data-copy-src, so post-render text redaction would pass the oracle yet leak every
+  secret through the copy path. Reviewers A/B in parallel (A 5 conformance, B 9
+  adversary). Operator verified every finding against the code before triage (Guardrail
+  9): 10 CONFIRMED, 3 REJECTED. Two reviewer findings shared a false premise worth
+  recording: both A1 and B6 asserted `write_projection(force=True)` invokes build's
+  prune and could delete files under --out; a direct read of build.write_projection
+  (mkdir + _write_if_changed only; _prune is a separate function it never calls) refuted
+  the deletion claim, so the "prune" framing was rejected while the real residual (an
+  export overwriting files in an unrecognized populated --out) was fixed with a CLI
+  refusal guard. The confirmed cluster, fixed in 1 fixer round (of 3): B1 (F6) the leak
+  core - redaction and secret detection moved to the json-DECODED content so a
+  \uXXXX-escaped or non-ASCII secret/PII cannot slip past raw-text matching and reappear
+  decoded in the share (incl. the base64 copy-src, the exact vector the oracle grep does
+  not decode); B5 (F9) a hostile payload timestamp cannot escape --out (validate first_ts
+  + reuse build.projection_dir); A2/A5 (R9/F8) reuse build.projection_dir + stdlib
+  html.escape rather than hand-rolled copies (pyright strict reportPrivateUsage forbids
+  importing render._escape / build._component, and the codebase never crosses that
+  boundary, so the canonical stdlib/public forms are used); A3 (R5/F7) an I/O read/write
+  failure is a named error, not a benign not-found; B2/B4 the pure-hex secret carve-out
+  narrowed to git/sha digest lengths and the generic detector extended to base64url; B7
+  (F7) a zero-width custom regex is inert (no corruption; ReDoS on user regex stays a
+  documented unbounded risk, stdlib re has no timeout); B9 word-boundary username/hostname
+  redaction. Rejected with reasons: A4 (report is the frozen pattern/file/line/replacement
+  schema and a constant [REDACTED] is REQUIRED - writing the removed value would leak it),
+  B3 (current-env builtins match the frozen decision + oracle; per-origin identity is a
+  later slice), B8 (broad-detector false positives are the accepted cost of the operator's
+  broad choice, --allow-findings is the hatch). Locked operator decisions taken before
+  the plan was finalized: explicit --out write-only (defer warehouse shares/ + rebuild),
+  skip-and-continue on a bad short, broad secret heuristics, regex custom patterns. 9
+  contract-derived regression tests (tests/test_share_regressions.py, cited on ticket 11).
+  Operator black-box verified 17/17 in temp dirs independent of the fixer self-report,
+  including base64 copy-src decode (no leak) and git-sha no-false-abort. Fix the prompt:
+  not needed (all four roles honored their rules; recorded as considered). Round count 1
+  (target <= 2). Gates: 4 oracle + 9 regression green, pyright strict 0, ruff clean; full
+  suite 16 failed / 169 passed, red for the right reason (test_cli 4 + test_config 9 are
+  slice-13, test_relocate 3 is slice-12). Milestone tag slice-11 at completion. Next:
+  ticket 12 (relocate).
 
 ---
 

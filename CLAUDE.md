@@ -111,7 +111,21 @@ separate consent-gated single rename only (D1, no import); fixer round 1 (of 3) 
 trap, retire refuses an existing target rather than clobber-an-empty-dir or crash,
 missing locks/migrate lock), 0 rejected; 3 contract-derived regression tests
 (tests/test_migrate_regressions.py); operator black-box verified 6/6; retro in HARNESS
-section 8. Milestone tags slice-01..10. Next: ticket 11 (share + redaction).
+section 8. Milestone tags slice-01..10. Slice 11 (share + redaction) COMPLETE 2026-07-19:
+`ccw share s:<key> ... --out <dir>` builds a sanitized static site from COPIES (store +
+projections keep full fidelity, R4); redaction runs on the json-DECODED payload before the
+shared renderer (R9) so a \uXXXX-escaped / non-ASCII secret cannot leak through the HTML
+base64 copy-src; secret-shaped strings abort the whole share unless --allow-findings ships
+them verbatim; reuses build.projection_dir naming + stdlib html.escape (R9/F8). Reviewers
+A/B ran in parallel (5 conformance + 9 adversary); operator verified each against the code
+(Guardrail 9): fixer round 1 (of 3) resolved 10 confirmed clusters (B1 decoded-content
+redaction, B5 timestamp path-traversal, A2/A5 reuse-not-duplicate, A3 error-vs-not-found,
+B2/B4 hex-carveout + base64url, B7 zero-width-regex, B9 word-boundary builtins, A1/B6 --out
+guard after refuting the "force prunes" premise), 3 rejected (A4 report schema frozen +
+constant token required, B3 current-env builtins, B8 broad-detector tradeoff); 9
+contract-derived regression tests (tests/test_share_regressions.py); operator black-box
+verified 17/17 incl. base64 copy-src decode; retro in HARNESS section 8. Milestone tags
+slice-01..11. Next: ticket 12 (relocate).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
