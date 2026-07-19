@@ -92,3 +92,5 @@ test_config 9 are slice-13 CLI/config polish, test_relocate 3 is slice-12). Resi
 notes carried forward: builtins are current-env identity (per-origin deferred); the broad
 detector may false-positive on long paths / base64 blobs; ReDoS on user regex is
 unbounded. Milestone tag slice-11 at completion. Next: ticket 12 (relocate).
+(Superseded note, 2026-07-19: slice 12 escalated and split; the live successor is
+ticket 12a, then 12b. The line above stands as the record of what was true then.)

@@ -510,6 +510,17 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   silent on several rules the implementation must invent (JSON key handling, the encoded-
   form content rule, file-mode preservation, scan scope). Recommended restart: split the
   two operations and land the contract clarifications first.
+- 2026-07-19: Architecture-review board added at cc-warehouse-architecture/ (SOURCE.md
+  canonical, index.html rendered by the new .claude/commands/architecture.md; adapted from
+  a sibling project's pattern the principal shared read-only, commit 17ef206). Process
+  relevance: reviews feed the board, the board proposes deepening candidates, grilling and
+  tickets decide; the contract stays with the principal, and the board never edits docs/.
+  The folder is outside /refresh's sweep scope by single ownership (/refresh's file map
+  updated to record that this run). Same-day /refresh sweep: gates ruff green, pyright
+  strict clean, suite 13 failed / 195 passed all slice-13 (7x CCW_ROOT ValueError from the
+  partial loader naming its pending slice, stub-CLI usage/exit assertions), red for the
+  right reason; zero stubs; DONE 01-11 with tag parity; ticket-11's completion tail gained
+  a dated superseded-note pointing at 12a (the split postdates that annotation).
 
 ---
 

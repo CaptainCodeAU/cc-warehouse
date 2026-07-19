@@ -273,6 +273,9 @@ keep that token in README's status paragraph.
 - Product: `src/cc_warehouse/` (stubs until slices land) · gates: `uv run pytest` ·
   `uv run pyright` (strict via pyproject) · `uv run ruff check`.
 - Status tier: `CLAUDE.md` (Current phase) · `README.md`.
+- Architecture board (OUT of this sweep's scope by single ownership, added 2026-07-19):
+  `cc-warehouse-architecture/` (SOURCE.md canonical, index.html rendered) is owned by the
+  `/architecture` command, whose own gate catches its staleness; /refresh never sweeps it.
 - Memory (outside the repo, never committed):
   `$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory/`.
 
