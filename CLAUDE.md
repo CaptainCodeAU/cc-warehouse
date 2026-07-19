@@ -125,7 +125,21 @@ guard after refuting the "force prunes" premise), 3 rejected (A4 report schema f
 constant token required, B3 current-env builtins, B8 broad-detector tradeoff); 9
 contract-derived regression tests (tests/test_share_regressions.py); operator black-box
 verified 17/17 incl. base64 copy-src decode; retro in HARNESS section 8. Milestone tags
-slice-01..11. Next: ticket 12 (relocate).
+slice-01..11. Slice 12 (relocate) ESCALATED 2026-07-19 under HARNESS section 4: NOT done,
+NO milestone tag. The first non-converging loop of the build (round 1: 27 findings, 22
+clusters confirmed; round 2: 21 more, five of them introduced by the round-1 fixes).
+Operator verification caught a locked-rule violation both reviewers missed and the
+round-1 fix had introduced (relocate was content-rewriting captured transcripts). The
+implementation IS landed and pushed as a working checkpoint (43432e4, edb5268, 4241c45)
+with 20 relocate regression tests, gates green, black-box 27/27; it is not DONE and the
+outstanding tier-2/3 findings are recorded on ticket 12. Section-4 diagnosis: bad slice
+boundary plus contract silence, so slice 12 is SPLIT into ticket 12a (containers: repo
+move, proven encoded-dir renames, registry claims) and 12b (content: memory/inventory
+rewrites, backup, scan scope); ticket 12 is SUPERSEDED and kept for its loop record.
+Principal rulings 2026-07-19 patched the contract (DESIGN 11 clarifications plus a
+CORRECTION to the specimen boundary rule, a matching SPEC 10.2 note, DESIGN 15 decided
+entries) and store.atomic_write now PRESERVES an existing target's mode. Next: ticket 12a
+(relocate containers), then 12b.
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.

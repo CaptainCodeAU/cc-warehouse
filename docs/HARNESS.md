@@ -112,10 +112,20 @@ is a STUB until slice 8; its oracle tests assert the spawn contract, not the out
 -> 5. sweep -> 6. transcript.md emitters (full+compact) -> 7. HTML emitters
 (full+compact) + manifest -> 8. build/render orchestration (un-stubs the child) ->
 9. status + `ccw verify` CLI (wraps the slice-1 walk, adds catalog cross-check) ->
-10. migrate (+retire) -> 11. share + redaction -> 12. relocate (plan/backup/apply/
-verify/report; double reviewer attention per BRAINSTORM) -> 13. config + env + CLI
-polish. Each slice ships with its oracle tests already merged, and no slice's work
-order may depend on a later slice's code.
+10. migrate (+retire) -> 11. share + redaction -> 12a. relocate containers (repo move,
+proven encoded-dir renames, registry claims) -> 12b. relocate content (memory and
+inventory rewrites, backup, scan scope) -> 13. config + env + CLI polish. Each slice
+ships with its oracle tests already merged, and no slice's work order may depend on a
+later slice's code.
+
+Slice 12 was ONE slice until the 2026-07-19 section-4 escalation split it (principal
+ruling; tickets 12a and 12b, record on ticket 12). It carried two operations with
+different risk profiles and different contracts: a small number of irreversible renames
+over paths the catalog can reason about, and an unbounded content scan over arbitrary
+user-configured roots. Every fix to one surfaced a hole in the other, so findings did not
+converge across two review rounds. The double reviewer attention BRAINSTORM mandates for
+relocate applies to BOTH halves. The split is also the standing worked example of the
+section-4 diagnosis: when a loop will not converge, suspect the slice boundary first.
 
 ## 8. Harness changelog
 
