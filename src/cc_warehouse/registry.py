@@ -131,22 +131,25 @@ def project_for_path(conn: sqlite3.Connection, path: str, kind: str) -> int | No
     return _alias_project(conn, path, kind)
 
 
-def cwd_for_encoded_dir(conn: sqlite3.Connection, encoded_name: str) -> str | None:
-    """The cwd claim of whichever project owns `encoded_name`, or None.
+def cwds_for_encoded_dir(conn: sqlite3.Connection, encoded_name: str) -> tuple[str, ...]:
+    """EVERY cwd claim of whichever project owns `encoded_name` (possibly empty).
 
     Lets a caller tell a repo SUBDIRECTORY's encoded dir from an unrelated SIBLING repo's:
     the encoding collapses `/`, `_` and `.` to `-`, so the names alone are ambiguous (F4).
+    Returns all claims, never one arbitrary row: a project that has been relocated keeps
+    its previous cwd alias (claims are append-only, R4), so picking a single row would
+    hand back a stale path and mislabel the project that owns it.
     """
-    row = cast(
-        "tuple[object, ...] | None",
+    rows = cast(
+        list[tuple[object, ...]],
         conn.execute(
             "SELECT cwd.path FROM project_alias enc"
             " JOIN project_alias cwd ON cwd.project_id = enc.project_id AND cwd.kind = 'cwd'"
             " WHERE enc.path = ? AND enc.kind = 'encoded_dir'",
             (encoded_name,),
-        ).fetchone(),
+        ).fetchall(),
     )
-    return cast(str, row[0]) if row is not None else None
+    return tuple(cast(str, row[0]) for row in rows)
 
 
 def encode_cwd(path: str) -> str:

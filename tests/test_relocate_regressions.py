@@ -282,6 +282,96 @@ def test_content_failure_reports_and_halts_container_renames(
         world.inventory.chmod(stat.S_IRWXU)
 
 
+def test_subdir_proof_does_not_rename_a_contested_sibling(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """F4: `<repo>/two` and `<repo>-two` encode IDENTICALLY, so a matching subdirectory
+    is not by itself proof of ownership; a real sibling of the same encoded name makes
+    the candidate contested and it must be left alone."""
+    world = World(ccw_env, tmp_path)
+    (world.repo / "two").mkdir()  # a real subdir: encodes the same as the sibling below
+    assert world.sibling.is_dir()  # <repo>-two exists as an unrelated real directory
+    contested = claude_projects(ccw_env) / (encode(world.repo) + "-two")
+    contested.mkdir(parents=True)
+    result = world.apply()
+    assert result.code == 0
+    assert contested.is_dir(), "a contested encoded dir was renamed on a subdir match"
+    assert "two" in result.out + result.err
+
+
+def test_every_cwd_claim_is_returned_for_an_encoded_dir(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """F4: alias claims are append-only (R4), so a project that has been relocated keeps
+    its previous cwd row. Attribution must see EVERY claim; returning one arbitrary row
+    hands back a stale path and mislabels the project that owns the encoded dir, which
+    makes a legitimately owned dir permanently unrenameable."""
+    from cc_warehouse import catalog, registry
+
+    root = warehouse_root(ccw_env)
+    root.mkdir(parents=True, exist_ok=True)
+    conn = catalog.open_catalog(root)
+    try:
+        resolved = registry.resolve_project(
+            conn, cwd="/x/widget", encoded_dir="-x-widget", now="2026-01-05T10:00:00Z"
+        )
+        registry.move_project(
+            conn, resolved.project_id, "/x/widget", "/x/new", "2026-01-05T11:00:00Z"
+        )
+        claims = registry.cwds_for_encoded_dir(conn, "-x-widget")
+    finally:
+        conn.close()
+    assert set(claims) == {"/x/widget", "/x/new"}, "attribution saw only one arbitrary cwd row"
+
+
+def test_json_path_keys_are_rewritten_and_do_not_fake_a_failure(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """F6: real config is keyed BY absolute path. Leaving keys stale both fails to repair
+    the field that resolves a project and makes verify report a failure on a run that
+    actually completed."""
+    world = World(ccw_env, tmp_path)
+    keyed = world.inventory / "claude-ish.json"
+    keyed.write_text(json.dumps({"projects": {str(world.repo): {"note": "hi"}}}))
+    result = world.apply()
+    assert result.code == 0, result.err
+    data = cast(dict[str, object], json.loads(keyed.read_text()))
+    projects = cast(dict[str, object], data["projects"])
+    assert str(world.new_repo) in projects, "the path-shaped JSON KEY was not rewritten"
+    assert str(world.repo) not in projects
+
+
+def test_a_root_containing_the_repo_does_not_manufacture_failures(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """DESIGN 11 VERIFY: files under the repo move WITH it, so verification must follow
+    them; reading the pre-move path would report failure on a successful run."""
+    home = Path(ccw_env["HOME"])
+    world = World(ccw_env, tmp_path, roots=[str(home / "projects")])
+    inside = world.repo / "NOTES.md"
+    inside.write_text(f"this repo lives at {world.repo}\n")
+    result = world.apply()
+    assert result.code == 0, f"verify manufactured a failure: {result.err}"
+    moved = world.new_repo / "NOTES.md"
+    assert moved.exists() and str(world.new_repo) in moved.read_text()
+
+
+def test_reference_to_a_renamed_encoded_dir_is_rewritten(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """F4/F6: the run must not create its own dangling references - a memory file naming
+    an encoded dir this run renames is updated to the new encoded name."""
+    world = World(ccw_env, tmp_path)
+    world.capture(world.sub, "55555555-2222-3333-4444-555555555555")
+    ref = world.inventory / "encoded-ref.md"
+    ref.write_text(f"memory at ~/.claude/projects/{encode(world.sub)}/memory/MEMORY.md\n")
+    assert world.apply().code == 0
+    text = ref.read_text()
+    expected = encode(world.new_repo) + "-sub"
+    assert expected in text, "a reference to a dir this run renamed was left dangling"
+    assert encode(world.sub) not in text
+
+
 def test_registry_gains_both_the_cwd_and_encoded_claims(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:

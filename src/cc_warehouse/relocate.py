@@ -111,7 +111,9 @@ def _relocate_roots(root: Path) -> tuple[tuple[Path, ...], str | None]:
     return tuple(_absolute(Path(i)) for i in items if isinstance(i, str) and i), None
 
 
-def _form_patterns(old_repo: str, new_repo: str) -> list[tuple[re.Pattern[str], str]]:
+def _form_patterns(
+    old_repo: str, new_repo: str, extra: list[tuple[str, str]] | None = None
+) -> list[tuple[re.Pattern[str], str]]:
     """Boundary-guarded (old_form -> new_form) rewrites for absolute/tilde/encoded paths.
 
     A match must sit at a path boundary (neither neighbour is a name char), so the repo
@@ -125,6 +127,12 @@ def _form_patterns(old_repo: str, new_repo: str) -> list[tuple[re.Pattern[str], 
         new_form = "~" + new_repo[len(home) :] if new_repo.startswith(home + "/") else new_repo
         pairs.append(("~" + old_repo[len(home) :], new_form))
     pairs.append((registry.encode_cwd(old_repo), registry.encode_cwd(new_repo)))
+    # One literal pair per encoded dir this run actually renames. The generic encoded
+    # pattern is boundary-guarded and `-` is a name char, so it matches only the exact
+    # dir; without these, a reference to a renamed SUBPROJECT dir would be left dangling
+    # by the very run that renamed it. Only renamed dirs are listed, so a reference to a
+    # dir we deliberately did not touch is never rewritten either.
+    pairs.extend(extra or [])
     compiled: list[tuple[re.Pattern[str], str]] = []
     for old_form, new_form in pairs:
         pat = re.compile(rf"(?<!{_NAME_CHARS}){re.escape(old_form)}(?!{_NAME_CHARS})")
@@ -139,13 +147,23 @@ def _sub_text(text: str, patterns: list[tuple[re.Pattern[str], str]]) -> str:
 
 
 def _sub_tree(node: object, patterns: list[tuple[re.Pattern[str], str]]) -> object:
-    """Rewrite every string VALUE in a decoded JSON structure (keys are structural)."""
+    """Rewrite every string in a decoded JSON structure, KEYS INCLUDED.
+
+    Real memory/config files are keyed BY absolute project path (`{"projects": {"/old":
+    ...}}`), so skipping keys would leave the file stale in exactly the field that
+    resolves a project, and the verify pass would then re-match it and report a failure
+    on a run that actually succeeded. The boundary guard means only a whole path
+    component is ever replaced, so a structural key that merely contains the text is safe.
+    """
     if isinstance(node, str):
         return _sub_text(node, patterns)
     if isinstance(node, list):
         return [_sub_tree(item, patterns) for item in cast(list[object], node)]
     if isinstance(node, dict):
-        return {key: _sub_tree(val, patterns) for key, val in cast(dict[str, object], node).items()}
+        return {
+            _sub_text(key, patterns): _sub_tree(val, patterns)
+            for key, val in cast(dict[str, object], node).items()
+        }
     return node
 
 
@@ -260,6 +278,11 @@ def _subdir_encodings(old_repo: Path) -> set[str]:
     return names
 
 
+def _rename_pairs(renames: list[tuple[Path, Path]]) -> list[tuple[str, str]]:
+    """(old encoded name -> new encoded name) for every dir this run renames."""
+    return [(old_dir.name, new_dir.name) for old_dir, new_dir in renames]
+
+
 def _encoded_moves(
     root: Path, old_repo: Path, new_repo: str, *, claim_ambiguous: bool
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, str]]]:
@@ -273,6 +296,7 @@ def _encoded_moves(
     onto the relocated project (F4/F9); --claim-ambiguous opts into taking those too.
     """
     old_str = str(old_repo)
+    prefix = old_str.rstrip("/") + "/"
     renames: list[tuple[Path, Path]] = []
     skipped: list[tuple[Path, str]] = []
     candidates = _encoded_candidates(old_str, new_repo)
@@ -283,12 +307,17 @@ def _encoded_moves(
         if not remainder:
             renames.append((old_dir, new_dir))
             continue
-        owner_cwd = _cwd_for_encoded(root, old_dir.name)
-        attributed = owner_cwd is not None and (
-            owner_cwd == old_str or owner_cwd.startswith(old_str.rstrip("/") + "/")
-        )
-        foreign = owner_cwd is not None and not attributed
-        if attributed or (not foreign and old_dir.name in subdirs):
+        # Check EVERY cwd claim: a relocated project KEEPS its previous one (claims are
+        # append-only, R4), so a single row could be a stale path for the right project.
+        claims = _cwds_for_encoded(root, old_dir.name)
+        attributed = any(c == old_str or c.startswith(prefix) for c in claims)
+        foreign = bool(claims) and not attributed
+        # A matching subdirectory is only a proof when no OTHER real directory encodes to
+        # the same name: `/x/widget/two` and `/x/widget-two` both encode to
+        # `-x-widget-two`, so a subdir match alone cannot rule the sibling out (F4).
+        rival = Path(old_str + remainder)
+        contested = rival.is_dir() or rival.is_symlink()
+        if attributed or (old_dir.name in subdirs and not contested):
             renames.append((old_dir, new_dir))
         elif claim_ambiguous and not foreign:
             renames.append((old_dir, new_dir))
@@ -310,12 +339,12 @@ def _catalog_conn(root: Path) -> sqlite3.Connection | None:
     return catalog.open_catalog(root)
 
 
-def _cwd_for_encoded(root: Path, encoded_name: str) -> str | None:
+def _cwds_for_encoded(root: Path, encoded_name: str) -> tuple[str, ...]:
     conn = _catalog_conn(root)
     if conn is None:
-        return None
+        return ()
     try:
-        return registry.cwd_for_encoded_dir(conn, encoded_name)
+        return registry.cwds_for_encoded_dir(conn, encoded_name)
     finally:
         conn.close()
 
@@ -335,7 +364,13 @@ def plan_relocate(
 ) -> RelocatePlan:
     """Enumerate every edit without touching anything (read-only; creates no catalog)."""
     repo_path, new_path = _absolute(repo_path), _absolute(new_path)
-    patterns = _form_patterns(str(repo_path), str(new_path))
+    # The encoded renames are decided FIRST so the content patterns can carry one pair
+    # per dir this run will actually rename (A2-4: otherwise the rename creates its own
+    # dangling references, which the verify pass is blind to by construction).
+    renames, ambiguous = _encoded_moves(
+        config.root, repo_path, str(new_path), claim_ambiguous=claim_ambiguous
+    )
+    patterns = _form_patterns(str(repo_path), str(new_path), _rename_pairs(renames))
     scan = _scan_content(config, patterns)
     edits: list[RelocateEdit] = []
     if scan.config_error:
@@ -344,9 +379,6 @@ def plan_relocate(
         edits.append(RelocateEdit("memory_file", target, f"rewrite path refs -> {new_path}"))
     for path, reason in scan.skipped:
         edits.append(RelocateEdit("inventory_file", path, f"SKIPPED: {reason}"))
-    renames, ambiguous = _encoded_moves(
-        config.root, repo_path, str(new_path), claim_ambiguous=claim_ambiguous
-    )
     for old_dir, new_dir in renames:
         edits.append(RelocateEdit("encoded_dir", old_dir, f"rename -> {new_dir}"))
     for path, reason in ambiguous:
@@ -472,12 +504,21 @@ def _manifest(backup_dir: Path, outcomes: list[ItemOutcome]) -> None:
 def _verify(
     targets: tuple[Path, ...],
     patterns: list[tuple[re.Pattern[str], str]],
+    old_repo: Path,
     new_repo: Path,
     encoded: list[tuple[Path, Path]],
 ) -> list[ItemOutcome]:
-    """Re-read exactly the files this run rewrote (not the whole tree again)."""
+    """Re-read exactly the files this run rewrote (not the whole tree again).
+
+    A target that lived UNDER the repo has moved with it, so it is verified at its new
+    location: reading the pre-move path would manufacture a failure report on a run where
+    every step actually succeeded.
+    """
     outcomes: list[ItemOutcome] = []
-    for path in targets:
+    for original in targets:
+        path = original
+        if original == old_repo or old_repo in original.parents:
+            path = new_repo / original.relative_to(old_repo)
         try:
             text = path.read_text()
         except (OSError, UnicodeDecodeError) as exc:
@@ -498,11 +539,11 @@ def _apply_locked(
 ) -> BatchReport:
     root = config.root
     old_repo, new_repo = _absolute(plan.repo_path), _absolute(plan.new_path)
-    patterns = _form_patterns(str(old_repo), str(new_repo))
-    scan = _scan_content(config, patterns)
     encoded, ambiguous = _encoded_moves(
         root, old_repo, str(new_repo), claim_ambiguous=claim_ambiguous
     )
+    patterns = _form_patterns(str(old_repo), str(new_repo), _rename_pairs(encoded))
+    scan = _scan_content(config, patterns)
     project_id = _project_for_cwd(root, str(old_repo))
 
     errors = _preflight(config, old_repo, new_repo, scan, encoded, project_id, backup_dir)
@@ -575,7 +616,7 @@ def _apply_locked(
         _manifest(backup_dir, outcomes)
         return BatchReport(tuple(outcomes))
 
-    outcomes.extend(_verify(scan.targets, patterns, new_repo, encoded))
+    outcomes.extend(_verify(scan.targets, patterns, old_repo, new_repo, encoded))
     _manifest(backup_dir, outcomes)
     return BatchReport(tuple(outcomes))
 
