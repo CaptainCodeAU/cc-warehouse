@@ -36,3 +36,27 @@ performs the single sanctioned old-world rename afterward.
 
 Standard loop (HARNESS section 2); /tdd inside the implementer; reviewers get
 diff + excerpts + the ADJACENT list only.
+
+## DONE 2026-07-19
+
+COMPLETE through the full loop. Implementer green on first gate pass (6 oracle
+tests). Reviewers A/B in parallel (A 3 conformance, B 2 adversary; overlap 1 -
+the non-regular-file silent drop, found by both lenses). Operator triage: 3
+clusters, all 3 CONFIRMED and probe-verified, 0 rejected, fixed in 1 fixer round
+(of 3): C1 (F7/R10) a non-regular *.jsonl (dangling/looping symlink, FIFO, socket)
+is now a named error item in both the BatchReport and the manifest rather than
+silently dropped, never handed to capture (a FIFO read would block migrate); C2
+(R4/F9) retire refuses a pre-existing target rather than let os.rename silently
+remove an existing empty _RETIRED_ dir (a delete outside R4's closed list) or
+crash on a non-empty one, the CLI catches OSError for a clean message; A1
+(R14/DESIGN 13) migrate now takes a locks/migrate O_EXCL lock (DESIGN 13 names
+migrate a lock-taker) mirroring sweep, refusing a live holder with a distinct
+non-counted refusal. Locked decision D1: --retire = consent + single rename only,
+no import (DESIGN 10 "separate explicit step"). migrate reuses
+capture.capture_transcript verbatim (R9/F8), store.atomic_write for the manifest
+(R2), reports.BatchReport/ItemOutcome. 3 contract-derived regression tests
+(tests/test_migrate_regressions.py). Operator black-box verified 6/6 independent
+of the fixer self-report (dangling symlink, FIFO no-hang, empty+non-empty retire
+target, happy retire, lock-held). Gates: 6 oracle + 3 regression green, pyright
+strict 0, ruff clean; full suite 20 failed / 156 passed, red for the right reason.
+Retro in HARNESS section 8. Milestone tag slice-10.

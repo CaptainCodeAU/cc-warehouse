@@ -395,6 +395,45 @@ order may depend on a later slice's code.
   0, ruff clean; full suite 24 failed / 149 passed, red for the right reason. Milestone
   tag slice-09 at completion. Next: ticket 10 (migrate + retire).
 
+- 2026-07-19: Slice 10 (migrate + retire) COMPLETE through the full loop.
+  Implementer green on first gate pass (6 oracle tests); migrate reuses
+  capture.capture_transcript verbatim per file (R9/F8, zero capture logic), hash
+  dedupe collapses duplicate archive copies for free (F1), reports.BatchReport, and
+  store.atomic_write for the <root>/logs/migrate-manifest.json per-file manifest (R2).
+  Reviewers A/B in parallel (A 3 conformance, B 2 adversary; overlap 1: both lenses
+  caught the non-regular-file silent drop, A via R5/R10 and B via F7/F6, so both
+  earned their seats). Operator verified every finding with a fresh black-box probe
+  (Guardrail 9) BEFORE triage: the os.rename empty-target clobber and the DESIGN-13
+  migrate-lock requirement were the two load-bearing ones. Triage: 3 clusters, all 3
+  CONFIRMED, 0 rejected, fixed in 1 fixer round (of 3): C1 (F7/R10) a *.jsonl dirent
+  that is not a regular file (dangling/looping symlink, FIFO, socket, device) is now a
+  NAMED error item in both the BatchReport and the manifest instead of a silent
+  is_file() drop, and is never handed to capture (reading a FIFO named *.jsonl would
+  block migrate forever - the fixer was warned of the trap up front); C2 (R4/F9)
+  retire refuses a pre-existing target (new_path.exists() or is_symlink()) rather than
+  let os.rename SILENTLY remove an existing empty _RETIRED_ dir (a delete outside R4's
+  closed list, probe-confirmed) or raise an uncaught OSError on a non-empty one, with
+  the CLI catching OSError for a clean report-not-crash message (R5); A1 (R14/DESIGN
+  13) migrate now holds a locks/migrate O_EXCL lock mirroring sweep - DESIGN 13 line
+  305 names migrate a lock-taker, so two concurrent runs can no longer race the shared
+  manifest (last-writer-wins); a live holder is a distinct non-counted refusal.
+  Locked principal decision D1 (asked before planning): `migrate --retire` = consent +
+  the single rename ONLY, no import (DESIGN 10 "a separate explicit step"); plain
+  migrate imports only. 3 contract-derived regression tests added
+  (tests/test_migrate_regressions.py, cited on ticket 10). Operator black-box verified
+  6/6 in temp dirs independent of the fixer self-report (dangling symlink reported +
+  sibling still imports, FIFO no-hang under a 10s timeout, empty + non-empty retire
+  target both refused-and-preserved, happy retire renames, lock-held refuses with no
+  manifest/import). Ops note: both the Engineer implementer and fixer ran in
+  auto-created worktrees; the deliverable was landed on the main tree via a controlled
+  exact-match Write and the worktrees + branches removed before commit (the slice-05
+  lesson); the operator regression file was ruff-clean before the fixer round. Fix the
+  prompt: not needed (implementer, both reviewers, and fixer honored their rules;
+  recorded as considered). Round count 1 (target <= 2). Gates: 6 oracle + 3 regression
+  green, pyright strict 0, ruff clean; full suite 20 failed / 156 passed, red for the
+  right reason. Milestone tag slice-10 at completion. Next: ticket 11 (share +
+  redaction).
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

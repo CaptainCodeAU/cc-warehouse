@@ -101,8 +101,17 @@ both directions (corrupted / orphan-never-deleted / missing), read-only (R4); fi
 round 1 (of 3) resolved 2 confirmed reviewer clusters (verify crashing on a
 malformed/NULL catalog hash, an unreadable-object label), 2 refuted; 3 contract-derived
 regression tests (tests/test_status_verify_regressions.py); operator black-box verified
-7/7; retro in HARNESS section 8. Milestone tags slice-01..09. Next: ticket 10 (migrate
-+ retire).
+7/7; retro in HARNESS section 8. Milestone tags slice-01..09. Slice 10 (migrate +
+retire) COMPLETE 2026-07-19: `ccw migrate <old-root>` imports a legacy archive through
+capture.capture_transcript verbatim (R9/F8, hash dedupe collapses duplicate copies F1),
+records a per-file manifest to <root>/logs/migrate-manifest.json via store.atomic_write
+(R2), under a locks/migrate O_EXCL lock (R14/DESIGN 13); `ccw migrate --retire` is a
+separate consent-gated single rename only (D1, no import); fixer round 1 (of 3) resolved
+3 confirmed reviewer clusters (non-regular *.jsonl named-not-dropped incl. the FIFO-hang
+trap, retire refuses an existing target rather than clobber-an-empty-dir or crash,
+missing locks/migrate lock), 0 rejected; 3 contract-derived regression tests
+(tests/test_migrate_regressions.py); operator black-box verified 6/6; retro in HARNESS
+section 8. Milestone tags slice-01..10. Next: ticket 11 (share + redaction).
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
