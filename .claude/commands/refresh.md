@@ -181,6 +181,15 @@ Across CLAUDE.md, README.md, harness/tickets/, and the docs status tier (scope-d
   memory naming a file, function, or flag is verified against the live tree (`test -e` / grep);
   stale current-state claims fixed, dated history left; frontmatter `description:` lines still
   accurate.
+  **Ownership boundary (decided 2026-07-20, principal).** This sweep owns FACTS: is what is
+  written still TRUE. It detects and surgically repairs stale claims, moved paths, dead refs,
+  broken parity and inaccurate frontmatter. It does NOT own CONTENT or STRUCTURE: contradictions
+  between two memories, superseded wording left live, content belonging to another project,
+  splitting / merging / relocating an entry, restructuring the index, or ingesting a memory from
+  elsewhere. Those belong to the **`MemoryCuration` skill** (global, `~/.claude/skills/`), which
+  works entry by entry with the principal confirming each before/after. This sweep's standing
+  "contradictions are flagged to the principal, not fixed" now has a named destination: flag it
+  and name the skill. Never rewrite a memory's substance here.
 - **Gap discipline:** any gap/inconsistency THIS sweep uncovers is surfaced in the report AND, when
   it is harness-process-relevant, appended as a dated line to HARNESS section 8 in the same run.
   There is no G-register in this repo; the report + HARNESS changelog are where gaps live.
