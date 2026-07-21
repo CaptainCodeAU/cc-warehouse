@@ -575,8 +575,12 @@ def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
         inner.extend(_render_block(block, policy))
     inner = _strip_separators(inner)
     if not inner:
-        return [f"> {meta.head()}", ""] if policy.breadcrumbs else []
+        return ["", f"> {meta.head()}", ""] if policy.breadcrumbs else []
+    # The leading blank is required, not cosmetic: CommonMark needs a blank line
+    # before an HTML block, or a preceding paragraph swallows the open tag
+    # (the spacing class the exporter fixed in v8.7).
     return [
+        "",
         "<details>",
         f"<summary>{meta.head()}</summary>",
         "",
@@ -608,22 +612,15 @@ def _turn_body(turn: Turn, policy: _Policy) -> list[str]:
     return collapsed
 
 
-def _render_turn(
-    turn: Turn, total: int, policy: _Policy, elapsed: str | None = None
-) -> list[str]:
-    if turn.synthetic and not policy.include_machinery:
-        return []
-    lines = ["***", ""]
-    if turn.synthetic:
-        lines.extend(["## \N{ELECTRIC PLUG} Pre-conversation entries", ""])
-        lines.extend(_turn_body(turn, policy))
-        lines.append("")
-        return lines
+def _user_md(turn: Turn, total: int, policy: _Policy, elapsed: str | None) -> list[str]:
+    """The `## User` half of a turn: heading, optional breadcrumb, prompt,
+    reminders. Shared with the HTML emitter so the user SECTION on the page and
+    the user half of the file are built from one definition (R9)."""
     stamp = turn.first_ts or ""
     tail = f" \N{MIDDLE DOT} {stamp}" if stamp else ""
     if elapsed:
         tail += f" \N{MIDDLE DOT} \N{STOPWATCH} {elapsed}"
-    lines.append(f"## \N{BUST IN SILHOUETTE} User{tail}")
+    lines = [f"## \N{BUST IN SILHOUETTE} User{tail}"]
     if policy.breadcrumbs:
         lines.append(f"> breadcrumb: turn {turn.ordinal} of {total}")
     lines.append("")
@@ -631,18 +628,46 @@ def _render_turn(
         lines.append(_harden(turn.prompt))
     for reminder in turn.reminders:
         lines.extend(_render_reminder(reminder, policy.reminder_mode))
+    return _strip_separators(lines)
+
+
+def _claude_md(turn: Turn, policy: _Policy) -> list[str]:
+    """The `## Claude` half: every phase and reply that followed the prompt.
+    Empty when the policy strips all of it (the compact variant of a turn whose
+    only content was thinking and tools)."""
     body = _strip_separators(_turn_body(turn, policy))
-    if body:
-        # The exporter separates every role turn with the Quick-Look-safe rule;
-        # our model pairs a prompt with its replies, so the rule sits between
-        # the two halves of the pair.
-        stamp_claude = turn.last_ts or ""
-        head = "## \N{ROBOT FACE} Claude"
-        if stamp_claude:
-            head += f" \N{MIDDLE DOT} {stamp_claude}"
-        lines.extend(["", "***", "", head, ""])
-        lines.extend(body)
-    lines.append("")
+    if not body:
+        return []
+    stamp = turn.last_ts or ""
+    head = "## \N{ROBOT FACE} Claude"
+    if stamp:
+        head += f" \N{MIDDLE DOT} {stamp}"
+    return [head, "", *body]
+
+
+def _synthetic_md(turn: Turn, policy: _Policy) -> list[str]:
+    body = _strip_separators(_turn_body(turn, policy))
+    if not body:
+        return []
+    return ["## \N{ELECTRIC PLUG} Pre-conversation entries", "", *body]
+
+
+def _render_turn(
+    turn: Turn, total: int, policy: _Policy, elapsed: str | None = None
+) -> list[str]:
+    """One turn as markdown: the user half, then the Claude half, each preceded
+    by the Quick-Look-safe rule. The exporter gives every ROLE turn its own
+    heading and separator; our model pairs a prompt with its replies, so the
+    pair is emitted as those same two role sections."""
+    if turn.synthetic:
+        if not policy.include_machinery:
+            return []
+        synthetic = _synthetic_md(turn, policy)
+        return ["***", "", *synthetic, ""] if synthetic else []
+    lines = ["***", "", *_user_md(turn, total, policy, elapsed), ""]
+    claude = _claude_md(turn, policy)
+    if claude:
+        lines.extend(["***", "", *claude, ""])
     return lines
 
 
@@ -1261,7 +1286,10 @@ def _block_html(
         result_repo = detect_github_repo(block.text) or repo
         if result_repo is not None:
             body = _linkify_commits(body, block.text, result_repo)
-    return _copy_block(anchors, ordinal, f"block block-{block.kind}", fragment, body)
+    # A visible reply is the exporter's standout ".reply" block; everything else
+    # keeps the generic block class.
+    css = "reply" if block.kind == "assistant_text" else f"block block-{block.kind}"
+    return _copy_block(anchors, ordinal, css, fragment, body)
 
 
 _ROW_ICONS = {
@@ -1351,6 +1379,52 @@ def _phase_html(
     )
 
 
+def _section_html(
+    *,
+    role: str,
+    label: str,
+    stamp: str,
+    elapsed: str | None,
+    fragment: str,
+    inner: list[str],
+    ordinal: int,
+    anchors: _AnchorAllocator,
+) -> list[str]:
+    """One role section: head row plus body. `fragment` is the section's own
+    transcript.md markdown, carried as the copy payload."""
+    if not inner:
+        return []
+    section_id = anchors.allocate(ordinal, f"{role}:{ordinal}:{fragment}")
+    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    time_span = f'<span class="timestamp">{_escape(stamp)}</span>' if stamp else ""
+    clock = f'<span class="elapsed">⏱ {_escape(elapsed)}</span>' if elapsed else ""
+    return [
+        f'<section class="turn {role}" id="{section_id}" data-copy-src="{payload}">',
+        f'<div class="turn-head"><span class="role">{label}{time_span}{clock}</span>'
+        f"{_COPY_BUTTON}</div>",
+        '<div class="turn-body">',
+        *inner,
+        "</div>",
+        "</section>",
+    ]
+
+
+def _claude_inner(
+    turn: Turn, policy: _Policy, repo: str | None, anchors: _AnchorAllocator
+) -> list[str]:
+    inner: list[str] = []
+    for segment in group_segments(turn):
+        if segment.is_phase:
+            phase = _phase_html(segment, policy, repo, turn.ordinal, anchors)
+            if phase is not None:
+                inner.append(phase)
+            continue
+        block_html = _block_html(segment.blocks[0], policy, repo, turn.ordinal, anchors)
+        if block_html is not None:
+            inner.append(block_html)
+    return inner
+
+
 def _turn_html(
     turn: Turn,
     policy: _Policy,
@@ -1359,47 +1433,62 @@ def _turn_html(
     total: int,
     elapsed: str | None,
 ) -> list[str]:
-    if turn.synthetic and not policy.include_machinery:
-        return []
-    fragment = "\n".join(_strip_separators(_render_turn(turn, total, policy, elapsed)[1:]))
-    if not fragment:
-        return []
-    section_id = anchors.allocate(turn.ordinal, f"turn:{turn.ordinal}:{turn.prompt}")
-    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
-    role = "assistant" if turn.synthetic else "user"
-    icon = (
-        "\N{ELECTRIC PLUG} Pre-conversation"
-        if turn.synthetic
-        else "\N{BUST IN SILHOUETTE} User"
-    )
-    stamp = f'<span class="timestamp">{_escape(turn.first_ts or "")}</span>'
-    clock = f'<span class="elapsed">⏱ {_escape(elapsed)}</span>' if elapsed else ""
-    out = [
-        f'<section class="turn {role}" id="{section_id}" data-copy-src="{payload}">',
-        f'<div class="turn-head"><span class="role">{icon}{stamp}{clock}</span>'
-        f"{_COPY_BUTTON}</div>",
-        '<div class="turn-body">',
-    ]
+    """A turn as the SAME two role sections the markdown emits: one user section
+    carrying the prompt and its reminders, one Claude section carrying the
+    phases and replies. Emitting a single section here (with Claude's tool
+    phases nested inside the user block) was the structural defect the operator
+    caught on 2026-07-21.
+    """
+    if turn.synthetic:
+        if not policy.include_machinery:
+            return []
+        return _section_html(
+            role="assistant",
+            label="\N{ELECTRIC PLUG} Pre-conversation",
+            stamp=turn.first_ts or "",
+            elapsed=None,
+            fragment="\n".join(_synthetic_md(turn, policy)),
+            inner=_claude_inner(turn, policy, repo, anchors),
+            ordinal=turn.ordinal,
+            anchors=anchors,
+        )
+    user_inner: list[str] = []
     if turn.prompt:
         prompt_md = _harden(turn.prompt)
         body = _md_to_html(prompt_md, allow_block_html=False)
-        out.append(_copy_block(anchors, turn.ordinal, "prompt", prompt_md, body))
+        user_inner.append(_copy_block(anchors, turn.ordinal, "prompt", prompt_md, body))
     for reminder in turn.reminders:
         lines = _strip_separators(_render_reminder(reminder, policy.reminder_mode))
         if lines:
             reminder_md = "\n".join(lines)
             body = _md_to_html(reminder_md, allow_block_html=True)
-            out.append(_copy_block(anchors, turn.ordinal, "reminder", reminder_md, body))
-    for segment in group_segments(turn):
-        if segment.is_phase:
-            phase = _phase_html(segment, policy, repo, turn.ordinal, anchors)
-            if phase is not None:
-                out.append(phase)
-            continue
-        block_html = _block_html(segment.blocks[0], policy, repo, turn.ordinal, anchors)
-        if block_html is not None:
-            out.append(block_html)
-    out.extend(["</div>", "</section>"])
+            user_inner.append(
+                _copy_block(anchors, turn.ordinal, "reminder", reminder_md, body)
+            )
+    out = _section_html(
+        role="user",
+        label="\N{BUST IN SILHOUETTE} User",
+        stamp=turn.first_ts or "",
+        elapsed=elapsed,
+        fragment="\n".join(_user_md(turn, total, policy, elapsed)),
+        inner=user_inner,
+        ordinal=turn.ordinal,
+        anchors=anchors,
+    )
+    claude_md = _claude_md(turn, policy)
+    if claude_md:
+        out.extend(
+            _section_html(
+                role="assistant",
+                label="\N{ROBOT FACE} Claude",
+                stamp=turn.last_ts or "",
+                elapsed=None,
+                fragment="\n".join(claude_md),
+                inner=_claude_inner(turn, policy, repo, anchors),
+                ordinal=turn.ordinal,
+                anchors=anchors,
+            )
+        )
     return out
 
 
