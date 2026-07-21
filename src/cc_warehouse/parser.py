@@ -280,6 +280,13 @@ class Turn:
     `synthetic` marks the holder for entries that precede the first real prompt
     so they are kept, not silently dropped (SPEC 6 CHANGE, F6); a synthetic turn
     has an empty prompt and is not counted as a prompt.
+
+    `first_ts`/`last_ts` are the timestamps of the first and last source entries
+    that fed this turn, or None when the entries carried none. They exist so the
+    emitters can show a turn's clock time and the elapsed gap since the previous
+    turn (DESIGN section 6 elapsed times); nothing in the model derives meaning
+    from them, so a transcript whose entries carry no timestamp just omits those
+    labels.
     """
 
     ordinal: int
@@ -287,6 +294,8 @@ class Turn:
     reminders: tuple[str, ...]
     blocks: tuple[Block, ...]
     synthetic: bool = False
+    first_ts: str | None = None
+    last_ts: str | None = None
 
 
 @dataclass(frozen=True)
@@ -295,6 +304,47 @@ class Conversation:
     prompt_count: int
     tool_call_count: int
     skipped_lines: int
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One stretch of a turn: either a single visible reply, or a PHASE.
+
+    DESIGN section 6 has the parser produce "turns, phases, blocks". A phase is
+    a run of consecutive non-reply blocks (thinking, tool calls, tool results,
+    machinery) that the emitters fold into one collapsible unit; a reply block
+    (`assistant_text`) ends the run and stands on its own. `is_phase` picks
+    which: False means exactly one reply block, True means one or more grouped
+    blocks. Grouping is presentation-neutral -- it reorders nothing and drops
+    nothing, so the flat `Turn.blocks` sequence stays the source of truth.
+    """
+
+    is_phase: bool
+    blocks: tuple[Block, ...]
+
+
+def group_segments(turn: Turn) -> tuple[Segment, ...]:
+    """Split a turn's blocks into reply segments and phase segments.
+
+    A run of consecutive non-`assistant_text` blocks becomes one phase segment;
+    each `assistant_text` block becomes its own reply segment and breaks the
+    run. Concatenating every segment's blocks in order reproduces `turn.blocks`
+    exactly, which is what makes the grouping safe to apply in one emitter and
+    not another.
+    """
+    segments: list[Segment] = []
+    run: list[Block] = []
+    for block in turn.blocks:
+        if block.kind == "assistant_text":
+            if run:
+                segments.append(Segment(is_phase=True, blocks=tuple(run)))
+                run = []
+            segments.append(Segment(is_phase=False, blocks=(block,)))
+            continue
+        run.append(block)
+    if run:
+        segments.append(Segment(is_phase=True, blocks=tuple(run)))
+    return tuple(segments)
 
 
 def split_reminder(text: str) -> tuple[str, tuple[str, ...]]:
@@ -408,9 +458,11 @@ def build_conversation(data: bytes) -> Conversation:
     reminders: tuple[str, ...] = ()
     blocks: list[Block] = []
     started = False
+    first_ts: str | None = None
+    last_ts: str | None = None
 
     def flush() -> None:
-        nonlocal blocks
+        nonlocal blocks, first_ts, last_ts
         if started or blocks:
             turns.append(
                 Turn(
@@ -419,13 +471,24 @@ def build_conversation(data: bytes) -> Conversation:
                     reminders=reminders,
                     blocks=tuple(blocks),
                     synthetic=not started,
+                    first_ts=first_ts,
+                    last_ts=last_ts,
                 )
             )
         blocks = []
+        first_ts = None
+        last_ts = None
 
     for entry in entries:
         kind = entry.get("type")
         content = _message_content(entry)
+        stamp = _as_nonempty_str(entry.get("timestamp"))
+        if stamp is not None:
+            # The turn spans every entry that fed it; a prompt entry sets the
+            # opening stamp below, after flush() has closed the previous turn.
+            if first_ts is None:
+                first_ts = stamp
+            last_ts = stamp
 
         if kind == "assistant":
             blocks.extend(_assistant_blocks(content))
@@ -470,6 +533,9 @@ def build_conversation(data: bytes) -> Conversation:
         prompt = visible
         reminders = entry_reminders
         started = True
+        # flush() cleared the span; this prompt entry opens the new turn's.
+        first_ts = stamp
+        last_ts = stamp
 
     flush()
 
