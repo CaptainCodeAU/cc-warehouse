@@ -206,8 +206,21 @@ def _render_tool_use(block: Block) -> list[str]:
         todos = _render_todos(tool_input.get("todos"))
         if todos is not None:
             return ["**TodoWrite**", "", *todos]
+    # Untyped tool: the exporter hides the raw payload behind a per-row toggle
+    # rather than dumping it inline, so a long input cannot swamp the row. The
+    # typed tools above keep their SPEC-7 rendering and need no toggle.
     payload = json.dumps(dict(tool_input), indent=2, sort_keys=True, ensure_ascii=False)
-    return [f"**{name}**", "", *_fence(payload, "json")]
+    safe = name.replace("<", "").replace(">", "")
+    return [
+        f"**{name}**",
+        "",
+        "<details>",
+        f"<summary>\N{GEAR} raw {safe}</summary>",
+        "",
+        *_fence(payload, "json"),
+        "",
+        "</details>",
+    ]
 
 
 def _render_tool_result(block: Block) -> list[str]:
@@ -473,6 +486,13 @@ def _title(meta: ParsedSession) -> str:
     return "session"
 
 
+def _claude_turn_count(conv: Conversation, policy: _Policy) -> int:
+    """How many `## Claude` sections this variant emits: the turns whose Claude
+    half survives the policy. Equals the number of Claude sections on the page,
+    which is what makes the header's split honest."""
+    return sum(1 for t in conv.turns if not t.synthetic and _claude_md(t, policy))
+
+
 def _lean_rows(
     meta: ParsedSession, conv: Conversation, policy: _Policy, source_hash: str
 ) -> list[str]:
@@ -487,13 +507,19 @@ def _lean_rows(
     """
     dot = " \N{MIDDLE DOT} "
     span = " \N{RIGHTWARDS ARROW} ".join(x for x in (meta.first_ts, meta.last_ts) if x)
+    # Claude TURNS, not assistant blocks: this is the count of "## Claude"
+    # sections the file actually contains, so the split matches what is on the
+    # page. Counting blocks reported 153 Claude against 13 you.
+    replies = _claude_turn_count(conv, policy)
     rows = [
         f"> **Source:** s-{source_hash[:12]}{dot}sha256 `{source_hash}`",
         f"> **Project:** {meta.cwd or ''}",
         f"> **Branch:** {meta.git_branch or ''}",
         f"> **Session:** {meta.session_uuid or ''}",
         f"> **Captured:** {span}",
-        f"> **Turns:** {conv.prompt_count} (source: claude-code)",
+        f"> **Model:** {meta.model or ''}",
+        f"> **Turns:** {conv.prompt_count}{dot}{conv.prompt_count} you /"
+        f" {replies} Claude (source: claude-code)",
     ]
     if policy.variant_note:
         # Carries the word "compact" (test_compact_carries_a_variant_note) so the
@@ -507,13 +533,11 @@ def _lean_rows(
     return rows
 
 
-def _detail_rows(meta: ParsedSession, conv: Conversation) -> list[str]:
+def _detail_rows(meta: ParsedSession, conv: Conversation, policy: _Policy) -> list[str]:
     """The collapsed "More details" grid. Counts are computed from the model, so
     they describe THIS render rather than restating the source."""
     dot = " \N{MIDDLE DOT} "
-    replies = sum(
-        1 for t in conv.turns for b in t.blocks if b.kind == "assistant_text"
-    )
+    replies = _claude_turn_count(conv, policy)
     thinking = sum(1 for t in conv.turns for b in t.blocks if b.kind == "thinking")
     words = sum(len(t.prompt.split()) for t in conv.turns)
     words += sum(len(b.text.split()) for t in conv.turns for b in t.blocks)
@@ -525,11 +549,17 @@ def _detail_rows(meta: ParsedSession, conv: Conversation) -> list[str]:
         f"- **Files touched:** {len(files)}",
         f"- **Loss:** {conv.skipped_lines} skipped line(s)",
         f"- **Slug:** {meta.slug or ''}",
+        f"- **Model:** {meta.model or ''}",
         f"- **CLI version:** {meta.version or ''}",
         f"- **Source lines:** {meta.line_count}",
         f"- **Hidden:** {'yes' if meta.hidden else 'no'}",
         "- **Renderer:** cc-warehouse (reference: exporter v8.10.1)",
     ]
+    visible, _ = split_reminder(meta.summary)
+    visible = " ".join(visible.split())
+    if visible and visible != "(no summary)":
+        # The exporter's italic chat-summary line (.more-grid .full).
+        rows.append(f"- **Summary:** *{visible}*")
     return rows
 
 
@@ -551,7 +581,7 @@ def _header(
                 "",
                 "> \N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} More details",
                 "",
-                *_detail_rows(meta, conv),
+                *_detail_rows(meta, conv, policy),
                 "",
                 "</details>",
             ]
@@ -1137,6 +1167,12 @@ ul,ol { padding-left:24px; } li { margin:4px 0; }
 .meta > .copy-md { position:absolute; top:12px; right:14px; margin:0; }
 .meta .m-key { color:var(--sky); }
 .meta .m-warn { color:var(--yellow); }
+.meta .m-model { color:var(--mauve); font-weight:700; background:rgba(194,162,241,0.12);
+  padding:1px 9px; border-radius:6px; }
+.meta .m-you { color:var(--blue); } .meta .m-claude { color:var(--peach); }
+.more-grid .full { grid-column:1 / -1; font-style:italic; color:var(--muted); }
+.row .rbody p { margin:6px 0; }
+.row .rlabel .q { color:var(--green); }
 .meta .m-note { color:var(--muted); font-size:0.88em; }
 .meta .m-note::before { content:"\\2022"; color:var(--yellow); margin-right:7px; }
 .more > details { background:transparent; border:none; border-top:1px solid var(--line);
@@ -1181,7 +1217,6 @@ ul,ol { padding-left:24px; } li { margin:4px 0; }
   cursor:pointer; opacity:0; pointer-events:none; transition:opacity .2s; z-index:9; }
 #totop.show { opacity:0.3; pointer-events:auto; }
 #totop:hover { opacity:1; color:var(--text); }
-[data-copy-src] { cursor:copy; }
 /* highlight.js token colours, inlined (tokyo-night-dark roles mapped onto the
    palette above) so the page needs no second external stylesheet. */
 .hljs-comment, .hljs-quote { color:var(--muted); font-style:italic; }
@@ -1281,7 +1316,9 @@ def _block_html(
     if not lines:
         return None
     fragment = "\n".join(lines)
-    body = _md_to_html(fragment, allow_block_html=block.kind == "continuation")
+    body = _md_to_html(
+        fragment, allow_block_html=block.kind in ("continuation", "tool_use")
+    )
     if block.kind == "tool_result":
         result_repo = detect_github_repo(block.text) or repo
         if result_repo is not None:
@@ -1311,10 +1348,14 @@ def _row_label(block: Block) -> str:
     if block.kind == "tool_use":
         name = block.tool_name or "Tool"
         info = block.tool_input or {}
+        query = _as_str(info.get("query"))
+        if query:
+            # The exporter renders a search query in green (.q) rather than as a
+            # muted badge, because the query IS the content of that row.
+            return f'{_escape(name)} <span class="q">"{_escape(query)}"</span>'
         detail = (
             _as_str(info.get("description"))
             or _as_str(info.get("file_path"))
-            or _as_str(info.get("query"))
             or _as_str(info.get("url"))
         )
         if not detail:
@@ -1352,7 +1393,11 @@ def _phase_html(
         if not lines:
             continue
         fragment = "\n".join(lines)
-        body = _md_to_html(fragment, allow_block_html=block.kind == "continuation")
+        # continuation and the untyped-tool raw toggle are disclosure blocks WE
+        # author; their payloads sit inside fences, so no transcript text can
+        # reach the passthrough.
+        block_html_ok = block.kind in ("continuation", "tool_use")
+        body = _md_to_html(fragment, allow_block_html=block_html_ok)
         if block.kind == "tool_result":
             result_repo = detect_github_repo(block.text) or repo
             if result_repo is not None:
@@ -1510,19 +1555,33 @@ def _header_html(
         label, _, value = row[2:].partition(":** ")
         key = _escape(label.replace("**", ""))
         css = "m-warn" if "\N{WARNING SIGN}" in row else "m-key"
-        lean.append(f'<span class="{css}">{key}</span>: {_escape(value)}')
+        shown = _escape(value)
+        if key == "Model" and value:
+            shown = f'<span class="m-model">{shown}</span>'
+        elif key == "Turns":
+            # Colour the split the way the exporter does: you in blue, Claude
+            # in peach, so the balance of the conversation reads at a glance.
+            shown = re.sub(
+                r"(\d+) you", r'<span class="m-you">\1 you</span>', shown, count=1
+            )
+            shown = re.sub(
+                r"(\d+) Claude", r'<span class="m-claude">\1 Claude</span>', shown, count=1
+            )
+        lean.append(f'<span class="{css}">{key}</span>: {shown}')
     if policy.variant_note:
         lean.append(
             '<span class="m-note">compact variant, thinking and tool detail omitted'
             " (see conversation.html)</span>"
         )
     grid: list[str] = []
-    for row in _detail_rows(meta, conv):
+    for row in _detail_rows(meta, conv, policy):
         label, _, value = row[2:].partition(":** ")
-        grid.append(
-            f'<span class="k">{_escape(label.replace("**", ""))}</span>'
-            f'<span class="v">{_escape(value)}</span>'
-        )
+        key = _escape(label.replace("**", ""))
+        if key == "Summary":
+            # Full-width italic row, the exporter's .full treatment.
+            grid.append(f'<span class="full">{_escape(value.strip("*"))}</span>')
+            continue
+        grid.append(f'<span class="k">{key}</span><span class="v">{_escape(value)}</span>')
     return (
         f'<div class="meta" data-copy-src="{payload}">{_COPY_BUTTON}'
         + "<br>".join(lean)

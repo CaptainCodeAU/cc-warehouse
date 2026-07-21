@@ -41,6 +41,10 @@ class ParsedSession:
     skipped_lines: int
     summary: str
     hidden: bool
+    # The assistant model that answered, from the first entry carrying
+    # `message.model`. Optional: older payloads and user-only sessions have
+    # none, and the emitters simply omit the field then.
+    model: str | None = None
 
 
 def _as_nonempty_str(value: object) -> str | None:
@@ -164,6 +168,7 @@ def parse_session(data: bytes) -> ParsedSession:
     version: str | None = None
     first_ts: str | None = None
     last_ts: str | None = None
+    model: str | None = None
 
     for entry in entries:
         session_uuid = session_uuid or _as_nonempty_str(entry.get("sessionId"))
@@ -171,6 +176,10 @@ def parse_session(data: bytes) -> ParsedSession:
         slug = slug or _as_nonempty_str(entry.get("slug"))
         git_branch = git_branch or _as_nonempty_str(entry.get("gitBranch"))
         version = version or _as_nonempty_str(entry.get("version"))
+        if model is None:
+            message = entry.get("message")
+            if isinstance(message, dict):
+                model = _as_nonempty_str(cast(dict[str, object], message).get("model"))
         ts = _as_nonempty_str(entry.get("timestamp"))
         if ts is not None:
             if first_ts is None:
@@ -201,6 +210,7 @@ def parse_session(data: bytes) -> ParsedSession:
         skipped_lines=skipped_lines,
         summary=summary,
         hidden=hidden,
+        model=model,
     )
 
 
