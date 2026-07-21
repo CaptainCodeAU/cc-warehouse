@@ -10,16 +10,19 @@ import base64
 import json
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import cast
 
 from cc_warehouse.parser import (
     Block,
     Conversation,
     ParsedSession,
+    Segment,
     Turn,
     build_conversation,
     detect_commits,
     detect_github_repo,
+    group_segments,
     parse_session,
     split_reminder,
 )
@@ -239,6 +242,15 @@ def _render_reminder(reminder: str, mode: str) -> list[str]:
     return []
 
 
+def _thinking_label(block: Block) -> str:
+    """The thinking label: TYPE, then CAPTION joined with a pipe when one can be
+    derived (DESIGN section 6). claude.ai supplies the caption as
+    `thinking.summaries`; here it comes from the thinking text's own first line,
+    so the label degrades to the bare TYPE rather than inventing one."""
+    caption = _caption_from_thinking(block.text)
+    return f"Thinking | {caption}" if caption else "Thinking"
+
+
 def _render_machinery(block: Block) -> list[str]:
     if block.kind == "continuation":
         return [
@@ -264,7 +276,13 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
     if kind == "assistant_text":
         return ["", _harden(block.text)]
     if kind == "thinking":
-        return ["", *_fence(block.text, "md")] if policy.include_thinking else []
+        if not policy.include_thinking:
+            return []
+        # DESIGN section 6: the label's TYPE and CAPTION are held separately and
+        # joined with "|" here. The blockquote label survives macOS Quick Look,
+        # which drops <summary> text (exporter v8.7).
+        label = f"> \N{THOUGHT BALLOON} {_thinking_label(block)}"
+        return ["", label, "", *_fence(block.text, "md")]
     if kind == "tool_use":
         return ["", *_render_tool_use(block)] if policy.include_tools else []
     if kind == "tool_result":
@@ -272,6 +290,172 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
     if not policy.include_machinery:
         return []
     return _render_machinery(block)
+
+
+# --------------------------------------------------------------------------
+# Phase presentation (DESIGN section 6; exporter v8.10.1 is the reference).
+# A phase is parser.group_segments' run of non-reply blocks, shown as one
+# collapsible unit with a caption, a duration, and tool counts. Every helper
+# here is shared by the markdown and HTML emitters so a copied fragment
+# reproduces its transcript.md source (R9/F8).
+# --------------------------------------------------------------------------
+
+_CAPTION_MAX = 72
+_FILE_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
+
+
+def _iso_seconds(stamp: str | None) -> float | None:
+    """Epoch seconds for an ISO-8601 entry timestamp, or None when absent or
+    unparseable. Trailing 'Z' is normalized: fromisoformat accepts an offset."""
+    if not stamp:
+        return None
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _elapsed_nice(seconds: float) -> str | None:
+    """The exporter's elapsed ladder: '18 s', '3 min 42 s', '4 hrs 12 m',
+    '2 days 3 h'. Full label on the primary unit, single letter on the
+    secondary. Negative or non-finite spans yield None."""
+    if seconds < 0 or seconds != seconds or seconds in (float("inf"), float("-inf")):
+        return None
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total} s"
+    minutes = total // 60
+    if minutes < 60:
+        return f"{minutes} min {total % 60} s"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} {'hr' if hours == 1 else 'hrs'} {minutes % 60} m"
+    days = hours // 24
+    return f"{days} {'day' if days == 1 else 'days'} {hours % 24} h"
+
+
+def _turn_elapsed(turn: Turn, previous: Turn | None) -> str | None:
+    """Gap between this turn's opening entry and the previous turn's last one.
+    The first turn is the zero point and renders '0' (exporter v8.6)."""
+    start = _iso_seconds(turn.first_ts)
+    if start is None:
+        return None
+    if previous is None:
+        return "0"
+    earlier = _iso_seconds(previous.last_ts) or _iso_seconds(previous.first_ts)
+    if earlier is None:
+        return None
+    return _elapsed_nice(start - earlier)
+
+
+def _caption_from_thinking(text: str) -> str | None:
+    """A phase caption derived from the thinking text's first meaningful line.
+
+    claude.ai supplies `thinking.summaries` for this; a Claude Code transcript
+    has no such field, so the nearest real equivalent is the opening line of the
+    thinking itself, trimmed to one clause. Returns None when nothing usable is
+    left, and the caller falls back to a tool-derived caption.
+    """
+    for raw in text.split("\n"):
+        line = raw.strip().lstrip("#>-*+ ").strip()
+        # A caption lands inside a <summary> line and a blockquote, so angle
+        # brackets and backticks are removed rather than escaped: the same
+        # string has to read correctly in both places.
+        line = line.replace("<", "").replace(">", "").replace("`", "").strip()
+        if not line:
+            continue
+        if len(line) > _CAPTION_MAX:
+            line = line[: _CAPTION_MAX - 3].rstrip() + "..."
+        return line
+    return None
+
+
+@dataclass(frozen=True)
+class _PhaseMeta:
+    icon: str
+    caption: str
+    bits: tuple[str, ...]
+    errors: bool
+
+    def head(self) -> str:
+        dot = " \N{MIDDLE DOT} "
+        tail = dot.join(self.bits)
+        warn = " \N{WARNING SIGN}" if self.errors else ""
+        return f"{self.icon} {self.caption}{warn}{dot + tail if tail else ''}"
+
+
+def _phase_meta(blocks: tuple[Block, ...]) -> _PhaseMeta:
+    """Caption, duration bits and tool counts for one phase (exporter groupMeta).
+
+    Caption priority mirrors the exporter: the LAST thinking block's caption
+    wins, then any tool name, then the generic 'Worked'. DESIGN section 6 keeps
+    label TYPE and CAPTION separate; they are joined at render time here.
+    """
+    thinking = [b for b in blocks if b.kind == "thinking" and b.text.strip()]
+    caption: str | None = None
+    for block in reversed(thinking):
+        caption = _caption_from_thinking(block.text)
+        if caption:
+            break
+    tool_uses = [b for b in blocks if b.kind == "tool_use"]
+    if not caption:
+        # No thinking to caption from: name the tools the phase actually ran,
+        # in first-use order, so the summary line says what happened rather
+        # than naming only the last call.
+        names: list[str] = []
+        for block in tool_uses:
+            if block.tool_name and block.tool_name not in names:
+                names.append(block.tool_name)
+        if names:
+            caption = ", ".join(names[:3]) + (", ..." if len(names) > 3 else "")
+    searches = sum(1 for b in tool_uses if b.tool_name == "WebSearch")
+    fetches = sum(1 for b in tool_uses if b.tool_name == "WebFetch")
+    others = len(tool_uses) - searches - fetches
+    bits: list[str] = []
+    if searches:
+        bits.append(f"{searches} search" if searches == 1 else f"{searches} searches")
+    if fetches:
+        bits.append(f"{fetches} fetch" if fetches == 1 else f"{fetches} fetches")
+    if others:
+        bits.append(f"{others} tool" if others == 1 else f"{others} tools")
+    if thinking:
+        count = len(thinking)
+        bits.append("1 thought" if count == 1 else f"{count} thoughts")
+    return _PhaseMeta(
+        icon="\N{MICROSCOPE}" if thinking else "\N{JIGSAW PUZZLE PIECE}",
+        caption=caption or "Worked",
+        bits=tuple(bits),
+        errors=any(b.kind == "tool_result" and _looks_failed(b.text) for b in blocks),
+    )
+
+
+def _looks_failed(text: str) -> bool:
+    """Whether a tool result reads as an error. claude.ai carries an `is_error`
+    flag; a Claude Code tool_result carries only text, so this is a surface
+    reading and deliberately conservative."""
+    head = text.lstrip()[:200].lower()
+    return head.startswith(("error", "error:", "traceback")) or "<tool_use_error>" in head
+
+
+def _file_targets(conv: Conversation) -> list[tuple[str, str]]:
+    """(path, verb) for every file-editing tool call, first mention wins.
+
+    The exporter's Artifacts Index has no counterpart in a Claude Code session:
+    there are no artifacts. The nearest real equivalent is the set of files the
+    session created or edited, so that slot carries this instead of standing
+    empty (operator ruling 2026-07-21: substitute an alternate value where one
+    exists rather than blank the section).
+    """
+    seen: dict[str, str] = {}
+    for turn in conv.turns:
+        for block in turn.blocks:
+            if block.kind != "tool_use" or block.tool_name not in _FILE_TOOLS:
+                continue
+            path = _as_str((block.tool_input or {}).get("file_path"))
+            if not path or path in seen:
+                continue
+            seen[path] = "created" if block.tool_name == "Write" else "edited"
+    return list(seen.items())
 
 
 # --------------------------------------------------------------------------
@@ -289,53 +473,212 @@ def _title(meta: ParsedSession) -> str:
     return "session"
 
 
-def _header(meta: ParsedSession, policy: _Policy) -> list[str]:
+def _lean_rows(
+    meta: ParsedSession, conv: Conversation, policy: _Policy, source_hash: str
+) -> list[str]:
+    """The header card's always-visible identity lines (exporter's lean header).
+
+    The exporter shows Source URL / Exported / Model. A captured Claude Code
+    session has none of those, so the same slots carry what does exist: the
+    content address that names the stored payload, the project path, the branch,
+    the session UUID and the captured span. A field with no value keeps its row
+    and shows a blank, so the layout is stable across sessions (operator ruling
+    2026-07-21).
+    """
+    dot = " \N{MIDDLE DOT} "
+    span = " \N{RIGHTWARDS ARROW} ".join(x for x in (meta.first_ts, meta.last_ts) if x)
+    rows = [
+        f"> **Source:** s-{source_hash[:12]}{dot}sha256 `{source_hash}`",
+        f"> **Project:** {meta.cwd or ''}",
+        f"> **Branch:** {meta.git_branch or ''}",
+        f"> **Session:** {meta.session_uuid or ''}",
+        f"> **Captured:** {span}",
+        f"> **Turns:** {conv.prompt_count} (source: claude-code)",
+    ]
+    if policy.variant_note:
+        # Carries the word "compact" (test_compact_carries_a_variant_note) so the
+        # variant needs no second, duplicate note line.
+        rows.append(f"> **Variant:** {policy.variant_note}")
+    if conv.skipped_lines:
+        rows.append(
+            f"> \N{WARNING SIGN} **{conv.skipped_lines} unreadable line(s)** skipped"
+            f"{dot}see manifest.json loss telemetry"
+        )
+    return rows
+
+
+def _detail_rows(meta: ParsedSession, conv: Conversation) -> list[str]:
+    """The collapsed "More details" grid. Counts are computed from the model, so
+    they describe THIS render rather than restating the source."""
+    dot = " \N{MIDDLE DOT} "
+    replies = sum(
+        1 for t in conv.turns for b in t.blocks if b.kind == "assistant_text"
+    )
+    thinking = sum(1 for t in conv.turns for b in t.blocks if b.kind == "thinking")
+    words = sum(len(t.prompt.split()) for t in conv.turns)
+    words += sum(len(b.text.split()) for t in conv.turns for b in t.blocks)
+    files = _file_targets(conv)
+    rows = [
+        f"- **Split:** {conv.prompt_count} you / {replies} Claude",
+        f"- **Content:** ~{words:,} words{dot}{thinking} thinking blocks"
+        f"{dot}{conv.tool_call_count} tool calls",
+        f"- **Files touched:** {len(files)}",
+        f"- **Loss:** {conv.skipped_lines} skipped line(s)",
+        f"- **Slug:** {meta.slug or ''}",
+        f"- **CLI version:** {meta.version or ''}",
+        f"- **Source lines:** {meta.line_count}",
+        f"- **Hidden:** {'yes' if meta.hidden else 'no'}",
+        "- **Renderer:** cc-warehouse (reference: exporter v8.10.1)",
+    ]
+    return rows
+
+
+def _header(
+    meta: ParsedSession,
+    policy: _Policy,
+    conv: Conversation,
+    source_hash: str,
+) -> list[str]:
     suffix = " (compact)" if policy.variant_note else ""
     lines = [f"# Transcript{suffix}: {_title(meta)}", ""]
-    if policy.variant_note:
-        lines.extend([policy.variant_note, ""])
+    lines.extend(_lean_rows(meta, conv, policy, source_hash))
     if policy.header_details:
-        detail = ["<details>", "<summary>Session details</summary>", ""]
-        if meta.slug:
-            detail.append(f"- slug: {meta.slug}")
-        if meta.git_branch:
-            detail.append(f"- branch: {meta.git_branch}")
-        if meta.session_uuid:
-            detail.append(f"- session: {meta.session_uuid}")
-        if meta.first_ts:
-            detail.append(f"- first entry: {meta.first_ts}")
-        if meta.last_ts:
-            detail.append(f"- last entry: {meta.last_ts}")
-        detail.extend(["", "</details>", ""])
-        lines.extend(detail)
+        lines.extend(
+            [
+                "",
+                "<details>",
+                "<summary>More details</summary>",
+                "",
+                "> \N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} More details",
+                "",
+                *_detail_rows(meta, conv),
+                "",
+                "</details>",
+            ]
+        )
+    lines.append("")
     return lines
 
 
-def _render_turn(turn: Turn, total: int, policy: _Policy) -> list[str]:
+def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
+    """One phase as markdown: a collapsible section whose summary is the caption
+    line, with a blockquote breadcrumb repeating it inside.
+
+    The breadcrumb is not decoration: macOS Quick Look drops <summary> text
+    entirely, so a reader there would otherwise see an unlabelled block (the
+    exporter's v8.7 hybrid-label finding). In the compact variant the section
+    collapses to that breadcrumb alone, and only when breadcrumbs are on.
+    """
+    meta = _phase_meta(segment.blocks)
+    inner: list[str] = []
+    for block in segment.blocks:
+        inner.extend(_render_block(block, policy))
+    inner = _strip_separators(inner)
+    if not inner:
+        return [f"> {meta.head()}", ""] if policy.breadcrumbs else []
+    return [
+        "<details>",
+        f"<summary>{meta.head()}</summary>",
+        "",
+        f"> {meta.head()}",
+        "",
+        *inner,
+        "",
+        "</details>",
+        "",
+    ]
+
+
+def _turn_body(turn: Turn, policy: _Policy) -> list[str]:
+    """Everything under a turn's `## Claude` heading: phases and replies, in
+    source order. Shared by the markdown file and the HTML copy payloads."""
+    lines: list[str] = []
+    for segment in group_segments(turn):
+        if segment.is_phase:
+            lines.extend(_phase_md(segment, policy))
+            continue
+        lines.extend(_render_block(segment.blocks[0], policy))
+    # Segment boundaries each contribute their own blank line; collapse the
+    # doubles so the file reads as one document rather than a concatenation.
+    collapsed: list[str] = []
+    for line in lines:
+        if not line.strip() and collapsed and not collapsed[-1].strip():
+            continue
+        collapsed.append(line)
+    return collapsed
+
+
+def _render_turn(
+    turn: Turn, total: int, policy: _Policy, elapsed: str | None = None
+) -> list[str]:
     if turn.synthetic and not policy.include_machinery:
         return []
     lines = ["***", ""]
     if turn.synthetic:
-        lines.append("## Pre-conversation entries")
-    else:
-        lines.append(f"## Turn {turn.ordinal}")
-        if policy.breadcrumbs:
-            lines.append(f"> breadcrumb: turn {turn.ordinal} of {total}")
+        lines.extend(["## \N{ELECTRIC PLUG} Pre-conversation entries", ""])
+        lines.extend(_turn_body(turn, policy))
+        lines.append("")
+        return lines
+    stamp = turn.first_ts or ""
+    tail = f" \N{MIDDLE DOT} {stamp}" if stamp else ""
+    if elapsed:
+        tail += f" \N{MIDDLE DOT} \N{STOPWATCH} {elapsed}"
+    lines.append(f"## \N{BUST IN SILHOUETTE} User{tail}")
+    if policy.breadcrumbs:
+        lines.append(f"> breadcrumb: turn {turn.ordinal} of {total}")
     lines.append("")
     if turn.prompt:
         lines.append(_harden(turn.prompt))
     for reminder in turn.reminders:
         lines.extend(_render_reminder(reminder, policy.reminder_mode))
-    for block in turn.blocks:
-        lines.extend(_render_block(block, policy))
+    body = _strip_separators(_turn_body(turn, policy))
+    if body:
+        # The exporter separates every role turn with the Quick-Look-safe rule;
+        # our model pairs a prompt with its replies, so the rule sits between
+        # the two halves of the pair.
+        stamp_claude = turn.last_ts or ""
+        head = "## \N{ROBOT FACE} Claude"
+        if stamp_claude:
+            head += f" \N{MIDDLE DOT} {stamp_claude}"
+        lines.extend(["", "***", "", head, ""])
+        lines.extend(body)
     lines.append("")
     return lines
 
 
-def _render(conv: Conversation, meta: ParsedSession, policy: _Policy) -> str:
-    lines = _header(meta, policy)
+def _files_index_md(conv: Conversation) -> list[str]:
+    files = _file_targets(conv)
+    if not files:
+        return []
+    lines = ["***", "", "## \N{BOOKMARK TABS} Files Index", ""]
+    for i, (path, verb) in enumerate(files, start=1):
+        lines.append(f"{i}. **{path}** ({verb})")
+    lines.append("")
+    return lines
+
+
+def _elapsed_labels(conv: Conversation) -> list[str | None]:
+    """Per-turn elapsed labels, positionally aligned with conv.turns. Computed
+    once here so the markdown and HTML emitters cannot disagree (R9)."""
+    labels: list[str | None] = []
+    previous: Turn | None = None
     for turn in conv.turns:
-        lines.extend(_render_turn(turn, conv.prompt_count, policy))
+        if turn.synthetic:
+            labels.append(None)
+            continue
+        labels.append(_turn_elapsed(turn, previous))
+        previous = turn
+    return labels
+
+
+def _render(
+    conv: Conversation, meta: ParsedSession, policy: _Policy, source_hash: str
+) -> str:
+    lines = _header(meta, policy, conv, source_hash)
+    labels = _elapsed_labels(conv)
+    for turn, elapsed in zip(conv.turns, labels, strict=True):
+        lines.extend(_render_turn(turn, conv.prompt_count, policy, elapsed))
+    lines.extend(_files_index_md(conv))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -359,7 +702,10 @@ def _compact_policy(options: RenderOptions) -> _Policy:
         reminder_mode=options.reminders_compact,
         variant_note=_COMPACT_NOTE,
         breadcrumbs=options.breadcrumbs,
-        header_details=False,
+        # Exporter parity: the compact variant keeps the SAME header card as the
+        # full one (its finalMdCompact reuses the built header verbatim), so the
+        # two files stay comparable and the HTML page matches its markdown.
+        header_details=True,
     )
 
 
@@ -374,8 +720,9 @@ def render_markdown(data: bytes, options: RenderOptions) -> tuple[str, str]:
     """
     conv = build_conversation(data)
     meta = parse_session(data)
-    full = _render(conv, meta, _full_policy(options))
-    compact = _render(conv, meta, _compact_policy(options))
+    source_hash = sha256_hex(data)
+    full = _render(conv, meta, _full_policy(options), source_hash)
+    compact = _render(conv, meta, _compact_policy(options), source_hash)
     return full, compact
 
 
@@ -534,48 +881,293 @@ def _md_to_html(md: str, allow_block_html: bool) -> str:
 # --------------------------------------------------------------------------
 
 _HLJS_BASE = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0"
+# DESIGN section 6 permits the highlight.js SCRIPT as the ONE external
+# reference, and test_page_has_a_single_external_cdn_reference pins that count.
+# The exporter also links a tokyo-night-dark stylesheet, which would be a second
+# reference: instead the token colours are inlined into _CSS below, so the page
+# keeps the exporter's look while honouring our stricter rule.
 _HLJS_SCRIPT = (
     f'<script src="{_HLJS_BASE}/highlight.min.js" '
     'onload="hljs.highlightAll()" onerror="void 0"></script>'
 )
+_TOOLBAR = (
+    '<div class="toolbar">'
+    '<button data-act="collapse">Collapse all</button>'
+    '<button data-act="expand-turns">Expand turns</button>'
+    '<button data-act="expand-all">Expand all</button>'
+    '<button data-act="copyall">Copy ALL as Markdown</button>'
+    '<span class="turnpos" id="turnpos"></span>'
+    '<span class="wbtns">'
+    '<button data-w="s" title="950px">S</button>'
+    '<button data-w="m" title="1400px">M</button>'
+    '<button data-w="l" title="1900px">L</button></span>'
+    '<span class="fbtns">'
+    '<button data-f="s" title="12.8px">A-</button>'
+    '<button data-f="m" title="14px">A</button>'
+    '<button data-f="l" title="16px">A+</button></span>'
+    "</div>"
+)
 # Double-click a block to copy its exact transcript.md markdown from the
 # base64 data-copy-src payload. Best-effort; the page renders without it.
-_COPY_SCRIPT = (
-    "<script>\n"
-    "(function () {\n"
-    "  function decode(value) {\n"
-    "    var binary = atob(value);\n"
-    "    var bytes = new Uint8Array(binary.length);\n"
-    "    for (var i = 0; i < binary.length; i += 1) {\n"
-    "      bytes[i] = binary.charCodeAt(i);\n"
-    "    }\n"
-    '    return new TextDecoder("utf-8").decode(bytes);\n'
-    "  }\n"
-    '  document.addEventListener("dblclick", function (event) {\n'
-    '    var node = event.target.closest("[data-copy-src]");\n'
-    "    if (!node || !navigator.clipboard) {\n"
-    "      return;\n"
-    "    }\n"
-    '    navigator.clipboard.writeText(decode(node.getAttribute("data-copy-src")));\n'
-    "  });\n"
-    "})();\n"
-    "</script>"
-)
-_CSS = (
-    ":root { color-scheme: light dark; }\n"
-    "body { font: 16px/1.55 -apple-system, system-ui, sans-serif; margin: 0; }\n"
-    "main.transcript { max-width: 52rem; margin: 0 auto; padding: 2rem 1rem; }\n"
-    "section.turn { border-top: 1px solid rgba(128, 128, 128, 0.3); "
-    "margin-top: 1.5rem; padding-top: 0.5rem; }\n"
-    "h1, h2 { line-height: 1.2; }\n"
-    "pre { overflow-x: auto; padding: 0.75rem; border-radius: 6px; "
-    "background: rgba(128, 128, 128, 0.12); }\n"
-    "p code, li code { padding: 0.1em 0.3em; border-radius: 4px; "
-    "background: rgba(128, 128, 128, 0.15); }\n"
-    "[data-copy-src] { cursor: copy; }\n"
-    "summary { cursor: pointer; }\n"
-    "a { color: #2563eb; }\n"
-)
+_COPY_SCRIPT = """\
+<script>
+(function () {
+  function decode(value) {
+    var binary = atob(value);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+  function payload(node) {
+    return node ? decode(node.getAttribute("data-copy-src")) : "";
+  }
+  function flash(btn, text) {
+    var old = btn.textContent;
+    btn.textContent = text;
+    setTimeout(function () { btn.textContent = old; }, 1200);
+  }
+  function copy(btn, text) {
+    if (!navigator.clipboard) { flash(btn, "no clipboard"); return; }
+    navigator.clipboard.writeText(text).then(
+      function () { flash(btn, "Copied"); },
+      function () { flash(btn, "Copy failed"); }
+    );
+  }
+  // Every copy button reads the data-copy-src of its nearest carrier, so the
+  // page has ONE payload mechanism: the per-fragment transcript.md markdown.
+  document.querySelectorAll(".copy-md").forEach(function (btn) {
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      copy(btn, payload(btn.closest("[data-copy-src]")));
+    });
+  });
+  document.addEventListener("dblclick", function (event) {
+    var node = event.target.closest("[data-copy-src]");
+    if (!node || !navigator.clipboard) { return; }
+    navigator.clipboard.writeText(payload(node));
+  });
+  document.querySelectorAll(".turn-head").forEach(function (head) {
+    head.addEventListener("click", function (event) {
+      if (event.target.closest(".copy-md")) { return; }
+      var section = head.closest("section.turn");
+      if (section) { section.classList.toggle("collapsed"); }
+    });
+  });
+  document.querySelectorAll(".toolbar button[data-act]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var act = btn.dataset.act;
+      if (act === "copyall") {
+        copy(btn, payload(document.getElementById("whole-transcript")));
+        return;
+      }
+      document.querySelectorAll("section.turn").forEach(function (s) {
+        s.classList.toggle("collapsed", act === "collapse");
+      });
+      if (act !== "expand-turns") {
+        document.querySelectorAll("section.turn details").forEach(function (d) {
+          d.open = act === "expand-all";
+        });
+      }
+    });
+  });
+  function toggler(key, prefix, selector, fallback) {
+    var btns = document.querySelectorAll(selector);
+    var apply = function (value) {
+      document.body.classList.remove(prefix + "s", prefix + "m", prefix + "l");
+      document.body.classList.add(prefix + value);
+      btns.forEach(function (b) {
+        b.classList.toggle("active", b.dataset[prefix === "w-" ? "w" : "f"] === value);
+      });
+      try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+    };
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        apply(b.dataset[prefix === "w-" ? "w" : "f"]);
+      });
+    });
+    var saved = fallback;
+    try { saved = localStorage.getItem(key) || fallback; } catch (e) { /* private mode */ }
+    apply(["s", "m", "l"].indexOf(saved) >= 0 ? saved : fallback);
+  }
+  toggler("ccw_html_width", "w-", ".wbtns button", "l");
+  toggler("ccw_html_font", "f-", ".fbtns button", "s");
+  var pos = document.getElementById("turnpos");
+  var turns = [].slice.call(document.querySelectorAll("section.turn"));
+  var ticking = false;
+  function updatePos() {
+    ticking = false;
+    if (!pos || !turns.length) { return; }
+    var bar = document.querySelector(".toolbar");
+    var edge = (bar ? bar.getBoundingClientRect().bottom : 0) + 4;
+    var cur = 0;
+    for (var i = 0; i < turns.length; i += 1) {
+      cur = i;
+      if (turns[i].getBoundingClientRect().bottom > edge) { break; }
+    }
+    var who = turns[cur].classList.contains("user") ? "\\u{1F464}" : "\\u{1F916}";
+    pos.innerHTML = who + " turn <b>" + (cur + 1) + "</b> / " + turns.length;
+  }
+  addEventListener("scroll", function () {
+    if (!ticking) { ticking = true; requestAnimationFrame(updatePos); }
+  }, { passive: true });
+  updatePos();
+  var top = document.createElement("button");
+  top.id = "totop";
+  top.textContent = "\\u2191";
+  top.title = "Scroll to top";
+  document.body.appendChild(top);
+  top.addEventListener("click", function () {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  addEventListener("scroll", function () {
+    top.classList.toggle("show", scrollY > innerHeight);
+  }, { passive: true });
+})();
+</script>"""
+# Catppuccin-Macchiato-derived palette and chrome (DESIGN section 6; the
+# structure, class names and colour roles follow exporter v8.10.1 so a
+# cc-warehouse page and an exporter page read as the same product).
+_CSS = """\
+:root {
+  --bg:#1f202f; --text:#ccd3f3; --muted:#6f738b;
+  --yellow:#ddca9d; --blue:#93acef; --green:#afd89b;
+  --peach:#e5a982; --sky:#8ec2e1; --mauve:#c2a2f1;
+  --surface:#262838; --deep:#181925; --line:#34364a;
+  --mono:"JetBrainsMono Nerd Font Mono","JetBrains Mono","Fira Code",ui-monospace,monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--mono),system-ui,sans-serif;
+  margin:0 auto; padding:24px; line-height:1.7; font-weight:300; transition:max-width .2s; }
+body.f-s { font-size:0.8em; } body.f-m { font-size:0.875em; } body.f-l { font-size:1em; }
+body.w-s { max-width:min(950px, 94vw); }
+body.w-m { max-width:min(1400px, 94vw); }
+body.w-l { max-width:min(1900px, 92vw); }
+strong, summary, .role, th, button { font-weight:700; }
+h1 { color:var(--mauve); border-bottom:1px solid var(--line); padding-bottom:12px;
+  font-size:1.5em; }
+h2,h3,h4,h5,h6 { color:var(--mauve); }
+.role { font-weight:bold; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;
+  display:flex; align-items:center; margin:0; }
+.user .role { color:var(--blue); } .assistant .role { color:var(--peach); }
+.timestamp { color:var(--muted); font-size:0.85em; margin-left:12px; font-weight:normal;
+  text-transform:none; letter-spacing:normal; }
+.elapsed { color:var(--green); font-size:0.85em; margin-left:12px; font-weight:normal;
+  text-transform:none; letter-spacing:normal; }
+details { margin:8px 0; background:var(--deep); border-radius:8px; padding:8px 12px;
+  border:1px solid var(--line); }
+details > summary { cursor:pointer; font-weight:bold; color:var(--sky);
+  display:flex; align-items:center; gap:8px; list-style-position:inside; }
+pre { background:var(--deep); padding:14px 16px; border-radius:8px; overflow-x:auto;
+  border:1px solid var(--line); }
+code { font-family:var(--mono); font-size:0.9em; }
+p code, li code, td code { background:rgba(175,216,155,0.12); color:var(--green);
+  padding:2px 6px; border-radius:4px; }
+a { color:var(--sky); } img { max-width:100%; border-radius:8px; margin:8px 0; }
+strong { color:var(--yellow); }
+table { border-collapse:collapse; margin:12px 0; width:100%; }
+th,td { border:1px solid var(--line); padding:6px 10px; text-align:left; }
+th { background:var(--surface); color:var(--blue); }
+blockquote { border-left:3px solid var(--muted); margin:8px 0; padding:4px 12px;
+  color:var(--muted); }
+ul,ol { padding-left:24px; } li { margin:4px 0; }
+.toolbar { display:flex; gap:8px; margin:0 0 20px; flex-wrap:wrap; align-items:center;
+  position:sticky; top:0; z-index:5; background:var(--bg); padding:10px 0;
+  border-bottom:1px solid var(--line); }
+.toolbar button, .copy-md { background:transparent; border:1px solid var(--line);
+  color:var(--muted);
+  padding:5px 12px; border-radius:7px; cursor:pointer; font-size:12px; font-weight:600;
+  font-family:var(--mono); transition:color .15s, border-color .15s; }
+.toolbar button:hover, .copy-md:hover { color:var(--text); border-color:var(--muted); }
+.toolbar button.active { border-color:var(--sky); color:var(--sky); }
+.wbtns, .fbtns { display:flex; gap:6px; } .wbtns { margin-left:auto; }
+.fbtns { border-left:1px solid var(--line); padding-left:12px; margin-left:6px; }
+.turnpos { margin:0 auto; font-size:12px; color:var(--muted); background:var(--surface);
+  border:1px solid var(--line); border-radius:999px; padding:4px 14px; white-space:nowrap; }
+.turnpos b { color:var(--sky); font-weight:700; }
+/* The class lives on a wrapper, never on the details element itself: every
+   disclosure tag the page emits stays bare so opening and closing literals
+   balance (test_user_details_line_is_escaped_and_page_balanced). Note this
+   comment must not spell that tag out either, for the same reason. */
+.turn { margin:24px 0; border-radius:10px; border:1px solid var(--line); padding:0;
+  overflow:hidden; background:transparent; }
+.turn.user { background:rgba(147,172,239,0.06); border-left:3px solid var(--blue); }
+.turn.assistant { background:rgba(229,169,130,0.05); border-left:3px solid var(--peach); }
+/* A turn collapses by CLASS, not by a disclosure element: the body is visible
+   in plain HTML, so a reader with scripting off still sees the whole
+   conversation, and the toolbar drives the same class. */
+.turn-head { cursor:pointer; padding:12px 20px; display:flex; align-items:center;
+  gap:10px; user-select:none; }
+.turn-head::before { content:"\\25B6"; font-size:10px; color:var(--muted);
+  transition:transform .15s; line-height:1; align-self:center; transform:rotate(90deg); }
+.turn.collapsed .turn-head::before { transform:none; }
+.turn.collapsed .turn-body { display:none; }
+.turn-body { padding:0 20px 16px; }
+.copy-md { margin-left:auto; flex-shrink:0; font-size:15px; line-height:1; padding:5px 11px; }
+.copy-md.sub { padding:2px 9px; font-size:14px; margin-left:auto; }
+.meta { position:relative; line-height:1.9; background:var(--surface); border:1px solid var(--line);
+  border-radius:10px; padding:14px 20px 10px; margin-bottom:12px; color:var(--muted);
+  font-size:0.9em; }
+.meta > .copy-md { position:absolute; top:12px; right:14px; margin:0; }
+.meta .m-key { color:var(--sky); }
+.meta .m-warn { color:var(--yellow); }
+.meta .m-note { color:var(--muted); font-size:0.88em; }
+.meta .m-note::before { content:"\\2022"; color:var(--yellow); margin-right:7px; }
+.more > details { background:transparent; border:none; border-top:1px solid var(--line);
+  border-radius:0; padding:8px 0 0; margin:10px 0 0; }
+.more > details > summary { color:var(--sky); font-size:0.9em; font-weight:700;
+  display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+.more > details > summary:hover { text-decoration:underline; }
+.more > details > summary::before { content:"\\25B8"; font-size:11px; transition:transform .15s;
+  line-height:1; }
+.more > details[open] > summary::before { transform:rotate(90deg); }
+.more-grid { display:grid; grid-template-columns:max-content 1fr; gap:2px 18px;
+  font-size:0.88em; color:var(--muted); padding:8px 0 0 4px; }
+.more-grid .k { color:var(--sky); }
+.more-grid .v { color:var(--text); font-weight:300; }
+.phase { background:var(--deep); border:1px solid var(--line);
+  border-left:3px solid var(--sky);
+  border-radius:10px; margin:14px 0; padding:0; overflow:hidden; }
+.phase > details { margin:0; background:transparent; border:none; border-radius:0; padding:0; }
+.phase > details > summary { cursor:pointer; padding:10px 16px; color:var(--sky);
+  font-weight:700; display:flex; align-items:center; gap:10px; list-style-position:inside; }
+.phase > details > summary .badges { color:var(--muted); font-weight:300; font-size:0.85em;
+  margin-left:4px; }
+.phase-body { padding:4px 16px 12px; }
+.phase-line { color:var(--muted); font-size:0.92em; padding:8px 14px; margin:12px 0;
+  background:var(--deep); border:1px solid var(--line); border-left:3px solid var(--sky);
+  border-radius:8px; }
+.row { display:flex; gap:10px; margin:10px 0; align-items:flex-start; }
+.row .ic { flex-shrink:0; width:1.6em; text-align:center; opacity:0.85; }
+.row .rw { flex:1; min-width:0; }
+.row .rlabel { color:var(--text); display:flex; align-items:center; gap:8px; }
+.row.err .rlabel { color:var(--yellow); }
+.row .rbody { color:var(--muted); margin-top:4px; }
+.reply { border-left:3px solid var(--mauve); background:rgba(194,162,241,0.05);
+  border-radius:0 10px 10px 0; padding:6px 18px; margin:16px 0; }
+.file-ref { background:rgba(194,162,241,0.08); border:1px solid var(--line);
+  border-left:3px solid var(--mauve); border-radius:6px; padding:8px 12px; margin:8px 0;
+  font-size:0.9em; }
+.idx { margin:24px 0; padding:16px 20px; border-radius:10px; border:1px solid var(--line);
+  border-left:3px solid var(--mauve); background:var(--surface); position:relative; }
+#totop { position:fixed; right:22px; bottom:22px; width:42px; height:42px; border-radius:10px;
+  background:var(--surface); border:1px solid var(--line); color:var(--muted); font-size:18px;
+  cursor:pointer; opacity:0; pointer-events:none; transition:opacity .2s; z-index:9; }
+#totop.show { opacity:0.3; pointer-events:auto; }
+#totop:hover { opacity:1; color:var(--text); }
+[data-copy-src] { cursor:copy; }
+/* highlight.js token colours, inlined (tokyo-night-dark roles mapped onto the
+   palette above) so the page needs no second external stylesheet. */
+.hljs-comment, .hljs-quote { color:var(--muted); font-style:italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type { color:var(--mauve); }
+.hljs-string, .hljs-attr, .hljs-addition { color:var(--green); }
+.hljs-number, .hljs-symbol, .hljs-meta { color:var(--peach); }
+.hljs-title, .hljs-name, .hljs-section, .hljs-built_in { color:var(--blue); }
+.hljs-variable, .hljs-template-variable, .hljs-attribute { color:var(--yellow); }
+.hljs-deletion { color:var(--peach); }
+.hljs-emphasis { font-style:italic; } .hljs-strong { font-weight:700; }
+"""
 
 
 class _AnchorAllocator:
@@ -612,7 +1204,7 @@ def _document_head(title: str) -> list[str]:
         f"<title>{_escape(title)}</title>",
         f"<style>\n{_CSS}</style>",
         "</head>",
-        "<body>",
+        '<body class="w-l f-s">',
     ]
 
 
@@ -672,41 +1264,228 @@ def _block_html(
     return _copy_block(anchors, ordinal, f"block block-{block.kind}", fragment, body)
 
 
+_ROW_ICONS = {
+    "thinking": "\N{THOUGHT BALLOON}",
+    "tool_use": "\N{WRENCH}",
+    "tool_result": "\N{CLIPBOARD}",
+    "task_notification": "\N{BELL}",
+    "stop_hook": "\N{OCTAGONAL SIGN}",
+    "continuation": "\N{LINK SYMBOL}",
+    "machinery": "\N{GEAR}",
+    "reminder": "\N{INFORMATION SOURCE}",
+}
+_COPY_BUTTON = '<button class="copy-md" title="Copy as Markdown">⧉</button>'
+_COPY_BUTTON_SUB = '<button class="copy-md sub" title="Copy as Markdown">⧉</button>'
+
+
+def _row_label(block: Block) -> str:
+    """The one-line label for a phase row, from the block's own strings."""
+    if block.kind == "tool_use":
+        name = block.tool_name or "Tool"
+        info = block.tool_input or {}
+        detail = (
+            _as_str(info.get("description"))
+            or _as_str(info.get("file_path"))
+            or _as_str(info.get("query"))
+            or _as_str(info.get("url"))
+        )
+        if not detail:
+            return _escape(name)
+        return f'{_escape(name)} <span class="badges">{_escape(detail)}</span>'
+    if block.kind == "thinking":
+        return _escape(_thinking_label(block))
+    if block.kind == "tool_result":
+        return "Result"
+    return _escape(block.kind.replace("_", " "))
+
+
+def _row_icon(block: Block) -> str:
+    if block.kind == "tool_use":
+        if block.tool_name == "WebSearch":
+            return "\N{LEFT-POINTING MAGNIFYING GLASS}"
+        if block.tool_name == "WebFetch":
+            return "\N{GLOBE WITH MERIDIANS}"
+    return _ROW_ICONS.get(block.kind, "\N{WRENCH}")
+
+
+def _phase_html(
+    segment: Segment, policy: _Policy, repo: str | None, ordinal: int, anchors: _AnchorAllocator
+) -> str | None:
+    """One phase as a collapsible section of rows.
+
+    The section's data-copy-src is the phase's OWN transcript.md markdown, and
+    each row carries its block's fragment, so every copy button on the page
+    yields text that appears verbatim in the transcript file.
+    """
+    meta = _phase_meta(segment.blocks)
+    rows: list[str] = []
+    for block in segment.blocks:
+        lines = _strip_separators(_render_block(block, policy))
+        if not lines:
+            continue
+        fragment = "\n".join(lines)
+        body = _md_to_html(fragment, allow_block_html=block.kind == "continuation")
+        if block.kind == "tool_result":
+            result_repo = detect_github_repo(block.text) or repo
+            if result_repo is not None:
+                body = _linkify_commits(body, block.text, result_repo)
+        anchor = anchors.allocate(ordinal, fragment)
+        payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+        err = " err" if block.kind == "tool_result" and _looks_failed(block.text) else ""
+        rows.append(
+            f'<div class="row{err}" id="{anchor}" data-copy-src="{payload}">'
+            f'<span class="ic">{_row_icon(block)}</span><div class="rw">'
+            f'<div class="rlabel">{_row_label(block)}{_COPY_BUTTON_SUB}</div>'
+            f'<div class="rbody">{body}</div></div></div>'
+        )
+    head = _escape(meta.head())
+    if not rows:
+        return f'<div class="phase-line">{head}</div>' if policy.breadcrumbs else None
+    fragment = "\n".join(_strip_separators(_phase_md(segment, policy)))
+    anchor = anchors.allocate(ordinal, f"phase:{fragment}")
+    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    return (
+        f'<div class="phase" id="{anchor}" data-copy-src="{payload}"><details>'
+        f"<summary><span>{head}</span>{_COPY_BUTTON_SUB}</summary>"
+        f'<div class="phase-body">{"".join(rows)}</div></details></div>'
+    )
+
+
 def _turn_html(
-    turn: Turn, policy: _Policy, repo: str | None, anchors: _AnchorAllocator
+    turn: Turn,
+    policy: _Policy,
+    repo: str | None,
+    anchors: _AnchorAllocator,
+    total: int,
+    elapsed: str | None,
 ) -> list[str]:
     if turn.synthetic and not policy.include_machinery:
         return []
+    fragment = "\n".join(_strip_separators(_render_turn(turn, total, policy, elapsed)[1:]))
+    if not fragment:
+        return []
     section_id = anchors.allocate(turn.ordinal, f"turn:{turn.ordinal}:{turn.prompt}")
-    heading = "Pre-conversation entries" if turn.synthetic else f"Turn {turn.ordinal}"
-    out = [f'<section class="turn" id="{section_id}">', f"<h2>{_escape(heading)}</h2>"]
+    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    role = "assistant" if turn.synthetic else "user"
+    icon = (
+        "\N{ELECTRIC PLUG} Pre-conversation"
+        if turn.synthetic
+        else "\N{BUST IN SILHOUETTE} User"
+    )
+    stamp = f'<span class="timestamp">{_escape(turn.first_ts or "")}</span>'
+    clock = f'<span class="elapsed">⏱ {_escape(elapsed)}</span>' if elapsed else ""
+    out = [
+        f'<section class="turn {role}" id="{section_id}" data-copy-src="{payload}">',
+        f'<div class="turn-head"><span class="role">{icon}{stamp}{clock}</span>'
+        f"{_COPY_BUTTON}</div>",
+        '<div class="turn-body">',
+    ]
     if turn.prompt:
-        fragment = _harden(turn.prompt)
-        body = _md_to_html(fragment, allow_block_html=False)
-        out.append(_copy_block(anchors, turn.ordinal, "prompt", fragment, body))
+        prompt_md = _harden(turn.prompt)
+        body = _md_to_html(prompt_md, allow_block_html=False)
+        out.append(_copy_block(anchors, turn.ordinal, "prompt", prompt_md, body))
     for reminder in turn.reminders:
         lines = _strip_separators(_render_reminder(reminder, policy.reminder_mode))
         if lines:
-            fragment = "\n".join(lines)
-            body = _md_to_html(fragment, allow_block_html=True)
-            out.append(_copy_block(anchors, turn.ordinal, "reminder", fragment, body))
-    for block in turn.blocks:
-        block_html = _block_html(block, policy, repo, turn.ordinal, anchors)
+            reminder_md = "\n".join(lines)
+            body = _md_to_html(reminder_md, allow_block_html=True)
+            out.append(_copy_block(anchors, turn.ordinal, "reminder", reminder_md, body))
+    for segment in group_segments(turn):
+        if segment.is_phase:
+            phase = _phase_html(segment, policy, repo, turn.ordinal, anchors)
+            if phase is not None:
+                out.append(phase)
+            continue
+        block_html = _block_html(segment.blocks[0], policy, repo, turn.ordinal, anchors)
         if block_html is not None:
             out.append(block_html)
-    out.append("</section>")
+    out.extend(["</div>", "</section>"])
     return out
 
 
+def _header_html(
+    meta: ParsedSession,
+    conv: Conversation,
+    policy: _Policy,
+    anchors: _AnchorAllocator,
+    source_hash: str,
+) -> str:
+    """The header card: lean identity rows always visible, everything else in a
+    collapsed More-details grid, with a copy button carrying the header's
+    transcript.md markdown."""
+    fragment = "\n".join(_strip_separators(_header(meta, policy, conv, source_hash)))
+    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    anchors.allocate(0, f"header:{fragment}")
+    lean: list[str] = []
+    for row in _lean_rows(meta, conv, policy, source_hash):
+        label, _, value = row[2:].partition(":** ")
+        key = _escape(label.replace("**", ""))
+        css = "m-warn" if "\N{WARNING SIGN}" in row else "m-key"
+        lean.append(f'<span class="{css}">{key}</span>: {_escape(value)}')
+    if policy.variant_note:
+        lean.append(
+            '<span class="m-note">compact variant, thinking and tool detail omitted'
+            " (see conversation.html)</span>"
+        )
+    grid: list[str] = []
+    for row in _detail_rows(meta, conv):
+        label, _, value = row[2:].partition(":** ")
+        grid.append(
+            f'<span class="k">{_escape(label.replace("**", ""))}</span>'
+            f'<span class="v">{_escape(value)}</span>'
+        )
+    return (
+        f'<div class="meta" data-copy-src="{payload}">{_COPY_BUTTON}'
+        + "<br>".join(lean)
+        + '<div class="more"><details><summary>More details</summary>'
+        f'<div class="more-grid">{"".join(grid)}</div></details></div></div>'
+    )
+
+
+def _files_index_html(conv: Conversation, anchors: _AnchorAllocator) -> str | None:
+    files = _file_targets(conv)
+    if not files:
+        return None
+    fragment = "\n".join(_strip_separators(_files_index_md(conv)[1:]))
+    payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    anchor = anchors.allocate(0, f"files:{fragment}")
+    items = "".join(
+        f"<li><code>{_escape(path)}</code> <span class='badges'>({verb})</span></li>"
+        for path, verb in files
+    )
+    return (
+        f'<div class="idx" id="{anchor}" data-copy-src="{payload}">'
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+        f"<strong>\N{BOOKMARK TABS} Files Index</strong>{_COPY_BUTTON}</div>"
+        f"<ol>{items}</ol></div>"
+    )
+
+
 def _render_page(
-    conv: Conversation, meta: ParsedSession, policy: _Policy, repo: str | None
+    conv: Conversation,
+    meta: ParsedSession,
+    policy: _Policy,
+    repo: str | None,
+    source_hash: str,
 ) -> str:
     anchors = _AnchorAllocator()
+    whole = _render(conv, meta, policy, source_hash)
+    whole_payload = base64.b64encode(whole.encode("utf-8")).decode("ascii")
     parts = _document_head(_title(meta))
+    parts.append(f'<div id="whole-transcript" hidden data-copy-src="{whole_payload}"></div>')
+    variant = ' <span class="badges">(compact)</span>' if policy.variant_note else ""
+    parts.append(f"<h1>{_escape(_title(meta))}{variant}</h1>")
+    parts.append(_header_html(meta, conv, policy, anchors, source_hash))
+    parts.append(_TOOLBAR)
     parts.append('<main class="transcript">')
-    parts.append(_md_to_html("\n".join(_header(meta, policy)), allow_block_html=True))
-    for turn in conv.turns:
-        parts.extend(_turn_html(turn, policy, repo, anchors))
+    labels = _elapsed_labels(conv)
+    for turn, elapsed in zip(conv.turns, labels, strict=True):
+        parts.extend(
+            _turn_html(turn, policy, repo, anchors, conv.prompt_count, elapsed)
+        )
+    index = _files_index_html(conv, anchors)
+    if index is not None:
+        parts.append(index)
     parts.extend(["</main>", _HLJS_SCRIPT, _COPY_SCRIPT, "</body>", "</html>"])
     return "\n".join(parts) + "\n"
 
@@ -725,8 +1504,9 @@ def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
     conv = build_conversation(data)
     meta = parse_session(data)
     repo = _session_repo(conv)
-    full = _render_page(conv, meta, _full_policy(options), repo)
-    compact = _render_page(conv, meta, _compact_policy(options), repo)
+    source_hash = sha256_hex(data)
+    full = _render_page(conv, meta, _full_policy(options), repo, source_hash)
+    compact = _render_page(conv, meta, _compact_policy(options), repo, source_hash)
     return full, compact
 
 
