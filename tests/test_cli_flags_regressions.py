@@ -110,3 +110,34 @@ def test_exposed_scrubbed_only_drops_exposed(tmp_path: Path) -> None:
     share.commit_comparison(comparison, out, keep_exposed=False)
     assert (out / "SCRUBBED").is_dir()
     assert not (out / "EXPOSED").exists()
+
+
+def test_the_internal_notify_verb_dispatches_but_is_absent_from_help(
+    ccw_env: dict[str, str],
+) -> None:
+    """DESIGN 7 internal-verb amendment (principal, 2026-07-24, v1 exit review).
+
+    `ccw notify --record <json>` is the detached notify-only helper the capture hook
+    spawns so webhook and voice sinks stay off its critical path (DESIGN 12). It is
+    machine-facing: it must DISPATCH (it is a real re-entry point, not an unknown verb)
+    while staying out of `-h`, which lists the user-facing surface. Before the amendment
+    DESIGN 7 said `-h` "lists every verb", which this verb made false.
+
+    No sink is configured here, so post_webhooks has nothing to POST and the helper is a
+    no-op; the assertion is about dispatch, not about delivery.
+    """
+    record = '{"status": "ok", "session": "s:deadbeefcafe"}'
+    dispatched = run_ccw(["notify", "--record", record], ccw_env)
+    assert dispatched.code == 0, dispatched.err
+    assert "unknown" not in dispatched.err.lower(), "the internal verb was not dispatched"
+
+    unknown = run_ccw(["frobnicate"], ccw_env)
+    assert unknown.code != 0, "an unknown verb must still be a usage error"
+
+    help_out = run_ccw(["-h"], ccw_env)
+    assert help_out.code == 0, help_out.err
+    lines = [ln for ln in help_out.out.splitlines() if ln.startswith("  ")]
+    listed = {ln.strip().split()[0] for ln in lines}
+    assert "notify" not in listed, "an internal verb leaked into the user-facing help"
+    for verb in ("build", "render", "share", "relocate", "status", "verify"):
+        assert verb in listed, f"{verb} missing from help"

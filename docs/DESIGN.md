@@ -220,7 +220,18 @@ emit plus the hardening rules from SPEC section 7.
 
 Errors print `Error: <msg>` to stderr, exit 1 (SPEC's CLI contract). No default-verb
 dispatch; bare `ccw` prints short status + usage; an unknown verb is a usage error;
-`-h`/`--help` lists every verb, `-v`/`--version`/`version` print the version.
+`-h`/`--help` lists every USER-FACING verb, `-v`/`--version`/`version` print the version.
+
+**Internal verbs (amended 2026-07-24, principal, at the v1 exit review).** The table above
+is the user-facing surface. A detached child process re-enters the CLI to do its work, so
+the dispatcher also accepts INTERNAL verbs that are deliberately absent from `-h` and from
+the table: they are machine-facing, take a serialized payload rather than operands, and
+are not a supported way to drive the tool by hand. Re-entering `cli:main` rather than
+adding a second module entry point is what keeps R9/F8 satisfied (one implementation; a
+wrapper carries no logic). v1 has exactly one: `ccw notify --record <json>`, the detached
+notify-only helper that keeps webhook and voice sinks off the capture hook's critical path
+(section 12). An internal verb must still be listed HERE when it is added, so "absent from
+`-h`" never means "absent from the contract".
 Packaging (decided 2026-07-17): distribution `cc-warehouse` on PyPI, import package
 `cc_warehouse`, console scripts `ccw` (primary) and `cc-warehouse` (alias to the same
 entry).
