@@ -473,6 +473,29 @@ show the new content classes (Decision 2 = B); and `--EXPOSED` is the one sancti
 unscrubbed-publish path, gated by a scrubbed-vs-exposed comparison plus a typed
 confirmation with a non-TTY abort (section 9).
 
+**v1 EXIT REVIEW HELD AND CLOSED, 2026-07-24 (principal).** Every slice in the section 16
+build order is DONE and carries its milestone tag (slice-01..13 including 12a and 12b,
+14 tags); gates ruff clean, pyright strict 0, whole suite green; zero stubs. The review
+found two contract-vs-code gaps that no DONE annotation, milestone tag or green test could
+have surfaced, because the oracle suite was written from the tickets, the tickets from the
+slice list, and the slice list enumerated neither surface. Both were ruled and closed in
+the review:
+(1) `ccw project` was implemented 1-of-5 against the section 7 table. Ruled: build all
+four missing subcommands NOW rather than deferring `move`/`merge` to v1.1. This was not
+cosmetic - section 8 keys per-project config on `[project.<registry-id>]` and names
+`ccw project show` as the way to obtain that id, so the per-project override feature
+shipped in slice 13 had no documented way to be used. Closed by commit b32b235.
+(2) The dispatcher accepted an undocumented `ccw notify --record <json>`, making section
+7's "lists every verb" false. Ruled: sanction INTERNAL verbs in section 7, keep them out
+of `-h`, and require each to be listed in section 7 when added. Closed by commit 61a7d62.
+Standing lesson recorded so it is not relearned: SLICE COMPLETENESS IS NOT CONTRACT
+COMPLETENESS. A green suite proves the code matches the tests; only reading the contract
+against the code proves the tests cover the contract.
+STILL OPEN after this review, and deliberately NOT closed by it: item 8 (`--hljs` inline
+vs CDN) and the `--theme` product theme-neutrality question, both of which need their own
+principal ruling; items 6 (PyPI name re-check) and 7 (registry backup/export story), both
+pre-release rather than pre-v1; and the v1.1 flag groups named in section 7.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

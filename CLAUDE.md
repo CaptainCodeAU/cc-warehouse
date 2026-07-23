@@ -177,11 +177,23 @@ declared in the XDG tier was ignored and the content it named was PUBLISHED. con
 now the only module in src/ that parses TOML. Milestone tags slice-01..13 incl. 12a/12b,
 14 in all; ticket 12 stays SUPERSEDED and untagged by design. Gates: ruff clean, pyright
 strict 0, suite 378 passed / 0 failed; zero stubs; zero forward-looking "lands in slice N"
-promises left in src/. **v1 IS CODE-COMPLETE.** OPEN / next: the DESIGN section 16 v1 EXIT
-REVIEW with the principal; then v1.1 flag groups (per-file matrix, HTML chrome defaults,
-truncation, --since/--until) and the --hljs (DESIGN 15 item 8) + --theme rulings; the
-architecture board is stale (18 commits / 2,565 lines of src/ since its 56262f6 snapshot)
-and this phase note is a candidate for compaction, neither blocking.
+promises left in src/. **v1 EXIT REVIEW HELD AND CLOSED 2026-07-24** (DESIGN section 15
+records the decisions, HARNESS section 8 the process). It found two contract-vs-code gaps
+no DONE annotation, tag or green test could surface: `ccw project` was 1-of-5 against the
+DESIGN 7 table, which silently broke the per-project config feature shipped the day before
+(DESIGN 8 names `ccw project show` as the way to get the registry id it is keyed by), and
+the dispatcher accepted an undocumented `notify` verb that made section 7's "lists every
+verb" false. Principal ruled: build all four subcommands now (b32b235), and sanction
+INTERNAL verbs in section 7 while keeping them out of `-h` (61a7d62). Suite 400 passed / 0
+failed. Standing lesson: SLICE COMPLETENESS IS NOT CONTRACT COMPLETENESS; a green suite
+proves the code matches the tests, only reading the contract against the code proves the
+tests cover the contract. **v1 IS CLOSED.** OPEN / next: the --hljs (DESIGN 15 item 8) and
+--theme rulings, both needing the principal; then the v1.1 flag groups (per-file matrix,
+HTML chrome defaults, truncation, --since/--until); then v1.1 proper (FTS5 + `ccw search` +
+`ccw import`) and v1.2 (`ccw mcp`). Pre-release, not pre-v1: DESIGN 15 items 6 (PyPI name
+re-check) and 7 (registry export). Non-blocking: the architecture board is stale (~20
+commits / 2,700+ lines of src/ since its 56262f6 snapshot) and this phase note is a
+candidate for compaction.
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.

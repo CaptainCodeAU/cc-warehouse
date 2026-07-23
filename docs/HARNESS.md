@@ -614,6 +614,25 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   others rather than fixing the instance. Grepping for the stale-promise phrasing that hid
   the relocate one found two more in cli.py and the live leak in share.py; a grep for
   `tomllib` now returns config.py alone.
+- 2026-07-24: v1 EXIT REVIEW held with the principal and CLOSED (DESIGN section 15 records
+  the decisions; this entry records the process). The review is the reason to have one: it
+  found two contract-vs-code gaps that the whole apparatus of this harness had been unable
+  to see. `ccw project` was 1-of-5 against DESIGN section 7, silently breaking the
+  per-project config feature shipped the previous day, and the dispatcher accepted an
+  undocumented `notify` verb that made a written section-7 rule false. Both were ruled and
+  closed inside the review (b32b235, 61a7d62); the suite went 378 -> 400.
+  THE LESSON, which outranks the other four from this pair of slices: SLICE COMPLETENESS
+  IS NOT CONTRACT COMPLETENESS. Every DONE annotation was honest, every milestone tag was
+  earned, every gate was green, and the contract surface was still incomplete, because the
+  oracle suite was written from the tickets, the tickets from the slice list, and the slice
+  list never enumerated the `project` subcommands or the internal verb. A green suite
+  proves the code matches the TESTS. Only reading the CONTRACT against the CODE proves the
+  tests cover the contract, and nothing in sections 1-7 of this document does that.
+  PROCESS CONSEQUENCE for the next version cut: an exit review must include an explicit
+  contract-surface reconciliation (verb table vs dispatcher vs help, config key map vs
+  Config fields, section 14 rules vs their enforcing fences), performed by reading the
+  contract and computing the code, never by re-reading the tickets. Both findings came from
+  that pass; neither came from the ticket record.
 
 ---
 
