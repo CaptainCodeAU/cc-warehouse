@@ -43,11 +43,17 @@ class _Head:
 
 
 def render_options(config: Config) -> render.RenderOptions:
-    """The RenderOptions every emitter uses, from the personal render config keys."""
+    """The RenderOptions every emitter uses, from the personal render config keys
+    (the Group-A content toggles land here from config + flags, DESIGN section 8)."""
     return render.RenderOptions(
         reminders_full=config.render_reminders_full,
         reminders_compact=config.render_reminders_compact,
         breadcrumbs=config.render_breadcrumbs,
+        subagents=config.render_subagents,
+        attachments=config.render_attachments,
+        commands=config.render_commands,
+        extras=config.render_extras,
+        toolresult_diff=config.render_tool_output,
     )
 
 

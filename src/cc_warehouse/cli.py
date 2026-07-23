@@ -33,11 +33,132 @@ from cc_warehouse import (
 from cc_warehouse.config import Config, load_config
 from cc_warehouse.render import RenderOptions
 
+# The v1 verb table (DESIGN section 7). The order is the help listing order;
+# every name here must appear in `ccw -h` (test_help_lists_every_v1_verb).
+_VERBS: tuple[tuple[str, str], ...] = (
+    ("hook", "capture a session from a SessionEnd payload on stdin"),
+    ("sweep", "import transcripts the hook missed (--source DIR)"),
+    ("render", "(re)build the 4 files for --session s:<key>, or an ad-hoc <path>"),
+    ("build", "rebuild projections from the catalog (--rebuild, content flags)"),
+    ("migrate", "one-shot import of a legacy archive"),
+    ("relocate", "move / rename a project across the external world"),
+    ("project", "list / show / rename / move / merge projects"),
+    ("share", "build a sanitized static site for chosen sessions"),
+    ("status", "recent captures, counts, store size, last errors"),
+    ("verify", "re-hash objects and cross-check the catalog"),
+    ("version", "print the ccw version"),
+)
 
-def _stub() -> int:
-    """Placeholder for a verb whose slice has not landed yet."""
-    print("Error: not implemented", file=sys.stderr)
-    return 1
+_HELP_FLAGS = frozenset({"-h", "--help"})
+_VERSION_FLAGS = frozenset({"-v", "--version"})
+
+
+def _usage() -> str:
+    """The `ccw` help text: a usage line plus every v1 verb. Printed on `-h`, on
+    bare `ccw`, and (to stderr) on an unknown verb."""
+    lines = ["usage: ccw <verb> [options]", "", "verbs:"]
+    lines.extend(f"  {name:<9} {blurb}" for name, blurb in _VERBS)
+    lines.append("")
+    lines.append("run 'ccw <verb> -h' for a verb's options")
+    return "\n".join(lines)
+
+
+def _print_version() -> int:
+    import cc_warehouse
+
+    print(cc_warehouse.__version__)
+    return 0
+
+
+def _bare() -> int:
+    """Bare `ccw`: a short status line (best-effort, only if a warehouse already
+    exists so bare never creates one) plus the usage help. Exit 0 (DESIGN 7)."""
+    try:
+        config = load_config()
+        if (config.root / "catalog.sqlite").exists():
+            print(status.status_text(config))
+            print()
+    except Exception:  # a status readout must never make bare ccw fail
+        pass
+    print(_usage())
+    return 0
+
+
+# Group-A content toggles: (flag stem, load_config key, help blurb). All default
+# ON; `--stem` forces on, `--no-stem` forces off (DESIGN section 8 flag tier).
+_CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("subagents", "subagents", "sub-agent (sidechain) exchanges"),
+    ("attachments", "attachments", "file / plan attachments"),
+    ("commands", "commands", "slash commands the user ran"),
+    ("extras", "extras", "bridge / queue / last-prompt / agent-name events"),
+    ("tool-output", "tool_output", "structured stdout / stderr on tool results"),
+    ("breadcrumbs", "breadcrumbs", "per-phase caption strips (compact variant)"),
+)
+
+
+def _content_flags(args: Sequence[str]) -> dict[str, str]:
+    """Group-A content toggles parsed into a load_config flags mapping. `--x` ->
+    on, `--no-x` -> off; `--reminders VALUE` sets the full-variant reminder mode."""
+    flags: dict[str, str] = {}
+    for arg in args:
+        for stem, key, _blurb in _CONTENT_BOOL_FLAGS:
+            if arg == f"--{stem}":
+                flags[key] = "1"
+            elif arg == f"--no-{stem}":
+                flags[key] = "0"
+    for i, arg in enumerate(args):
+        if arg == "--reminders" and i + 1 < len(args):
+            flags["reminders"] = args[i + 1]
+        elif arg.startswith("--reminders="):
+            flags["reminders"] = arg.split("=", 1)[1]
+    return flags
+
+
+def _config_source(args: Sequence[str]) -> tuple[bool, Path | None]:
+    """The `--no-config` / `--config PATH` global switches (Group H)."""
+    no_config = "--no-config" in args
+    config_path: Path | None = None
+    for i, arg in enumerate(args):
+        if arg == "--config" and i + 1 < len(args):
+            config_path = Path(args[i + 1])
+        elif arg.startswith("--config="):
+            config_path = Path(arg.split("=", 1)[1])
+    return no_config, config_path
+
+
+def _load(args: Sequence[str], *, project_id: int | None = None) -> Config:
+    """load_config honoring the content toggles and `--no-config`/`--config`
+    parsed from a verb's args."""
+    no_config, config_path = _config_source(args)
+    return load_config(
+        flags=_content_flags(args),
+        no_config=no_config,
+        config_path=config_path,
+        project_id=project_id,
+    )
+
+
+def _wants_help(args: Sequence[str]) -> bool:
+    return any(a in _HELP_FLAGS for a in args)
+
+
+def _verb_help(verb: str, specific: tuple[tuple[str, str], ...], *, content: bool) -> str:
+    """Per-verb help: verb-specific options, then (for build/render) the shared
+    content toggles and the config-source switches."""
+    lines = [f"usage: ccw {verb} [options]", ""]
+    for name, blurb in specific:
+        lines.append(f"  {name:<28} {blurb}")
+    if content:
+        lines.append("")
+        lines.append("content (default on; --no-X drops it):")
+        for stem, _key, blurb in _CONTENT_BOOL_FLAGS:
+            lines.append(f"  --[no-]{stem:<21} {blurb}")
+        lines.append(f"  {'--reminders {collapse|strip|show}':<28} system-reminder handling")
+    lines.append("")
+    lines.append("config:")
+    lines.append(f"  {'--config PATH':<28} read one config file instead of the usual two")
+    lines.append(f"  {'--no-config':<28} ignore config files (defaults + env + flags only)")
+    return "\n".join(lines)
 
 
 def _read_payload() -> dict[str, object]:
@@ -235,9 +356,19 @@ def _run_build(args: Sequence[str]) -> int:
     without projecting anything (R14). Otherwise prints a one-line report and names any
     failed item (R10); exits non-zero when the build was refused or an item failed."""
     rest = args[1:]
+    if _wants_help(rest):
+        print(_verb_help(
+            "build",
+            (
+                ("--rebuild", "regenerate every file, not just changed ones"),
+                ("--include-hidden", "also project warmup / no-summary sessions"),
+            ),
+            content=True,
+        ))
+        return 0
     rebuild = "--rebuild" in rest
     include_hidden = "--include-hidden" in rest
-    config = load_config()
+    config = _load(rest)
     report = build.build(config, rebuild=rebuild, include_hidden=include_hidden)
     if any(outcome.action == build.BUILD_LOCK_HELD for outcome in report.outcomes):
         print("build refused: lock held by a live holder", file=sys.stderr)
@@ -281,7 +412,7 @@ def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | No
     return session, out, source
 
 
-def _render_session(session_key: str) -> int:
+def _render_session(session_key: str, rest: Sequence[str]) -> int:
     """`ccw render --session s:<key>`: (re)project one stored session, the hook's
     detached child (DESIGN section 4). Projects only a CURRENT head through the shared
     build helper (build.head_for_short, R9/F8): a short with no catalog row is the
@@ -293,7 +424,7 @@ def _render_session(session_key: str) -> int:
     and exits non-zero, and a successful render honors the open-folder opt-in. A
     superseded/hidden no-op is not a failure, so it stays silent."""
     short = session_key[2:] if session_key.startswith("s:") else session_key
-    config = load_config()
+    config = _load(rest)
     conn = catalog.open_catalog(config.root)
     try:
         exists = (
@@ -328,11 +459,12 @@ def _render_session(session_key: str) -> int:
     return 0
 
 
-def _render_options() -> RenderOptions:
-    """Ad-hoc render honors the personal render config when a warehouse is configured,
-    and falls back to defaults otherwise; it never opens the catalog or the store."""
+def _render_options(rest: Sequence[str]) -> RenderOptions:
+    """Ad-hoc render honors the personal render config + content flags when a
+    warehouse is configured, and falls back to defaults otherwise; it never opens
+    the catalog or the store."""
     try:
-        return build.render_options(load_config())
+        return build.render_options(_load(rest))
     except Exception:
         return RenderOptions()
 
@@ -356,7 +488,7 @@ def _out_under_warehouse(out: str) -> bool:
     return False
 
 
-def _render_adhoc(source: str, out: str | None) -> int:
+def _render_adhoc(source: str, out: str | None, rest: Sequence[str]) -> int:
     """`ccw render <path> [--out DIR]`: render a transcript outside the store to a
     directory, without touching the catalog (DESIGN section 7). With no --out the target
     is a fresh temp dir (outside projections) whose path is printed. A user --out is
@@ -375,7 +507,7 @@ def _render_adhoc(source: str, out: str | None) -> int:
         )
         return 1
     directory = Path(out) if out is not None else Path(tempfile.mkdtemp(prefix="ccw-render-"))
-    build.write_projection(directory, data, _render_options(), force=False)
+    build.write_projection(directory, data, _render_options(rest), force=False)
     if out is None:
         print(str(directory))
     return 0
@@ -383,11 +515,23 @@ def _render_adhoc(source: str, out: str | None) -> int:
 
 def _run_render(args: Sequence[str]) -> int:
     """`ccw render`: dispatch the --session (catalog) and ad-hoc (path) forms."""
-    session, out, source = _render_flags(args[1:])
+    rest = args[1:]
+    if _wants_help(rest):
+        print(_verb_help(
+            "render",
+            (
+                ("--session s:<key>", "(re)project one stored session"),
+                ("<path>", "render a transcript outside the store"),
+                ("--out DIR", "ad-hoc destination (default: a temp dir, path printed)"),
+            ),
+            content=True,
+        ))
+        return 0
+    session, out, source = _render_flags(rest)
     if session is not None:
-        return _render_session(session)
+        return _render_session(session, rest)
     if source is not None:
-        return _render_adhoc(source, out)
+        return _render_adhoc(source, out, rest)
     print("Error: render requires --session s:<key> or a transcript path", file=sys.stderr)
     return 1
 
@@ -702,6 +846,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch one ccw invocation; returns the process exit code."""
     args = list(argv) if argv is not None else sys.argv[1:]
     verb = args[0] if args else None
+    if verb is None:
+        return _bare()
+    if verb in _VERSION_FLAGS or verb == "version":
+        return _print_version()
+    if verb in _HELP_FLAGS:
+        print(_usage())
+        return 0
     if verb == "hook":
         return _run_hook()
     if verb == "notify":
@@ -724,4 +875,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_share(args)
     if verb == "relocate":
         return _run_relocate(args)
-    return _stub()
+    # Unknown leading arg: a usage error, never a default-verb dispatch
+    # (SPEC 2 DROP; test_unknown_verb_is_a_usage_error_not_a_dispatch).
+    print(f"Error: unknown verb {verb!r}", file=sys.stderr)
+    print(_usage(), file=sys.stderr)
+    return 2
