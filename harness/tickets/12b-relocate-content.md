@@ -62,6 +62,24 @@ From the ticket-12 escalation, still open in code:
 - JSON rewriting re-serializes the whole document, destroying hand-maintained layout of
   a file whose plan line promised only "rewrite path refs". Decide and record whether
   layout preservation is required, or whether the plan must say what it will do.
+  RULED + CLOSED 2026-07-23 (principal), commit 7a3b4b5. Layout IS preserved: rewrite as
+  text, then decode the result and check no old reference survives; if one does, redo that
+  file structurally and NAME it on stderr as reformatted. Decided by enumerating 29 JSON
+  shapes and running both candidate implementations over every one, not from an example.
+  That matrix found a defect in the obvious fix AND a live defect in the shipped code:
+  an escaped path form (`\/x\/y`, `/x`) is legal JSON that decodes to the real path
+  and is invisible to raw-text matching, so the SCAN never selected such a file, the
+  rewrite never ran, and `_verify` (also raw text) confirmed success over a file still
+  pointing at the old location. Fixed in three places (scan / rewrite / verify) via a
+  shared `_references` predicate. The matrix is permanent:
+  tests/test_relocate_json_matrix.py (119 assertions, one real `ccw relocate --apply`),
+  confirmed red against pre-fix code. It also pins what must NOT change, which the old
+  code silently normalised: duplicate keys, number formats, big integers, unicode escapes,
+  raw non-ASCII, layout.
+  NOTE for the rest of this slice: the plan LINE still reads "rewrite path refs", which is
+  now accurate for the common case; a file needing the decode fallback is named at apply
+  time rather than at plan time, because the scan does not retain file contents. Revisit
+  when the scan is restructured (finding 3/4 below).
 - Files under a symlinked directory inside a root are never enumerated, and `.git` and
   the excluded trees are dropped with no mention, contradicting the "never silently
   drops a file" claim. Either report them or drop the claim.
