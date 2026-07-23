@@ -471,6 +471,23 @@ def test_home_unset_is_refused_rather_than_running_with_guards_inert(
     assert tree_snapshot(world.inventory) == before_inventory, "content was rewritten anyway"
     assert tree_snapshot(claude_projects(ccw_env)) == before_projects, "a container moved anyway"
 
+    # The public module API must not slip past the guard either: a caller enumerating a
+    # plan with HOME unset has to SEE why it is not honourable, rather than read a short
+    # edit list as "not much to do" (R8: home_error's docstring promises exactly this).
+    import os
+
+    from cc_warehouse import relocate as relocate_mod
+    from cc_warehouse.config import load_config
+
+    saved = os.environ.pop("HOME")
+    try:
+        blind_plan = relocate_mod.plan_relocate(load_config(), world.repo, world.new_repo)
+    finally:
+        os.environ["HOME"] = saved
+    assert any("HOME is not set" in edit.detail for edit in blind_plan.edits), (
+        "plan_relocate returned a plan that cannot be honoured without saying so"
+    )
+
 
 def test_to_parent_that_is_a_regular_file_is_refused_before_any_rewrite(
     ccw_env: dict[str, str], tmp_path: Path
@@ -523,6 +540,63 @@ def test_to_parent_that_is_a_dangling_symlink_is_refused_before_any_rewrite(
     )
     assert world.repo.is_dir(), "the source repo was moved"
     assert dangling.is_symlink() and not dangling.exists()
+
+
+def test_apply_refuses_when_the_world_drifted_after_planning(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-4 (R13): consent is collected against a PLAN, so apply must honour that plan.
+
+    `apply_relocate` took a RelocatePlan and then ignored `plan.edits` entirely,
+    recomputing its own set from the repo paths. Anything that started referencing the old
+    path between planning and applying was rewritten without ever having been shown or
+    consented to. R13 makes apply-class confirmation explicit; confirmation of a set the
+    operator never saw is not confirmation.
+
+    The frozen slice-12 decision keeps a re-check AT THE POINT OF ACTION, so the fix is
+    not "trust the stale plan": apply recomputes and REFUSES on any divergence, leaving
+    the operator to re-plan and re-consent (R5/F7).
+    """
+    from cc_warehouse import relocate as relocate_mod
+    from cc_warehouse.config import load_config
+
+    world = World(ccw_env, tmp_path)
+    config = load_config()
+    plan = relocate_mod.plan_relocate(config, world.repo, world.new_repo)
+    planned = {str(e.target) for e in plan.edits if e.kind == "memory_file"}
+    assert planned, "the fixture should plan at least one content rewrite"
+
+    latecomer = world.inventory / "latecomer.md"
+    latecomer.write_text(f"also at {world.repo}\n")
+    before_latecomer = latecomer.read_text()
+    before_inventory = tree_snapshot(world.inventory)
+
+    report = relocate_mod.apply_relocate(
+        config, plan, backup_dir=world.root / "backups" / "drift"
+    )
+    rewritten = {o.item for o in report.outcomes if o.action == "rewritten"}
+    assert not rewritten - planned, "apply rewrote a file the operator never consented to"
+    assert latecomer.read_text() == before_latecomer, "an unconsented file was rewritten"
+    assert tree_snapshot(world.inventory) == before_inventory, "a drifted world was applied to"
+    assert world.repo.is_dir() and not world.new_repo.exists(), "containers moved on a stale plan"
+    assert report.failures, "the divergence was not reported"
+
+
+def test_apply_names_the_edits_it_is_about_to_make(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-4 (R13): the apply path must SHOW what it will change, not just where.
+
+    The consent prompt named only `<repo> -> <new>`. The edit list was printed on the
+    dry-run path only, so the run that actually mutates the world was the one that never
+    said what it would touch.
+    """
+    world = World(ccw_env, tmp_path)
+    result = world.apply()
+    assert result.code == 0, result.err
+    shown = result.out + result.err
+    assert world.memory_md.name in shown, "the apply run never named the file it rewrote"
+    assert str(world.new_repo) in shown
 
 
 def test_registry_gains_both_the_cwd_and_encoded_claims(

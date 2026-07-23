@@ -410,11 +410,27 @@ def _project_for_cwd(root: Path, cwd: str) -> int | None:
         conn.close()
 
 
-def plan_relocate(
-    config: Config, repo_path: Path, new_path: Path, *, claim_ambiguous: bool = False
-) -> RelocatePlan:
-    """Enumerate every edit without touching anything (read-only; creates no catalog)."""
-    repo_path, new_path = _absolute(repo_path), _absolute(new_path)
+@dataclass(frozen=True)
+class _Computed:
+    """One pass over the world: the internals apply needs AND the edits a plan shows.
+
+    Both `plan_relocate` and the apply path derive from this single function, so the set
+    the operator consents to and the set apply executes are produced by one implementation
+    rather than two that can drift apart (R9/F8, ticket 12a finding 4).
+    """
+
+    renames: list[tuple[Path, Path]]
+    ambiguous: list[tuple[Path, str]]
+    patterns: list[tuple[re.Pattern[str], str]]
+    scan: _Scan
+    project_id: int | None
+    edits: tuple[RelocateEdit, ...]
+
+
+def _compute(
+    config: Config, repo_path: Path, new_path: Path, *, claim_ambiguous: bool
+) -> _Computed:
+    """Enumerate every edit and the internals behind it, without touching anything."""
     # The encoded renames are decided FIRST so the content patterns can carry one pair
     # per dir this run will actually rename (A2-4: otherwise the rename creates its own
     # dangling references, which the verify pass is blind to by construction).
@@ -423,7 +439,15 @@ def plan_relocate(
     )
     patterns = _form_patterns(str(repo_path), str(new_path), _rename_pairs(renames))
     scan = _scan_content(config, patterns)
+    project_id = _project_for_cwd(config.root, str(repo_path))
     edits: list[RelocateEdit] = []
+    # Surfaced as a plan entry, exactly like a malformed config below: a caller that
+    # enumerates a plan with HOME unset must SEE why the plan is not honourable, rather
+    # than read a short edit list as "not much to do" (R8 - the docstring on home_error
+    # promises the module API cannot slip past the guard, so it must not).
+    home_problem = home_error()
+    if home_problem:
+        edits.append(RelocateEdit("inventory_file", config.root, home_problem))
     if scan.config_error:
         edits.append(RelocateEdit("inventory_file", config.root, scan.config_error))
     for target in scan.targets:
@@ -434,9 +458,36 @@ def plan_relocate(
         edits.append(RelocateEdit("encoded_dir", old_dir, f"rename -> {new_dir}"))
     for path, reason in ambiguous:
         edits.append(RelocateEdit("encoded_dir", path, f"SKIPPED: {reason}"))
-    if _project_for_cwd(config.root, str(repo_path)) is not None:
+    if project_id is not None:
         edits.append(RelocateEdit("alias", new_path, f"claim {new_path} (cwd + encoded)"))
-    return RelocatePlan(repo_path, new_path, tuple(edits))
+    return _Computed(renames, ambiguous, patterns, scan, project_id, tuple(edits))
+
+
+def _drift_detail(
+    planned: tuple[RelocateEdit, ...], current: tuple[RelocateEdit, ...]
+) -> str:
+    """Name what changed between the plan the operator saw and the world apply found."""
+    added = sorted(f"{e.kind} {e.target}" for e in set(current) - set(planned))
+    gone = sorted(f"{e.kind} {e.target}" for e in set(planned) - set(current))
+    parts: list[str] = []
+    if added:
+        parts.append("new since the plan: " + ", ".join(added))
+    if gone:
+        parts.append("gone since the plan: " + ", ".join(gone))
+    return (
+        "the world changed after the plan was shown, so the consent given no longer"
+        " covers this run; nothing was changed. Re-run to re-plan and re-consent. "
+        + "; ".join(parts)
+    )
+
+
+def plan_relocate(
+    config: Config, repo_path: Path, new_path: Path, *, claim_ambiguous: bool = False
+) -> RelocatePlan:
+    """Enumerate every edit without touching anything (read-only; creates no catalog)."""
+    repo_path, new_path = _absolute(repo_path), _absolute(new_path)
+    computed = _compute(config, repo_path, new_path, claim_ambiguous=claim_ambiguous)
+    return RelocatePlan(repo_path, new_path, computed.edits)
 
 
 def _existing_parent(path: Path) -> Path:
@@ -627,12 +678,18 @@ def _apply_locked(
 ) -> BatchReport:
     root = config.root
     old_repo, new_repo = _absolute(plan.repo_path), _absolute(plan.new_path)
-    encoded, ambiguous = _encoded_moves(
-        root, old_repo, str(new_repo), claim_ambiguous=claim_ambiguous
-    )
-    patterns = _form_patterns(str(old_repo), str(new_repo), _rename_pairs(encoded))
-    scan = _scan_content(config, patterns)
-    project_id = _project_for_cwd(root, str(old_repo))
+    # RECOMPUTE at the point of action (the frozen slice-12 decision keeps this re-check),
+    # then require it to MATCH the plan the operator consented to. Consent is given for a
+    # specific set of edits (R13); silently applying a different set is not consent, and
+    # blindly replaying a stale plan would under-repair a world that has since changed.
+    # Divergence is therefore a refusal, not a merge (R5/F7), and the operator re-plans.
+    computed = _compute(config, old_repo, new_repo, claim_ambiguous=claim_ambiguous)
+    if computed.edits != plan.edits:
+        return BatchReport(
+            (ItemOutcome(str(new_repo), "error", _drift_detail(plan.edits, computed.edits)),)
+        )
+    encoded, ambiguous = computed.renames, computed.ambiguous
+    patterns, scan, project_id = computed.patterns, computed.scan, computed.project_id
 
     errors = _preflight(config, old_repo, new_repo, scan, encoded, project_id, backup_dir)
     if errors:

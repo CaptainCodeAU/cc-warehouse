@@ -675,6 +675,13 @@ def _run_verify() -> int:
     return 1 if findings else 0
 
 
+def _print_plan(plan: relocate.RelocatePlan, header: str) -> None:
+    """One rendering of a relocate plan, shared by the dry-run and the apply path (R9)."""
+    print(header)
+    for edit in plan.edits:
+        print(f"  {edit.kind}: {edit.target}: {edit.detail}")
+
+
 def _run_relocate(args: Sequence[str]) -> int:
     """`ccw relocate <repo> --to <new> [--apply] [--yes]` (DESIGN section 11).
 
@@ -727,11 +734,13 @@ def _run_relocate(args: Sequence[str]) -> int:
     repo_path, new_path = Path(repo_str), Path(new_str)
     plan = relocate.plan_relocate(config, repo_path, new_path, claim_ambiguous=claim_ambiguous)
     if not do_apply:
-        print(f"relocate (dry-run): {repo_path} -> {new_path}")
-        for edit in plan.edits:
-            print(f"  {edit.kind}: {edit.target}: {edit.detail}")
+        _print_plan(plan, f"relocate (dry-run): {repo_path} -> {new_path}")
         print(f"{len(plan.edits)} edits planned; re-run with --apply to execute")
         return 0
+    # SHOW the plan on the apply path too, before asking. Consent for a set the operator
+    # never saw is not consent (R13); the edit list used to appear on the dry-run path
+    # only, so the run that actually mutates the world was the silent one.
+    _print_plan(plan, f"relocate: {repo_path} -> {new_path}")
     if not _consented(assume_yes, f"Relocate {repo_path} to {new_path}? [y/N] "):
         print("relocate aborted: no consent (use --yes)", file=sys.stderr)
         return 2
