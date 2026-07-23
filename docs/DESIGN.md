@@ -302,7 +302,7 @@ NEVER writes to the source tree. Continue-past-failures with end report. Complet
 criteria: every source jsonl accounted for as stored / duplicate-of / failed-with-
 reason; `ccw verify` green afterward. Then, as a separate explicit step the user runs,
 `ccw migrate --retire <root>` renames the source root to
-`_RETIRED_<YYYY-MM>_<original-name>` (e.g. `_RETIRED_2026-08_my-claude-code-transcripts`;
+`_RETIRED_<YYYY-MM>_<original-name>` (e.g. `_RETIRED_2026-08_claude-code-transcripts`;
 underscore prefix matches the archive's `_`-dir convention, the date stamps when it
 stopped being live). This is the single sanctioned write to the old world, per the
 visibly-retired decision.
