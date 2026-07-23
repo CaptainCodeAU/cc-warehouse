@@ -514,7 +514,7 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   canonical, index.html rendered by the new .claude/commands/architecture.md; adapted from
   a sibling project's pattern the principal shared read-only, commit 17ef206). Process
   relevance: reviews feed the board, the board proposes deepening candidates, grilling and
-  tickets decide; the contract stays with the principal, and the board never edits docs/.
+  tickets decide; the contract stays with the principal, and the board never edits contract/.
   The folder is outside /refresh's sweep scope by single ownership (/refresh's file map
   updated to record that this run). Same-day /refresh sweep: gates ruff green, pyright
   strict clean, suite 13 failed / 195 passed all slice-13 (7x CCW_ROOT ValueError from the

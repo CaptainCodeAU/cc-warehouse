@@ -29,7 +29,7 @@ truncation, `--since`/`--until`), then FTS5 with `ccw search` and `ccw import`,
 then `ccw mcp` in v1.2. Before publishing: re-check the PyPI name and settle the
 registry export story (DESIGN section 15 items 6 and 7).
 
-The contract lives in `docs/` (BRAINSTORM, SPEC, DESIGN, FINDINGS, HARNESS); the
+The contract lives in `contract/` (BRAINSTORM, SPEC, DESIGN, FINDINGS, HARNESS); the
 oracle suite in `tests/` was written before the implementation.
 
 ## Verbs

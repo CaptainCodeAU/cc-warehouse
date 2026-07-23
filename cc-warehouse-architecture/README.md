@@ -7,7 +7,7 @@ in-repo, versioned, at a stable path.
 
 **Scope guard:** this is cc-warehouse's CODE architecture - modules, seams, depth, testability.
 The product/system contract (BRAINSTORM, SPEC, DESIGN, FINDINGS, HARNESS) is LOCKED and lives in
-`docs/`; this board never edits it and never relitigates its decisions. A candidate that needs a
+`contract/`; this board never edits it and never relitigates its decisions. A candidate that needs a
 contract change says so on its card and waits for the principal's ruling.
 
 | File | What it is |
@@ -26,7 +26,7 @@ contract change says so on its card and waits for the principal's ruling.
 - Candidate STATE only advances through the project's own discipline: grilling before any build,
   work landing through harness tickets, closures proven by tests and the HARNESS changelog.
 - Single ownership: `/architecture` owns this folder's currency. `/refresh`'s docs slice
-  enumerates CLAUDE.md, README, the docs/ status tier, and harness/tickets; this folder is
+  enumerates CLAUDE.md, README, the contract/ status tier, and harness/tickets; this folder is
   deliberately outside that scope, and staleness here is caught by the `/architecture` gate.
 
 ## Open the report

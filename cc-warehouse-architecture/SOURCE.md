@@ -3,7 +3,7 @@
 > **This file is the canonical record of cc-warehouse's code-architecture review board.**
 > `index.html` is the VIEW rendered from this file by `/architecture` - edit THIS, then
 > regenerate. Never hand-author findings into the HTML.
-> **Scope guard:** the contract docs (`docs/BRAINSTORM.md`, `SPEC.md`, `DESIGN.md`,
+> **Scope guard:** the contract docs (`contract/BRAINSTORM.md`, `SPEC.md`, `DESIGN.md`,
 > `FINDINGS.md`, `HARNESS.md`) are LOCKED. This board never edits them and never relitigates
 > their decisions; a candidate that needs a contract change says so and waits for the
 > principal's ruling (the card-8 pattern).

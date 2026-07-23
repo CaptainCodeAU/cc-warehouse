@@ -7,11 +7,11 @@ read it, never modify it).
 
 ## Read these before working (they are the contract)
 
-1. `docs/BRAINSTORM.md` - approved scope: version cuts, locked decisions, rejected items.
-2. `docs/SPEC.md` - the specimen's real behavior with keep/change/drop verdicts.
-3. `docs/FINDINGS.md` - failure classes (F1-F10) the design must make impossible.
-4. `docs/DESIGN.md` - the architecture; section 14 rules R1-R14 are enforceable in review.
-5. `docs/HARNESS.md` + `harness/prompts/` - HOW code gets built (roles, gates, loop).
+1. `contract/BRAINSTORM.md` - approved scope: version cuts, locked decisions, rejected items.
+2. `contract/SPEC.md` - the specimen's real behavior with keep/change/drop verdicts.
+3. `contract/FINDINGS.md` - failure classes (F1-F10) the design must make impossible.
+4. `contract/DESIGN.md` - the architecture; section 14 rules R1-R14 are enforceable in review.
+5. `contract/HARNESS.md` + `harness/prompts/` - HOW code gets built (roles, gates, loop).
 
 Decisions locked in these documents are not relitigated in-session; propose contract
 edits to the principal instead.
@@ -40,7 +40,8 @@ edits to the principal instead.
 
 ## Layout (grows during the build)
 
-- `docs/` the five contract documents + `docs/diagrams/` | `harness/prompts/` role
+- `contract/` the five LOCKED contract documents + `contract/diagrams/` | `docs/`
+  user-facing guides (install, quickstart, configuration, sharing) | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
   (gitignored once git init lands) | `cc-warehouse-architecture/` the code-architecture
   review board (SOURCE.md is canonical, index.html is rendered from it by
@@ -69,11 +70,11 @@ left open, `--hljs` and `--theme`, were also taken and closed that day.
 that own those facts more completely (one slice-03 finding was in HARNESS and the ticket
 but had never made it here at all). Nothing was lost; the detail lives at:
 
-- **per-slice records, retros, process lessons** -> `docs/HARNESS.md` section 8 (append-only)
+- **per-slice records, retros, process lessons** -> `contract/HARNESS.md` section 8 (append-only)
 - **what each slice did, its findings and their outcomes** -> `harness/tickets/<nn>-*.md`
   (each carries a dated DONE annotation; findings keep their original wording with the
   verified outcome appended)
-- **decisions and the reasoning behind them** -> `docs/DESIGN.md` section 15 (append-only)
+- **decisions and the reasoning behind them** -> `contract/DESIGN.md` section 15 (append-only)
 - **architecture candidates and their states** -> `cc-warehouse-architecture/SOURCE.md`
 
 ## OPEN / next (no silent omissions)

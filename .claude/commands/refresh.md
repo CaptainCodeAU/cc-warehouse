@@ -13,7 +13,7 @@ ground truth** so the next session opens on facts, not a stale snapshot. Follow 
 improvise a lighter version.
 
 > **This repo is a CONTRACT + an oracle suite + a harness, in that order of authority.** The five
-> docs in `docs/` are locked contract; the oracle tests are the contract's executable form; the
+> docs in `contract/` are locked contract; the oracle tests are the contract's executable form; the
 > tickets and status prose are the only freely refreshable tier. That ordering decides what this
 > sweep may touch (Guardrail 1).
 
@@ -31,7 +31,7 @@ never "refreshed" and never edited-to-pass.
 - **`all`** (blank) - full sweep: ground truth, harvest supersessions, staleness + coherence audit,
   surgical apply, re-verify, commit, report.
 - **`audit`** / **`dry-run`** - read-only: Phases 1-4, present the drift ledger, then STOP. No edits.
-- **`docs`** - CLAUDE.md + README + the docs/ STATUS surface (status headers, changelogs, section 15
+- **`docs`** - CLAUDE.md + README + the contract/ STATUS surface (status headers, changelogs, section 15
   decided list) - status tier only, never contract substance.
 - **`tickets`** - harness/tickets/ wiring: oracle-test references, ADJACENT lists, frozen-decision
   blurbs vs the tests, slice progress annotations.
@@ -60,15 +60,15 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - Phase note vs reality (the currency of CLAUDE.md's "Current phase" is judged in Phase 3 against the counts above): !`R=$(git rev-parse --show-toplevel); sed -n '/^## Current phase/,/^## /p' "$R/CLAUDE.md" | head -12`
 - README currency (added 2026-07-19; REWRITTEN 2026-07-24 because the old max-number probe was a LOWER BOUND that passed while the prose was stale: it took the largest slice number appearing ANYWHERE in README, so "Slices 01-11 landed" plus an unrelated mention of 13 scored 13 and read as current, and it could never see "Still open:" prose naming a slice that is now DONE. It now checks the CLAIMS, not the maximum): !`R=$(git rev-parse --show-toplevel); OPEN=""; for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" || continue; n=$(basename "$t" | grep -oE '^[0-9]+[a-z]?'); grep -qiE "(still open|not done|remaining|deferred)[^.]{0,120}(ticket )?$n\b" "$R/README.md" "$R/CLAUDE.md" 2>/dev/null && OPEN="$OPEN $n"; done; LM=$(for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && basename "$t" | grep -oE '^[0-9]{1,2}'; done | sort -n | tail -1); RANGE=$(grep -oiE 'slice-0*[0-9]{1,2}\.\.0*[0-9]{1,2}[a-z]?' "$R/README.md" | tail -1); RT=$(echo "$RANGE" | grep -oE '[0-9]{1,2}' | tail -1); if [ -n "$OPEN" ]; then echo "STATUS PROSE STALE: README/CLAUDE.md still call these OPEN but their tickets are DONE:$OPEN"; elif [ -n "$RT" ] && [ "$((10#$RT))" -lt "$((10#$LM))" ]; then echo "README STALE: tag range '$RANGE' stops at $RT, live max DONE slice is $LM"; else echo "(no DONE slice is described as open; README tag range '${RANGE:-none}' vs live max DONE $LM)"; fi`
 - Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] && continue; grep -rh "forward marker" "$M" 2>/dev/null | grep -qF "[[$l]]" && continue; echo "DANGLING [[${l}]]"; done; fi`
-- Config-vs-contract render map (CODE outran CONTRACT is a FLAG-only finding, not an auto-edit; added 2026-07-23 after the [render] map drifted, code had 8 keys while DESIGN 8 + ticket 13 named 3): !`R=$(git rev-parse --show-toplevel); S=$(sed -n '/^## 8\./,/^## 9\./p' "$R/docs/DESIGN.md"); MISS=""; for k in $(grep -oE 'render_[a-z_]+' "$R/src/cc_warehouse/config.py" | sed 's/^render_//' | sort -u); do echo "$S" | grep -q "$k" || MISS="$MISS $k"; done; [ -n "$MISS" ] && echo "CONTRACT DRIFT (flag to principal, do NOT auto-edit docs): config render keys absent from DESIGN 8 [render] map:$MISS" || echo "(every config render key is named in the DESIGN 8 [render] map)"`
+- Config-vs-contract render map (CODE outran CONTRACT is a FLAG-only finding, not an auto-edit; added 2026-07-23 after the [render] map drifted, code had 8 keys while DESIGN 8 + ticket 13 named 3): !`R=$(git rev-parse --show-toplevel); S=$(sed -n '/^## 8\./,/^## 9\./p' "$R/contract/DESIGN.md"); MISS=""; for k in $(grep -oE 'render_[a-z_]+' "$R/src/cc_warehouse/config.py" | sed 's/^render_//' | sort -u); do echo "$S" | grep -q "$k" || MISS="$MISS $k"; done; [ -n "$MISS" ] && echo "CONTRACT DRIFT (flag to principal, do NOT auto-edit the contract): config render keys absent from DESIGN 8 [render] map:$MISS" || echo "(every config render key is named in the DESIGN 8 [render] map)"`
 
 ---
 
 ## Guardrails (non-negotiable - read first)
 
 1. **The authority ladder decides what /refresh may edit.**
-   - **CONTRACT (locked - NEVER edited by this sweep):** the decided substance of `docs/BRAINSTORM.md`,
-     `docs/SPEC.md`, `docs/DESIGN.md`, `docs/FINDINGS.md`, `docs/HARNESS.md`, and the role prompts'
+   - **CONTRACT (locked - NEVER edited by this sweep):** the decided substance of `contract/BRAINSTORM.md`,
+     `contract/SPEC.md`, `contract/DESIGN.md`, `contract/FINDINGS.md`, `contract/HARNESS.md`, and the role prompts'
      rule bodies. A contradiction or defect found here is FLAGGED in the report as a proposed
      contract edit for the principal (HARNESS section 4); /refresh waits, it does not decide.
      The sanctioned doc writes are STATUS-tier only: appending a dated HARNESS changelog line,
@@ -129,7 +129,7 @@ slice-progress map; the ticket/test/function counts; the git state.
 ## Phase 2 - harvest what was RECENTLY superseded (self-updating; no hardcoded pairs)
 
 Read the newest material and extract OLD -> NEW relationships so the sweep tracks its own era:
-- The newest `docs/HARNESS.md` changelog lines (section 8), the newest dated lines in each
+- The newest `contract/HARNESS.md` changelog lines (section 8), the newest dated lines in each
   `harness/prompts/*.md` changelog footer, the newest DESIGN section 15 "Decided" entries, and the
   last few `git log --oneline` subjects since the previous sweep.
 - Harvest every phrase like "supersedes / retires / replaces / renamed / decided / reversed /
@@ -297,8 +297,8 @@ GENUINE dangling link (unresolved and NOT declared a forward marker) still repor
 
 ## Canonical file map (stable structure; update only when the layout changes)
 
-- Contract (locked): `docs/BRAINSTORM.md` · `docs/SPEC.md` · `docs/DESIGN.md` (rules: section 14;
-  decided log: section 15) · `docs/FINDINGS.md` · `docs/HARNESS.md` (changelog: section 8).
+- Contract (locked): `contract/BRAINSTORM.md` · `contract/SPEC.md` · `contract/DESIGN.md` (rules: section 14;
+  decided log: section 15) · `contract/FINDINGS.md` · `contract/HARNESS.md` (changelog: section 8).
 - Harness: `harness/prompts/*.md` (role prompts, dated changelog footers) ·
   `harness/tickets/NN-*.md` (work orders; the freely-annotatable tier).
 - Executable contract: `tests/` (oracle suite; conftest.py holds the shared helpers).

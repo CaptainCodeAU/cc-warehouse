@@ -17,7 +17,7 @@ verdicts, and the verified-healthy findings. Two files, one folder:
 - **`cc-warehouse-architecture/index.html`** - the human-facing VIEW, RENDERED from SOURCE.md by
   this command. Never hand-author findings into the HTML; it is generated.
 
-**Scope guard (the locked contract):** the contract docs (`docs/BRAINSTORM.md`, `SPEC.md`,
+**Scope guard (the locked contract):** the contract docs (`contract/BRAINSTORM.md`, `SPEC.md`,
 `DESIGN.md`, `FINDINGS.md`, `HARNESS.md`) are LOCKED. This command NEVER edits them and never
 relitigates their decisions. A candidate that needs a contract change carries an amber contract
 callout naming the open item (the C8 pattern: DESIGN section 15 item 8) and waits for the
@@ -125,7 +125,7 @@ Built on the mattpocock HTML-REPORT pattern, cc-warehouse-fitted:
    BUILT (tests + the HARNESS changelog are the proof) or REJECTED (record why, so future
    reviews stop re-suggesting it). This command records state; it never advances one on its own.
 4. **Single ownership:** this command owns `cc-warehouse-architecture/` currency. `/refresh`'s
-   docs slice enumerates CLAUDE.md, README, the docs/ status tier, and harness/tickets - this
+   docs slice enumerates CLAUDE.md, README, the contract/ status tier, and harness/tickets - this
    folder is deliberately outside that scope; staleness here is caught by THIS command's gate
    (ticket/contract drift + line-ref decay).
 5. **Stage by name; never `git add -A`.** Never commit warehouse data, scratchpads, or memory.
