@@ -49,6 +49,12 @@ class RelocateEdit:
     kind: str  # alias | encoded_dir | memory_file | inventory_file
     target: Path
     detail: str
+    # True when this entry records something the run REFUSED to touch. A skip belongs in
+    # the report by name (R10) and out of every total: counting refusals as work inflates
+    # the blast radius before consent and overstates what happened after it (F6). Typed
+    # rather than sniffed from the detail string, so a reworded message cannot silently
+    # change a count.
+    skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -56,6 +62,21 @@ class RelocatePlan:
     repo_path: Path
     new_path: Path
     edits: tuple[RelocateEdit, ...]
+
+
+# The outcome actions that represent a real change to the world. Shared by the success
+# line and the halted-run report so the two can never disagree about what counts (R9).
+CHANGE_ACTIONS = ("rewritten", "moved", "renamed", "alias")
+
+
+def planned_changes(plan: RelocatePlan) -> tuple[RelocateEdit, ...]:
+    """The plan entries a run would actually MAKE; skips are shown but never counted."""
+    return tuple(edit for edit in plan.edits if not edit.skipped)
+
+
+def applied_changes(report: BatchReport) -> tuple[ItemOutcome, ...]:
+    """The outcomes that changed something; refusals and skips are not changes."""
+    return tuple(o for o in report.outcomes if o.action in CHANGE_ACTIONS)
 
 
 @dataclass(frozen=True)
@@ -453,11 +474,11 @@ def _compute(
     for target in scan.targets:
         edits.append(RelocateEdit("memory_file", target, f"rewrite path refs -> {new_path}"))
     for path, reason in scan.skipped:
-        edits.append(RelocateEdit("inventory_file", path, f"SKIPPED: {reason}"))
+        edits.append(RelocateEdit("inventory_file", path, f"SKIPPED: {reason}", skipped=True))
     for old_dir, new_dir in renames:
         edits.append(RelocateEdit("encoded_dir", old_dir, f"rename -> {new_dir}"))
     for path, reason in ambiguous:
-        edits.append(RelocateEdit("encoded_dir", path, f"SKIPPED: {reason}"))
+        edits.append(RelocateEdit("encoded_dir", path, f"SKIPPED: {reason}", skipped=True))
     if project_id is not None:
         edits.append(RelocateEdit("alias", new_path, f"claim {new_path} (cwd + encoded)"))
     return _Computed(renames, ambiguous, patterns, scan, project_id, tuple(edits))

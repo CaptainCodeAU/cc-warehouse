@@ -735,7 +735,10 @@ def _run_relocate(args: Sequence[str]) -> int:
     plan = relocate.plan_relocate(config, repo_path, new_path, claim_ambiguous=claim_ambiguous)
     if not do_apply:
         _print_plan(plan, f"relocate (dry-run): {repo_path} -> {new_path}")
-        print(f"{len(plan.edits)} edits planned; re-run with --apply to execute")
+        # Count the edits this run would MAKE. Skips are printed above by name (R10) but
+        # counting a refusal as planned work overstates the blast radius before consent.
+        planned = relocate.planned_changes(plan)
+        print(f"{len(planned)} edits planned; re-run with --apply to execute")
         return 0
     # SHOW the plan on the apply path too, before asking. Consent for a set the operator
     # never saw is not consent (R13); the edit list used to appear on the dry-run path
@@ -766,14 +769,16 @@ def _run_relocate(args: Sequence[str]) -> int:
     if failures:
         # Say what WAS already changed and where the originals are, so a halted run is
         # recoverable by hand instead of leaving the operator to guess (F6/R10).
-        rewritten = [o for o in report.outcomes if o.action in ("rewritten", "moved", "renamed")]
-        if rewritten:
-            print(f"relocate halted after {len(rewritten)} change(s):", file=sys.stderr)
-            for outcome in rewritten:
+        changed = relocate.applied_changes(report)
+        if changed:
+            print(f"relocate halted after {len(changed)} change(s):", file=sys.stderr)
+            for outcome in changed:
                 print(f"  {outcome.action}: {outcome.item}", file=sys.stderr)
             print(f"originals and journal: {backup_dir}", file=sys.stderr)
         return 1
-    print(f"relocate: {repo_path} -> {new_path} ({len(report.outcomes)} changes)")
+    # CHANGES, not outcomes: skipped entries were reported by name above and must not be
+    # counted as things this run did (F6 - the number has to mean what it says).
+    print(f"relocate: {repo_path} -> {new_path} ({len(relocate.applied_changes(report))} changes)")
     return 0
 
 

@@ -599,6 +599,72 @@ def test_apply_names_the_edits_it_is_about_to_make(
     assert str(world.new_repo) in shown
 
 
+def test_skipped_entries_are_named_but_never_counted_as_changes(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-5 (R10/F6): a SKIPPED entry is something the run refused to touch.
+
+    Both counters treated skips as work: the dry-run's "N edits planned" and the success
+    line's "(N changes)" each included every entry the run had explicitly declined to
+    repair. That inflates the apparent blast radius before consent and overstates what
+    happened after it, which is the guarantee-drift class F6 names. Skips must stay in the
+    report, by name (R10), and out of the totals.
+
+    The pin is a BASELINE COMPARISON rather than a hard-coded total: the count is taken
+    before the skip exists and must not move when it does. A test asserting the count
+    equals some derived expression could agree with the bug.
+    """
+    world = World(ccw_env, tmp_path)
+
+    def planned(out: str) -> int:
+        match = re.search(r"(\d+) edits planned", out)
+        assert match, f"no plan count in output: {out}"
+        return int(match.group(1))
+
+    dry_args = ["relocate", str(world.repo), "--to", str(world.new_repo)]
+    baseline = run_ccw(dry_args, ccw_env)
+    assert baseline.code == 0, baseline.err
+    before = planned(baseline.out)
+
+    outside = tmp_path / "outside.md"
+    outside.write_text(f"outside ref {world.repo}\n")
+    (world.inventory / "linked.md").symlink_to(outside)
+
+    with_skip = run_ccw(dry_args, ccw_env)
+    assert with_skip.code == 0, with_skip.err
+    assert "linked.md" in with_skip.out, "the skipped entry was not named in the plan"
+    assert "SKIPPED:" in with_skip.out
+    assert planned(with_skip.out) == before, "a SKIPPED entry was counted as a planned edit"
+
+    result = world.apply()
+    assert result.code == 0, result.err
+    assert "linked.md" in result.out + result.err, "the skipped entry was not named on apply"
+
+    # Enumerate the real changes INDEPENDENTLY, from the filesystem and the catalog, so
+    # the expected total comes from observed facts rather than from re-deriving the
+    # counter's own arithmetic. The plan count above is deliberately NOT reused: DESIGN 11
+    # enumerates external-world REPAIRS, so the repo move is the header, not a plan edit.
+    from conftest import catalog_rows
+
+    assert str(world.new_repo) in world.memory_md.read_text()  # 1 rewritten
+    assert str(world.new_repo) in world.state_json.read_text()  # 2 rewritten
+    assert world.new_repo.is_dir() and not world.repo.exists()  # 3 moved
+    assert world.encoded_dir(world.new_repo).is_dir()  # 4 renamed
+    assert not world.encoded_dir(world.repo).exists()
+    alias_paths = {
+        cast(tuple[str], row)[0]
+        for row in cast(
+            list[tuple[object, ...]], catalog_rows(ccw_env, "SELECT path FROM project_alias")
+        )
+    }
+    assert str(world.new_repo) in alias_paths  # 5 alias
+    assert (world.inventory / "linked.md").is_symlink()  # the skip changed nothing
+
+    changed = re.search(r"\((\d+) changes\)", result.out)
+    assert changed, f"no change count in output: {result.out}"
+    assert int(changed.group(1)) == 5, "a SKIPPED entry was counted as a change"
+
+
 def test_registry_gains_both_the_cwd_and_encoded_claims(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
