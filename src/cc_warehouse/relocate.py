@@ -446,6 +446,37 @@ def _existing_parent(path: Path) -> Path:
     return parent
 
 
+def _uncreatable_parent(new_repo: Path) -> str | None:
+    """Why `--to`'s parent cannot be created as a directory, or None (ticket 12a).
+
+    `_existing_parent` walks up until something EXISTS, and both failure shapes below slip
+    through that test, so pre-flight approved a target the container phase could never
+    produce. By then the contents had already been rewritten to point at it: a
+    half-repaired world, which is precisely what the plan/backup/apply order exists to
+    prevent. Pre-flight must PROVE the parent is, or can become, a directory (R5/F7).
+
+    - a REGULAR FILE reports exists() == True, so the walk stopped there and every later
+      check (st_dev, os.access) answered about the file;
+    - a DANGLING SYMLINK reports exists() == False, so the walk stepped straight past it
+      to a real ancestor, and `mkdir(parents=True, exist_ok=True)` then raises EEXIST on
+      the link.
+
+    Proven by tests/test_relocate_regressions.py::
+    test_to_parent_that_is_a_regular_file_is_refused_before_any_rewrite and
+    ::test_to_parent_that_is_a_dangling_symlink_is_refused_before_any_rewrite.
+    """
+    parent = new_repo.parent
+    while not parent.exists():
+        if parent.is_symlink():
+            return f"target parent is a dangling symlink: {parent}"
+        if parent == parent.parent:  # walked off the top without finding anything real
+            return f"target parent has no existing ancestor: {new_repo.parent}"
+        parent = parent.parent
+    if not parent.is_dir():
+        return f"target parent is not a directory: {parent}"
+    return None
+
+
 def _is_nested(inner: Path, outer: Path) -> bool:
     return inner == outer or outer in inner.parents
 
@@ -489,6 +520,9 @@ def _preflight(
         errors.append(ItemOutcome(str(new_repo), "error", "source and target are nested"))
     if new_repo.exists() or new_repo.is_symlink():
         errors.append(ItemOutcome(str(new_repo), "error", "target already exists"))
+    parent_problem = _uncreatable_parent(new_repo)
+    if parent_problem:
+        errors.append(ItemOutcome(str(new_repo), "error", parent_problem))
     try:
         if os.stat(old_repo).st_dev != os.stat(_existing_parent(new_repo.parent)).st_dev:
             errors.append(

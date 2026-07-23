@@ -472,6 +472,59 @@ def test_home_unset_is_refused_rather_than_running_with_guards_inert(
     assert tree_snapshot(claude_projects(ccw_env)) == before_projects, "a container moved anyway"
 
 
+def test_to_parent_that_is_a_regular_file_is_refused_before_any_rewrite(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-3 (R5/F7): pre-flight must PROVE the target parent can become a directory.
+
+    `_existing_parent` walked up until something existed, and a regular file exists, so a
+    `--to` under a file passed every pre-flight check. Contents were then rewritten to
+    point at a path that could never come into being, and only the rename failed: the
+    half-repaired world DESIGN 11 exists to prevent ("it never falls through to a rename
+    with un-rewritten contents" has a mirror image, and this is it).
+    """
+    world = World(ccw_env, tmp_path)
+    blocker = Path(ccw_env["HOME"]) / "blocker"
+    blocker.write_text("i am a regular file\n")
+    before_inventory = tree_snapshot(world.inventory)
+    before_projects = tree_snapshot(claude_projects(ccw_env))
+    result = run_ccw(
+        ["relocate", str(world.repo), "--to", str(blocker / "gadget"), "--apply", "--yes"],
+        ccw_env,
+    )
+    assert result.code != 0
+    assert tree_snapshot(world.inventory) == before_inventory, (
+        "content was rewritten toward a target that can never exist"
+    )
+    assert tree_snapshot(claude_projects(ccw_env)) == before_projects
+    assert world.repo.is_dir(), "the source repo was moved"
+    assert blocker.is_file() and blocker.read_text() == "i am a regular file\n"
+
+
+def test_to_parent_that_is_a_dangling_symlink_is_refused_before_any_rewrite(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-3 (R5/F7): a dangling symlink is the other shape of an uncreatable parent.
+
+    It reports `exists() == False`, so the walk stepped straight past it to a real
+    ancestor and pre-flight approved a parent that `mkdir` cannot create.
+    """
+    world = World(ccw_env, tmp_path)
+    dangling = Path(ccw_env["HOME"]) / "dangling"
+    dangling.symlink_to(Path(ccw_env["HOME"]) / "nowhere")
+    before_inventory = tree_snapshot(world.inventory)
+    result = run_ccw(
+        ["relocate", str(world.repo), "--to", str(dangling / "gadget"), "--apply", "--yes"],
+        ccw_env,
+    )
+    assert result.code != 0
+    assert tree_snapshot(world.inventory) == before_inventory, (
+        "content was rewritten toward an uncreatable target"
+    )
+    assert world.repo.is_dir(), "the source repo was moved"
+    assert dangling.is_symlink() and not dangling.exists()
+
+
 def test_registry_gains_both_the_cwd_and_encoded_claims(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
