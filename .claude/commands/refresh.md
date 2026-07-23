@@ -60,6 +60,7 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - Phase note vs reality (the currency of CLAUDE.md's "Current phase" is judged in Phase 3 against the counts above): !`R=$(git rev-parse --show-toplevel); sed -n '/^## Current phase/,/^## /p' "$R/CLAUDE.md" | head -12`
 - README currency (README's status prose must name the live max slice; added 2026-07-19 after this drift recurred; keys on the slice-01..NN token README carries): !`R=$(git rev-parse --show-toplevel); LM=$(for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && basename "$t" | grep -oE '^[0-9]+'; done | sort -n | tail -1); RM=$(grep -oiE 'slice[- ]?0*[0-9]{1,2}(\.\.0*[0-9]{1,2}|-0*[0-9]{1,2})?' "$R/README.md" | grep -oE '[0-9]{1,2}' | sort -n | tail -1); if [ -n "$LM" ] && [ -n "$RM" ] && [ "$((10#$RM))" -lt "$((10#$LM))" ]; then echo "README STALE: names slice $RM, live max DONE slice is $LM"; else echo "README names slice ${RM:-none}; live max DONE slice ${LM:-none} (currency OK)"; fi`
 - Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] || echo "DANGLING [[${l}]]"; done; fi`
+- Config-vs-contract render map (CODE outran CONTRACT is a FLAG-only finding, not an auto-edit; added 2026-07-23 after the [render] map drifted, code had 8 keys while DESIGN 8 + ticket 13 named 3): !`R=$(git rev-parse --show-toplevel); S=$(sed -n '/^## 8\./,/^## 9\./p' "$R/docs/DESIGN.md"); MISS=""; for k in $(grep -oE 'render_[a-z_]+' "$R/src/cc_warehouse/config.py" | sed 's/^render_//' | sort -u); do echo "$S" | grep -q "$k" || MISS="$MISS $k"; done; [ -n "$MISS" ] && echo "CONTRACT DRIFT (flag to principal, do NOT auto-edit docs): config render keys absent from DESIGN 8 [render] map:$MISS" || echo "(every config render key is named in the DESIGN 8 [render] map)"`
 
 ---
 
@@ -240,7 +241,14 @@ discipline: the README-currency live signal (README's status prose named an olde
 than the live max DONE ticket). It was implicitly proposed the prior run, then recurred
 this run (README was frozen at slice 04 while the build had reached slice 09), so it
 graduated from proposed to added. It keys on the slice-01..NN token README carries, so
-keep that token in README's status paragraph.
+keep that token in README's status paragraph. ADDED 2026-07-23 (operator-directed
+graduation): the config-vs-contract render-map live signal. The direct build of slice 13
+expanded config.py's `[render]` keys from 3 to 8 while DESIGN 8 and ticket 13 still named
+3; the divergence went unnoticed until the exit-review doc sync, which was costly enough
+that the principal directed the probe be added on first occurrence rather than waiting for
+a recurrence. It is FLAG-only (code-vs-contract is the principal's to reconcile,
+Guardrail 1) and generalizes: any render toggle added to code but not to the DESIGN 8 map
+surfaces here.
 
 ---
 
@@ -271,6 +279,16 @@ keep that token in README's status paragraph.
   The Phase-7 push conditional stays self-adapting: this list records the practice, it does not
   hardcode always-push. A landed slice missing its milestone tag is surfaced by the tag-parity
   live signal and reported as a report-tier note, not a gate.
+- **The DIRECT-BUILD era (dated 2026-07-23).** The principal may direct a slice to be built directly
+  rather than through the harness loop, and OUT OF the DESIGN section 16 order. Two consequences the
+  sweep must not misread as breakage: (a) a later slice can be DONE while an earlier one is still open
+  (slice 13 landed before relocate 12a/12b) - this is the principal's ordering, not drift; (b) a
+  direct-build slice may sit DONE WITHOUT a milestone tag pending the principal's tagging decision, so
+  the tag-parity note is expected, not a finding to fix. Also new this era: CODE can outrun CONTRACT
+  (a direct build lands, its doc reconciliation follows in the exit review). That reconciliation is a
+  principal-present exit-review action recording ALREADY-APPROVED decisions - it is NOT /refresh
+  editing locked contract. When /refresh finds code-vs-contract divergence (the config-vs-contract
+  render-map signal), it FLAGS it for the principal; it never edits the contract to match code.
 
 ## Canonical file map (stable structure; update only when the layout changes)
 
