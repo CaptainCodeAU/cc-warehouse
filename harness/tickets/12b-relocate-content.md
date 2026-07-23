@@ -1,5 +1,23 @@
 # Ticket 12b: relocate, content rewriting
 
+DONE 2026-07-24 (direct build, not the harness loop; principal chose Option 1). All six
+findings closed: the four carried forward from the ticket-12 escalation plus the two
+inherited from 12a. Commits 7a3b4b5, f7c6a81 (JSON layout), 865ce00, 981c8e9 (byte
+fidelity), 8738423 (scan restructure), 03ca402 (config loader), a085c7c (stale docstrings).
+Every finding was re-derived by EXECUTION before being fixed; TWO were materially
+understated on this ticket and one turned out to be a contract deviation rather than
+duplication (details on each entry below). Gates: ruff clean, pyright strict 0 errors,
+full suite 376 passed / 0 failed (was 215 at the start of this work). Zero stubs and zero
+forward-looking "lands in slice N" promises left in src/. Ticket 12b's five named oracle
+tests green; 186 tests across the four relocate test files.
+
+NOT closed here, because it belongs to slice 11 and is recorded for the principal:
+`share.py::_custom_patterns` has the SAME third-reader defect finding 5 fixed in relocate
+(its own tomllib parse of `<root>/config.toml`), so `[share].redact_patterns` declared in
+the XDG tier are IGNORED by `ccw share`. Verified: load_config sees the pattern,
+share compiles none. The consequence is worse than relocate's, because share is the
+outward-facing command: content the operator asked to be redacted is published.
+
 Split from ticket 12 at the 2026-07-19 section-4 escalation (see 12-relocate.md for the
 loop record and the diagnosis). Slice 12b of 13. Depends on: 12a (containers must be
 decided before content, because content rewriting must track exactly the dirs 12a
@@ -102,6 +120,16 @@ From the ticket-12 escalation, still open in code:
 - Files under a symlinked directory inside a root are never enumerated, and `.git` and
   the excluded trees are dropped with no mention, contradicting the "never silently
   drops a file" claim. Either report them or drop the claim.
+  CLOSED 2026-07-24, commit 8738423. A census of 15 filesystem shapes found EIGHT silent
+  drops, not three: the ones named above plus FIFOs, unix sockets, files under a directory
+  the walk could not read, and (new, on no ticket) every file under a configured root that
+  does not exist or is not a directory. That last one is the worst: a typo in
+  `[relocate] roots` repaired nothing while the containers moved anyway. Principal ruling
+  2026-07-24: a missing root is a NAMED skip and the run proceeds, because the apply path
+  now prints the plan before asking (slice-D fix) and one config.toml shared across
+  machines may legitimately name an absent root. Fixed by the os.walk restructure below;
+  every decline is now NAMED exactly once. Independent re-census: 8 silent drops -> 0.
+  24 enumerated edge cases in tests/test_relocate_scan_matrix.py, 11 red first.
 - The roots are fully scanned twice per apply (once for the plan, once inside the lock)
   and every candidate opens its own SQLite connection. With `roots = ["~"]` this is two
   full home reads before the first mutation (F5).
@@ -110,6 +138,15 @@ From the ticket-12 escalation, still open in code:
   are BOTH required (the second is the point-of-action re-check the frozen decision
   mandates). The duplication is therefore intentional now; what remains for this slice is
   making each scan cheap, not removing one of them.
+  CLOSED 2026-07-24, commit 8738423. Both halves fixed, measured rather than asserted.
+  Exclusions now resolve once per DIRECTORY and a pruned subtree is never descended, so
+  its files are never resolved, stat'd or opened: on 200 dirs / 5000 files,
+  Path.resolve() 5202 -> 203 (26x) and plan_relocate 351 -> 144 ms; the CLI runs two
+  scans, so it halves twice. One catalog connection per computation instead of one per
+  encoded candidate: 13 -> 1 for twelve candidates. `sorted(rglob("*"))` also stopped
+  materialising the whole tree in memory before iterating. Pinned by behaviour, not by a
+  flaky timer: test_e23 asserts ZERO file opens under a pruned subtree, test_e24 asserts
+  at most two connections per plan.
 
 Added 2026-07-23 while closing 12a (found by probe, on no ticket before now):
 
@@ -120,6 +157,21 @@ Added 2026-07-23 while closing 12a (found by probe, on no ticket before now):
   is drift created by slice 13 building out of DESIGN-16 order. Fold the reader into
   `load_config` and consume `config.relocate_roots`; the `config._webhooks_from_root`
   pattern already named in ADJACENT BEHAVIORS is the shape to follow.
+  CLOSED 2026-07-24, commit 03ca402. NOT merely duplication: because relocate parsed
+  `<root>/config.toml` directly, DESIGN 8's LAYERING never applied to those roots, so
+  roots declared in the XDG tier were invisible to it. Verified: load_config returned the
+  root, relocate planned 0 files. A dotfiles-managed config therefore repaired nothing
+  while the containers were renamed anyway, and reported nothing, because with zero roots
+  there is not even a skip to name. The complication worth recording: load_config is
+  deliberately best-effort (a broken config must never stop a capture, R5) while relocate
+  needs a malformed config to REFUSE, with a locked oracle test pinning that. Resolved by
+  having the single parse carry its own problems: `_read_toml` returns (data, problem),
+  `Config` gains `config_errors`, and key-shape validation for `[relocate].roots` lives in
+  config.py because that module owns the frozen key map. One parser, two policies.
+
+- The `rglob` -> `os.walk` restructure and the per-candidate realpath cost inherited from
+  12a: CLOSED 2026-07-24 by the same commit 8738423 as findings 3 and 4 above; they were
+  one structural change, not three.
 - 12a's exclusion fix resolves EVERY candidate path (one realpath per entry) inside the
   `rglob` walk. That is correct but pays a syscall per file on an unbounded home walk. The
   `rglob` -> `os.walk(onerror=...)` restructure this slice owns should prune at DIRECTORY

@@ -571,6 +571,39 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   Scope discipline held: the `rglob` -> `os.walk` restructure, the silent-drop reporting and
   the parallel config loader were all left to 12b rather than merged back into 12a, since
   re-merging the two halves is precisely what the section-4 escalation split apart.
+- 2026-07-24: Slice 12b (relocate content rewriting) COMPLETE by direct build. Both halves
+  of the escalated slice 12 have now converged, ending the build's only non-converging loop.
+  Six findings closed (four carried forward, two inherited from 12a): JSON layout (7a3b4b5),
+  byte fidelity of the pre-image (865ce00), the scan restructure covering silent drops, scan
+  cost and the realpath cost (8738423), and the parallel config loader (03ca402). Gates ruff
+  clean / pyright strict 0 / suite 376 passed / 0 failed; zero stubs and zero forward-looking
+  "lands in slice N" promises left in src/. Four process lessons:
+  (a) A DECISION IS A CENSUS, NOT AN ARGUMENT. The JSON-layout question was settled by
+  enumerating 29 shapes and running BOTH candidate implementations over every one. That
+  killed the operator's own recommendation (pure text-edit scored 26/29) and exposed a live
+  defect nobody had reported: an escaped path form is invisible to the raw-text SCAN, so such
+  a file was never a candidate, was never rewritten, and verify confirmed success over it.
+  Reasoning from one worked example would have shipped the wrong fix with green tests.
+  (b) THE TICKET UNDERSTATED TWO OF FOUR FINDINGS, AGAIN. Finding 1 was recorded as a locale
+  problem; `Path.read_text()` is also newline-translating, so it fires on a DEFAULT UTF-8
+  machine and a CRLF file lost every carriage return in the file AND in its own backup, exit
+  0. Finding 5 was recorded as duplication; it was a contract deviation, because relocate's
+  private parser meant DESIGN 8's layering never reached `[relocate] roots`. Across 12a and
+  12b, four of ten findings were mis-stated. A ticket's finding list is a starting point for
+  verification, never a specification.
+  (c) NON-DESTRUCTIVENESS IS A PRECONDITION, NOT AN INTENTION. The N1 guard (read each backup
+  back and require byte-equality before the original becomes eligible to be touched) turns
+  "there is always a recoverable pre-image" into something the code enforces. It would have
+  caught two of this slice's symptoms without anyone understanding their cause.
+  (d) A STALE FORWARD-LOOKING DOCSTRING IS A DEFECT WITH A TIMER ON IT. "the config layering
+  that folds this into load_config lands in slice 13" was true when written and became a lie
+  the moment slice 13 landed, hiding finding 5 for a whole slice. A grep for the phrase found
+  two more in cli.py (fixed, a085c7c) and one in share.py which is NOT this slice's to fix
+  and is escalated below.
+  ESCALATED TO THE PRINCIPAL: `share.py::_custom_patterns` has the same third-reader defect,
+  so `[share].redact_patterns` declared in the XDG tier are IGNORED. Verified by execution.
+  Slice 11 is DONE and tagged, and share is the one outward-facing command, so reopening it
+  is a process decision rather than a fix to make in passing.
 
 ---
 
