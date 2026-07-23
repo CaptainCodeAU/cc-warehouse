@@ -16,7 +16,9 @@ import html
 import json
 import os
 import re
+import shutil
 import socket
+import tempfile
 import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -404,3 +406,140 @@ def share(
         skipped=tuple(skipped),
         errored=tuple(errored),
     )
+
+
+# ---------------------------------------------------------------------------
+# --EXPOSED: publish UNSCRUBBED content, gated by a scrubbed-vs-exposed
+# comparison (DESIGN section 9 amendment, principal-approved 2026-07-23). The
+# whole flow lives here (a delete-sanctioned module) so the staging->final move
+# stays out of cli.py. The CLI orchestrates the consent gate; this module never
+# writes to the caller's real --out until commit_comparison is called.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SiteComparison:
+    """The two staged sites plus the byte-size / redaction data the --EXPOSED
+    gate shows the operator before they decide."""
+
+    staging_root: Path  # the temp parent; removed by commit/discard
+    scrubbed_dir: Path
+    exposed_dir: Path
+    per_session: tuple[tuple[str, int, int], ...]  # (label, scrubbed_bytes, exposed_bytes)
+    hits: tuple[RedactionHit, ...]
+    findings: tuple[RedactionHit, ...]
+    skipped: tuple[str, ...]
+    errored: tuple[str, ...]
+
+
+def _write_site_entry(
+    out_root: Path,
+    item: _Resolved,
+    payload: bytes,
+    patterns: tuple[tuple[str, re.Pattern[str]], ...],
+    index: list[tuple[str, str]],
+    *,
+    redact_names: bool,
+) -> int:
+    """Render one session's projection into `out_root`; return the total bytes of
+    its files. `redact_names` sanitizes the label/slug path segments (scrubbed
+    site) or leaves them raw (exposed site)."""
+    if redact_names:
+        label = _redact_display(item.label, patterns)
+        slug = _redact_display(item.slug or "session", patterns)
+    else:
+        label = item.label
+        slug = item.slug or "session"
+    first_ts = item.first_ts if item.first_ts and _DATE_RE.match(item.first_ts) else None
+    subdir = build.projection_dir(out_root, label, first_ts, slug, item.short)
+    build.write_projection(subdir, payload, render.RenderOptions(), force=True)
+    href = f"{subdir.relative_to(out_root).as_posix()}/conversation.html"
+    index.append((href, slug or item.short))
+    return sum(f.stat().st_size for f in subdir.iterdir() if f.is_file())
+
+
+def _write_site_index(
+    out_dir: Path, entries: list[tuple[str, str]], hits: tuple[RedactionHit, ...]
+) -> None:
+    store.atomic_write(out_dir / "index.html", _index_html(entries).encode("utf-8"))
+    report = (json.dumps([asdict(h) for h in hits], indent=2) + "\n").encode("utf-8")
+    store.atomic_write(out_dir / "redaction-report.json", report)
+
+
+def prepare_comparison(config: Config, sessions: tuple[str, ...]) -> SiteComparison:
+    """Render BOTH a scrubbed and an exposed (UN-redacted) site into a private
+    temp staging area so the --EXPOSED gate can compare them. The caller's real
+    --out is untouched until commit_comparison; discard_comparison removes the
+    staging area if the operator aborts."""
+    root = config.root
+    patterns = _redaction_patterns(root)
+    resolved, skipped = _resolve(root, sessions)
+    staging_root = Path(tempfile.mkdtemp(prefix="ccw-exposed-"))
+    scrubbed_dir = staging_root / "SCRUBBED"
+    exposed_dir = staging_root / "EXPOSED"
+    scrubbed_dir.mkdir(parents=True, exist_ok=True)
+    exposed_dir.mkdir(parents=True, exist_ok=True)
+    per_session: list[tuple[str, int, int]] = []
+    all_hits: list[RedactionHit] = []
+    all_findings: list[RedactionHit] = []
+    errored: list[str] = []
+    scrub_index: list[tuple[str, str]] = []
+    exposed_index: list[tuple[str, str]] = []
+    for item in resolved:
+        try:
+            data = store.get(root, item.hash)
+        except OSError:
+            errored.append(f"s:{item.short}")
+            continue
+        text = data.decode("utf-8-sig", errors="replace")
+        redacted_text, hits = _redact(text, item.short, patterns)
+        all_hits.extend(hits)
+        all_findings.extend(_scan_secrets(redacted_text, item.short))
+        s_bytes = _write_site_entry(
+            scrubbed_dir, item, redacted_text.encode("utf-8"), patterns, scrub_index,
+            redact_names=True,
+        )
+        e_bytes = _write_site_entry(
+            exposed_dir, item, data, patterns, exposed_index, redact_names=False,
+        )
+        per_session.append((item.slug or item.short, s_bytes, e_bytes))
+    _write_site_index(scrubbed_dir, scrub_index, tuple(all_hits))
+    _write_site_index(exposed_dir, exposed_index, ())  # exposed = nothing redacted
+    return SiteComparison(
+        staging_root=staging_root,
+        scrubbed_dir=scrubbed_dir,
+        exposed_dir=exposed_dir,
+        per_session=tuple(per_session),
+        hits=tuple(all_hits),
+        findings=tuple(all_findings),
+        skipped=tuple(skipped),
+        errored=tuple(errored),
+    )
+
+
+def commit_comparison(comparison: SiteComparison, out_dir: Path, *, keep_exposed: bool) -> None:
+    """Move the chosen staged site(s) into the final `out_dir` under labelled
+    subdirs after the operator consents, then remove the staging area. `SCRUBBED/`
+    always lands; `EXPOSED/` only when keep_exposed (the operator typed EXPOSED).
+    A pre-existing SCRUBBED/ or EXPOSED/ from a prior share is replaced (R4:
+    shares-rebuild deletion authority)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _replace_dir(comparison.scrubbed_dir, out_dir / "SCRUBBED")
+    if keep_exposed:
+        _replace_dir(comparison.exposed_dir, out_dir / "EXPOSED")
+    report = (json.dumps([asdict(h) for h in comparison.hits], indent=2) + "\n").encode("utf-8")
+    store.atomic_write(out_dir / "redaction-report.json", report)
+    shutil.rmtree(comparison.staging_root, ignore_errors=True)
+
+
+def discard_comparison(comparison: SiteComparison) -> None:
+    """Remove the staging area without publishing anything (the operator aborted)."""
+    shutil.rmtree(comparison.staging_root, ignore_errors=True)
+
+
+def _replace_dir(src: Path, dest: Path) -> None:
+    """Move `src` onto `dest`, replacing any prior directory there. Both are share
+    output dirs (R4 shares-rebuild), never the store or a source."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.move(str(src), str(dest))

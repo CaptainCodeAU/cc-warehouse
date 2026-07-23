@@ -761,15 +761,16 @@ def _run_relocate(args: Sequence[str]) -> int:
     return 0
 
 
-def _share_flags(rest: Sequence[str]) -> tuple[list[str], str | None, bool]:
-    """Split `ccw share` args into (session_keys, out_dir, allow_findings).
+def _share_flags(rest: Sequence[str]) -> tuple[list[str], str | None, bool, bool]:
+    """Split `ccw share` args into (session_keys, out_dir, allow_findings, exposed).
 
     Positional non-flag args are s:<key> session keys; `--out DIR` names the destination;
-    `--allow-findings` ships secret-shaped content verbatim. Deliberately minimal (no
-    argparse); the full flag layering lands in slice 13."""
+    `--allow-findings` ships secret-shaped content verbatim; `--EXPOSED` opens the
+    unscrubbed-publish comparison gate (DESIGN section 9 amendment)."""
     sessions: list[str] = []
     out: str | None = None
     allow = False
+    exposed = False
     i = 0
     while i < len(rest):
         arg = rest[i]
@@ -782,12 +783,69 @@ def _share_flags(rest: Sequence[str]) -> tuple[list[str], str | None, bool]:
         elif arg == "--allow-findings":
             allow = True
             i += 1
+        elif arg == "--EXPOSED":
+            exposed = True
+            i += 1
         elif not arg.startswith("-"):
             sessions.append(arg)
             i += 1
         else:
             i += 1
-    return sessions, out, allow
+    return sessions, out, allow, exposed
+
+
+def _exposed_choice() -> str:
+    """The --EXPOSED three-way gate. A non-TTY (pipe, cron, here-string) is NEVER
+    consent: it returns 'A' (abort). Typing the literal word EXPOSED -> 'E';
+    's'/'scrubbed' -> 'S'; anything else -> 'A'."""
+    if not sys.stdin.isatty():
+        return "A"
+    try:
+        answer = sys.stdin.readline()
+    except (OSError, EOFError):
+        return "A"
+    stripped = answer.strip()
+    if stripped == "EXPOSED":
+        return "E"
+    if stripped.lower() in ("s", "scrubbed"):
+        return "S"
+    return "A"
+
+
+def _run_share_exposed(config: Config, sessions: list[str], out_path: Path) -> int:
+    """The `ccw share ... --EXPOSED` gate: render a scrubbed and an unscrubbed site
+    to staging, print the byte-size + redaction comparison, and publish per the
+    operator's typed choice. Nothing reaches --out until they confirm; a non-TTY
+    aborts (DESIGN section 9 amendment, 2026-07-23)."""
+    comparison = share.prepare_comparison(config, tuple(sessions))
+    warn = sys.stderr
+    print("!! --EXPOSED: this would publish UNSCRUBBED content. Nothing published yet.", file=warn)
+    print("   Both versions rendered for comparison:", file=warn)
+    print(f"     SCRUBBED (normal): {comparison.scrubbed_dir}", file=warn)
+    print(f"     EXPOSED  (raw):    {comparison.exposed_dir}", file=warn)
+    print(f"   {'session':<30}{'scrubbed':>11}{'exposed':>11}{'delta':>9}", file=warn)
+    for label, scrubbed_bytes, exposed_bytes in comparison.per_session:
+        delta = exposed_bytes - scrubbed_bytes
+        print(
+            f"   {label[:30]:<30}{scrubbed_bytes:>11,}{exposed_bytes:>11,}{delta:>+9,}",
+            file=warn,
+        )
+    print(f"   redactions scrubbing removes: {len(comparison.hits)}", file=warn)
+    print(f"   secret-shaped findings:       {len(comparison.findings)}", file=warn)
+    print(f"   report: {comparison.scrubbed_dir / 'redaction-report.json'}", file=warn)
+    print("   [E] publish EXPOSED to --out  (type EXPOSED to confirm)", file=warn)
+    print("   [S] publish SCRUBBED to --out", file=warn)
+    print("   [A] abort, publish nothing", file=warn)
+    print("   > ", end="", file=warn)
+    choice = _exposed_choice()
+    if choice == "A":
+        share.discard_comparison(comparison)
+        print("share --EXPOSED: aborted, nothing published.", file=sys.stderr)
+        return 1
+    share.commit_comparison(comparison, out_path, keep_exposed=choice == "E")
+    kept = "EXPOSED + SCRUBBED" if choice == "E" else "SCRUBBED only"
+    print(f"share --EXPOSED: published {kept} -> {out_path}")
+    return 0
 
 
 def _run_share(args: Sequence[str]) -> int:
@@ -798,7 +856,7 @@ def _run_share(args: Sequence[str]) -> int:
     non-zero unless --allow-findings ships it verbatim (DESIGN section 9). A short with no
     current/visible head is skipped and named, and makes the exit non-zero (R10), while
     the resolvable sessions are still shared."""
-    sessions, out, allow = _share_flags(args[1:])
+    sessions, out, allow, exposed = _share_flags(args[1:])
     if not out:
         print("Error: ccw share requires --out DIR", file=sys.stderr)
         return 2
@@ -809,6 +867,9 @@ def _run_share(args: Sequence[str]) -> int:
     if out_path.exists() and not out_path.is_dir():
         print(f"Error: --out {out_path} exists and is not a directory", file=sys.stderr)
         return 2
+    if exposed:
+        # The unscrubbed-publish gate owns its own comparison + consent + writes.
+        return _run_share_exposed(load_config(), sessions, out_path)
     # Refuse to write into a populated dir we do not recognize as a prior share, so a
     # stray --out never overwrites unrelated files (F9-conservative; the export deletes
     # nothing, but it does overwrite its own filenames).
