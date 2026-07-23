@@ -13,6 +13,22 @@
 > `src/cc_warehouse/store.py` changed between the two, +13 lines; its cited ranges verified to
 > still hold). All file:line evidence pins to `56262f6`. Line refs decay as src moves; a fresh
 > review re-verifies, the renderer only flags.
+>
+> **LINE REFS HAVE DECAYED BADLY (measured 2026-07-24).** 20 commits have touched `src/` since
+> the snapshot: +4,036 / -357 lines. Per cited file, then -> now:
+> `render.py` 747 -> 1836 (+1089) . `cli.py` 727 -> 1091 (+364) . `relocate.py` 641 -> 979
+> (+338) . `parser.py` 485 -> 756 (+271) . `config.py` 115 -> 305 (+190) . `share.py` 406 -> 543
+> (+137) . `build.py` 280 -> 286 (+6). Unchanged: `catalog.py`, `reports.py`, `sweep.py`,
+> `migrate.py`, `status.py`.
+> **Treat every file:line in cards C1-C8 and C10 as INDICATIVE, not exact.** Only C9
+> (`sweep.py` / `migrate.py`) still has exact refs. Per the /architecture guardrail this
+> command flags decay and never silently re-derives it: a FRESH REVIEW is due, and the breadth
+> here is the signal, not a rendering fault.
+>
+> **STATE folded 2026-07-24 without a fresh review** (verified first-hand, not re-scanned):
+> C8 -> BUILT, C10 -> its F5 half CLOSED, C3 -> its designated home closed without it, and the
+> three-module config-parser item -> RESOLVED. The PROBLEM ANALYSES below were not re-derived;
+> only states and dated notes were folded.
 > **Method:** 3 background Explore lens scans (pipeline core / orchestration / testability)
 > over the git hot-spot census (60 commits), every load-bearing claim re-verified first-hand
 > before entering this board.
@@ -84,6 +100,24 @@ spot-verified) . in-process
   carried-forward findings are rewriter-core defects); fold the rewriter seam into 12b's work
   order. The share half stands alone, not gated on 12b.
 - **Why 3rd:** biggest testability payoff; the relocate half now has a natural home.
+- **STATE CHANGE 2026-07-24 - the natural home CLOSED without taking it.** Ticket 12b is DONE
+  and its work landed squarely on this surface (JSON rewriting, escaped-reference detection,
+  byte-fidelity), but the seam was never folded into its work order as this card recommended.
+  Verified first-hand: `_form_patterns`, `_sub_text`, `_sub_tree`, `_rewrite_bytes` are all
+  still private and the surface GREW by two more private helpers, `_tree_matches` and
+  `_references` (relocate.py:169-263). Share's half is unchanged: `_scan_secrets`,
+  `_is_generic_secret`, `_redact_tree` still private.
+  The card's own argument got STRONGER while nobody acted on it. 12b's headline defect was
+  exactly the kind this card predicts: an escaped path form was invisible to the scan, so a
+  file was never a candidate and `verify` confirmed success over it. It was found by an ad-hoc
+  29-shape matrix driven through the CLI, and it is now pinned by
+  `tests/test_relocate_json_matrix.py` - 29 cases that must each run a full
+  `ccw relocate --apply` subprocess because the transform underneath is not callable directly.
+  That test file IS the evidence for this card: the cheap in-memory assertion it argues for
+  would have made the same matrix a table of pure function calls.
+  **Re-rank recommendation:** this is now the strongest un-built candidate on the board and
+  should be re-ranked 1st or 2nd at the next review, since 12a/12b/13 have all landed and the
+  timing objections that placed it 3rd are gone.
 
 ### 4th . C4 - Give the head concept one home: a catalog read seam
 `[PROPOSED]` . Strength: **Strong** . Tier: VERIFIED . in-process
@@ -143,8 +177,8 @@ spot-verified) . in-process
 - **Contract ties:** F6, R7.
 
 ### 8th . C8 - A page-chrome seam in render_html
-`[PROPOSED]` . Strength: Worth exploring . Tier: VERIFIED + CONTRACT (DESIGN 15 item 8) .
-in-process . **contract callout**
+`[BUILT]` . Strength: (was Worth exploring) . Tier: VERIFIED (state re-verified 2026-07-24) .
+in-process . **contract callout RESOLVED**
 - **Files:** `render.py` . `share.py`
 - **Problem:** render_html emits content and chrome as one indivisible page; the highlight.js
   script tag pointing at cdnjs.cloudflare.com is appended unconditionally (render.py:536-540,
@@ -159,6 +193,18 @@ in-process . **contract callout**
   principal's contract call.
 - **Wins:** two adapters justify the seam (personal chrome, share chrome) . unblocks the item
   8 decision.
+- **BUILT 2026-07-24** (verified first-hand, commit `0cd4146`). The principal decided DESIGN 15
+  item 8 the same day, and the seam this card proposed is what implemented it: a
+  `RenderOptions.hljs` mode (`cdn` | `inline` | `off`, default `cdn`) plus `render._hljs_block`
+  choosing the chrome, with `share.py` setting `inline` at both of its render call sites.
+  Outcome exactly as the card predicted: personal projections keep the CDN plus its onerror
+  fallback (exporter parity), shared pages carry ZERO external references. The card's "two
+  adapters justify the seam" test was met by real adapters rather than hypothetical ones,
+  which is the standard this board sets for a seam.
+  Worth recording as a board-validation datapoint: this candidate was ranked 8th of 10 and
+  Worth-exploring, yet its contract callout is what made it actionable the moment the
+  principal ruled. The AMBER CONTRACT CALLOUT PATTERN did its job - the card waited for a
+  ruling instead of guessing, and was ready when the ruling came.
 
 ### 9th . C9 - One source walker, two policies
 `[PROPOSED]` . Strength: Speculative . Tier: VERIFIED . in-process
@@ -180,6 +226,17 @@ carried-forward list)
   findings name this exact churn ("every candidate opens its own SQLite connection ... two
   full home reads before the first mutation", F5). Scheduled work owned by 12b; the analysis
   is kept for the record.
+- **PARTIALLY CLOSED 2026-07-24** by ticket 12b (commit `8738423`), verified first-hand. The
+  O(N) half - the one F5 actually named - is gone: `_compute` now opens ONE connection for the
+  whole computation and passes it into `_encoded_moves`, so twelve candidates cost 1 connection
+  instead of 13, and `_cwds_for_encoded` was deleted. The same commit removed the other half of
+  the F5 finding, the double full scan, by pruning at directory level (resolve calls 5202 -> 203
+  on 200 dirs / 5000 files).
+  NOT fully closed, and the board should not claim it is: `_project_for_cwd` (relocate.py:528)
+  and `_encoded_owner` (:752) still open their own connections, both called from `_preflight`.
+  That is O(1) per apply rather than O(N) per candidate, so it is ceremony rather than the F5
+  defect - the same "copied ceremony around a deep primitive" shape C2 is about. Left open
+  deliberately rather than marked BUILT.
 
 ---
 
@@ -202,14 +259,51 @@ carried-forward list)
 
 - The five hand-rolled flag scanners in cli.py - ticket 13 ("full flag layering lands in
   slice 13" annotations at cli.py:153, :258, :625).
+  **UPDATE 2026-07-24:** ticket 13 is DONE, and it did NOT remove them; two survive
+  deliberately (`_sweep_source`, `_render_flags`) and their docstrings now say WHY rather than
+  promising a future slice - sweep takes one option, and the Group-A content flags reach
+  `build`/`render` through `load_config(flags=...)` instead. The three "lands in slice 13"
+  annotations this entry cited are gone (commit `a085c7c`). Whether the survivors are a
+  candidate is a fresh-review question; this entry no longer has a ticket to defer to.
 - config.toml parsed in three modules (config._webhooks_from_root, share._custom_patterns,
   relocate._relocate_roots) while Config's redact_patterns / relocate_roots / voice_* /
   inbox fields sit unpopulated - ticket 13 ("COMPLETE it in place; a parallel loader is a
   rejection, R9").
-- Relocate's catalog connection churn - ticket 12b (see C10 above).
+  **RESOLVED 2026-07-24, and NOT by the ticket this entry deferred to.** A census now returns
+  `config.py` as the only module in `src/` importing `tomllib`. relocate's reader went in
+  commit `03ca402` (ticket 12b) and share's in `f9b7bbd` (a reopening of the tagged slice 11,
+  on a principal ruling). Two lessons for the board, both about deferral:
+  (a) DEFERRING TO A TICKET IS NOT THE SAME AS BEING FIXED. Ticket 13 closed on 2026-07-23
+  with this untouched, and the board would have gone on believing it was owned.
+  (b) THE ENTRY UNDERSTATED THE HARM. It was filed as R9 duplication. In relocate it meant
+  DESIGN 8's layering never reached `[relocate] roots`, so a dotfiles-managed config repaired
+  NOTHING while containers moved; in share it meant a `[share] redact_patterns` rule set in the
+  XDG tier was ignored and the content it named was PUBLISHED. A "duplication" finding on the
+  outward-facing command was a live leak.
+- Relocate's catalog connection churn - ticket 12b (see C10 above): partially closed, see the
+  dated note on that card.
 
 ## Provenance and change log
 
+- **2026-07-24** - STATE FOLD, no fresh review (`/architecture add` behaviour). v1 closed:
+  slices 12a, 12b and 13 all landed, the v1 exit review was held, and the principal ruled on
+  DESIGN 15 item 8 (`--hljs`) and on `--theme`. Folded, each verified first-hand against the
+  live tree rather than taken from the commit messages:
+  C8 -> **BUILT** (its contract callout was resolved by the item-8 ruling, and the seam it
+  proposed is what implemented it, `0cd4146`);
+  C10 -> **partially closed** (the O(N) per-candidate churn F5 named is gone, `8738423`;
+  two O(1) helper-scoped opens remain, so it is NOT marked BUILT);
+  C3 -> **unbuilt and now stronger** (ticket 12b, its designated home, closed WITHOUT folding
+  in the seam; the private surface grew by two helpers, and 12b's headline defect plus the
+  29-case CLI-driven matrix that pins it are direct evidence for the card. Re-rank to 1st/2nd
+  at the next review);
+  the three-module config-parser entry -> **RESOLVED**, by 12b and by a reopening of slice 11,
+  NOT by ticket 13 which it was deferred to;
+  the flag-scanner entry -> ticket 13 closed without removing them, two survive deliberately.
+  Ranking NOT re-derived here: C1 remains the recorded top recommendation, but that ordering
+  predates 1,089 new lines in `render.py` and should not be trusted over a fresh review.
+  Line-ref decay measured and recorded in the header banner; the breadth of it is the signal a
+  fresh review is due. Mermaid validation: not re-run in this fold (no diagram content changed).
 - **2026-07-19** - Board created from this session's review: 3 Explore lens scans (pipeline
   core / orchestration / testability) plus first-hand verification of every load-bearing
   claim at master `a909cc0`; citations re-checked at `56262f6` after the slice-12 split
