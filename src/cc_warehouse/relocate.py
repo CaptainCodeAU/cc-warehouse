@@ -235,18 +235,77 @@ def _sub_tree(node: object, patterns: list[tuple[re.Pattern[str], str]]) -> obje
     return node
 
 
-def _rewrite_bytes(path: Path, original: str, patterns: list[tuple[re.Pattern[str], str]]) -> bytes:
-    """The rewritten bytes for a pre-image; JSON-aware for .json so the result re-parses."""
-    if path.suffix == ".json":
-        try:
-            data = cast(object, json.loads(original))
-        except json.JSONDecodeError:
-            rewritten = _sub_text(original, patterns)
-        else:
-            rewritten = json.dumps(_sub_tree(data, patterns), ensure_ascii=False)
+REFORMAT_NOTE = "reformatted (escaped path references required decoding)"
+
+
+def _tree_matches(node: object, patterns: list[tuple[re.Pattern[str], str]]) -> bool:
+    """Does any string in a DECODED document match, keys included? (mirrors _sub_tree)"""
+    if isinstance(node, str):
+        return any(pat.search(node) for pat, _ in patterns)
+    if isinstance(node, list):
+        return any(_tree_matches(item, patterns) for item in cast(list[object], node))
+    if isinstance(node, dict):
+        return any(
+            _tree_matches(key, patterns) or _tree_matches(val, patterns)
+            for key, val in cast(dict[str, object], node).items()
+        )
+    return False
+
+
+def _references(path: Path, text: str, patterns: list[tuple[re.Pattern[str], str]]) -> bool:
+    """Does this file reference an old form, in raw text OR only after decoding?
+
+    A JSON string may spell a path in an escaped form (`\\/x\\/y`, `\\u002fx`) that is
+    legal, invisible to raw-text matching, and decodes to the real path. Raw matching
+    alone therefore never SELECTS such a file, so no amount of care inside the rewrite
+    could repair it, and the verify pass would then confirm success over a file still
+    pointing at the old location. This is the slice-11 B1 lesson (redaction had to run on
+    the decoded payload for exactly the same reason), applied to relocate.
+    Proven by tests/test_relocate_json_matrix.py cases C27-C29.
+    """
+    if any(pat.search(text) for pat, _ in patterns):
+        return True
+    if path.suffix != ".json":
+        return False
+    try:
+        return _tree_matches(cast(object, json.loads(text)), patterns)
+    except json.JSONDecodeError:
+        return False
+
+
+def _rewrite_bytes(
+    path: Path, original: str, patterns: list[tuple[re.Pattern[str], str]]
+) -> tuple[bytes, str | None]:
+    """The rewritten bytes for a pre-image, plus a note when layout could not be kept.
+
+    Policy (principal ruling 2026-07-23): rewrite as TEXT so a hand-maintained file keeps
+    its layout, since the plan promises only "rewrite path refs" and reformatting a
+    document is a second, unconsented mutation riding along. Then DECODE the result and
+    check no old reference survived; if one did, redo the file through the decode path and
+    return a note so the run can NAME it (F6 - the report must say what actually happened).
+
+    A file that was already unparseable before this run is rewritten as text and carries no
+    note: we do not claim to have fixed it, and we are not blamed for it.
+
+    Pinned across 29 enumerated JSON shapes by tests/test_relocate_json_matrix.py, which
+    also proves the decode path is NOT taken for the other 26 (duplicate keys, number
+    formats, unicode escapes and layout all survive untouched).
+    """
+    if path.suffix != ".json":
+        return _sub_text(original, patterns).encode("utf-8"), None
+    try:
+        data = cast(object, json.loads(original))
+    except json.JSONDecodeError:
+        return _sub_text(original, patterns).encode("utf-8"), None
+    text_first = _sub_text(original, patterns)
+    try:
+        reparsed = cast(object, json.loads(text_first))
+    except json.JSONDecodeError:
+        pass  # our own text edit broke it: fall through to the structural rewrite
     else:
-        rewritten = _sub_text(original, patterns)
-    return rewritten.encode("utf-8")
+        if not _tree_matches(reparsed, patterns):
+            return text_first.encode("utf-8"), None
+    return json.dumps(_sub_tree(data, patterns), ensure_ascii=False).encode("utf-8"), REFORMAT_NOTE
 
 
 def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -> _Scan:
@@ -302,7 +361,9 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
             except UnicodeDecodeError:
                 skipped.append((path, "not UTF-8 text"))
                 continue
-            if any(pat.search(text) for pat, _ in patterns):
+            # Raw text OR decoded: an escaped path reference is invisible to the former
+            # and would never become a candidate at all (ticket 12b finding 2).
+            if _references(path, text, patterns):
                 targets.append(path)
     return _Scan(tuple(targets), tuple(skipped), config_error)
 
@@ -684,7 +745,9 @@ def _verify(
         except (OSError, UnicodeDecodeError) as exc:
             outcomes.append(ItemOutcome(str(path), "error", f"unverifiable after rewrite: {exc}"))
             continue
-        if any(pat.search(text) for pat, _ in patterns):
+        # Same decoded check as the scan: verifying only the raw text would confirm
+        # success over a file whose escaped reference still resolves to the old path.
+        if _references(path, text, patterns):
             outcomes.append(ItemOutcome(str(path), "error", "old path still present after rewrite"))
     if not new_repo.exists():
         outcomes.append(ItemOutcome(str(new_repo), "error", "repo missing at new path"))
@@ -747,8 +810,10 @@ def _apply_locked(
     content_failed = False
     for path, original in pre_images:
         try:
-            store.atomic_write(path, _rewrite_bytes(path, original, patterns))
-            outcomes.append(ItemOutcome(str(path), "rewritten", str(new_repo)))
+            body, note = _rewrite_bytes(path, original, patterns)
+            store.atomic_write(path, body)
+            detail = str(new_repo) if note is None else f"{note} -> {new_repo}"
+            outcomes.append(ItemOutcome(str(path), "rewritten", detail))
         except OSError as exc:
             outcomes.append(ItemOutcome(str(path), "error", f"rewrite failed: {exc}"))
             content_failed = True

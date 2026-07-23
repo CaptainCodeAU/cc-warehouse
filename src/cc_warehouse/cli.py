@@ -776,6 +776,11 @@ def _run_relocate(args: Sequence[str]) -> int:
                 print(f"  {outcome.action}: {outcome.item}", file=sys.stderr)
             print(f"originals and journal: {backup_dir}", file=sys.stderr)
         return 1
+    # A file whose layout could not be preserved is NAMED, not merely counted: relocate
+    # promised to rewrite path refs, so any extra transformation has to be visible (F6/R10).
+    for outcome in report.outcomes:
+        if outcome.action == "rewritten" and (outcome.detail or "").startswith("reformatted"):
+            print(f"relocate {outcome.detail.split(' ->')[0]}: {outcome.item}", file=sys.stderr)
     # CHANGES, not outcomes: skipped entries were reported by name above and must not be
     # counted as things this run did (F6 - the number has to mean what it says).
     print(f"relocate: {repo_path} -> {new_path} ({len(relocate.applied_changes(report))} changes)")
