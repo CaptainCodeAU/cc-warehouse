@@ -45,7 +45,7 @@ history is durable, findable, shareable, and never breaks when projects move.
 | Notify | Desktop always; voice + open-folder opt-in; webhook sinks (Telegram etc.) |
 | Render | 4 files per session, all mandatory: transcript.md, transcript.compact.md, conversation.html, conversation.compact.html. Exporter-style (claude-exporter v8.10.1 is the reference): grouped research phases with captions/durations/tool counts, collapsible turns, copy-as-markdown everywhere, elapsed times, Quick-Look-safe md separators. Thinking + tool calls ON in full variants; thinking-label type and caption stored separately; system reminders collapsed in full variants, stripped in compact |
 | Migrate | One-shot hash-verified import of the ~7k-session archive; old archive visibly retired (single rename, e.g. _RETIRED_ prefix; never deleted) |
-| Share | Static-site export: single session or multi-session bundle with one index page; sanitization at share time via config-driven redaction rules (home dir, username, email, custom patterns) plus a redaction report listing every hit |
+| Share | Static-site export: single session or multi-session bundle with one index page; sanitization at share time via config-driven redaction rules (home dir, username, email, custom patterns) plus a redaction report listing every hit. Added 2026-07-23 (principal): `--EXPOSED`, the one sanctioned unscrubbed-publish path, gated by a scrubbed-vs-exposed comparison, a typed confirmation, and a non-TTY abort (DESIGN section 9) |
 
 ## v1.1
 
