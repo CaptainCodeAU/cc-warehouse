@@ -223,6 +223,10 @@ different mechanics (difference stated inline) | `DROP` not carried (reason inli
   `(no summary)` are hidden from listings (summary.py:100, archive.py:33).
   **KEEP** extraction priority and the warmup/no-summary hiding as catalog fields
   computed once at capture (FINDINGS F5), not re-derived per listing.
+  Note (2026-07-23): this summary rule is unchanged. The RENDER title (the H1 / page
+  title) is a separate concern and now prefers Claude Code's own `ai-title` entry over
+  this summary-derived fallback (DESIGN section 6); the catalog `summary` field and the
+  hidden logic still use the rule above.
 - Agent-session filtering: files named `agent-*` are ALWAYS excluded from `local`
   (summary.py:96-97) and excluded by default from `all` with an `--include-agents`
   opt-in (archive.py:28-29, cli.py:782-786). **CHANGE:** cc-warehouse captures and

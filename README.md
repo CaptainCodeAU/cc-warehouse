@@ -4,18 +4,19 @@ Content-addressed, immutable warehouse for AI conversation sessions (Claude Code
 claude.ai exports, future sources), projected into uniform markdown/HTML files.
 CLI: `ccw`.
 
-Status: main build in progress, slice by slice per DESIGN section 16. Slices
-01-11 have landed (store; catalog + registry; parser + conversation model;
-capture hook + notify; sweep; markdown emitters; HTML emitters + manifest;
-build/render orchestration; status + verify; migrate + retire; share +
-redaction), tagged `slice-01..11`. Slice 12 (relocate) is landed on master as a working
-checkpoint but is NOT done and carries no tag: its review loop did not converge and was
-escalated under HARNESS section 4, which split it into ticket 12a (containers) and 12b
-(content rewriting); next is ticket 12a. The contract lives in
+Status: main build essentially complete. Slices 01-11 landed and tagged
+`slice-01..11` (store; catalog + registry; parser + conversation model; capture
+hook + notify; sweep; markdown emitters; HTML emitters + manifest; build/render
+orchestration; status + verify; migrate + retire; share + redaction). The render
+was then extended to the full exporter-v8.10.1 chrome and to complete Claude Code
+entry-type coverage (ai-title titles, sub-agent phases, attachments, commands,
+structured tool output, informational extras), each an independent toggle.
+Slice 13 (config layering + the `ccw` help/version surface + the content flags +
+`--no-config`/`--config` + `share --EXPOSED`) landed 2026-07-23 and the whole
+oracle suite is green. Still open: relocate ticket 12a (containers) then 12b
+(content), which were deferred out of the DESIGN 16 order. The contract lives in
 `docs/` (BRAINSTORM, SPEC, DESIGN, FINDINGS, HARNESS); the oracle suite in
-`tests/` was written before the implementation; each slice's tests go green as
-it lands, and the rest stay red for the right reason (missing implementation)
-until theirs does.
+`tests/` was written before the implementation.
 
 ## Development
 

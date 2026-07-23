@@ -174,7 +174,22 @@ system-reminder blocks COLLAPSED in full variants, STRIPPED in compact variants,
 config-overridable for PERSONAL projections only (share builds ignore the override,
 section 9); message anchors are unique (turn ordinal + short content hash, fixing
 SPEC's `make_msg_id` collision); `manifest.json` records config, counts, and loss
-telemetry so "did we lose anything" is always answerable (exporter principle). When a
+telemetry so "did we lose anything" is always answerable (exporter principle).
+
+**Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
+JSONL format found 13 entry types where the render consumed only `user`/`assistant`.
+The model now surfaces the rest, each grouped into its own phase and each an
+independent toggle (all default ON): the session TITLE prefers Claude Code's own
+`ai-title` over the slug/summary fallback; sub-agent (`isSidechain`) exchanges fold
+into a labelled phase; `attachment` entries split into content kinds (rendered) and
+machinery kinds (one-line marker); a `system` `local_command` renders as user input,
+other subtypes as machinery; a tool result's `toolUseResult` renders stdout/stderr
+with an interrupted marker (the Edit patch is left to the tool_use, not repeated);
+and bridge-session / queue-operation / last-prompt / agent-name are surfaced verbatim
+as informational extras. Turns carry entry timestamps so the emitters show per-turn
+elapsed times; phases group by CATEGORY so a sub-agent run, an attachment run, and the
+main tool calls fold separately. `message.model` is a header field. The compact
+variant stays prose-only and drops all of these. When a
 session gains a newer version (section 2), incremental build removes the superseded
 version's projection dir (a sanctioned in-projections deletion, R4) so exactly one
 browsable dir per session UUID reads as canonical. When a project LABEL changes
@@ -192,8 +207,8 @@ emit plus the hardening rules from SPEC section 7.
 |---|---|
 | `ccw hook` | SessionEnd capture from stdin payload (section 4) |
 | `ccw sweep` | import anything the hook missed from `~/.claude/projects` (or `--source`) |
-| `ccw render` | (re)build the 4 files for `--session s:<hash>`; or render an ad-hoc `<path>` outside the store to `--out` (default: a temp dir, path printed), never under `projections/`, never touching the catalog |
-| `ccw build` | rebuild projections from the catalog; incremental by default, `--rebuild` for full |
+| `ccw render` | (re)build the 4 files for `--session s:<hash>`; or render an ad-hoc `<path>` outside the store to `--out` (default: a temp dir, path printed), never under `projections/`, never touching the catalog; honors the content flags |
+| `ccw build` | rebuild projections from the catalog; incremental by default, `--rebuild` for full, `--include-hidden` for hidden sessions; honors the content flags |
 | `ccw migrate` | one-shot import of the legacy archive (section 10) |
 | `ccw relocate` | move/rename a project across the external world (section 11) |
 | `ccw project` | `list` / `show` / `rename` (label) / `move OLD NEW` (alias) / `merge A B` |
@@ -204,9 +219,21 @@ emit plus the hardening rules from SPEC section 7.
 | v1.1: `ccw search`, `ccw import`; v1.2: `ccw mcp` | per BRAINSTORM cut |
 
 Errors print `Error: <msg>` to stderr, exit 1 (SPEC's CLI contract). No default-verb
-dispatch; bare `ccw` prints short status + usage. Packaging (decided 2026-07-17):
-distribution `cc-warehouse` on PyPI, import package `cc_warehouse`, console scripts
-`ccw` (primary) and `cc-warehouse` (alias to the same entry).
+dispatch; bare `ccw` prints short status + usage; an unknown verb is a usage error;
+`-h`/`--help` lists every verb, `-v`/`--version`/`version` print the version.
+Packaging (decided 2026-07-17): distribution `cc-warehouse` on PyPI, import package
+`cc_warehouse`, console scripts `ccw` (primary) and `cc-warehouse` (alias to the same
+entry).
+
+**Flag surface (slice 13, principal-approved 2026-07-23).** `build` and `render` take
+the Group-A content toggles, each a `--x` / `--no-x` pair defaulting ON, mapped onto
+the same `[render]` config keys (section 8) so a flag overrides config for one run:
+`--subagents`, `--attachments`, `--commands`, `--extras`, `--tool-output`,
+`--breadcrumbs`, plus `--reminders {collapse|strip|show}`. Global config-source
+switches on every verb: `--no-config` (ignore both config files; defaults + env +
+flags only) and `--config PATH` (read one named file instead of the usual two). `share`
+adds `--EXPOSED` (section 9). Later flag groups (per-file matrix, HTML chrome defaults,
+truncation, date-locale, `--since`/`--until`) are the v1.1 surface.
 
 ## 8. Configuration
 
@@ -219,14 +246,19 @@ stable registry ID, never by label: labels are mutable and R3 confines them to
 presentation; `ccw project show` prints the ID to use) -> `CCW_*` environment
 variables -> CLI flags. Env vars exist for
 hook-wrapper ergonomics (the successor of `TRANSCRIPT_*`): `CCW_ROOT`, `CCW_SKIP_HOOK`,
-`CCW_VOICE_URL`, `CCW_VOICE_ID`, `CCW_OPEN_FOLDER`, `CCW_WEBHOOKS` (exact list
-finalized in Phase 2 with the config key map). Decided 2026-07-17: the `CCW_` prefix
-is locked and the code honors NO legacy `TRANSCRIPT_*` names; the plugin wrapper
-switches to the new names on migration day. Config keys cover: root path, render options
-(reminders, breadcrumbs, labels), notification sinks (desktop on by default; voice,
-open-folder, webhook URLs opt-in), share redaction rules, relocate root inventory,
-import inbox path. Desktop notification is ALWAYS on (locked); voice, open-folder,
-and webhooks are opt-in. TOML parsing is stdlib `tomllib`.
+`CCW_VOICE_URL`, `CCW_VOICE_ID`, `CCW_OPEN_FOLDER`, `CCW_WEBHOOKS`. Decided 2026-07-17:
+the `CCW_` prefix is locked and the code honors NO legacy `TRANSCRIPT_*` names; the
+plugin wrapper switches to the new names on migration day. `--no-config` ignores both
+config files (defaults + env + flags only); `--config PATH` reads one named file
+instead of the two.
+
+The frozen TOML key map (Phase 2, `[render]` expanded 2026-07-23 with the principal for
+the content toggles): top-level `root`; `[notify]` voice_url voice_id open_folder;
+`[render]` breadcrumbs reminders_full reminders_compact **subagents attachments commands
+extras tool_output**; `[share]` redact_patterns; `[relocate]` roots; `[import]` inbox;
+`[[notify.webhook]]` name url events template; `[project.<id>.<table>]` overrides. The
+render toggles all default ON. Desktop notification is ALWAYS on (locked); voice,
+open-folder, and webhooks are opt-in. TOML parsing is stdlib `tomllib`.
 
 ## 9. Share: static-site export (v1)
 
@@ -242,7 +274,23 @@ share with a findings report (`--allow-findings` overrides), because auto-mangli
 token-shaped string in a conversation ABOUT tokens would corrupt legitimate content. Raw store and personal projections stay full-fidelity.
 Share builds IGNORE any personal render overrides: shared compact variants are always
 reminder-free and shared full variants always collapse reminders, regardless of config
-(a share must never leak `~/.claude` context because of a personal preference).
+(a share must never leak `~/.claude` context because of a personal preference). The
+fixed share policy DOES show the entry-type content classes (sub-agents, attachments,
+commands, extras), same as a personal build (Decision 2 = B, principal 2026-07-23):
+redaction recurses the whole decoded payload including embedded attachment content, so
+this is a completeness choice, not a redaction gap.
+
+**`--EXPOSED` (principal-approved 2026-07-23; the ONE sanctioned exception to "a share
+must never leak").** A deliberately scary ALL-CAPS flag that publishes UNSCRUBBED
+content, the only irreversible outward-facing action in the tool. It renders BOTH a
+scrubbed and an unscrubbed site into a private temp staging area, prints a per-session
+byte-size comparison plus the redaction-hit and secret-finding counts, then gates on a
+three-way choice: type the literal word `EXPOSED` to publish the raw site, `S` for
+scrubbed-only, anything else aborts. A non-TTY stdin is NEVER consent (it aborts,
+nothing written). On the EXPOSED choice BOTH `out/EXPOSED/` and `out/SCRUBBED/` land so
+the operator keeps both for comparison; on scrubbed-only just `out/SCRUBBED/`. The
+staging lifecycle and the move-into-place live in the share module (R4 delete
+authority); the real `--out` is untouched until the operator confirms.
 
 ## 10. Migrate (one-shot legacy import, v1)
 
@@ -363,7 +411,9 @@ is logged, never raised (capture must survive notification infrastructure).
    the call and publishes it (cc-vantage v0.3 section 16 defers to us).
 3. Registry key form shared with cc-vantage (`project.registry_key`).
 4. Default redaction rule set details (seed from the specimen's sanitize conventions).
-5. Exact `CCW_*` env names + config key map (Phase 2, with the config module).
+5. Exact `CCW_*` env names + config key map: DECIDED 2026-07-23 (principal). The env
+   list is the six names in section 8; the frozen TOML map is section 8, with `[render]`
+   expanded to carry the content toggles. No render toggle takes an env var.
 6. PyPI name final check (`cc-warehouse` availability re-verified before repo goes
    public; spot-checked only).
 7. Registry backup/export story (the registry is non-derivable live state, section 1):
@@ -402,6 +452,15 @@ containers move by same-device rename; `registry.move_project` also claims the e
 form of the new path; and `atomic_write` PRESERVES an existing target's mode, because
 replacing the inode was silently changing permissions on every rewrite (section 11 and
 the section 11 boundary-rule correction record the relocate-specific halves of this).
+Slice-13 / entry-type rulings, 2026-07-23 (principal): the render surfaces all 13 JSONL
+entry types, each a content class toggle defaulting ON (section 6); the session title
+prefers `ai-title` (extends the SPEC 8 title source, does not replace the fallback); the
+`[render]` config map is expanded with subagents/attachments/commands/extras/tool_output
+(section 8), each settable as a flag, a config key, and a per-project override, with a
+flag overriding config for one run; `--no-config` and `--config PATH` are added; shares
+show the new content classes (Decision 2 = B); and `--EXPOSED` is the one sanctioned
+unscrubbed-publish path, gated by a scrubbed-vs-exposed comparison plus a typed
+confirmation with a non-TTY abort (section 9).
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 

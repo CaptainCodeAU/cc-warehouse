@@ -521,6 +521,24 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   partial loader naming its pending slice, stub-CLI usage/exit assertions), red for the
   right reason; zero stubs; DONE 01-11 with tag parity; ticket-11's completion tail gained
   a dated superseded-note pointing at 12a (the split postdates that annotation).
+- 2026-07-23: Direct-build era (principal chose Option 1 over the harness loop for
+  interactive render work), all verified against ONE operator-scoped read-only session.
+  Two process lessons worth carrying. (a) AUDIT BY STRUCTURE, NOT SUBSTRING. The exporter-
+  chrome / entry-type render work shipped a 94-check "audit" that only tested string
+  PRESENCE; it passed while the HTML had NO Claude sections and Claude's tool phases were
+  nested inside the user block. A parsing audit (nesting invariants, role-section counts
+  against the model, payload-in-md checks) replaced it and caught three real defects the
+  presence audit could not see. The operator caught the original miss. (b) CENSUS THE DATA,
+  NOT JUST THE LAYOUT. Round after round of "looks right vs the exporter" kept missing
+  gaps because nothing censused the SOURCE format; a 400-session field census (615 keys,
+  13 entry types) showed the render consumed only 2 of 13 types, including dropping the
+  session's own ai-title. Both are the same failure the verification-discipline memory
+  names: confidence must not exceed verification coverage, and a lower-bound instrument
+  (grep / presence) must not be reported as a census. Slice 13 (config + CLI + flags +
+  --EXPOSED) then built directly, oracle suite green, 7 contract-derived regression tests,
+  each flag proven through the real CLI against the scoped session; v1 exit review with the
+  principal followed, and the contract docs were reconciled to the approved decisions in the
+  same review (this doc sync).
 
 ---
 

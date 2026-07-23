@@ -1,5 +1,15 @@
 # Ticket 13: config + env + CLI polish
 
+DONE 2026-07-23 (direct build, not the harness loop; principal chose Option 1,
+v1 exit review followed). load_config now does the full DESIGN 8 layering;
+the help/version/bare/unknown surface and the Group-A content flags + config
+bypass (--no-config / --config) landed; --EXPOSED added to share. The whole
+oracle suite is green (was 13 red) plus 7 contract-derived regression tests in
+tests/test_cli_flags_regressions.py. Commits b723a71 (core) + c366a96
+(--EXPOSED). Deferred to v1.1: per-file matrix, HTML chrome defaults, truncation,
+formatting, --since/--until; --hljs (open item 8) and --theme still need their
+own principal ruling.
+
 Slice 13 of 13. Depends on: everything (this slice completes surfaces that
 earlier slices stubbed or partially implemented).
 
@@ -30,9 +40,12 @@ management verbs.
   overridable via the xdg_config_home parameter) -> <root>/config.toml
   key-by-key -> [project.<registry-id>.<table>] sections -> CCW_* env ->
   flags. Frozen TOML map: top-level root; [notify] voice_url voice_id
-  open_folder; [render] breadcrumbs reminders_full reminders_compact;
+  open_folder; [render] breadcrumbs reminders_full reminders_compact
+  subagents attachments commands extras tool_output ([render] expanded
+  2026-07-23 with the principal for the content toggles);
   [share] redact_patterns; [relocate] roots; [import] inbox;
-  [[notify.webhook]] name url events template.
+  [[notify.webhook]] name url events template. Added 2026-07-23: --no-config
+  (ignore both files) and --config PATH (substitute one file).
 - Env vars: CCW_ROOT, CCW_SKIP_HOOK, CCW_VOICE_URL, CCW_VOICE_ID,
   CCW_OPEN_FOLDER, CCW_WEBHOOKS. NO legacy TRANSCRIPT_* name is honored.
 - Bare ccw: short status + usage, exit 0. Unknown verb: usage error, no

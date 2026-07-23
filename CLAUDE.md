@@ -140,8 +140,28 @@ move, proven encoded-dir renames, registry claims) and 12b (content: memory/inve
 rewrites, backup, scan scope); ticket 12 is SUPERSEDED and kept for its loop record.
 Principal rulings 2026-07-19 patched the contract (DESIGN 11 clarifications plus a
 CORRECTION to the specimen boundary rule, a matching SPEC 10.2 note, DESIGN 15 decided
-entries) and store.atomic_write now PRESERVES an existing target's mode. Next: ticket 12a
-(relocate containers), then 12b.
+entries) and store.atomic_write now PRESERVES an existing target's mode.
+2026-07-23, DIRECT-BUILD SESSION (principal chose Option 1 over the harness loop for
+interactive render work; all verified against ONE operator-scoped read-only session
+supplied out of tree). Slice 07 render was extended to the full exporter-v8.10.1 chrome
+(header card, collapsible turns/phases, sticky toolbar, palette) and then to full
+entry-type coverage: a field census (400 sessions, 615 keys, 13 types) found the render
+consumed only user/assistant, so parser+render now surface ai-title titles, sub-agent
+phases, attachments, commands, structured tool output (stdout/stderr), and the
+informational extras, each an independent toggle default ON (DESIGN 6). SLICE 13
+(config + CLI + flags + --EXPOSED) COMPLETE 2026-07-23 by direct build (ticket 13 DONE):
+load_config does the full DESIGN 8 layering, the help/version/bare/unknown surface lands,
+the Group-A content flags are wired as flags + config keys + per-project (the `[render]`
+frozen map expanded with the principal), --no-config/--config added, and share gains
+--EXPOSED (unscrubbed publish gated by a scrubbed-vs-exposed comparison + typed
+confirmation + non-tty abort); whole oracle suite GREEN (was 13 red) + 7 regression tests
+(tests/test_cli_flags_regressions.py); commits b723a71, c366a96. Contract docs reconciled
+to the approved decisions in the exit review (DESIGN 6/7/8/9/15, SPEC 8 note, ticket 13,
+this file). NO milestone tag yet; the render-chrome/entry-type work has no ticket of its
+own. OPEN / next: relocate ticket 12a (containers) then 12b (content) are STILL not done
+(slice 13 was built out of the DESIGN 16 order at the principal's direction); v1.1 flag
+groups (per-file matrix, HTML chrome defaults, truncation, --since/--until) and the
+--hljs (DESIGN 15 item 8) + --theme rulings remain.
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
