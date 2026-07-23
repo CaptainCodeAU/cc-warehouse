@@ -59,6 +59,25 @@ From the ticket-12 escalation, still open in code:
 - `Path.read_text()` is locale-dependent, so a non-UTF-8 locale writes mojibake over the
   user's file AND stores the same mojibake as the backup, leaving no recoverable
   pre-image. Decode explicitly, and treat an undecodable file as a named skip.
+  CLOSED 2026-07-24, commit 865ce00. UNDERSTATED as written: `read_text()` is not only
+  locale-dependent, it is NEWLINE-TRANSLATING, so the same defect fires with NO unusual
+  locale at all. Three symptoms verified by execution before any fix:
+  (A) a CRLF file on a DEFAULT UTF-8 machine loses every `\r` in the file and in its
+  backup, exit 0; (B) non-ASCII under a latin-1 locale becomes mojibake in both, exit 0;
+  (C) under LC_ALL=C relocate refuses to run at all on any accented file, exit 1. Row A
+  is the important one: it needs no configuration and hits any Windows-authored file.
+  Fixed by reading bytes, storing bytes verbatim, decoding explicitly (the scan's existing
+  policy), and applying the same explicit decode in `_verify`, which had the third
+  divergent read. Plus the principal-approved non-destructive hardening N1-N5: N1 PROVES
+  each backup by reading it back before the original is eligible to be touched (a mismatch
+  halts before any mutation), N2 checks the rewritten bytes decode as UTF-8 before
+  writing, N3 skips the write when bytes are unchanged, N4 keeps every backup ahead of
+  every rewrite (now pinned by test), N5 applies the scan's 8 MB cap at backup time.
+  6 TDD regression tests written before the implementation; 5 confirmed red first, the
+  6th (undecodable file is a named skip) was already green and is recorded as a behaviour
+  pin rather than as evidence of this fix. Rows A and its backup assertion need no special
+  locale, so CI coverage survives; the locale-forced rows announce a loud skip rather than
+  passing silently where the locale is missing.
 - JSON rewriting re-serializes the whole document, destroying hand-maintained layout of
   a file whose plan line promised only "rewrite path refs". Decide and record whether
   layout preservation is required, or whether the plan must say what it will do.
