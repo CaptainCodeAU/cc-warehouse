@@ -59,7 +59,7 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - Personal-data leak scan (public repo; username + hostname derived live, never written here): !`R=$(git rev-parse --show-toplevel); U=$(id -un); HN=$(hostname -s); H=$(git -C "$R" grep -rlI -e "$U" -e "$HN" 2>/dev/null); [ -n "$H" ] && echo "LEAK candidate in: $H" || echo "(no username/hostname in tracked files)"`
 - Phase note vs reality (the currency of CLAUDE.md's "Current phase" is judged in Phase 3 against the counts above): !`R=$(git rev-parse --show-toplevel); sed -n '/^## Current phase/,/^## /p' "$R/CLAUDE.md" | head -12`
 - README currency (README's status prose must name the live max slice; added 2026-07-19 after this drift recurred; keys on the slice-01..NN token README carries): !`R=$(git rev-parse --show-toplevel); LM=$(for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && basename "$t" | grep -oE '^[0-9]+'; done | sort -n | tail -1); RM=$(grep -oiE 'slice[- ]?0*[0-9]{1,2}(\.\.0*[0-9]{1,2}|-0*[0-9]{1,2})?' "$R/README.md" | grep -oE '[0-9]{1,2}' | sort -n | tail -1); if [ -n "$LM" ] && [ -n "$RM" ] && [ "$((10#$RM))" -lt "$((10#$LM))" ]; then echo "README STALE: names slice $RM, live max DONE slice is $LM"; else echo "README names slice ${RM:-none}; live max DONE slice ${LM:-none} (currency OK)"; fi`
-- Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] || echo "DANGLING [[${l}]]"; done; fi`
+- Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] && continue; grep -rh "forward marker" "$M" 2>/dev/null | grep -qF "[[$l]]" && continue; echo "DANGLING [[${l}]]"; done; fi`
 - Config-vs-contract render map (CODE outran CONTRACT is a FLAG-only finding, not an auto-edit; added 2026-07-23 after the [render] map drifted, code had 8 keys while DESIGN 8 + ticket 13 named 3): !`R=$(git rev-parse --show-toplevel); S=$(sed -n '/^## 8\./,/^## 9\./p' "$R/docs/DESIGN.md"); MISS=""; for k in $(grep -oE 'render_[a-z_]+' "$R/src/cc_warehouse/config.py" | sed 's/^render_//' | sort -u); do echo "$S" | grep -q "$k" || MISS="$MISS $k"; done; [ -n "$MISS" ] && echo "CONTRACT DRIFT (flag to principal, do NOT auto-edit docs): config render keys absent from DESIGN 8 [render] map:$MISS" || echo "(every config render key is named in the DESIGN 8 [render] map)"`
 
 ---
@@ -248,7 +248,12 @@ expanded config.py's `[render]` keys from 3 to 8 while DESIGN 8 and ticket 13 st
 that the principal directed the probe be added on first occurrence rather than waiting for
 a recurrence. It is FLAG-only (code-vs-contract is the principal's to reconcile,
 Guardrail 1) and generalizes: any render toggle added to code but not to the DESIGN 8 map
-surfaces here.
+surfaces here. REFINED 2026-07-23: the memory dangling-link probe now EXEMPTS a wiki-link
+declared a forward marker (a `[[slug]]` on a line that also says "forward marker"; the
+convention sanctions a link to a not-yet-written memory as a TODO, not an error). The
+[[memory-compaction-discipline]] false positive was proposed for exemption the prior
+sweep and fired again this sweep, so the refinement graduated from proposed to added. A
+GENUINE dangling link (unresolved and NOT declared a forward marker) still reports.
 
 ---
 
