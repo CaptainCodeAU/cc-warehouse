@@ -9,6 +9,7 @@ compact markdown variants are one implementation, not two near-verbatim copies
 import base64
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import cast
@@ -34,6 +35,14 @@ class RenderOptions:
     reminders_full: str = "collapse"  # collapse | strip | show (personal override only)
     reminders_compact: str = "strip"
     breadcrumbs: bool = False
+    # Per-content-class switches, all default ON (principal ruling 2026-07-23,
+    # "include everything"). Each is an independent toggle here; wiring them to
+    # config keys and CLI flags is ticket 13's frozen scope.
+    subagents: bool = True
+    attachments: bool = True
+    commands: bool = True
+    extras: bool = True  # bridge-session / queue-operation / last-prompt / agent-name
+    toolresult_diff: bool = True
 
 
 @dataclass(frozen=True)
@@ -47,6 +56,11 @@ class _Policy:
     variant_note: str | None
     breadcrumbs: bool
     header_details: bool
+    include_subagents: bool
+    include_attachments: bool
+    include_commands: bool
+    include_extras: bool
+    toolresult_diff: bool
 
 
 # Compact variant note. The word "compact" is load-bearing (oracle test
@@ -223,7 +237,29 @@ def _render_tool_use(block: Block) -> list[str]:
     ]
 
 
-def _render_tool_result(block: Block) -> list[str]:
+def _structured_result(result: Mapping[str, object]) -> list[str] | None:
+    """Render a tool_result's structured `toolUseResult` payload: stdout and
+    stderr as separate fenced blocks, plus an interrupted marker (item 5).
+
+    The Edit patch carried here is deliberately NOT re-rendered: the matching
+    Edit tool_use already shows that exact diff, so repeating it is noise. What
+    the raw result text cannot show -- separated streams, an interrupted flag --
+    is what this adds. Returns None when there is nothing structured to surface,
+    so the caller falls back to the plain result text.
+    """
+    lines: list[str] = []
+    stdout = _as_str(result.get("stdout"))
+    stderr = _as_str(result.get("stderr"))
+    if stdout:
+        lines.extend(["stdout:", *_fence(stdout)])
+    if stderr:
+        lines.extend(["", "stderr:", *_fence(stderr)])
+    if result.get("interrupted") is True:
+        lines.append("> interrupted")
+    return lines or None
+
+
+def _render_tool_result(block: Block, structured: bool = True) -> list[str]:
     text = block.text
     body: list[str] = [
         f"- commit `{commit.sha}`: {commit.message}" for commit in detect_commits(text)
@@ -231,10 +267,38 @@ def _render_tool_result(block: Block) -> list[str]:
     repo = detect_github_repo(text)
     if repo is not None:
         body.append(f"- repo: {repo}")
-    # Always keep the raw result text too (safe-fenced), in addition to any
-    # commit/repo cards, so detection never drops the rest of the result (F6).
-    body.extend(_fence(text))
+    rich: list[str] | None = None
+    if structured and block.result is not None:
+        rich = _structured_result(block.result)
+    if rich is not None:
+        body.extend(rich)
+    else:
+        # Always keep the raw result text (safe-fenced), in addition to any
+        # commit/repo cards, so detection never drops the rest of the result (F6).
+        body.extend(_fence(text))
     return ["**Result:**", "", *body]
+
+
+def _render_subagent(block: Block) -> list[str]:
+    # One step of a sub-agent's exchange, as a bullet. The phase caption already
+    # names the agent, so the line carries only the step.
+    return [f"- {block.text}"]
+
+
+def _render_command(block: Block) -> list[str]:
+    return ["", f"`{block.text}`"]
+
+
+def _render_extra(block: Block) -> list[str]:
+    return [f"- {block.text}"]
+
+
+def _render_attachment(block: Block) -> list[str]:
+    header, _, body = block.text.partition("\n\n")
+    out = ["", f"**{header}**"]
+    if body:
+        out.extend(["", *_fence(body)])
+    return out
 
 
 def _render_reminder(reminder: str, mode: str) -> list[str]:
@@ -299,7 +363,17 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
     if kind == "tool_use":
         return ["", *_render_tool_use(block)] if policy.include_tools else []
     if kind == "tool_result":
-        return ["", *_render_tool_result(block)] if policy.include_tools else []
+        if not policy.include_tools:
+            return []
+        return ["", *_render_tool_result(block, policy.toolresult_diff)]
+    if kind == "subagent":
+        return _render_subagent(block) if policy.include_subagents else []
+    if kind == "command":
+        return _render_command(block) if policy.include_commands else []
+    if kind == "attachment":
+        return _render_attachment(block) if policy.include_attachments else []
+    if kind == "extra":
+        return _render_extra(block) if policy.include_extras else []
     if not policy.include_machinery:
         return []
     return _render_machinery(block)
@@ -421,10 +495,23 @@ def _phase_meta(blocks: tuple[Block, ...]) -> _PhaseMeta:
                 names.append(block.tool_name)
         if names:
             caption = ", ".join(names[:3]) + (", ..." if len(names) > 3 else "")
+    subagent = {b.agent_id for b in blocks if b.kind == "subagent"}
+    if not caption and subagent:
+        names = sorted(a for a in subagent if a)
+        caption = "sub-agent" + (f": {names[0]}" if len(names) == 1 and names[0] else "")
+    if not caption:
+        for kind, word in (("attachment", "attachments"), ("command", "commands"),
+                           ("extra", "session events"), ("machinery", "background")):
+            if any(b.kind == kind for b in blocks):
+                caption = word
+                break
     searches = sum(1 for b in tool_uses if b.tool_name == "WebSearch")
     fetches = sum(1 for b in tool_uses if b.tool_name == "WebFetch")
     others = len(tool_uses) - searches - fetches
     bits: list[str] = []
+    n_sub = sum(1 for b in blocks if b.kind == "subagent")
+    if n_sub:
+        bits.append(f"{n_sub} sub-agent step" + ("" if n_sub == 1 else "s"))
     if searches:
         bits.append(f"{searches} search" if searches == 1 else f"{searches} searches")
     if fetches:
@@ -434,8 +521,14 @@ def _phase_meta(blocks: tuple[Block, ...]) -> _PhaseMeta:
     if thinking:
         count = len(thinking)
         bits.append("1 thought" if count == 1 else f"{count} thoughts")
+    if subagent:
+        icon = "\N{ROBOT FACE}"
+    elif thinking:
+        icon = "\N{MICROSCOPE}"
+    else:
+        icon = "\N{JIGSAW PUZZLE PIECE}"
     return _PhaseMeta(
-        icon="\N{MICROSCOPE}" if thinking else "\N{JIGSAW PUZZLE PIECE}",
+        icon=icon,
         caption=caption or "Worked",
         bits=tuple(bits),
         errors=any(b.kind == "tool_result" and _looks_failed(b.text) for b in blocks),
@@ -477,6 +570,12 @@ def _file_targets(conv: Conversation) -> list[tuple[str, str]]:
 
 
 def _title(meta: ParsedSession) -> str:
+    """The page/document title. Priority (principal ruling 2026-07-23): Claude
+    Code's own ai-title, then the slug, then the first line of the summary, then
+    a bare fallback. The summary can be a machine-generated CONTEXT: wrapper, so
+    it ranks below the real title."""
+    if meta.ai_title:
+        return meta.ai_title
     if meta.slug:
         return meta.slug
     visible, _ = split_reminder(meta.summary)
@@ -746,6 +845,11 @@ def _full_policy(options: RenderOptions) -> _Policy:
         variant_note=None,
         breadcrumbs=False,
         header_details=True,
+        include_subagents=options.subagents,
+        include_attachments=options.attachments,
+        include_commands=options.commands,
+        include_extras=options.extras,
+        toolresult_diff=options.toolresult_diff,
     )
 
 
@@ -761,6 +865,13 @@ def _compact_policy(options: RenderOptions) -> _Policy:
         # full one (its finalMdCompact reuses the built header verbatim), so the
         # two files stay comparable and the HTML page matches its markdown.
         header_details=True,
+        # Compact is prose conversation only: sub-agents, attachments, commands
+        # and the informational extras are all detail the compact variant drops.
+        include_subagents=False,
+        include_attachments=False,
+        include_commands=False,
+        include_extras=False,
+        toolresult_diff=False,
     )
 
 
@@ -1338,6 +1449,10 @@ _ROW_ICONS = {
     "continuation": "\N{LINK SYMBOL}",
     "machinery": "\N{GEAR}",
     "reminder": "\N{INFORMATION SOURCE}",
+    "subagent": "\N{ROBOT FACE}",
+    "command": "\N{KEYBOARD}",
+    "attachment": "\N{PAPERCLIP}",
+    "extra": "\N{INFORMATION SOURCE}",
 }
 _COPY_BUTTON = '<button class="copy-md" title="Copy as Markdown">⧉</button>'
 _COPY_BUTTON_SUB = '<button class="copy-md sub" title="Copy as Markdown">⧉</button>'
@@ -1365,7 +1480,16 @@ def _row_label(block: Block) -> str:
         return _escape(_thinking_label(block))
     if block.kind == "tool_result":
         return "Result"
-    return _escape(block.kind.replace("_", " "))
+    # Label is the readable TYPE; the block's own content fills the row body, so
+    # nothing is shown twice.
+    labels = {
+        "subagent": "sub-agent",
+        "command": "command",
+        "extra": "session event",
+    }
+    if block.kind == "attachment":
+        return _escape(block.text.partition("\n\n")[0])
+    return _escape(labels.get(block.kind, block.kind.replace("_", " ")))
 
 
 def _row_icon(block: Block) -> str:

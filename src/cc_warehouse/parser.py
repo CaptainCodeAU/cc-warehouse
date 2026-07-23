@@ -45,6 +45,11 @@ class ParsedSession:
     # `message.model`. Optional: older payloads and user-only sessions have
     # none, and the emitters simply omit the field then.
     model: str | None = None
+    # Claude Code's own human-readable session title, from a `type: "ai-title"`
+    # entry's `aiTitle` field. Present in most recent sessions; the render title
+    # prefers it over the summary-derived fallback (principal ruling 2026-07-23,
+    # SPEC 8 title source extended). None when the session predates the field.
+    ai_title: str | None = None
 
 
 def _as_nonempty_str(value: object) -> str | None:
@@ -169,6 +174,7 @@ def parse_session(data: bytes) -> ParsedSession:
     first_ts: str | None = None
     last_ts: str | None = None
     model: str | None = None
+    ai_title: str | None = None
 
     for entry in entries:
         session_uuid = session_uuid or _as_nonempty_str(entry.get("sessionId"))
@@ -176,6 +182,12 @@ def parse_session(data: bytes) -> ParsedSession:
         slug = slug or _as_nonempty_str(entry.get("slug"))
         git_branch = git_branch or _as_nonempty_str(entry.get("gitBranch"))
         version = version or _as_nonempty_str(entry.get("version"))
+        # A later ai-title supersedes an earlier one (the title is regenerated as
+        # the conversation grows); keep the last, not the first.
+        if entry.get("type") == "ai-title":
+            title = _as_nonempty_str(entry.get("aiTitle"))
+            if title is not None:
+                ai_title = title
         if model is None:
             message = entry.get("message")
             if isinstance(message, dict):
@@ -211,6 +223,7 @@ def parse_session(data: bytes) -> ParsedSession:
         summary=summary,
         hidden=hidden,
         model=model,
+        ai_title=ai_title,
     )
 
 
@@ -270,15 +283,22 @@ class Block:
     """One typed unit inside a turn.
 
     `kind` is one of: thinking, assistant_text, tool_use, tool_result,
-    task_notification, stop_hook, continuation, machinery, reminder. `text`
-    carries the primary content; tool_name/tool_input carry a tool call's typed
-    payload (both None for non-tool blocks).
+    task_notification, stop_hook, continuation, machinery, reminder, subagent,
+    command, attachment, extra. `text` carries the primary content; tool_name/tool_input
+    carry a tool call's typed payload (both None for non-tool blocks).
     """
 
     kind: str
     text: str
     tool_name: str | None = None
     tool_input: Mapping[str, object] | None = None
+    # A tool_result's structured payload (`toolUseResult`): stdout/stderr,
+    # `interrupted`, and `structuredPatch` for Edit diffs. None when the source
+    # entry carried none.
+    result: Mapping[str, object] | None = None
+    # The sub-agent that produced a `subagent` block (`isSidechain` entries'
+    # `agentId`), so a run of them folds under one labelled phase.
+    agent_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -333,27 +353,54 @@ class Segment:
     blocks: tuple[Block, ...]
 
 
+_PHASE_CATEGORY = {
+    "subagent": "subagent",
+    "command": "command",
+    "attachment": "attachment",
+    "extra": "extra",
+}
+
+
+def _segment_category(block: Block) -> str:
+    """Which phase a block belongs to. Sub-agents, commands, attachments and the
+    informational extras each get their OWN phase, so a sub-agent review is not
+    jumbled in with the main tool calls (principal ruling 2026-07-23). Everything
+    else (thinking, tools, machinery) is one 'research' category."""
+    return _PHASE_CATEGORY.get(block.kind, "research")
+
+
 def group_segments(turn: Turn) -> tuple[Segment, ...]:
     """Split a turn's blocks into reply segments and phase segments.
 
-    A run of consecutive non-`assistant_text` blocks becomes one phase segment;
-    each `assistant_text` block becomes its own reply segment and breaks the
-    run. Concatenating every segment's blocks in order reproduces `turn.blocks`
+    Each `assistant_text` block is its own reply segment. Every other block joins
+    a phase, but a phase breaks when the CATEGORY changes, so a run of sub-agent
+    steps, a run of attachments, and a run of tool calls each fold separately.
+    Concatenating every segment's blocks in order reproduces `turn.blocks`
     exactly, which is what makes the grouping safe to apply in one emitter and
     not another.
     """
     segments: list[Segment] = []
     run: list[Block] = []
+    run_cat: str | None = None
+
+    def flush_run() -> None:
+        nonlocal run, run_cat
+        if run:
+            segments.append(Segment(is_phase=True, blocks=tuple(run)))
+            run = []
+            run_cat = None
+
     for block in turn.blocks:
         if block.kind == "assistant_text":
-            if run:
-                segments.append(Segment(is_phase=True, blocks=tuple(run)))
-                run = []
+            flush_run()
             segments.append(Segment(is_phase=False, blocks=(block,)))
             continue
+        category = _segment_category(block)
+        if run and category != run_cat:
+            flush_run()
         run.append(block)
-    if run:
-        segments.append(Segment(is_phase=True, blocks=tuple(run)))
+        run_cat = category
+    flush_run()
     return tuple(segments)
 
 
@@ -425,9 +472,13 @@ def _assistant_blocks(content: object) -> list[Block]:
     return out
 
 
-def _user_list_blocks(content: list[object]) -> list[Block]:
+def _user_list_blocks(
+    content: list[object], result: Mapping[str, object] | None = None
+) -> list[Block]:
     """Blocks from a user message whose content is a block array: tool results
-    (machinery replies) and any embedded text blocks."""
+    (machinery replies) and any embedded text blocks. `result` is the entry's
+    `toolUseResult`, attached to the tool_result block so the emitter can render
+    a structured diff or stdout/stderr rather than only the text (item 5)."""
     out: list[Block] = []
     for raw in content:
         if not isinstance(raw, dict):
@@ -435,12 +486,112 @@ def _user_list_blocks(content: list[object]) -> list[Block]:
         block = cast(dict[str, object], raw)
         block_type = block.get("type")
         if block_type == "tool_result":
-            out.append(Block("tool_result", _tool_result_text(block)))
+            out.append(Block("tool_result", _tool_result_text(block), result=result))
         elif block_type == "text":
             text = block.get("text")
             if isinstance(text, str) and text.strip():
                 out.append(Block("assistant_text", text.strip()))
     return out
+
+
+# Attachment kinds that carry conversation CONTENT (rendered) vs machinery
+# (recorded as a one-line marker). Split confirmed by the principal 2026-07-23.
+_ATTACHMENT_CONTENT = {
+    "file",
+    "edited_text_file",
+    "already_read_file",
+    "queued_command",
+    "plan_mode",
+    "plan_mode_exit",
+    "opened_file_in_ide",
+}
+
+
+def _attachment_block(attachment: dict[str, object]) -> Block:
+    """One `type: "attachment"` entry as a block. Content kinds render their
+    payload; every other kind becomes a compact machinery marker so it is
+    visible without dumping large hook/reminder bodies (item 3)."""
+    kind = _as_nonempty_str(attachment.get("type")) or "attachment"
+    if kind not in _ATTACHMENT_CONTENT:
+        detail = _as_nonempty_str(attachment.get("filename")) or ""
+        text = f"attachment:{kind}" + (f" {detail}" if detail else "")
+        return Block("machinery", text)
+    filename = _as_nonempty_str(attachment.get("filename")) or ""
+    body = _attachment_text(attachment)
+    header = f"attachment ({kind})" + (f": {filename}" if filename else "")
+    return Block("attachment", header + ("\n\n" + body if body else ""))
+
+
+def _attachment_text(attachment: dict[str, object]) -> str:
+    """Readable body of a content attachment, dug out of its nested shape."""
+    for key in ("snippet",):
+        value = _as_nonempty_str(attachment.get(key))
+        if value is not None:
+            return value
+    content = attachment.get("content")
+    if isinstance(content, dict):
+        file_obj = cast(dict[str, object], content).get("file")
+        if isinstance(file_obj, dict):
+            text = _as_nonempty_str(cast(dict[str, object], file_obj).get("content"))
+            if text is not None:
+                return text
+        text = _as_nonempty_str(cast(dict[str, object], content).get("content"))
+        if text is not None:
+            return text
+    for key in ("planFilePath", "command", "content"):
+        value = _as_nonempty_str(attachment.get(key))
+        if value is not None:
+            return value
+    return ""
+
+
+def _subagent_blocks(entry: dict[str, object]) -> list[Block]:
+    """A sidechain (sub-agent) entry rendered as `subagent` blocks tagged with
+    its agentId, so a run of them folds under one labelled phase (item 2).
+
+    Each inner unit (the prompt, a thinking block, a tool call, a reply) becomes
+    one line so the fold stays scannable; the full detail is in the source."""
+    agent_id = _as_nonempty_str(entry.get("agentId")) or "sub-agent"
+    role = entry.get("type")
+    content = _message_content(entry)
+    lines: list[str] = []
+    if role == "user":
+        text = extract_text(content) if not isinstance(content, str) else content.strip()
+        if isinstance(content, list):
+            for raw in cast(list[object], content):
+                if isinstance(raw, dict):
+                    block = cast(dict[str, object], raw)
+                    if block.get("type") == "tool_result":
+                        lines.append("tool result")
+        if text:
+            lines.append(f"prompt: {_one_line(text)}")
+    else:
+        for block in _assistant_blocks(content):
+            if block.kind == "thinking":
+                lines.append(f"thinking: {_one_line(block.text)}")
+            elif block.kind == "assistant_text":
+                lines.append(_one_line(block.text))
+            elif block.kind == "tool_use":
+                lines.append(f"tool: {block.tool_name or 'tool'}")
+    return [Block("subagent", line, agent_id=agent_id) for line in lines if line]
+
+
+def _one_line(text: str, limit: int = 200) -> str:
+    collapsed = " ".join(text.split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 3] + "..."
+
+
+def _value_summary(entry: dict[str, object], keys: tuple[str, ...]) -> str:
+    """A `key=value` line for the informational entry types the principal asked
+    to surface verbatim (item 6): bridge-session, queue-operation, last-prompt,
+    agent-name."""
+    parts: list[str] = []
+    for key in keys:
+        value = entry.get(key)
+        if value in (None, "", [], {}):
+            continue
+        parts.append(f"{key}={_one_line(str(value))}")
+    return " ".join(parts)
 
 
 def build_conversation(data: bytes) -> Conversation:
@@ -500,17 +651,61 @@ def build_conversation(data: bytes) -> Conversation:
                 first_ts = stamp
             last_ts = stamp
 
+        # Sidechain entries are a sub-agent's own exchange, not the main
+        # thread: fold them in as subagent blocks rather than letting them start
+        # or join a top-level turn (item 2). Checked before role dispatch so a
+        # sidechain user prompt never opens a main turn.
+        if entry.get("isSidechain") is True and kind in ("user", "assistant"):
+            blocks.extend(_subagent_blocks(entry))
+            continue
+
+        if kind == "attachment":
+            attachment = entry.get("attachment")
+            if isinstance(attachment, dict):
+                blocks.append(_attachment_block(cast(dict[str, object], attachment)))
+            continue
+        if kind == "system":
+            subtype = _as_nonempty_str(entry.get("subtype"))
+            text = _as_nonempty_str(entry.get("content"))
+            if subtype == "local_command" and text:
+                # A slash command the user typed reads as user input (item 4).
+                blocks.append(Block("command", text))
+            elif text or subtype:
+                label = f"system:{subtype or 'system'} {text or ''}".strip()
+                blocks.append(Block("machinery", label))
+            continue
+        if kind in ("bridge-session", "queue-operation", "last-prompt", "agent-name"):
+            summary = _value_summary(
+                entry,
+                (
+                    "operation",
+                    "content",
+                    "lastPrompt",
+                    "agentName",
+                    "bridgeSessionId",
+                    "leafUuid",
+                    "lastSequenceNum",
+                ),
+            )
+            if summary:
+                blocks.append(Block("extra", f"{kind}: {summary}"))
+            continue
+
         if kind == "assistant":
             blocks.extend(_assistant_blocks(content))
             continue
         if kind != "user":
             continue
 
+        result = entry.get("toolUseResult")
+        result_map = (
+            cast("Mapping[str, object]", result) if isinstance(result, dict) else None
+        )
         if entry.get("isCompactSummary") is True:
             blocks.append(Block("continuation", extract_text(content)))
             continue
         if isinstance(content, list):
-            blocks.extend(_user_list_blocks(cast(list[object], content)))
+            blocks.extend(_user_list_blocks(cast(list[object], content), result_map))
             continue
         if not isinstance(content, str):
             continue
