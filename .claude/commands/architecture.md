@@ -59,7 +59,9 @@ candidates). Before rendering:
 3. **Line-ref decay check:** SOURCE.md pins file:line evidence at a named commit. If src changed
    since (`git -C <repo> diff --name-only <snapshot-sha>..HEAD -- src/`) in the cited files, mark
    the affected refs "line refs may have drifted" in the render (do NOT silently re-derive - a
-   fresh review re-verifies, this command only renders).
+   fresh review re-verifies, this command only renders). A DIRECT-BUILD burst (Guardrail 7) moves
+   many cited files at once, so decay after one is LARGE and BROAD across cards; that breadth is
+   the signal a fresh review is due, not a rendering fault. Report it plainly and offer the review.
 4. **Ask the operator whether anything is pending** (an unfolded grilling outcome, a candidate
    verdict, new review results) - one short question, not a pop-up. Only then render. `regen` is
    the sole bypass.
@@ -131,6 +133,16 @@ Built on the mattpocock HTML-REPORT pattern, cc-warehouse-fitted:
    trailer.
 6. **Judgment calls go to the principal** as one short question with a recommendation, never an
    auto-decision.
+7. **The direct-build era (2026-07-23).** The principal may direct work built directly and OUT OF
+   the DESIGN section 16 order, so the build-state line reflects what actually LANDED, not the
+   linear slice order: slice 13 landed while relocate 12a/12b are still open, and the render was
+   reworked to the full exporter-v8.10.1 chrome plus entry-type coverage (parser + render) without
+   a ticket of its own. Consequences for this board: (a) the snapshot commit in SOURCE.md can fall
+   far behind HEAD in one burst, so line-ref decay is broad, not a bug; (b) a candidate's cited
+   surface may have moved even though no ticket "landed" it (the render rework touched C1/C5/C7's
+   files, cli.py cards C2/C6, the config surface); (c) that breadth is the standing signal to run a
+   fresh `/mattpocock-skills:improve-codebase-architecture` review and re-verify before re-ranking.
+   This command still never advances a state or re-derives a ref on its own.
 
 ## File map
 
