@@ -271,7 +271,9 @@ def _sweep_source(args: Sequence[str]) -> tuple[Path | None, str | None]:
     default ~/.claude/projects. A `--source` present but with a MISSING, EMPTY, or flag-like
     (starts with "-") value yields (None, message): the caller reports the usage error and
     refuses to sweep rather than silently targeting a tree the operator did not name (R5).
-    This is deliberately minimal (no argparse); the full flag layering lands in slice 13."""
+    Deliberately a hand-rolled parser rather than argparse: `sweep` takes exactly this one
+    option, and the Group-A content flags slice 13 added apply to `build` and `render`, not
+    here (DESIGN section 7)."""
     raw: str | None = None
     seen = False
     for i, arg in enumerate(args):
@@ -385,8 +387,9 @@ def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | No
     """Split `ccw render` args into (session_key, out_dir, source_path).
 
     `--session s:<key>` selects the catalog form; a bare positional selects the ad-hoc
-    form; `--out DIR` names the ad-hoc destination. Deliberately minimal (no argparse);
-    the full flag layering lands in slice 13."""
+    form; `--out DIR` names the ad-hoc destination. This splits only the SELECTION
+    arguments; the Group-A content flags slice 13 added are layered separately through
+    load_config(flags=...) (DESIGN section 8), which is why this stayed hand-rolled."""
     session: str | None = None
     out: str | None = None
     source: str | None = None
