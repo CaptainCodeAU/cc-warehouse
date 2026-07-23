@@ -58,16 +58,35 @@ class Config:
     redact_patterns: tuple[str, ...] = ()
     relocate_roots: tuple[Path, ...] = ()
     inbox: Path | None = None
+    # Config files that EXIST but could not be read or parsed, and key-shape problems.
+    # load_config stays best-effort (R5) so a capture never fails on a broken config;
+    # apply-class commands consult this and refuse rather than treat a typo as "nothing
+    # to do" while they mutate the external world (ticket 12b finding 5).
+    config_errors: tuple[str, ...] = ()
 
 
-def _read_toml(path: Path) -> dict[str, object]:
-    """Parse one config.toml (stdlib tomllib). A missing or unparseable file
-    yields an empty mapping (best-effort, R5), never raising into the loader."""
+def _read_toml(path: Path) -> tuple[dict[str, object], str | None]:
+    """Parse one config.toml (stdlib tomllib). Returns (data, problem).
+
+    A MISSING file is not a problem: both config files are optional. A file that EXISTS
+    but cannot be read or parsed is one, and that problem now travels with the data
+    instead of being swallowed.
+
+    Two callers need opposite policies from one parser (R9/F8). `load_config` stays
+    best-effort and always returns a usable Config, because a broken config file must
+    never stop a capture from storing a session (R5). An apply-class command consults
+    `Config.config_errors` and REFUSES, because for those a typo that silently means
+    "nothing to do" leaves a half-repaired world (ticket 12b finding 5).
+    """
     try:
         with open(path, "rb") as fh:
-            return cast(dict[str, object], tomllib.load(fh))
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+            return cast(dict[str, object], tomllib.load(fh)), None
+    except FileNotFoundError:
+        return {}, None
+    except OSError as exc:
+        return {}, f"{path} is unreadable: {exc}"
+    except tomllib.TOMLDecodeError as exc:
+        return {}, f"{path} is malformed: {exc}"
 
 
 def _table(data: Mapping[str, object], name: str) -> dict[str, object]:
@@ -171,19 +190,26 @@ def load_config(
     home = resolved_env.get("HOME") or str(Path.home())
 
     # --- config files (skipped by --no-config; replaced by --config PATH) ---
+    problems: list[str] = []
     if no_config:
         file_data: dict[str, object] = {}
     elif config_path is not None:
-        file_data = _read_toml(config_path)
+        file_data, problem = _read_toml(config_path)
+        if problem:
+            problems.append(problem)
     else:
         xdg_dir = xdg_config_home or Path(
             resolved_env.get("XDG_CONFIG_HOME") or (Path(home) / ".config")
         )
-        xdg_data = _read_toml(xdg_dir / "cc-warehouse" / "config.toml")
+        xdg_data, problem = _read_toml(xdg_dir / "cc-warehouse" / "config.toml")
+        if problem:
+            problems.append(problem)
         # root must be known before the data-root file (it lives inside root),
         # so resolve it from xdg/env/flags first, then read <root>/config.toml.
         root_probe = _resolve_root(home, xdg_data, resolved_env, flag_map)
-        data_root_data = _read_toml(root_probe / "config.toml")
+        data_root_data, problem = _read_toml(root_probe / "config.toml")
+        if problem:
+            problems.append(problem)
         file_data = _merge(xdg_data, data_root_data)
 
     merged = _apply_project(file_data, project_id)
@@ -210,6 +236,12 @@ def load_config(
         str(p) for p in cast(list[object], share.get("redact_patterns", []))
         if isinstance(share.get("redact_patterns"), list)
     )
+    # A typo of the right TYPE is still a typo: `roots = "path"` must not silently mean
+    # "no roots" to a command that mutates the external world on the strength of it.
+    # Key-shape validation belongs here because this module owns the frozen key map.
+    roots_raw = relocate.get("roots")
+    if roots_raw is not None and not isinstance(roots_raw, list):
+        problems.append("[relocate].roots is not a list")
     relocate_roots = tuple(
         Path(str(p)) for p in cast(list[object], relocate.get("roots", []))
         if isinstance(relocate.get("roots"), list)
@@ -245,6 +277,7 @@ def load_config(
         ),
         redact_patterns=redact_patterns,
         relocate_roots=relocate_roots,
+        config_errors=tuple(problems),
         inbox=Path(inbox_raw) if inbox_raw is not None else None,
     )
 

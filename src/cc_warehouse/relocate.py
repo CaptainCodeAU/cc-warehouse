@@ -25,7 +25,6 @@ import json
 import os
 import re
 import sqlite3
-import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -149,34 +148,22 @@ def _resolved(path: Path) -> Path:
         return path
 
 
-def _relocate_roots(root: Path) -> tuple[tuple[Path, ...], str | None]:
-    """Read [relocate].roots from <root>/config.toml; returns (roots, parse_error).
+def _relocate_roots(config: Config) -> tuple[tuple[Path, ...], str | None]:
+    """The configured content-scan roots, or the reason the config cannot be trusted.
+
+    Both come from the SINGLE load in config.py (ticket 12b finding 5). This module used
+    to parse `<root>/config.toml` itself, which was two implementations of one behaviour
+    (R9/F8) and, worse, meant DESIGN 8's layering never applied here: roots declared in
+    the XDG tier were invisible to relocate, so a dotfiles-managed config produced a run
+    that repaired NOTHING while the containers were renamed anyway, and said so nowhere.
 
     An ABSENT file or section legitimately means no inventory to repair. A file that
-    fails to parse is NOT the same thing: it is reported so a typo can never masquerade
-    as "nothing to rewrite" while the containers are renamed anyway (R5/F7). The full
-    config layering that folds this into load_config lands in slice 13.
+    exists but fails to parse is NOT the same thing: it is reported so a typo can never
+    masquerade as "nothing to rewrite" (R5/F7).
     """
-    config_path = root / "config.toml"
-    if not config_path.exists():
-        return (), None
-    try:
-        with open(config_path, "rb") as fh:
-            data = cast(dict[str, object], tomllib.load(fh))
-    except OSError as exc:
-        return (), f"config.toml unreadable: {exc}"
-    except tomllib.TOMLDecodeError as exc:
-        return (), f"config.toml is malformed: {exc}"
-    section = data.get("relocate")
-    if not isinstance(section, dict):
-        return (), None
-    roots_raw = cast(dict[str, object], section).get("roots")
-    if roots_raw is None:
-        return (), None
-    if not isinstance(roots_raw, list):
-        return (), "[relocate].roots is not a list"
-    items = cast(list[object], roots_raw)
-    return tuple(_absolute(Path(i)) for i in items if isinstance(i, str) and i), None
+    if config.config_errors:
+        return (), config.config_errors[0]
+    return tuple(_absolute(root) for root in config.relocate_roots), None
 
 
 def _form_patterns(
@@ -330,7 +317,7 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
     the apply path prints the plan before asking, so the operator sees it before consenting,
     and one config.toml shared across machines may legitimately name an absent root.
     """
-    roots, config_error = _relocate_roots(config.root)
+    roots, config_error = _relocate_roots(config)
     warehouse = _resolved(_absolute(config.root))
     projects_link = _claude_projects()
     projects = _resolved(projects_link) if projects_link is not None else None

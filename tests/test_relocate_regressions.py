@@ -850,6 +850,78 @@ def test_an_undecodable_file_is_a_named_skip_and_the_run_continues(
     assert str(world.new_repo).encode() in good.read_bytes(), "the batch did not continue"
 
 
+# --------------------------------------------------------------------------------------
+# Ticket 12b finding 5: relocate ran its own [relocate].roots reader (R9/F8 drift created
+# by slice 13 landing out of DESIGN-16 order), which also meant DESIGN 8's config layering
+# never applied to those roots.
+# --------------------------------------------------------------------------------------
+
+
+def test_relocate_roots_declared_in_the_xdg_config_are_honoured(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12b-5 (DESIGN 8): the XDG file is a config tier for every frozen key.
+
+    relocate read `<root>/config.toml` directly, so roots declared in the XDG file were
+    invisible to it. A dotfiles-managed config therefore produced a run that repaired
+    NOTHING while the containers were renamed anyway, and said nothing: the exact
+    half-repaired world the malformed-config refusal exists to prevent.
+    """
+    world = World(ccw_env, tmp_path)
+    # Declare the roots ONLY in the XDG tier; the data-root file names no relocate section.
+    (world.root / "config.toml").write_text("[notify]\nopen_folder = false\n")
+    xdg = Path(ccw_env["HOME"]) / ".config" / "cc-warehouse"
+    xdg.mkdir(parents=True, exist_ok=True)
+    (xdg / "config.toml").write_text(f'[relocate]\nroots = ["{world.inventory}"]\n')
+
+    result = world.apply()
+    assert result.code == 0, result.err
+    assert str(world.new_repo) in world.memory_md.read_text(), (
+        "roots declared in the XDG config tier were ignored"
+    )
+
+
+def test_a_malformed_xdg_config_refuses_like_a_malformed_data_root_config(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12b-5 (R5/F7): the refusal must follow the layering, not one hard-coded file."""
+    world = World(ccw_env, tmp_path)
+    xdg = Path(ccw_env["HOME"]) / ".config" / "cc-warehouse"
+    xdg.mkdir(parents=True, exist_ok=True)
+    (xdg / "config.toml").write_text("[relocate]\nroots = this is not toml\n")
+    before = tree_snapshot(world.inventory)
+
+    result = world.apply()
+    assert result.code != 0, "a malformed XDG config was treated as 'nothing to rewrite'"
+    assert world.repo.is_dir() and not world.new_repo.exists()
+    assert tree_snapshot(world.inventory) == before
+
+
+def test_roots_that_are_not_a_list_are_refused(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """R5/F7: a typo of the right TYPE is still a typo; it must not mean 'no roots'."""
+    world = World(ccw_env, tmp_path)
+    (world.root / "config.toml").write_text('[relocate]\nroots = "not-a-list"\n')
+    before = tree_snapshot(world.inventory)
+
+    result = world.apply()
+    assert result.code != 0, "a non-list roots value silently meant 'nothing to rewrite'"
+    assert tree_snapshot(world.inventory) == before
+
+
+def test_relocate_does_not_parse_config_files_itself(ccw_env: dict[str, str]) -> None:
+    """R9/F8 fence: one implementation per behaviour. config.py owns config parsing.
+
+    A second reader is how the layering silently diverged in the first place, so this
+    pins the absence of one rather than trusting it to stay absent.
+    """
+    from cc_warehouse import relocate as relocate_mod
+
+    source = Path(relocate_mod.__file__).read_text()
+    assert "tomllib" not in source, "relocate.py parses config.toml itself again"
+
+
 def test_registry_gains_both_the_cwd_and_encoded_claims(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
