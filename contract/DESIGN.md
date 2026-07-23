@@ -425,8 +425,10 @@ is logged, never raised (capture must survive notification infrastructure).
 5. Exact `CCW_*` env names + config key map: DECIDED 2026-07-23 (principal). The env
    list is the six names in section 8; the frozen TOML map is section 8, with `[render]`
    expanded to carry the content toggles. No render toggle takes an env var.
-6. PyPI name final check (`cc-warehouse` availability re-verified before repo goes
-   public; spot-checked only).
+6. PyPI name final check: DORMANT 2026-07-24 (principal). The distribution name is
+   `cc-warehouse` (confirmed; already in pyproject.toml), but see the DISTRIBUTION POSTURE
+   entry below: the project is not being published for now, so nothing waits on a PyPI
+   name re-check. Reactivate this item if publication is taken up.
 7. Registry backup/export story (the registry is non-derivable live state, section 1):
    likely a `ccw project export` JSON dump; decide by the catalog slice.
 8. Shares and highlight.js: DECIDED 2026-07-24 (principal). SHARED pages INLINE the
@@ -526,6 +528,21 @@ operator's own display preference. It is v1.1 rather than v1 because it needs a 
 palette designed and, more importantly, the hand-mapped highlight.js token colours
 re-verified for contrast on a light background; that is design work, not plumbing, since
 the CSS already routes everything through `:root` custom properties.
+
+**DISTRIBUTION POSTURE: publication DEFERRED, 2026-07-24 (principal).** The project is NOT
+being published for now ("at least not now"). This SUPERSEDES the framing in the locked
+foundations that this document and BRAINSTORM carry - BRAINSTORM's "Public from day one:
+PyPI + git-URL distribution" (line 27) and its rejected-item note "publishing is the plan"
+(line 94), this section's restated foundation "PyPI + git distribution" (section, top),
+and SPEC section 11's "PyPI publishing IS planned". Those lines are left as the record of
+what was true in July 2026; this dated entry is the current posture, exactly as item 9's
+license decision superseded its own earlier Apache-vs-MIT framing without rewriting it.
+The distribution name stays `cc-warehouse` and the console scripts stay `ccw` /
+`cc-warehouse` (packaging is unchanged and still valid for a git-URL install); only the
+act of publishing to PyPI is deferred. Item 6 above is DORMANT as a consequence. The
+wording is deliberately neutral between "deferred" and "abandoned": the principal said
+"at least not now", and only the principal settles which. Reactivating publication
+reactivates item 6 and this posture is re-decided here with a new dated line.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
