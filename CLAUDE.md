@@ -187,11 +187,21 @@ verb" false. Principal ruled: build all four subcommands now (b32b235), and sanc
 INTERNAL verbs in section 7 while keeping them out of `-h` (61a7d62). Suite 400 passed / 0
 failed. Standing lesson: SLICE COMPLETENESS IS NOT CONTRACT COMPLETENESS; a green suite
 proves the code matches the tests, only reading the contract against the code proves the
-tests cover the contract. **v1 IS CLOSED.** OPEN / next: the --hljs (DESIGN 15 item 8) and
---theme rulings, both needing the principal; then the v1.1 flag groups (per-file matrix,
-HTML chrome defaults, truncation, --since/--until); then v1.1 proper (FTS5 + `ccw search` +
-`ccw import`) and v1.2 (`ccw mcp`). Pre-release, not pre-v1: DESIGN 15 items 6 (PyPI name
-re-check) and 7 (registry export). Non-blocking: the architecture board is stale (~20
+tests cover the contract. **v1 IS CLOSED.** Both rulings the exit review left open were
+taken 2026-07-24. `--hljs` (DESIGN 15 item 8): SHARED pages now INLINE the vendored
+highlight.js and make zero third-party requests, personal projections keep the CDN plus
+its onerror fallback (exporter parity); decided on PRIVACY (redaction scrubs the content
+while a CDN script exposed the READER's IP and page URL), with the "bigger files"
+counterargument measured away (3,157 -> 3,275 KB, +3.7%); asset vendored at
+src/cc_warehouse/vendor/ with URL, sha256 and BSD-3 licence, emitted payload asserted
+byte-for-byte; commit 0cd4146. `--theme`: dark-only STANDS, no flag; it was never a
+section 15 item and entered on a false premise (the page was believed theme-neutral; a
+census found no `color-scheme` and no `prefers-color-scheme` anywhere, and SPEC 7 had
+already DROPPED the light/dark toggle). Reader-OS-setting support is recorded as a named
+v1.1 candidate. OPEN / next: the v1.1 flag groups (per-file matrix, HTML chrome defaults,
+truncation, --since/--until); then v1.1 proper (FTS5 + `ccw search` + `ccw import`) and
+v1.2 (`ccw mcp`). Pre-release, not pre-v1: DESIGN 15 items 6 (PyPI name re-check) and 7
+(registry export). Non-blocking: the architecture board is stale (~20
 commits / 2,700+ lines of src/ since its 56262f6 snapshot) and this phase note is a
 candidate for compaction.
 `/refresh` (in `.claude/commands/`) is the currency sweep.

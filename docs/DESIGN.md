@@ -504,10 +504,28 @@ of `-h`, and require each to be listed in section 7 when added. Closed by commit
 Standing lesson recorded so it is not relearned: SLICE COMPLETENESS IS NOT CONTRACT
 COMPLETENESS. A green suite proves the code matches the tests; only reading the contract
 against the code proves the tests cover the contract.
-STILL OPEN after this review, and deliberately NOT closed by it: item 8 (`--hljs` inline
-vs CDN) and the `--theme` product theme-neutrality question, both of which need their own
-principal ruling; items 6 (PyPI name re-check) and 7 (registry backup/export story), both
-pre-release rather than pre-v1; and the v1.1 flag groups named in section 7.
+Left open by this review and CLOSED the same day, each by its own principal ruling:
+item 8 (`--hljs`), and the `--theme` question below. STILL OPEN: items 6 (PyPI name
+re-check) and 7 (registry backup/export story), both pre-release rather than pre-v1, and
+the v1.1 flag groups named in section 7.
+
+**`--theme`: DECIDED 2026-07-24 (principal). Dark-only stands; no flag is added.** This
+was never a section 15 item; it entered as a "product theme-neutrality decision" in the
+flag-surface plan, on a PREMISE THAT WAS FALSE. A census of render.py found no
+`color-scheme` declaration and no `prefers-color-scheme` media query anywhere: the page
+hard-codes a dark Catppuccin-derived palette, and SPEC section 7 had already DROPPED the
+specimen's dark/light localStorage toggle in favour of "the exporter's Catppuccin-derived
+single-page look". So the verdict existed; the question only looked open because the
+neutrality premise was wrong. Confirming it rather than reversing it: SPEC 7's drop is
+explicit and reasoned, exporter parity is a stated value, and nothing is broken.
+RECORDED AS A NAMED v1.1 CANDIDATE, not dropped: honouring the READER's OS setting via
+`prefers-color-scheme` (no toggle, no stored state, so it would not reverse SPEC 7's drop
+of the toggle). The justification is the one that decided item 8 the same day - shares are
+read by other people, so product decisions are made for the reader rather than for the
+operator's own display preference. It is v1.1 rather than v1 because it needs a light
+palette designed and, more importantly, the hand-mapped highlight.js token colours
+re-verified for contrast on a light background; that is design work, not plumbing, since
+the CSS already routes everything through `:root` custom properties.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
