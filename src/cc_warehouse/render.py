@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 
 from cc_warehouse.parser import (
@@ -43,6 +44,10 @@ class RenderOptions:
     commands: bool = True
     extras: bool = True  # bridge-session / queue-operation / last-prompt / agent-name
     toolresult_diff: bool = True
+    # highlight.js delivery: cdn | inline | off (DESIGN 15 item 8, principal 2026-07-24).
+    # Personal projections keep `cdn` for exporter parity; `ccw share` sets `inline` so a
+    # published page makes no third-party request. See _hljs_block.
+    hljs: str = "cdn"
 
 
 @dataclass(frozen=True)
@@ -1056,6 +1061,37 @@ _HLJS_SCRIPT = (
     f'<script src="{_HLJS_BASE}/highlight.min.js" '
     'onload="hljs.highlightAll()" onerror="void 0"></script>'
 )
+
+
+def _hljs_block(mode: str) -> str:
+    """The highlight.js delivery for one page (DESIGN 15 item 8, principal 2026-07-24).
+
+    `cdn` keeps the single external reference plus its graceful onerror fallback, which is
+    exporter parity and stays the default for personal projections. `inline` embeds the
+    VENDORED script so a page makes no third-party request at all: `ccw share` sets this,
+    because redaction scrubs the CONTENT while a CDN script exposes the READER, announcing
+    their IP and the page URL to a third party. It also keeps a published archive working
+    after a pinned CDN URL stops resolving. `off` emits nothing and code renders
+    unhighlighted, which is what the cdn fallback already does when the network is absent.
+
+    The payload is read from disk rather than pasted here, so it cannot drift from
+    vendor/README.md's recorded sha256; the emitted bytes are asserted to equal that file
+    in tests/test_render_html_regressions.py::
+    test_hljs_modes_control_the_one_external_reference.
+
+    An unknown mode falls back to `cdn`: this is presentation, and refusing to render a
+    transcript over a misspelt display option would be the wrong conservative branch.
+    """
+    if mode == "off":
+        return ""
+    if mode == "inline":
+        payload = (Path(__file__).parent / "vendor" / "highlight.min.js").read_text(
+            encoding="utf-8"
+        )
+        # The vendored bundle contains no "</script>", so it needs no escaping; a future
+        # bundle that did would break the page, which the byte-equality test would catch.
+        return f"<script>{payload}\nhljs.highlightAll();</script>"
+    return _HLJS_SCRIPT
 _TOOLBAR = (
     '<div class="toolbar">'
     '<button data-act="collapse">Collapse all</button>'
@@ -1739,6 +1775,7 @@ def _render_page(
     policy: _Policy,
     repo: str | None,
     source_hash: str,
+    hljs: str,
 ) -> str:
     anchors = _AnchorAllocator()
     whole = _render(conv, meta, policy, source_hash)
@@ -1758,7 +1795,7 @@ def _render_page(
     index = _files_index_html(conv, anchors)
     if index is not None:
         parts.append(index)
-    parts.extend(["</main>", _HLJS_SCRIPT, _COPY_SCRIPT, "</body>", "</html>"])
+    parts.extend(["</main>", _hljs_block(hljs), _COPY_SCRIPT, "</body>", "</html>"])
     return "\n".join(parts) + "\n"
 
 
@@ -1777,8 +1814,8 @@ def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
     meta = parse_session(data)
     repo = _session_repo(conv)
     source_hash = sha256_hex(data)
-    full = _render_page(conv, meta, _full_policy(options), repo, source_hash)
-    compact = _render_page(conv, meta, _compact_policy(options), repo, source_hash)
+    full = _render_page(conv, meta, _full_policy(options), repo, source_hash, options.hljs)
+    compact = _render_page(conv, meta, _compact_policy(options), repo, source_hash, options.hljs)
     return full, compact
 
 

@@ -165,7 +165,7 @@ reference):
 |---|---|
 | `transcript.md` | full: header card + collapsed details block, `***` separators (Quick-Look-safe), grouped research phases (caption, duration, tool counts), thinking in ```` ```md ```` fences, tool rows with raw JSON in nested details |
 | `transcript.compact.md` | conversation only + variant note; optional breadcrumbs (config, default off) |
-| `conversation.html` | single-page HTML: collapsible turns and phases, per-block copy-as-md, sticky toolbar, width/font toggles, elapsed times, Catppuccin-derived palette. NOT fully self-contained: highlight.js from CDN with graceful onerror fallback is the ONE permitted external reference (matching the exporter); whether shares inline it instead is an open decision (section 15) |
+| `conversation.html` | single-page HTML: collapsible turns and phases, per-block copy-as-md, sticky toolbar, width/font toggles, elapsed times, Catppuccin-derived palette. PERSONAL projections are not fully self-contained: highlight.js from CDN with graceful onerror fallback is the ONE permitted external reference (matching the exporter). SHARED pages INLINE the vendored highlight.js instead and carry ZERO external references (decided 2026-07-24, section 15 item 8) |
 | `conversation.compact.html` | conversation-only page, same chrome |
 
 Fixed policies (locked in brainstorm): thinking + tool calls ON in full variants;
@@ -429,9 +429,22 @@ is logged, never raised (capture must survive notification infrastructure).
    public; spot-checked only).
 7. Registry backup/export story (the registry is non-derivable live state, section 1):
    likely a `ccw project export` JSON dump; decide by the catalog slice.
-8. Shares and highlight.js: inline it into shared pages (true self-containment,
-   bigger files) vs keep the CDN reference (privacy note in the share report).
-   Personal projections keep the CDN + fallback either way (exporter parity).
+8. Shares and highlight.js: DECIDED 2026-07-24 (principal). SHARED pages INLINE the
+   vendored highlight.js and make no third-party request; PERSONAL projections keep the
+   CDN reference plus its graceful onerror fallback (exporter parity), as this item
+   always specified. The deciding argument was PRIVACY rather than self-containment:
+   `ccw share` exists so publishing does not leak, and redaction scrubs the CONTENT while
+   a CDN `<script>` exposes the READER, announcing their IP and the page URL to a third
+   party. Durability seconded it: a published archive keeps working after a pinned CDN
+   URL stops resolving. The "bigger files" counterargument was MEASURED and did not
+   survive: on a real session `conversation.html` goes 3,157 KB -> 3,275 KB (+3.7%),
+   because highlight.js is 118.9 KB against pages that are megabytes. Implemented as a
+   `RenderOptions.hljs` mode (`cdn` | `inline` | `off`, default `cdn`), so one renderer
+   serves both callers (R9) and the v1.1 `--hljs` flag inherits its meaning from this.
+   The asset is vendored at `src/cc_warehouse/vendor/` with its URL, version, sha256 and
+   BSD-3-Clause licence recorded; the emitted payload is asserted byte-for-byte against
+   that file so a swap cannot drift silently. This is NOT an R7 exception: R7 bans
+   third-party PYTHON imports, and this is a static asset copied into an output file.
 9. License: DECIDED 2026-07-18 (principal, Phase 2 bootstrap): PolyForm
    Noncommercial 1.0.0 (source-available; supersedes the Apache-2.0 vs MIT
    framing this item originally carried).

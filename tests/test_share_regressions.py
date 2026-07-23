@@ -276,3 +276,25 @@ def test_unreadable_object_reported_as_error_not_not_found(
     }
     session_pages = [p for p in out.rglob("*") if p.name in projection_names]
     assert not session_pages, "rendered a projection for an unreadable object"
+
+
+def test_a_shared_page_makes_no_third_party_request(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """DESIGN 15 item 8 (principal, 2026-07-24): a share must not expose its READER.
+
+    Redaction scrubs the content, but a CDN <script> makes every reader's browser
+    announce its IP and the page URL to a third party. `share` exists so that publishing
+    does not leak, so a shared page carries highlight.js inline and calls out to nothing.
+    """
+    short = capture_and_short(ccw_env, basic_session(prompt="check the shared page"))
+    out = tmp_path / "site"
+    result = run_ccw(["share", short, "--out", str(out)], ccw_env)
+    assert result.code == 0, result.err
+
+    pages = [p for p in out.rglob("*.html")]
+    assert pages, "no pages were written"
+    for page in pages:
+        text = page.read_text(errors="replace")
+        assert "cdnjs" not in text, f"{page.name} calls out to a CDN"
+        assert "http://" not in text.replace("http://www.w3.org", ""), f"{page.name} has http refs"

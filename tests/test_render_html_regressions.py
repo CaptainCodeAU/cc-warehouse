@@ -93,3 +93,46 @@ def test_inline_bold_and_links_render() -> None:
     assert "<strong>bold</strong>" in full
     assert 'href="https://x.test"' in full
     assert ">link</a>" in full
+
+
+def test_hljs_modes_control_the_one_external_reference() -> None:
+    """DESIGN 15 item 8, ruled by the principal 2026-07-24.
+
+    Shared pages INLINE highlight.js so a published archive is self-contained and makes
+    no third-party request; personal projections keep the CDN reference plus its graceful
+    onerror fallback (exporter parity). The mode is a RenderOptions field so the two
+    callers differ without a second renderer (R9).
+
+    The inlined payload is asserted to be the vendored file BYTE FOR BYTE: a hand-copied
+    or re-minified variant would drift from the recorded sha256 in vendor/README.md.
+    """
+    from pathlib import Path
+
+    from cc_warehouse import render
+
+    data = payload(user("hello"), assistant([{"type": "text", "text": "world"}]))
+    vendored = (
+        Path(render.__file__).parent / "vendor" / "highlight.min.js"
+    ).read_text(encoding="utf-8")
+
+    cdn, _ = render.render_html(data, render.RenderOptions(hljs="cdn"))
+    assert cdn.count("cdnjs.cloudflare.com") == 1, "personal pages keep exactly one CDN ref"
+    assert "onerror" in cdn, "the graceful fallback was dropped"
+    assert vendored not in cdn, "the cdn mode shipped the payload too"
+
+    inline, inline_compact = render.render_html(data, render.RenderOptions(hljs="inline"))
+    for page in (inline, inline_compact):
+        assert "cdnjs.cloudflare.com" not in page, "an inlined page still calls out to a CDN"
+        assert vendored in page, "the inlined payload is not the vendored file verbatim"
+        assert "hljs.highlightAll()" in page, "highlighting is not actually invoked"
+
+    off, _ = render.render_html(data, render.RenderOptions(hljs="off"))
+    assert "cdnjs.cloudflare.com" not in off
+    assert vendored not in off, "hljs=off still shipped the payload"
+
+
+def test_hljs_defaults_to_cdn_for_personal_projections() -> None:
+    """Exporter parity is the default; inlining is opt-in and share sets it."""
+    from cc_warehouse import render
+
+    assert render.RenderOptions().hljs == "cdn"

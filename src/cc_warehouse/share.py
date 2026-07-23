@@ -374,7 +374,10 @@ def share(
 
     # Phase 2: write the sanitized copies, the index, and the report (all atomic, R2).
     out_dir.mkdir(parents=True, exist_ok=True)
-    options = render.RenderOptions()  # fixed: shares ignore personal render overrides
+    # Fixed policy: shares ignore personal render overrides, and hljs is INLINED so a
+    # published page makes no third-party request (DESIGN 15 item 8, principal
+    # 2026-07-24). Redaction protects the content; this protects the reader.
+    options = render.RenderOptions(hljs="inline")
     index_entries: list[tuple[str, str]] = []
     for item, redacted_bytes in prepared:
         label = _redact_display(item.label, patterns)
@@ -447,7 +450,7 @@ def _write_site_entry(
         slug = item.slug or "session"
     first_ts = item.first_ts if item.first_ts and _DATE_RE.match(item.first_ts) else None
     subdir = build.projection_dir(out_root, label, first_ts, slug, item.short)
-    build.write_projection(subdir, payload, render.RenderOptions(), force=True)
+    build.write_projection(subdir, payload, render.RenderOptions(hljs="inline"), force=True)
     href = f"{subdir.relative_to(out_root).as_posix()}/conversation.html"
     index.append((href, slug or item.short))
     return sum(f.stat().st_size for f in subdir.iterdir() if f.is_file())
