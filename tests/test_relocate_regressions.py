@@ -420,7 +420,14 @@ def test_stored_objects_survive_a_symlinked_warehouse_root(
     assert hashlib.sha256(obj.read_bytes()).hexdigest() == digest, (
         "a stored object was rewritten through a symlinked warehouse root"
     )
-    assert str(real_root) not in result.err, "the warehouse subtree was touched at all"
+    # Since ticket 12b finding 3 the warehouse IS mentioned, as a named exclusion, because
+    # silently dropping a subtree lets the operator assume it was covered. So assert the
+    # rule rather than the silence: every mention must be a skip, never a rewrite.
+    for line in result.err.splitlines():
+        if str(real_root) in line:
+            assert "not scanned" in line or "not descended" in line, (
+                f"the warehouse subtree was acted on, not merely reported: {line}"
+            )
     assert result.code == 0, result.err
     assert run_ccw(["verify"], ccw_env).code == 0, "verify no longer clean after relocate"
 

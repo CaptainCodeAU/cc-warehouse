@@ -311,60 +311,118 @@ def _rewrite_bytes(
 def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -> _Scan:
     """Find files under [relocate].roots that reference the old path.
 
-    Excludes the warehouse root subtree entirely: a stored object is immutable and
-    content-addressed, so rewriting one would break its address (R4/F9). Never descends
-    or writes through a symlink, and never silently drops a file it cannot handle: an
-    unreadable, undecodable, or oversized file is returned as a NAMED skip so the caller
-    can report it as unrepaired instead of claiming a clean sweep (R5/F7).
+    EVERY path this declines is NAMED exactly once with a reason (ticket 12b finding 3).
+    The previous implementation claimed as much in prose while silently dropping eight
+    distinct shapes: files under a symlinked directory, files under `.git`, files under an
+    excluded tree, FIFOs and sockets, files under a directory it could not read, and every
+    file under a configured root that does not exist. Each of those is a file the operator
+    believes was repaired (F6/R8, R10).
+
+    Pruning happens at DIRECTORY level rather than per file (findings 4 and 6). An excluded
+    subtree is never descended, so its files are never resolved, stat'd or opened: on a
+    200-directory / 5000-file tree that is ~200 realpath calls instead of ~5200. `os.walk`
+    with `onerror` is what makes an unreadable directory a NAMED under-capture rather than
+    a silently short result (the slice-05 lesson).
+
+    Exclusions compare RESOLVED paths on both sides (ticket 12a), so a symlinked CCW_ROOT
+    or a symlinked `~/.claude` cannot defeat them. A configured root that is missing or is
+    not a directory is a named skip and the run continues (principal ruling 2026-07-24):
+    the apply path prints the plan before asking, so the operator sees it before consenting,
+    and one config.toml shared across machines may legitimately name an absent root.
     """
     roots, config_error = _relocate_roots(config.root)
-    # RESOLVED on both sides (ticket 12a): the walk yields real paths, so an exclusion
-    # holding a symlink path never matches one and protects nothing. See _resolved.
     warehouse = _resolved(_absolute(config.root))
     projects_link = _claude_projects()
     projects = _resolved(projects_link) if projects_link is not None else None
     targets: list[Path] = []
     skipped: list[tuple[Path, str]] = []
-    for root in roots:
-        if not root.is_dir():
+    named: set[Path] = set()
+    seen: set[Path] = set()
+
+    def note(path: Path, reason: str) -> None:
+        """Report a decline once. Nested or duplicated roots must not double-report."""
+        if path not in named:
+            named.add(path)
+            skipped.append((path, reason))
+
+    def exclusion(real: Path) -> str | None:
+        if warehouse == real or warehouse in real.parents:
+            return "warehouse not scanned (stored objects are immutable)"
+        if projects is not None and (projects == real or projects in real.parents):
+            # Captured transcripts are SOURCES: read-only forever (R4/F9). SPEC 10.2 keeps
+            # the specimen's rule that nothing outside the memory roots is string-edited;
+            # the encoded dirs are renamed instead.
+            return "captured transcripts not scanned (sources are read-only)"
+        return None
+
+    def onerror(exc: OSError) -> None:
+        if exc.filename:
+            note(Path(exc.filename), f"unreadable directory: {exc.strerror}")
+
+    for root in dict.fromkeys(roots):  # identical roots collapse, config order preserved
+        if not root.exists():
+            note(root, "configured root does not exist")
             continue
-        for path in sorted(root.rglob("*")):
-            real = _resolved(path)
-            if warehouse == real or warehouse in real.parents:
-                continue  # never rewrite the warehouse (store objects are immutable)
-            if projects is not None and (projects == real or projects in real.parents):
-                # Captured transcripts are SOURCES: read-only forever (R4/F9). SPEC 10.2
-                # keeps the specimen's rule that nothing outside the memory roots is ever
-                # string-edited; the encoded dirs are renamed instead.
-                continue
-            if ".git" in path.parts:
-                continue
-            if path.is_symlink():
-                skipped.append((path, "symlink not rewritten"))
-                continue
-            if not path.is_file():
-                continue
-            try:
-                # A BOUNDED read, never a stat-size comparison (the F1 fence forbids
-                # treating a size as meaningful): read one byte past the cap and refuse
-                # anything bigger rather than slurping an unbounded file (F5).
-                with path.open("rb") as handle:
-                    raw = handle.read(_MAX_CONTENT_BYTES + 1)
-            except OSError as exc:
-                skipped.append((path, f"unreadable: {exc}"))
-                continue
-            if len(raw) > _MAX_CONTENT_BYTES:
-                skipped.append((path, "file too large to rewrite"))
-                continue
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                skipped.append((path, "not UTF-8 text"))
-                continue
-            # Raw text OR decoded: an escaped path reference is invisible to the former
-            # and would never become a candidate at all (ticket 12b finding 2).
-            if _references(path, text, patterns):
-                targets.append(path)
+        if not root.is_dir():
+            note(root, "configured root is not a directory")
+            continue
+        root_excluded = exclusion(_resolved(root))
+        if root_excluded:
+            note(root, root_excluded)
+            continue
+        for dirpath, dirnames, filenames in os.walk(root, onerror=onerror):
+            here = Path(dirpath)
+            keep: list[str] = []
+            for name in sorted(dirnames):
+                child = here / name
+                if child.is_symlink():
+                    # Not descended: a link can leave the root entirely, and following one
+                    # invites a cycle. Named so the subtree is not assumed repaired.
+                    note(child, "symlinked directory not descended")
+                    continue
+                if name == ".git":
+                    note(child, ".git not scanned")
+                    continue
+                child_excluded = exclusion(_resolved(child))
+                if child_excluded:
+                    note(child, child_excluded)
+                    continue
+                keep.append(name)
+            dirnames[:] = keep  # prune IN PLACE: os.walk will not descend what we removed
+            for name in sorted(filenames):
+                path = here / name
+                if path in seen:  # reachable through two configured roots
+                    continue
+                seen.add(path)
+                if path.is_symlink():
+                    note(path, "symlink not rewritten")
+                    continue
+                if not path.is_file():
+                    # Classified by stat, never by reading: opening a FIFO named *.md
+                    # would block forever (the slice-10 trap).
+                    note(path, "not a regular file (fifo, socket or device)")
+                    continue
+                try:
+                    # A BOUNDED read, never a stat-size comparison (the F1 fence forbids
+                    # treating a size as meaningful): read one byte past the cap and refuse
+                    # anything bigger rather than slurping an unbounded file (F5).
+                    with path.open("rb") as handle:
+                        raw = handle.read(_MAX_CONTENT_BYTES + 1)
+                except OSError as exc:
+                    note(path, f"unreadable: {exc}")
+                    continue
+                if len(raw) > _MAX_CONTENT_BYTES:
+                    note(path, "file too large to rewrite")
+                    continue
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    note(path, "not UTF-8 text")
+                    continue
+                # Raw text OR decoded: an escaped path reference is invisible to the former
+                # and would never become a candidate at all (ticket 12b finding 2).
+                if _references(path, text, patterns):
+                    targets.append(path)
     return _Scan(tuple(targets), tuple(skipped), config_error)
 
 
@@ -417,7 +475,12 @@ def _rename_pairs(renames: list[tuple[Path, Path]]) -> list[tuple[str, str]]:
 
 
 def _encoded_moves(
-    root: Path, old_repo: Path, new_repo: str, *, claim_ambiguous: bool
+    root: Path,
+    old_repo: Path,
+    new_repo: str,
+    *,
+    claim_ambiguous: bool,
+    conn: sqlite3.Connection | None,
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, str]]]:
     """Split the name-matched candidates into (renames, skips).
 
@@ -442,7 +505,9 @@ def _encoded_moves(
             continue
         # Check EVERY cwd claim: a relocated project KEEPS its previous one (claims are
         # append-only, R4), so a single row could be a stale path for the right project.
-        claims = _cwds_for_encoded(root, old_dir.name)
+        # ONE connection for the whole computation, not one per candidate: re-opening the
+        # catalog per item is the full-corpus-work-for-a-small-question shape F5 bans.
+        claims = registry.cwds_for_encoded_dir(conn, old_dir.name) if conn is not None else ()
         attributed = any(c == old_str or c.startswith(prefix) for c in claims)
         foreign = bool(claims) and not attributed
         # A matching subdirectory is only a proof when no OTHER real directory encodes to
@@ -470,16 +535,6 @@ def _catalog_conn(root: Path) -> sqlite3.Connection | None:
     if not (root / "catalog.sqlite").exists():
         return None
     return catalog.open_catalog(root)
-
-
-def _cwds_for_encoded(root: Path, encoded_name: str) -> tuple[str, ...]:
-    conn = _catalog_conn(root)
-    if conn is None:
-        return ()
-    try:
-        return registry.cwds_for_encoded_dir(conn, encoded_name)
-    finally:
-        conn.close()
 
 
 def _project_for_cwd(root: Path, cwd: str) -> int | None:
@@ -513,15 +568,24 @@ def _compute(
     config: Config, repo_path: Path, new_path: Path, *, claim_ambiguous: bool
 ) -> _Computed:
     """Enumerate every edit and the internals behind it, without touching anything."""
-    # The encoded renames are decided FIRST so the content patterns can carry one pair
-    # per dir this run will actually rename (A2-4: otherwise the rename creates its own
-    # dangling references, which the verify pass is blind to by construction).
-    renames, ambiguous = _encoded_moves(
-        config.root, repo_path, str(new_path), claim_ambiguous=claim_ambiguous
-    )
-    patterns = _form_patterns(str(repo_path), str(new_path), _rename_pairs(renames))
-    scan = _scan_content(config, patterns)
-    project_id = _project_for_cwd(config.root, str(repo_path))
+    # ONE catalog connection for the whole computation (ticket 12b finding 4). It stays
+    # None when no catalog exists yet, so a dry-run still materialises nothing.
+    conn = _catalog_conn(config.root)
+    try:
+        # The encoded renames are decided FIRST so the content patterns can carry one pair
+        # per dir this run will actually rename (A2-4: otherwise the rename creates its own
+        # dangling references, which the verify pass is blind to by construction).
+        renames, ambiguous = _encoded_moves(
+            config.root, repo_path, str(new_path), claim_ambiguous=claim_ambiguous, conn=conn
+        )
+        patterns = _form_patterns(str(repo_path), str(new_path), _rename_pairs(renames))
+        scan = _scan_content(config, patterns)
+        project_id = (
+            registry.project_for_path(conn, str(repo_path), "cwd") if conn is not None else None
+        )
+    finally:
+        if conn is not None:
+            conn.close()
     edits: list[RelocateEdit] = []
     # Surfaced as a plan entry, exactly like a malformed config below: a caller that
     # enumerates a plan with HOME unset must SEE why the plan is not honourable, rather
