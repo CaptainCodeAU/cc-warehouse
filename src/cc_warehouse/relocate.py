@@ -741,7 +741,11 @@ def _verify(
         if original == old_repo or old_repo in original.parents:
             path = new_repo / original.relative_to(old_repo)
         try:
-            text = path.read_text()
+            # BYTES + explicit UTF-8, the same policy as the scan and the backup. Reading
+            # this back through the ambient locale meant verify could decode a file
+            # differently from the code that wrote it and confirm success over a mismatch
+            # (ticket 12b finding 1).
+            text = path.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             outcomes.append(ItemOutcome(str(path), "error", f"unverifiable after rewrite: {exc}"))
             continue
@@ -784,20 +788,58 @@ def _apply_locked(
         ItemOutcome(str(path), "skipped", reason) for path, reason in noted
     ]
 
-    # BACKUP: read each file ONCE and keep that pre-image, so the backup is exactly the
-    # bytes the rewrite transforms (no read-modify-write drift between the two).
-    pre_images: list[tuple[Path, str]] = []
+    # BACKUP: read each file ONCE, in BYTES, and store those bytes verbatim (ticket 12b
+    # finding 1). The pre-image used to be produced by Path.read_text(), which is both
+    # locale-dependent and newline-translating, and was then stored as that string
+    # re-encoded: so a CRLF file lost every \r, and a UTF-8 file under a latin-1 locale
+    # became mojibake, with the SAME damage written into the backup. Bytes in, bytes out,
+    # and the decode is explicit and identical to the one the scan already applied.
+    # Every backup completes before any rewrite begins, so a failure part-way through
+    # leaves the world untouched rather than half-repaired.
+    pre_images: list[tuple[Path, bytes, str]] = []
     for path in scan.targets:
         try:
-            original = path.read_text()
-            dest = backup_dir / path.relative_to(path.anchor)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            store.atomic_write(dest, original.encode("utf-8"))
-        except (OSError, UnicodeDecodeError) as exc:
+            with path.open("rb") as handle:
+                raw = handle.read(_MAX_CONTENT_BYTES + 1)
+        except OSError as exc:
             outcomes.append(ItemOutcome(str(path), "error", f"backup failed: {exc}"))
             _manifest(backup_dir, outcomes)
             return BatchReport(tuple(outcomes))
-        pre_images.append((path, original))
+        if len(raw) > _MAX_CONTENT_BYTES:
+            # The scan applies this cap too; a file that grew past it since then is named
+            # and left alone rather than slurped unbounded (F5).
+            outcomes.append(ItemOutcome(str(path), "skipped", "file too large to rewrite"))
+            continue
+        try:
+            original = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # The scan already skips these, so this is defence in depth; it is a SKIP and
+            # not a failure, so one unreadable file never aborts the batch (R5/R10).
+            outcomes.append(ItemOutcome(str(path), "skipped", "not UTF-8 text"))
+            continue
+        dest = backup_dir / path.relative_to(path.anchor)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            store.atomic_write(dest, raw)
+            stored = dest.read_bytes()
+        except OSError as exc:
+            outcomes.append(ItemOutcome(str(path), "error", f"backup failed: {exc}"))
+            _manifest(backup_dir, outcomes)
+            return BatchReport(tuple(outcomes))
+        if stored != raw:
+            # PROVE the pre-image before the original becomes eligible to be touched. With
+            # this check the worst outcome of any future defect on this path is a refusal,
+            # never a file destroyed alongside its own only backup.
+            outcomes.append(
+                ItemOutcome(
+                    str(path),
+                    "error",
+                    "backup is not a byte-exact pre-image; nothing was modified",
+                )
+            )
+            _manifest(backup_dir, outcomes)
+            return BatchReport(tuple(outcomes))
+        pre_images.append((path, raw, original))
 
     _write_json(
         backup_dir / "relocate-journal.json",
@@ -808,9 +850,23 @@ def _apply_locked(
     )
 
     content_failed = False
-    for path, original in pre_images:
+    for path, raw, original in pre_images:
         try:
             body, note = _rewrite_bytes(path, original, patterns)
+            try:
+                body.decode("utf-8")
+            except UnicodeDecodeError as exc:  # the output contract, checked before writing
+                outcomes.append(
+                    ItemOutcome(str(path), "error", f"rewrite produced invalid UTF-8: {exc}")
+                )
+                content_failed = True
+                continue
+            if body == raw:
+                # Nothing to do: do not open a file for writing to write what is already
+                # there. Not expected to fire (a target matched, so it changes), but it
+                # keeps "we only write when we must" true by construction rather than by
+                # argument, and costs one comparison.
+                continue
             store.atomic_write(path, body)
             detail = str(new_repo) if note is None else f"{note} -> {new_repo}"
             outcomes.append(ItemOutcome(str(path), "rewritten", detail))

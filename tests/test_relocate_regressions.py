@@ -27,6 +27,19 @@ pre-fix code before the fix landed, per the slice-12 escalation lesson):
   two never compared equal and the guard silently did nothing. This is the same locked
   rule the slice-12 escalation caught ("source transcripts are never modified by
   anything, ever"), left open for the symlinked case.
+
+Ticket 12b carried-forward findings (added 2026-07-24):
+
+- 12b-1 (R2/F9): the pre-image was produced by `Path.read_text()`, which is BOTH
+  locale-dependent AND newline-translating, while the scan had validated the file with an
+  explicit `raw.decode("utf-8")`. The backup was then written from that round-tripped
+  STRING rather than from the original bytes. Three reproducible symptoms of one defect:
+  a CRLF file silently loses every `\\r` (no unusual locale needed); a non-ASCII file under
+  a latin-1 locale is written back as mojibake; and under LC_ALL=C relocate refuses to run
+  at all on any accented file. In the first two the SAME damage is stored as the backup,
+  so there is no recoverable pre-image anywhere, and the run exits 0 reporting success.
+  The fix reads bytes, stores bytes, decodes explicitly, and PROVES each backup by
+  reading it back before the original is eligible to be touched.
 """
 
 import hashlib
@@ -34,6 +47,7 @@ import json
 import re
 import shutil
 import stat
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -663,6 +677,170 @@ def test_skipped_entries_are_named_but_never_counted_as_changes(
     changed = re.search(r"\((\d+) changes\)", result.out)
     assert changed, f"no change count in output: {result.out}"
     assert int(changed.group(1)) == 5, "a SKIPPED entry was counted as a change"
+
+
+# --------------------------------------------------------------------------------------
+# Ticket 12b finding 1: byte fidelity of the pre-image and the rewrite.
+# --------------------------------------------------------------------------------------
+
+
+def _latin1_locale() -> str | None:
+    """A latin-1 locale this machine actually has, or None.
+
+    Rows B and C of the finding need a non-UTF-8 locale to reproduce, which not every
+    machine provides. The CRLF row (A) needs no locale at all, so the coverage that pins
+    the fix survives even where these skip.
+    """
+    try:
+        out = subprocess.run(
+            ["locale", "-a"], capture_output=True, text=True, timeout=10, check=False
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for name in out.split():
+        if "8859-1" in name:
+            return name
+    return None
+
+
+def _backup_of(world: World, name: str) -> Path | None:
+    found = sorted((world.root / "backups").rglob(name))
+    return found[0] if found else None
+
+
+def test_crlf_line_endings_survive_a_rewrite(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """12b-1 row A (R2/F9): only the path may change. Nothing else in the bytes.
+
+    `Path.read_text()` translates universal newlines, so every `\\r\\n` in a file authored
+    on Windows became `\\n` the moment relocate repaired a path in it. No unusual locale is
+    needed; this fires on a default UTF-8 machine, and the run exits 0.
+    """
+    world = World(ccw_env, tmp_path)
+    target = world.inventory / "windows.md"
+    original = f"# notes\r\n\r\nproject at {world.repo}\r\ndone\r\n".encode()
+    target.write_bytes(original)
+
+    assert world.apply().code == 0
+    # The expectation is defined independently: the old path bytes become the new path
+    # bytes, and every other byte is untouched.
+    expected = original.replace(str(world.repo).encode(), str(world.new_repo).encode())
+    assert target.read_bytes() == expected, "a rewrite changed bytes other than the path"
+
+
+def test_the_backup_is_a_byte_exact_pre_image(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """12b-1 (R2/F9): a backup that is not the original bytes is not a backup.
+
+    The pre-image was a decoded STRING re-encoded to UTF-8, so every transform the decode
+    applied was baked into the stored copy. A file damaged by the rewrite was therefore
+    damaged identically in its own backup, leaving nothing to restore from.
+    """
+    world = World(ccw_env, tmp_path)
+    target = world.inventory / "windows.md"
+    original = f"# notes\r\n\r\nproject at {world.repo}\r\ndone\r\n".encode()
+    target.write_bytes(original)
+
+    assert world.apply().code == 0
+    backup = _backup_of(world, "windows.md")
+    assert backup is not None, "no backup was written for a rewritten file"
+    assert backup.read_bytes() == original, "the backup is not a faithful pre-image"
+
+
+def test_every_rewritten_file_has_a_byte_exact_backup(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12b-1 / N1: the invariant, across the shapes that break naive text round-trips.
+
+    Nothing may be mutated unless a byte-identical pre-image was stored first, so the
+    worst outcome of any future defect here is a refusal rather than a loss.
+    """
+    world = World(ccw_env, tmp_path)
+    shapes: dict[str, bytes] = {
+        "crlf.md": f"a\r\nb {world.repo}\r\n".encode(),
+        "lone-cr.md": f"a\rb {world.repo}\r".encode(),
+        "accents.md": f"café naïve {world.repo}\n".encode(),
+        "no-trailing-newline.md": f"{world.repo}".encode(),
+        "nul-and-tabs.md": f"a\tb\x0bc {world.repo}\n".encode(),
+        "bom.md": "﻿".encode() + f"{world.repo}\n".encode(),
+    }
+    for name, body in shapes.items():
+        (world.inventory / name).write_bytes(body)
+
+    assert world.apply().code == 0
+    for name, body in shapes.items():
+        backup = _backup_of(world, name)
+        assert backup is not None, f"{name}: rewritten with no backup"
+        assert backup.read_bytes() == body, f"{name}: backup is not the original bytes"
+        expected = body.replace(str(world.repo).encode(), str(world.new_repo).encode())
+        got = (world.inventory / name).read_bytes()
+        assert got == expected, f"{name}: bytes beyond the path changed"
+
+
+def test_non_ascii_survives_a_latin1_locale(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """12b-1 row B (R2/F9): the ambient locale must not reach the pre-image.
+
+    A latin-1 codec never fails, so a UTF-8 file read through it silently becomes
+    mojibake, which was then written over the user's file AND stored as the backup, with
+    the run exiting 0.
+    """
+    locale_name = _latin1_locale()
+    if locale_name is None:
+        # A loud skip, not a silent pass: this machine cannot exercise the row at all.
+        print("SKIP-LOUD: no latin-1 locale on this machine; row B unexercised here")
+        return
+    world = World(ccw_env, tmp_path)
+    target = world.inventory / "accents.md"
+    original = f"# Café notes\nnaïve résumé\nproject at {world.repo}\n".encode()
+    target.write_bytes(original)
+
+    env = {**ccw_env, "LC_ALL": locale_name, "LANG": locale_name, "PYTHONUTF8": "0"}
+    result = run_ccw(
+        ["relocate", str(world.repo), "--to", str(world.new_repo), "--apply", "--yes"], env
+    )
+    assert result.code == 0, result.err
+    expected = original.replace(str(world.repo).encode(), str(world.new_repo).encode())
+    assert target.read_bytes() == expected, "a latin-1 locale corrupted the file"
+    backup = _backup_of(world, "accents.md")
+    assert backup is not None and backup.read_bytes() == original, "the backup was corrupted too"
+
+
+def test_non_ascii_is_repaired_under_the_c_locale(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12b-1 row C (R5): LC_ALL=C is normal under cron and launchd.
+
+    An ASCII codec DOES fail, so relocate refused to run at all on any accented file. That
+    is safe but wrong: a legitimate repair was blocked by the ambient locale.
+    """
+    world = World(ccw_env, tmp_path)
+    target = world.inventory / "accents.md"
+    original = f"# Café notes\nproject at {world.repo}\n".encode()
+    target.write_bytes(original)
+
+    env = {**ccw_env, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0"}
+    result = run_ccw(
+        ["relocate", str(world.repo), "--to", str(world.new_repo), "--apply", "--yes"], env
+    )
+    assert result.code == 0, f"the C locale blocked a legitimate repair: {result.err}"
+    expected = original.replace(str(world.repo).encode(), str(world.new_repo).encode())
+    assert target.read_bytes() == expected
+
+
+def test_an_undecodable_file_is_a_named_skip_and_the_run_continues(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12b-1 (R5/R10): a file we cannot decode is reported, never rewritten, never fatal."""
+    world = World(ccw_env, tmp_path)
+    broken = world.inventory / "binary.md"
+    original = b"\xff\xfe\x00garbage " + str(world.repo).encode() + b"\n"
+    broken.write_bytes(original)
+    good = world.inventory / "fine.md"
+    good.write_bytes(f"project at {world.repo}\n".encode())
+
+    result = world.apply()
+    assert result.code == 0, result.err
+    assert broken.read_bytes() == original, "an undecodable file was rewritten"
+    assert "binary.md" in result.out + result.err, "the undecodable file was not named"
+    assert str(world.new_repo).encode() in good.read_bytes(), "the batch did not continue"
 
 
 def test_registry_gains_both_the_cwd_and_encoded_claims(
