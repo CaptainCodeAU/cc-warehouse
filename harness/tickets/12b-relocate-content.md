@@ -68,6 +68,26 @@ From the ticket-12 escalation, still open in code:
 - The roots are fully scanned twice per apply (once for the plan, once inside the lock)
   and every candidate opens its own SQLite connection. With `roots = ["~"]` this is two
   full home reads before the first mutation (F5).
+  NOTE 2026-07-23: 12a's finding-4 fix (1da004b) made apply recompute through the shared
+  `_compute` and compare against the plan, so the CLI now performs plan + apply scans that
+  are BOTH required (the second is the point-of-action re-check the frozen decision
+  mandates). The duplication is therefore intentional now; what remains for this slice is
+  making each scan cheap, not removing one of them.
+
+Added 2026-07-23 while closing 12a (found by probe, on no ticket before now):
+
+- relocate.py carries its own `[relocate].roots` TOML reader (`_relocate_roots`) whose
+  docstring still says "the full config layering that folds this into load_config lands in
+  slice 13". Slice 13 landed and gave `Config` a `relocate_roots` field, but relocate.py
+  was never switched over, so there are two implementations of one behaviour (R9/F8). This
+  is drift created by slice 13 building out of DESIGN-16 order. Fold the reader into
+  `load_config` and consume `config.relocate_roots`; the `config._webhooks_from_root`
+  pattern already named in ADJACENT BEHAVIORS is the shape to follow.
+- 12a's exclusion fix resolves EVERY candidate path (one realpath per entry) inside the
+  `rglob` walk. That is correct but pays a syscall per file on an unbounded home walk. The
+  `rglob` -> `os.walk(onerror=...)` restructure this slice owns should prune at DIRECTORY
+  level instead, which fixes the cost and the silent-drop reporting above in one shape
+  (the slice-05 `os.walk(onerror)` precedent).
 
 ## Process
 

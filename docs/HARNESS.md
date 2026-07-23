@@ -539,6 +539,38 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   each flag proven through the real CLI against the scoped session; v1 exit review with the
   principal followed, and the contract docs were reconciled to the approved decisions in the
   same review (this doc sync).
+- 2026-07-23: Slice 12a (relocate containers + registry) COMPLETE by direct build, the
+  first half of the escalated slice to converge. Five carried-forward findings closed, one
+  commit each (2ead0f6, f1e3866, 6f227be, 1da004b, 2f7a4ae), 8 contract-derived regression
+  tests; gates ruff clean / pyright strict 0 / suite 223 passed / 0 failed; zero stubs; all
+  five ticket-12a oracle tests green; independently black-box re-probed outside the suite.
+  Four process lessons, all sharpening rules this document already carries:
+  (a) A TICKET'S OWN FINDING LIST IS EVIDENCE, NOT A CENSUS. Every finding was re-derived by
+  EXECUTION against a synthetic probe world before being fixed. Two of the five were
+  materially understated (HOME-unset produces no relative path but a silently half-guarded
+  run; a bad `--to` parent does not merely fail at the rename, it rewrites contents first
+  and leaves them pointing at a path that can never exist), and a SIXTH finding existed on
+  no ticket at all. Had the fixes been written from the ticket text, two would have been
+  aimed at the wrong mechanism.
+  (b) THE MECHANISM CAN BE THE OPPOSITE OF THE ASSUMED ONE. The symlink findings were
+  assumed to be about traversal following links. `Path.rglob` does NOT descend symlinked
+  directories on Python 3.14, so the walk reaches the real path while the exclusion holds
+  the link: a COMPARISON bug. A traversal-shaped fix would have shipped green tests over a
+  live R4/F9 violation, which is the slice-12 lesson (c) in a new costume.
+  (c) THE RED CHECK MUST BE PERFORMED, NOT REASONED ABOUT. Two assertions were verified red
+  by temporarily removing the specific guard and re-running, not by arguing they must fail.
+  One of them was an R8 overclaim the operator had introduced in the PREVIOUS commit of this
+  same slice (a docstring promising the module API could not bypass the HOME guard, while
+  `plan_relocate` could), caught only because the independent probe disagreed with the
+  pytest suite. Two instruments beat one.
+  (d) WHEN A TEST AND THE CODE DISAGREE, THE TEST CAN BE THE WRONG ONE. A first-draft
+  assertion cross-compared the plan count against the apply count; the code was right and
+  the test was wrong, because DESIGN 11 enumerates external-world REPAIRS, so the repo move
+  is the header line and not a plan edit. Recorded because the reflex under time pressure is
+  to "fix" the code.
+  Scope discipline held: the `rglob` -> `os.walk` restructure, the silent-drop reporting and
+  the parallel config loader were all left to 12b rather than merged back into 12a, since
+  re-merging the two halves is precisely what the section-4 escalation split apart.
 
 ---
 

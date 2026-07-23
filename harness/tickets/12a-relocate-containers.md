@@ -1,5 +1,15 @@
 # Ticket 12a: relocate, containers and registry
 
+DONE 2026-07-23 (direct build, not the harness loop; principal chose Option 1). All five
+carried-forward findings closed, one commit each, each with a contract-derived regression
+test confirmed to FAIL against the pre-fix code first. Every finding was re-verified by
+EXECUTION before being fixed, not taken from this ticket's description: two turned out to
+be worse than written (see below), and a sixth was found that is on no ticket and has been
+recorded on 12b. Commits 2ead0f6, f1e3866, 6f227be, 1da004b, 2f7a4ae. Gates: ruff clean,
+pyright strict 0 errors, full suite 223 passed / 0 failed (was 215 before this slice; +8
+regression tests). Zero stubs. All five oracle tests named below green. Independently
+black-box re-probed outside the pytest suite: all five findings refuted.
+
 Split from ticket 12 at the 2026-07-19 section-4 escalation (see 12-relocate.md for the
 loop record and the diagnosis). Slice 12a of 13. Depends on: 02 (registry aliases),
 04 (config subset), 10 (migrate.retire is the refuse-existing-target template).
@@ -56,18 +66,49 @@ mixing them meant every fix to one surfaced a new hole in the other.
 
 ## Carried-forward findings this slice must close
 
-From the ticket-12 escalation, still open in code:
+From the ticket-12 escalation. ALL CLOSED 2026-07-23; each entry keeps its original
+wording with the verified outcome appended, per the append-don't-rewrite record rule.
 
 - The warehouse and source-transcript exclusions compare UNRESOLVED paths, so a symlinked
   root or a symlinked CCW_ROOT defeats them. Resolve before comparing.
+  CLOSED 2ead0f6. Verified by execution first: with a symlinked CCW_ROOT a stored object
+  became a rewrite target and its sha256 changed; with a symlinked `~/.claude` the run
+  printed `rewritten: .../projects/<encoded>/capture.jsonl`, a live recurrence of the
+  locked rule the escalation caught. Mechanism note for the record: `Path.rglob` does NOT
+  descend symlinked dirs on Python 3.14, so the vector is the COMPARISON, not traversal -
+  the walk holds the real path while the exclusion holds the link.
 - HOME unset (cron, launchd) makes the source-transcript guard inert and the encoded-dir
   scan resolve to a relative path. Refuse rather than proceed blind.
+  CLOSED f1e3866. UNDERSTATED as written: there is no relative path. `expanduser` still
+  finds the home via `pwd`, so the scan rewrites real files while `_claude_projects`
+  returns None, leaving zero encoded-dir candidates and no transcript guard. The dry-run
+  printed "2 edits planned". Now refused at the CLI (before planning), in `_preflight`,
+  and surfaced as a plan entry so the module API cannot slip past either.
 - A `--to` whose parent is a regular file or a dangling symlink passes pre-flight and
   fails only at the rename. Pre-flight must prove the parent is, or can become, a dir.
+  CLOSED 6f227be. UNDERSTATED as written: it does not merely fail at the rename. Contents
+  are rewritten FIRST, so the run leaves memory files pointing at a path that can never
+  exist. Both shapes reproduced (1 file rewritten each) before the fix.
 - The plan is advisory: apply recomputes instead of consuming plan.edits, so consent is
   collected against a set that may differ from the one applied (R13/R14 plan-apply gap).
+  CLOSED 1da004b. Reproduced: a file created after planning was rewritten unconsented.
+  Fixed by making plan and apply share ONE enumeration (`_compute`, R9) and by requiring
+  the point-of-action recompute to MATCH the plan, refusing on divergence rather than
+  merging. The apply path now also PRINTS the plan before asking.
 - The dry-run line counts SKIPPED entries as edits, and the success line counts them as
   changes.
+  CLOSED 2f7a4ae. `RelocateEdit.skipped` is now typed, and `planned_changes` /
+  `applied_changes` are the single source for both totals. Incidentally fixed: the
+  halted-run report omitted `alias` from its change list.
+
+## Findings found during 12a that do NOT belong to it
+
+- relocate.py carries its own `[relocate].roots` TOML reader (`_relocate_roots`) while
+  slice 13 gave `Config` a `relocate_roots` field: two implementations of one behaviour
+  (R9/F8), drift created by slice 13 landing out of DESIGN-16 order. Confirmed by probe.
+  It is a CONTENT-SCAN configuration concern, so it is recorded on ticket 12b rather than
+  fixed here (principal ruling 2026-07-23, keeping the container/content split the
+  section-4 escalation created).
 
 ## Process
 
