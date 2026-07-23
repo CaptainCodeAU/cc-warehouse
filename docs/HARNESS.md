@@ -534,7 +534,14 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   13 entry types) showed the render consumed only 2 of 13 types, including dropping the
   session's own ai-title. Both are the same failure the verification-discipline memory
   names: confidence must not exceed verification coverage, and a lower-bound instrument
-  (grep / presence) must not be reported as a census. Slice 13 (config + CLI + flags +
+  (grep / presence) must not be reported as a census.
+  COMMITS for that render work, recorded here 2026-07-24 because it has NO TICKET of its own
+  and CLAUDE.md's phase note was compacted off the hashes: 652a8bf (parser: turn timestamps
+  and phase grouping), 0ef30a2 (render: the exporter v8.10.1 chrome slice 07 deferred),
+  a489e34 (split each turn into its User and Claude sections), b4c28a8 (header fields),
+  14ae67e (parser, render: surface the 11 transcript entry types we ignored). They are also
+  named in the slice-13 tag annotation; this entry makes them greppable in the working tree,
+  which a tag is not. Slice 13 (config + CLI + flags +
   --EXPOSED) then built directly, oracle suite green, 7 contract-derived regression tests,
   each flag proven through the real CLI against the scoped session; v1 exit review with the
   principal followed, and the contract docs were reconciled to the approved decisions in the

@@ -51,159 +51,59 @@ edits to the principal instead.
 
 ## Current phase
 
-Phase 1 (contract docs) complete 2026-07-17. Phase 2 complete 2026-07-18: bootstrap
-(license PolyForm Noncommercial 1.0.0, gates wired), the oracle suite (red for the
-right reason), and the 13 tickets in `harness/tickets/`. HARNESS trial run (ticket
-01, store module) complete 2026-07-18 through the full loop; retro in HARNESS
-section 8; slice 01 tests green, remaining suite red for the right reason. Main
-build under way per DESIGN section 16. Slice 02 (catalog + registry) COMPLETE
-2026-07-18: fixer round 1 (of 3) resolved 9 confirmed reviewer clusters,
-operator-verified via black-box probes; retro in HARNESS section 8. Slice 03
-(parser + conversation model) COMPLETE 2026-07-18: fixer round 1 (of 3) resolved
-7 confirmed reviewer clusters (silent-loss / crash / overclaim), 6 contract-derived
-regression tests added (HARNESS section 4) and operator black-box verified 12/12;
-retro in HARNESS section 8. Slice 04 (capture hook + notify) COMPLETE 2026-07-18:
-fixer round 1 (of 3) resolved 6 confirmed reviewer clusters (detached notify helper
-off the hook critical path, best-effort sinks, the SPEC-3 _unresolved rung), 3
-rejected; 3 contract-derived regression tests; operator black-box verified 21/21;
-retro in HARNESS section 8. Slice 05 (sweep) COMPLETE 2026-07-18: fixer round 1
-(of 3) resolved 3 confirmed reviewer clusters (unreadable-source-subdir named via
-os.walk onerror, malformed --source refused conservatively, lock-held distinct
-refusal), 4 rejected; 3 contract-derived regression tests
-(tests/test_sweep_regressions.py); operator black-box verified 31/31; sweep reuses
-capture.capture_transcript verbatim (R9/F8); retro in HARNESS section 8. Milestone
-tags slice-01..05. Slice 06 (transcript.md emitters, full + compact) COMPLETE
-2026-07-18: adds the normalized conversation model (turns/blocks) to parser.py and a
-single-core markdown emitter to render.py; fixer round 1 (of 3) resolved 5 confirmed
-reviewer clusters (turn-grouping demotion, fence corruption/injection, reminder
-fail-open leak, commit tool_result text loss, R8 honesty) plus a tool-coverage add,
-2 rejected; 10 contract-derived regression tests
-(tests/test_render_md_regressions.py); operator black-box verified 18/18; retro in
-HARNESS section 8. Milestone tags slice-01..06. Slice 07 (HTML emitters full +
-compact, + manifest) COMPLETE 2026-07-19: an in-house stdlib markdown-to-HTML
-renderer + HTML page emitter + build_manifest in render.py, reusing the slice-6
-markdown fragments as the copy-as-md single source of truth (R9/F8); fixer round 1
-(of 3) resolved 5 confirmed reviewer clusters (HTML passthrough injection, duplicate
-sha256, multi-repo commit mislink, second CDN reference, R8 docstrings), 1 rejected,
-visual chrome deferred; 6 contract-derived regression tests
-(tests/test_render_html_regressions.py); operator black-box verified 10/10; retro in
-HARNESS section 8. Milestone tags slice-01..07. Slice 08 (build/render orchestration;
-un-stubs the render child) COMPLETE 2026-07-19: `ccw build` projects the catalog into
-projections/<label>/<date>_<slug>_s-<hash12>/ (4 files + manifest), `ccw render`
-(--session child + ad-hoc) and `ccw project rename` land, all writes via
-store.atomic_write and the only sanctioned deletions in build.py; fixer round 1 (of 3)
-resolved 6 confirmed reviewer clusters + the render-child error-notify (a permanent
-prune-on-failure data-loss path, an unguarded prune crash, the missing locks/build
-lock, the ad-hoc --out guard, silent rename-noid, head-only render), 1 rejected; 5
-contract-derived regression tests (tests/test_build_regressions.py); operator black-box
-verified; retro in HARNESS section 8. Milestone tags slice-01..08. Slice 09 (status + ccw verify CLI)
-COMPLETE 2026-07-19: `ccw status` reads the catalog only (F5 zero object opens);
-`ccw verify` wraps store.verify_walk and cross-checks the catalog against the objects
-both directions (corrupted / orphan-never-deleted / missing), read-only (R4); fixer
-round 1 (of 3) resolved 2 confirmed reviewer clusters (verify crashing on a
-malformed/NULL catalog hash, an unreadable-object label), 2 refuted; 3 contract-derived
-regression tests (tests/test_status_verify_regressions.py); operator black-box verified
-7/7; retro in HARNESS section 8. Milestone tags slice-01..09. Slice 10 (migrate +
-retire) COMPLETE 2026-07-19: `ccw migrate <old-root>` imports a legacy archive through
-capture.capture_transcript verbatim (R9/F8, hash dedupe collapses duplicate copies F1),
-records a per-file manifest to <root>/logs/migrate-manifest.json via store.atomic_write
-(R2), under a locks/migrate O_EXCL lock (R14/DESIGN 13); `ccw migrate --retire` is a
-separate consent-gated single rename only (D1, no import); fixer round 1 (of 3) resolved
-3 confirmed reviewer clusters (non-regular *.jsonl named-not-dropped incl. the FIFO-hang
-trap, retire refuses an existing target rather than clobber-an-empty-dir or crash,
-missing locks/migrate lock), 0 rejected; 3 contract-derived regression tests
-(tests/test_migrate_regressions.py); operator black-box verified 6/6; retro in HARNESS
-section 8. Milestone tags slice-01..10. Slice 11 (share + redaction) COMPLETE 2026-07-19:
-`ccw share s:<key> ... --out <dir>` builds a sanitized static site from COPIES (store +
-projections keep full fidelity, R4); redaction runs on the json-DECODED payload before the
-shared renderer (R9) so a \uXXXX-escaped / non-ASCII secret cannot leak through the HTML
-base64 copy-src; secret-shaped strings abort the whole share unless --allow-findings ships
-them verbatim; reuses build.projection_dir naming + stdlib html.escape (R9/F8). Reviewers
-A/B ran in parallel (5 conformance + 9 adversary); operator verified each against the code
-(Guardrail 9): fixer round 1 (of 3) resolved 10 confirmed clusters (B1 decoded-content
-redaction, B5 timestamp path-traversal, A2/A5 reuse-not-duplicate, A3 error-vs-not-found,
-B2/B4 hex-carveout + base64url, B7 zero-width-regex, B9 word-boundary builtins, A1/B6 --out
-guard after refuting the "force prunes" premise), 3 rejected (A4 report schema frozen +
-constant token required, B3 current-env builtins, B8 broad-detector tradeoff); 9
-contract-derived regression tests (tests/test_share_regressions.py); operator black-box
-verified 17/17 incl. base64 copy-src decode; retro in HARNESS section 8. Milestone tags
-slice-01..11. Slice 12 (relocate) ESCALATED 2026-07-19 under HARNESS section 4: NOT done,
-NO milestone tag. The first non-converging loop of the build (round 1: 27 findings, 22
-clusters confirmed; round 2: 21 more, five of them introduced by the round-1 fixes).
-Operator verification caught a locked-rule violation both reviewers missed and the
-round-1 fix had introduced (relocate was content-rewriting captured transcripts). The
-implementation IS landed and pushed as a working checkpoint (43432e4, edb5268, 4241c45)
-with 20 relocate regression tests, gates green, black-box 27/27; it is not DONE and the
-outstanding tier-2/3 findings are recorded on ticket 12. Section-4 diagnosis: bad slice
-boundary plus contract silence, so slice 12 is SPLIT into ticket 12a (containers: repo
-move, proven encoded-dir renames, registry claims) and 12b (content: memory/inventory
-rewrites, backup, scan scope); ticket 12 is SUPERSEDED and kept for its loop record.
-Principal rulings 2026-07-19 patched the contract (DESIGN 11 clarifications plus a
-CORRECTION to the specimen boundary rule, a matching SPEC 10.2 note, DESIGN 15 decided
-entries) and store.atomic_write now PRESERVES an existing target's mode.
-2026-07-23, DIRECT-BUILD SESSION (principal chose Option 1 over the harness loop for
-interactive render work; all verified against ONE operator-scoped read-only session
-supplied out of tree). Slice 07 render was extended to the full exporter-v8.10.1 chrome
-(header card, collapsible turns/phases, sticky toolbar, palette) and then to full
-entry-type coverage: a field census (400 sessions, 615 keys, 13 types) found the render
-consumed only user/assistant, so parser+render now surface ai-title titles, sub-agent
-phases, attachments, commands, structured tool output (stdout/stderr), and the
-informational extras, each an independent toggle default ON (DESIGN 6). SLICE 13
-(config + CLI + flags + --EXPOSED) COMPLETE 2026-07-23 by direct build (ticket 13 DONE):
-load_config does the full DESIGN 8 layering, the help/version/bare/unknown surface lands,
-the Group-A content flags are wired as flags + config keys + per-project (the `[render]`
-frozen map expanded with the principal), --no-config/--config added, and share gains
---EXPOSED (unscrubbed publish gated by a scrubbed-vs-exposed comparison + typed
-confirmation + non-tty abort); whole oracle suite GREEN (was 13 red) + 7 regression tests
-(tests/test_cli_flags_regressions.py); commits b723a71, c366a96. Contract docs reconciled
-to the approved decisions in the exit review (DESIGN 6/7/8/9/15, SPEC 8 note, ticket 13,
-this file). Tagged slice-13 at 440e264 (2026-07-24); its annotation also records the
-render-chrome/entry-type commits 652a8bf..14ae67e, which have no ticket of their own.
-Slice 12a (relocate containers) COMPLETE 2026-07-23 and 12b (relocate content) COMPLETE
-2026-07-24, both by direct build: ten findings closed across the two, each re-derived by
-EXECUTION before being fixed (four of the ten were mis-stated on their tickets, two
-understated and one mis-classified as duplication when it was a DESIGN 8 contract
-deviation). 12a: resolved-path exclusions (a symlinked CCW_ROOT or ~/.claude let relocate
-rewrite a stored object and a captured transcript), HOME-unset refusal, an uncreatable
---to parent, the plan/apply consent gap, and skips counted as edits. 12b: JSON layout
-preserved with a decode fallback (the 29-shape matrix found an escaped path form is
-invisible to the SCAN, so such a file was never a candidate and verify confirmed success
-over it), a byte-exact pre-image plus the N1-N5 non-destructive hardening (each backup is
-read back and required byte-identical before the original is eligible to be touched), the
-os.walk scan restructure (8 silent drops -> 0; resolve calls 5202 -> 203; catalog
-connections 13 -> 1), and one config parser. Slice 11 was REOPENED and re-closed the same
-day (f9b7bbd): share.py parsed config.toml itself, so a [share] redact_patterns entry
-declared in the XDG tier was ignored and the content it named was PUBLISHED. config.py is
-now the only module in src/ that parses TOML. Milestone tags slice-01..13 incl. 12a/12b,
-14 in all; ticket 12 stays SUPERSEDED and untagged by design. Gates: ruff clean, pyright
-strict 0, suite 378 passed / 0 failed; zero stubs; zero forward-looking "lands in slice N"
-promises left in src/. **v1 EXIT REVIEW HELD AND CLOSED 2026-07-24** (DESIGN section 15
-records the decisions, HARNESS section 8 the process). It found two contract-vs-code gaps
-no DONE annotation, tag or green test could surface: `ccw project` was 1-of-5 against the
-DESIGN 7 table, which silently broke the per-project config feature shipped the day before
-(DESIGN 8 names `ccw project show` as the way to get the registry id it is keyed by), and
-the dispatcher accepted an undocumented `notify` verb that made section 7's "lists every
-verb" false. Principal ruled: build all four subcommands now (b32b235), and sanction
-INTERNAL verbs in section 7 while keeping them out of `-h` (61a7d62). Suite 400 passed / 0
-failed. Standing lesson: SLICE COMPLETENESS IS NOT CONTRACT COMPLETENESS; a green suite
-proves the code matches the tests, only reading the contract against the code proves the
-tests cover the contract. **v1 IS CLOSED.** Both rulings the exit review left open were
-taken 2026-07-24. `--hljs` (DESIGN 15 item 8): SHARED pages now INLINE the vendored
-highlight.js and make zero third-party requests, personal projections keep the CDN plus
-its onerror fallback (exporter parity); decided on PRIVACY (redaction scrubs the content
-while a CDN script exposed the READER's IP and page URL), with the "bigger files"
-counterargument measured away (3,157 -> 3,275 KB, +3.7%); asset vendored at
-src/cc_warehouse/vendor/ with URL, sha256 and BSD-3 licence, emitted payload asserted
-byte-for-byte; commit 0cd4146. `--theme`: dark-only STANDS, no flag; it was never a
-section 15 item and entered on a false premise (the page was believed theme-neutral; a
-census found no `color-scheme` and no `prefers-color-scheme` anywhere, and SPEC 7 had
-already DROPPED the light/dark toggle). Reader-OS-setting support is recorded as a named
-v1.1 candidate. OPEN / next: the v1.1 flag groups (per-file matrix, HTML chrome defaults,
-truncation, --since/--until); then v1.1 proper (FTS5 + `ccw search` + `ccw import`) and
-v1.2 (`ccw mcp`). Pre-release, not pre-v1: DESIGN 15 items 6 (PyPI name re-check) and 7
-(registry export). Non-blocking: the architecture board is stale (~20
-commits / 2,700+ lines of src/ since its 56262f6 snapshot) and this phase note is a
-candidate for compaction.
-`/refresh` (in `.claude/commands/`) is the currency sweep.
-Cross-project context lives in the claude-code-transcripts project memory
-(`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
+**v1 is CLOSED (2026-07-24).** Every slice in the DESIGN section 16 build order landed and
+carries its milestone tag: slice-01..13, with slice 12 split into 12a (containers) and 12b
+(content), 14 tags in all. Gates green (ruff, pyright strict, 403 tests, zero stubs) and
+zero forward-looking "lands in slice N" promises left in `src/`.
+
+The DESIGN section 16 **v1 exit review was held and closed** the same day. It found two
+contract-vs-code gaps that no DONE annotation, milestone tag or green test could surface,
+and the principal ruled on both: `ccw project` was implemented 1-of-5 against the section 7
+table (which silently broke the per-project config feature, since DESIGN 8 names
+`ccw project show` as the way to get the registry id it is keyed by), and the dispatcher
+accepted an undocumented internal `notify` verb. Both closed. The two rulings the review
+left open, `--hljs` and `--theme`, were also taken and closed that day.
+
+**This section is a STATUS POINTER, not a changelog.** It was compacted on 2026-07-24 from
+158 lines after a census showed its per-slice narrative was a LOSSY duplicate of records
+that own those facts more completely (one slice-03 finding was in HARNESS and the ticket
+but had never made it here at all). Nothing was lost; the detail lives at:
+
+- **per-slice records, retros, process lessons** -> `docs/HARNESS.md` section 8 (append-only)
+- **what each slice did, its findings and their outcomes** -> `harness/tickets/<nn>-*.md`
+  (each carries a dated DONE annotation; findings keep their original wording with the
+  verified outcome appended)
+- **decisions and the reasoning behind them** -> `docs/DESIGN.md` section 15 (append-only)
+- **architecture candidates and their states** -> `cc-warehouse-architecture/SOURCE.md`
+
+## OPEN / next (no silent omissions)
+
+- **v1.1 flag groups**: per-file matrix, HTML chrome defaults, truncation, `--since`/`--until`.
+- **then v1.1 proper**: FTS5 + `ccw search` + `ccw import`; **then v1.2**: `ccw mcp`.
+- **Pre-release, not pre-v1**: DESIGN 15 item 6 (PyPI name re-check before the repo goes
+  public) and item 7 (registry backup/export story).
+- **Named v1.1 candidate, recorded not dropped**: honouring the reader's OS setting via
+  `prefers-color-scheme` for SHARED pages. Same reader-respect argument that decided
+  `--hljs`; needs a light palette designed and the highlight.js token colours re-checked
+  for contrast.
+- **Non-blocking**: a fresh architecture review is due. The board's line refs have decayed
+  across 20 commits and +4,036 lines of `src/`; `cc-warehouse-architecture/SOURCE.md`
+  carries the measured per-file table and flags every affected card.
+
+## Standing lessons (full form in HARNESS section 8)
+
+- **Slice completeness is not contract completeness.** The oracle suite was written from the
+  tickets, the tickets from the slice list. A green suite proves the code matches the TESTS;
+  only reading the CONTRACT against the CODE proves the tests cover the contract.
+- **A ticket's finding list is evidence, not a specification.** Across 12a and 12b, four of
+  ten carried findings were mis-stated: two understated, one mis-classified, one whose
+  mechanism was the reverse of the assumption. Re-derive every finding by execution first.
+- **The same defect class recurs across modules.** Fixing one instance of the private-config-
+  reader bug would have left a live redaction leak in `ccw share`. Census the class.
+- **Non-destructiveness is a precondition, not an intention.** Prove a backup before touching
+  its original, so the worst outcome of a future defect is a refusal rather than a loss.
+
+`/refresh` (in `.claude/commands/`) is the currency sweep; `/architecture` owns the review
+board and is outside `/refresh`'s scope. Cross-project context lives in the
+claude-code-transcripts project memory (`cc-warehouse-and-cc-vantage`); sibling project:
+`../cc-vantage`.
