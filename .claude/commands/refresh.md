@@ -31,8 +31,9 @@ never "refreshed" and never edited-to-pass.
 - **`all`** (blank) - full sweep: ground truth, harvest supersessions, staleness + coherence audit,
   surgical apply, re-verify, commit, report.
 - **`audit`** / **`dry-run`** - read-only: Phases 1-4, present the drift ledger, then STOP. No edits.
-- **`docs`** - CLAUDE.md + README + the contract/ STATUS surface (status headers, changelogs, section 15
-  decided list) - status tier only, never contract substance.
+- **`docs`** - CLAUDE.md + README + CHANGELOG.md + the user guides under `docs/` + the contract/
+  STATUS surface (status headers, changelogs, section 15 decided list) - status tier only, never
+  contract substance.
 - **`tickets`** - harness/tickets/ wiring: oracle-test references, ADJACENT lists, frozen-decision
   blurbs vs the tests, slice progress annotations.
 - **`memory`** - the project memory store only.
@@ -61,6 +62,8 @@ Treat everything READ-ONLY until Phase 5 (or forever, in `audit`/`dry-run`).
 - README currency (added 2026-07-19; REWRITTEN 2026-07-24 because the old max-number probe was a LOWER BOUND that passed while the prose was stale: it took the largest slice number appearing ANYWHERE in README, so "Slices 01-11 landed" plus an unrelated mention of 13 scored 13 and read as current, and it could never see "Still open:" prose naming a slice that is now DONE. It now checks the CLAIMS, not the maximum): !`R=$(git rev-parse --show-toplevel); OPEN=""; for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" || continue; n=$(basename "$t" | grep -oE '^[0-9]+[a-z]?'); grep -qiE "(still open|not done|remaining|deferred)[^.]{0,120}(ticket )?$n\b" "$R/README.md" "$R/CLAUDE.md" 2>/dev/null && OPEN="$OPEN $n"; done; LM=$(for t in "$R"/harness/tickets/*.md; do grep -qE 'DONE 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' "$t" && basename "$t" | grep -oE '^[0-9]{1,2}'; done | sort -n | tail -1); RANGE=$(grep -oiE 'slice-0*[0-9]{1,2}\.\.0*[0-9]{1,2}[a-z]?' "$R/README.md" | tail -1); RT=$(echo "$RANGE" | grep -oE '[0-9]{1,2}' | tail -1); if [ -n "$OPEN" ]; then echo "STATUS PROSE STALE: README/CLAUDE.md still call these OPEN but their tickets are DONE:$OPEN"; elif [ -n "$RT" ] && [ "$((10#$RT))" -lt "$((10#$LM))" ]; then echo "README STALE: tag range '$RANGE' stops at $RT, live max DONE slice is $LM"; else echo "(no DONE slice is described as open; README tag range '${RANGE:-none}' vs live max DONE $LM)"; fi`
 - Memory index parity + dangling wiki-links (store lives OUTSIDE the repo; never committed): !`M=$HOME/.claude/projects/$(git rev-parse --show-toplevel | tr '/' '-')/memory; if [ ! -d "$M" ]; then echo "(no memory store yet)"; else T=$(find "$M" -name '*.md' ! -name 'MEMORY.md' | wc -l | tr -d ' '); P=$(grep -cE '\]\([^)]+\.md\)' "$M/MEMORY.md" 2>/dev/null || echo 0); echo "topic files: $T | index lines: $P (should match)"; for l in $(grep -rhoE '\[\[[a-z0-9-]+\]\]' "$M" 2>/dev/null | tr -d '[]' | sort -u); do [ "$l" = name ] && continue; [ -f "$M/$l.md" ] && continue; grep -rh "forward marker" "$M" 2>/dev/null | grep -qF "[[$l]]" && continue; echo "DANGLING [[${l}]]"; done; fi`
 - Config-vs-contract render map (CODE outran CONTRACT is a FLAG-only finding, not an auto-edit; added 2026-07-23 after the [render] map drifted, code had 8 keys while DESIGN 8 + ticket 13 named 3): !`R=$(git rev-parse --show-toplevel); S=$(sed -n '/^## 8\./,/^## 9\./p' "$R/contract/DESIGN.md"); MISS=""; for k in $(grep -oE 'render_[a-z_]+' "$R/src/cc_warehouse/config.py" | sed 's/^render_//' | sort -u); do echo "$S" | grep -q "$k" || MISS="$MISS $k"; done; [ -n "$MISS" ] && echo "CONTRACT DRIFT (flag to principal, do NOT auto-edit the contract): config render keys absent from DESIGN 8 [render] map:$MISS" || echo "(every config render key is named in the DESIGN 8 [render] map)"`
+- README verb list vs the CLI (added 2026-07-24 when a Verbs block was added to README; it must be the SAME SET the dispatcher accepts and `ccw -h` prints, or it drifts silently as verbs are added): !`R=$(git rev-parse --show-toplevel); CLI=$(cd "$R" && uv run python -c "import sys;from cc_warehouse.cli import main;main(['-h'])" 2>/dev/null | grep -oE '^  [a-z]+' | tr -d ' ' | sort -u); RM=$(grep -oE '^ccw [a-z]+' "$R/README.md" | sed 's/ccw //' | sort -u); if [ -z "$RM" ]; then echo "(README has no Verbs block)"; else D=$(comm -3 <(echo "$CLI") <(echo "$RM") | tr -d '\t' | tr '\n' ' '); [ -n "$(echo $D)" ] && echo "README VERB LIST DRIFT (differs from ccw -h):$D" || echo "(README verb list matches ccw -h exactly)"; fi`
+- CHANGELOG milestone table vs git tags (added 2026-07-24; the seeded table must name every real slice tag and invent none, and must NOT claim a version heading while distribution is deferred, DESIGN 15): !`R=$(git rev-parse --show-toplevel); [ -f "$R/CHANGELOG.md" ] || { echo "(no CHANGELOG.md)"; exit 0; }; GT=$(git -C "$R" tag -l 'slice-*' | sort); CT=$(grep -oE '`slice-[0-9]+[ab]?`' "$R/CHANGELOG.md" | tr -d '`' | sort -u); MISS=$(comm -23 <(echo "$GT") <(echo "$CT") | tr '\n' ' '); INV=$(comm -13 <(echo "$GT") <(echo "$CT") | grep -vx 'slice-12' | tr '\n' ' '); VER=$(grep -cE '^## \[?v?[0-9]+\.[0-9]+' "$R/CHANGELOG.md"); OUT=""; [ -n "$(echo $MISS)" ] && OUT="$OUT missing-tags:$MISS"; [ -n "$(echo $INV)" ] && OUT="$OUT invented-tags:$INV"; [ "$VER" -gt 0 ] && OUT="$OUT claims-a-release-while-deferred"; [ -n "$OUT" ] && echo "CHANGELOG DRIFT:$OUT" || echo "(CHANGELOG names every slice tag, invents none, claims no release)"`
 
 ---
 
@@ -304,7 +307,13 @@ GENUINE dangling link (unresolved and NOT declared a forward marker) still repor
 - Executable contract: `tests/` (oracle suite; conftest.py holds the shared helpers).
 - Product: `src/cc_warehouse/` (stubs until slices land) · gates: `uv run pytest` ·
   `uv run pyright` (strict via pyproject) · `uv run ruff check`.
-- Status tier: `CLAUDE.md` (Current phase) · `README.md`.
+- Status tier: `CLAUDE.md` (Current phase) · `README.md` · `CHANGELOG.md` (build milestones,
+  seeded from the tags; no releases while distribution is deferred, DESIGN 15).
+- User-facing guides (added 2026-07-24 with the docs/ -> contract/ rename): `docs/*.md`
+  (currently `docs/sharing-and-redaction.md`). These describe RUNTIME behaviour, so they are
+  swept for currency like any status prose: a factual claim that disagrees with the code is a
+  finding. `docs/sharing-and-redaction.md` points at `contract/DESIGN.md` section 9 as its
+  locked source, so the contract wins on any conflict.
 - Architecture board (OUT of this sweep's scope by single ownership, added 2026-07-19):
   `cc-warehouse-architecture/` (SOURCE.md canonical, index.html rendered) is owned by the
   `/architecture` command, whose own gate catches its staleness; /refresh never sweeps it.
