@@ -539,43 +539,162 @@ def _run_render(args: Sequence[str]) -> int:
     return 1
 
 
+_PROJECT_SUBCOMMANDS = "list | show <id> | rename <id> <label> | move OLD NEW | merge A B"
+
+
+def _project_id_arg(raw: str) -> int | None:
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"Error: project id must be an integer, got {raw!r}", file=sys.stderr)
+        return None
+
+
 def _run_project(args: Sequence[str]) -> int:
-    """`ccw project rename <id> <label>`: a label edit (DESIGN section 2); nothing on
-    disk moves here, the next `ccw build` relocates the projection dirs. The wider
-    project verb surface (list/show/move/merge) lands in later slices."""
+    """`ccw project` (DESIGN section 7): list / show / rename / move / merge.
+
+    Completed at the v1 exit review 2026-07-24, which found DESIGN section 7 specifying
+    all five while only `rename` existed. `show` is the load-bearing one: DESIGN section 8
+    keys per-project config on `[project.<registry-id>]` and names this command as the way
+    to obtain that id, so the per-project override feature had no documented way to be
+    used. `list` and `show` read the catalog ONLY and open no stored payload (R6/F5).
+
+    Every registry edit goes through the registry module rather than SQL written here (R9),
+    so `move` and `merge` inherit its validation: a move whose old path is unclaimed or
+    whose new path belongs to another project RAISES rather than silently recording
+    nothing, and a merge validates both ids and soft-retires (R4: rows are never removed).
+    Paths are time-stamped alias CLAIMS and claims are append-only, so a move ADDS the new
+    path and keeps the old one (DESIGN section 2).
+    """
     rest = args[1:]
     if not rest:
-        print("Error: project requires a subcommand (rename)", file=sys.stderr)
+        print(f"Error: project requires a subcommand ({_PROJECT_SUBCOMMANDS})", file=sys.stderr)
         return 1
-    if rest[0] != "rename":
-        print(f"Error: unknown project subcommand {rest[0]!r}", file=sys.stderr)
+    sub, operands = rest[0], rest[1:]
+    if sub not in ("list", "show", "rename", "move", "merge"):
+        print(
+            f"Error: unknown project subcommand {sub!r} ({_PROJECT_SUBCOMMANDS})",
+            file=sys.stderr,
+        )
         return 1
-    if len(rest) < 3:
-        print("Error: project rename requires <id> <label>", file=sys.stderr)
-        return 1
-    id_str, label = rest[1], rest[2]
-    try:
-        project_id = int(id_str)
-    except ValueError:
-        print(f"Error: project id must be an integer, got {id_str!r}", file=sys.stderr)
-        return 1
-    if not label.strip():
-        print("Error: project rename requires a non-empty label", file=sys.stderr)
-        return 1
+
     config = load_config()
     conn = catalog.open_catalog(config.root)
     try:
-        exists = (
-            conn.execute("SELECT 1 FROM project WHERE id = ?", (project_id,)).fetchone()
-            is not None
-        )
-        if not exists:  # renaming a project that does not exist is an error, not a no-op
-            print(f"Error: no project with id {project_id}", file=sys.stderr)
+        if sub == "list":
+            rows = conn.execute(
+                "SELECT id, label, retired FROM project ORDER BY id"
+            ).fetchall()
+            if not rows:
+                print("no projects yet")
+                return 0
+            for project_id, label, retired in rows:
+                # A retired project is SHOWN and marked, never hidden: rows are
+                # soft-flagged (R4), so the command that enumerates projects must not
+                # make a merged one appear to have been deleted.
+                mark = "  (retired)" if retired else ""
+                print(f"{project_id}\t{label}{mark}")
+            return 0
+
+        if sub == "show":
+            if not operands:
+                print("Error: project show requires <id>", file=sys.stderr)
+                return 1
+            project_id = _project_id_arg(operands[0])
+            if project_id is None:
+                return 1
+            row = conn.execute(
+                "SELECT label, created_at, retired FROM project WHERE id = ?", (project_id,)
+            ).fetchone()
+            if row is None:
+                print(f"Error: no project with id {project_id}", file=sys.stderr)
+                return 1
+            label, created_at, retired = row
+            sessions = conn.execute(
+                "SELECT COUNT(*) FROM session WHERE project_id = ?", (project_id,)
+            ).fetchone()[0]
+            print(f"id: {project_id}")  # DESIGN 8: the id per-project config is keyed by
+            print(f"label: {label}")
+            print(f"created: {created_at}")
+            print(f"retired: {'yes' if retired else 'no'}")
+            print(f"sessions: {sessions}")
+            print(f"config section: [project.{project_id}]")
+            claims = conn.execute(
+                "SELECT kind, path, first_seen, last_seen FROM project_alias"
+                " WHERE project_id = ? ORDER BY kind, path",
+                (project_id,),
+            ).fetchall()
+            print("claims:" if claims else "claims: (none)")
+            for kind, path, first_seen, last_seen in claims:
+                print(f"  {kind}\t{path}\t{first_seen} .. {last_seen}")
+            return 0
+
+        if sub == "rename":
+            if len(operands) < 2:
+                print("Error: project rename requires <id> <label>", file=sys.stderr)
+                return 1
+            project_id = _project_id_arg(operands[0])
+            if project_id is None:
+                return 1
+            label = operands[1]
+            if not label.strip():
+                print("Error: project rename requires a non-empty label", file=sys.stderr)
+                return 1
+            exists = (
+                conn.execute("SELECT 1 FROM project WHERE id = ?", (project_id,)).fetchone()
+                is not None
+            )
+            if not exists:  # renaming a project that does not exist is an error, not a no-op
+                print(f"Error: no project with id {project_id}", file=sys.stderr)
+                return 1
+            registry.rename_project(conn, project_id, label)
+            return 0
+
+        if sub == "move":
+            if len(operands) < 2:
+                print("Error: project move requires OLD NEW", file=sys.stderr)
+                return 1
+            old_path, new_path = operands[0], operands[1]
+            owner = registry.project_for_path(conn, old_path, "cwd")
+            if owner is None:
+                print(f"Error: no project claims {old_path}", file=sys.stderr)
+                return 1
+            try:
+                registry.move_project(
+                    conn, owner, old_path, new_path, datetime.now(UTC).isoformat()
+                )
+            except ValueError as exc:  # another project's claim, or a stale old path (R5)
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            print(f"project {owner}: claimed {new_path} (previous claims kept)")
+            return 0
+
+        # merge A B: A is KEPT, B is merged into it and soft-retired.
+        if len(operands) < 2:
+            print("Error: project merge requires A B (A is kept)", file=sys.stderr)
             return 1
-        registry.rename_project(conn, project_id, label)
+        keep_id, merge_id = _project_id_arg(operands[0]), _project_id_arg(operands[1])
+        if keep_id is None or merge_id is None:
+            return 1
+        labels = {
+            cast(int, r[0]): cast(str, r[1])
+            for r in conn.execute("SELECT id, label FROM project").fetchall()
+        }
+        try:
+            registry.merge_projects(conn, keep_id, merge_id)
+        except ValueError as exc:  # same id, unknown id, or a retired keep (R5)
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        keep_label = labels.get(keep_id, str(keep_id))
+        merge_label = labels.get(merge_id, str(merge_id))
+        # Say which way it went: `merge A B` read cold does not tell you which survives.
+        print(
+            f"merged {merge_label} ({merge_id}) into {keep_label} ({keep_id});"
+            f" {merge_label} is retired, not deleted"
+        )
+        return 0
     finally:
         conn.close()
-    return 0
 
 
 def _consented(assume_yes: bool, prompt: str) -> bool:

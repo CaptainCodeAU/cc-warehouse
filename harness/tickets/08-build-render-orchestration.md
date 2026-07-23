@@ -1,5 +1,21 @@
 # Ticket 08: build + render orchestration (un-stubs the render child)
 
+EXIT-REVIEW ADDENDUM 2026-07-24 (principal ruled Option 2: build all four now). This
+ticket wired `ccw project rename` and nothing else, and no ticket ever enumerated the
+rest, so DESIGN section 7's `list / show / rename / move OLD NEW / merge A B` sat
+1-of-5 implemented behind a green suite and a DONE annotation. The gap was invisible to
+every slice-level check: the oracle suite was written from the tickets, the tickets from
+the slice list, and the slice list never named the subcommands. A green suite proves the
+code matches the tests, never that the tests cover the contract.
+It was not cosmetic. DESIGN section 8 keys per-project config on
+`[project.<registry-id>]` and names `ccw project show` as the way to obtain that id, so
+the per-project override feature shipped in slice 13 had no documented way to be used.
+Closed 2026-07-24; tests in tests/test_project_cli.py (21 cases, 13 red first). `list`
+and `show` read the catalog only and open no stored payload (R6/F5, pinned). `move` and
+`merge` route every edit through the registry module (R9) and inherit its validation, so
+each refusal path is asserted to change nothing, and `merge` soft-retires (R4) rather
+than removes. `list` shows a retired project marked rather than hiding it.
+
 Slice 8 of 13. Depends on: 04 (capture), 06, 07 (emitters).
 
 Tracer bullet: `ccw build` projects the catalog into
