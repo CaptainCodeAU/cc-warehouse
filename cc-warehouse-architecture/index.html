@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>cc-warehouse - architecture review board</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
@@ -10,17 +11,20 @@
     </script>
     <style>
       .seam { border-style: dashed; }
-      .band { display: flex; align-items: center; justify-content: center; text-align: center; }
       .deepbox { background: linear-gradient(135deg, #1e293b, #0f172a); border: 1px solid #64748b; }
+      .plain { border-left: 3px solid #38bdf8; }
+      pre.mermaid { background: transparent; }
     </style>
   </head>
   <body class="bg-slate-950 text-slate-100 font-sans">
     <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
 
+      <!-- ================= header ================= -->
       <header class="space-y-3">
         <h1 class="font-serif text-3xl font-bold text-slate-50">cc-warehouse - architecture review board</h1>
-        <p class="text-sm text-slate-400">Review 2026-07-19 &middot; snapshot: master <code class="font-mono text-slate-300">56262f6</code> (walked at a909cc0, every citation re-checked at 56262f6) &middot; rendered from <code class="font-mono text-slate-300">SOURCE.md</code> by /architecture &middot; three exploration lenses (pipeline core, orchestration, testability), every cited line verified first-hand</p>
-        <p class="text-sm text-slate-400">Build state: slices 01-11 tagged; slice 12 escalated and split into 12a (containers + registry) and 12b (content rewriting), its implementation an untagged checkpoint on master; next is 12a.</p>
+        <p class="text-sm text-slate-400">Review 2026-07-19 &middot; snapshot: master <code class="font-mono text-slate-300">56262f6</code> (walked at a909cc0, every citation re-checked at 56262f6) &middot; state folded 2026-07-24 &middot; rendered from <code class="font-mono text-slate-300">SOURCE.md</code> by /architecture</p>
+        <p class="text-sm text-slate-400">Build state: <span class="text-emerald-400 font-semibold">v1 is CLOSED</span>. Every DESIGN section 16 slice landed and carries its milestone tag, slice-01 to slice-13 including 12a and 12b (14 tags). The v1 exit review was held on 2026-07-24 and the principal ruled on <code class="font-mono">--hljs</code> and <code class="font-mono">--theme</code>. Next: v1.1 flag groups, then FTS5 with <code class="font-mono">ccw search</code> and <code class="font-mono">ccw import</code>.</p>
+
         <div class="flex flex-wrap gap-4 text-xs text-slate-300 pt-1">
           <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-3 border border-slate-400 bg-slate-800"></span> module</span>
           <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-0 border-t-2 border-dashed border-slate-400"></span> seam</span>
@@ -29,468 +33,324 @@
           <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-3 border border-amber-600 bg-amber-950"></span> contract callout</span>
         </div>
         <div class="flex flex-wrap gap-2 text-[11px] pt-1">
-          <span class="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700">states: PROPOSED &middot; GRILLING &middot; TICKETED-nn &middot; BUILT &middot; REJECTED</span>
+          <span class="px-2 py-0.5 rounded bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+          <span class="px-2 py-0.5 rounded bg-indigo-900/50 text-indigo-300 border border-indigo-700/50">TICKETED-nn</span>
+          <span class="px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-300 border border-emerald-700/50">BUILT</span>
+          <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">REJECTED</span>
+          <span class="px-2 py-0.5 rounded bg-emerald-800/40 text-emerald-300">Strong</span>
+          <span class="px-2 py-0.5 rounded bg-amber-800/40 text-amber-300">Worth exploring</span>
+          <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">Speculative</span>
           <span class="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700">tiers: VERIFIED first-hand &middot; CONTRACT &middot; AGENT-REPORTED</span>
         </div>
         <p class="text-xs text-slate-500">This repo's ADR-equivalent is the locked contract: DESIGN rules R1-R14, BRAINSTORM verdicts, FINDINGS F1-F10. No card re-proposes ticketed work; where a card touches an open contract decision it says so in amber. The canonical record is SOURCE.md; this page renders it and nothing more.</p>
       </header>
 
-      <!-- ================= healthy baseline ================= -->
-      <section class="rounded-lg border border-emerald-800 bg-emerald-950/40 p-5 space-y-2">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-emerald-300">The deep end (leave it alone)</h2>
-        <p class="text-sm text-slate-300">The foundation already has the shape the cards below aim for. <span class="font-mono text-xs">store.py</span> hides O_EXCL takeover races and atomic writes behind <span class="font-mono text-xs">put / get / acquire_lock / verify_walk</span>. <span class="font-mono text-xs">capture.capture_transcript</span> is one deep ingestion seam with three adapters (hook, sweep, migrate) and no caller re-implements dedupe or error paths. <span class="font-mono text-xs">render.py</span> puts 747 lines behind three functions. The oracle suite drives public seams only, proves the F5 zero-object-reads negative with an audit hook, and fault-injects <span class="font-mono text-xs">store.atomic_write</span> cleanly. Friction concentrates in the parser&rarr;render&rarr;build/share stretch and in cli.py, not here.</p>
-        <p class="text-sm text-slate-300">Fresh proof the deep seam earns its keep (2026-07-19, after this review's scan): relocate exposed that atomic_write silently reset an existing target's permissions on every rewrite, a defect present since slice 01. The fix landed in the ONE primitive and every caller inherited it, pinned by tests/test_store_regressions.py. That is locality doing exactly what this board keeps asking for.</p>
-        <p class="text-sm text-sky-200"><span class="font-semibold text-sky-300">In plain English.</span> The storage engine, the ingestion pipeline, and the test harness are in excellent shape; every suggestion on this board is about the layers above them. A bug just found in the write primitive was fixed once, in one place, and everything downstream got the fix for free - which is the whole argument of this board in miniature.</p>
-      </section>
-
-      <section id="candidates" class="space-y-10">
-
-        <!-- ================= C1 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c1">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C1 &middot; Parse once: one parse product</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-900/70 text-emerald-300 border border-emerald-700">Strong</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/parser.py &middot; render.py &middot; build.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">Before: 5 extraction passes per projection</p>
-              <pre class="mermaid">
-flowchart TB
-  B[build._projection_files] --> RM[render_markdown]
-  B --> RH[render_html]
-  B --> MF[build_manifest]
-  RM --> PS1[parse_session]
-  RM --> BC1[build_conversation]
-  RH --> PS2[parse_session]
-  RH --> BC2[build_conversation]
-  MF --> BC3[build_conversation]
-  PS1 --> E[_extract_entries x5]
-  BC1 --> E
-  PS2 --> E
-  BC2 --> E
-  BC3 --> E
-  classDef leak stroke:#ef4444,stroke-width:2px,fill:#450a0a,color:#fecaca;
-  class E,PS1,PS2,BC1,BC2,BC3 leak
-              </pre>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">After: one parse, three consumers</p>
-              <pre class="mermaid">
-flowchart TB
-  B[build._projection_files] --> P[parse once:<br/>metadata + conversation]
-  P --> RM[markdown emitter]
-  P --> RH[html emitter]
-  P --> MF[manifest]
-  classDef deep stroke:#94a3b8,stroke-width:3px,fill:#1e293b,color:#f1f5f9;
-  class P deep
-              </pre>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> parser.py sells two products over the same bytes - parse_session and build_conversation - and each re-runs _extract_entries (parser.py:158, parser.py:403). render.py's emitters take raw bytes, so build.py's one projection extracts the payload five times (render.py:375-377, 726-727, 740; build.py:84-86). DESIGN section 4 says parse ONCE; the interface defeats it.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> One parse entry extracts entries once and yields metadata and conversation together; the emitters accept the parsed model, with the bytes form kept only at the edge.</p>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>leverage: one parse, three emitters</li>
-            <li>locality: extraction quirks in one function</li>
-            <li>5x parse cost gone before the 7k-session migrate and v1.1 FTS5</li>
-            <li>makes the DESIGN parse-ONCE sentence true (R8)</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> Every time the tool turns one saved conversation into its four output files, it re-reads and re-decodes the same raw file five times. The fix: decode it once and hand the decoded result to all four outputs. Same results, a fifth of the work, one less way for the readers to disagree.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6. Contract ties: R8, R9; DESIGN section 4.</p>
-        </article>
-
-        <!-- ================= C2 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c2">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C2 &middot; Deepen the batch-verb protocol</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-900/70 text-emerald-300 border border-emerald-700">Strong</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/reports.py &middot; cli.py &middot; sweep.py &middot; build.py &middot; migrate.py &middot; relocate.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500">Before: the protocol, copied four times</p>
-              <div class="grid grid-cols-4 gap-1.5 text-[10px]">
-                <div class="text-center text-slate-400 font-mono">sweep</div>
-                <div class="text-center text-slate-400 font-mono">build</div>
-                <div class="text-center text-slate-400 font-mono">migrate</div>
-                <div class="text-center text-slate-400 font-mono">relocate</div>
-              </div>
-              <div class="grid grid-cols-4 gap-1.5">
-                <div class="space-y-1"><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">lock triple</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">acquire or refuse</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">finally release</div></div>
-                <div class="space-y-1"><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">lock triple</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">acquire or refuse</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">finally release</div></div>
-                <div class="space-y-1"><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">lock triple</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">acquire or refuse</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">finally release</div></div>
-                <div class="space-y-1"><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">lock triple</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">acquire or refuse</div><div class="band h-7 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">finally release</div></div>
-              </div>
-              <p class="text-[10px] text-slate-400 text-center pt-1 font-mono">cli.py, five times over:</p>
-              <div class="band h-8 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[10px]">lock-held detector &middot; failure loop &middot; count &middot; summary &middot; exit code &nbsp;(x5)</div>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500">After: one owner, thin policies</p>
-              <div class="band h-16 deepbox text-slate-100 rounded-lg text-xs font-semibold">reports: run-under-lock + BatchReport (lock_held, counts) + one console/exit presenter</div>
-              <div class="grid grid-cols-4 gap-1.5">
-                <div class="band h-9 border border-slate-600 bg-slate-800 rounded text-[9px]">sweep<br/>body only</div>
-                <div class="band h-9 border border-slate-600 bg-slate-800 rounded text-[9px]">build<br/>body only</div>
-                <div class="band h-9 border border-slate-600 bg-slate-800 rounded text-[9px]">migrate<br/>body only</div>
-                <div class="band h-9 border border-slate-600 bg-slate-800 rounded text-[9px]">relocate<br/>body only</div>
-              </div>
-              <div class="band h-8 border border-slate-500 seam rounded text-[10px] text-slate-300">cli.py: one presenter call per verb</div>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> The lock primitive is deep (store.py:192-271) but the ceremony around it is shallow and copied: the sentinel triple plus acquire-or-refuse plus finally-release appears in sweep.py:24-29/137-151, build.py:218-227/247-280, migrate.py:34-39/99-119, relocate.py:39-40/634-641. cli.py then re-implements the lock-held detector, failure loop, stored/built count, summary line, and exit policy five times (cli.py:187-195, 242-250, 491-502, 597-617, 684-698). reports.py fails the deletion test today: 19 lines, one property, the real R10 behavior lives in its callers.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> reports.py absorbs the protocol: run a batch body under locks/&lt;op&gt; or return the standard lock-held report, and present any BatchReport to console plus exit code in one place. Verbs keep only their bodies; the lock stays store's O_EXCL primitive (R14 untouched).</p>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>leverage: v1.1 ccw import gets the protocol free</li>
-            <li>locality: R10 and R14 presentation in one module</li>
-            <li>deletes four sentinel triples and five CLI blocks</li>
-            <li>shrinks exactly the cli.py surface 12a, 12b, and 13 must touch</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> Five commands all follow the same ritual: take a lock so two copies never run at once, work item by item, then print what failed and set the exit code. That ritual is copy-pasted into each command. Write it once and every current and future command inherits it; a fix to the ritual fixes all five at once.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6. Contract ties: R9, R10; R14 untouched. Timing: 12a, 12b, and 13 all touch cli.py.</p>
-        </article>
-
-        <!-- ================= C3 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c3">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C3 &middot; Make the risky transforms public and I/O-free</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-900/70 text-emerald-300 border border-emerald-700">Strong</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/share.py &middot; relocate.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">Before: testing one redaction rule</p>
-              <pre class="mermaid">
-sequenceDiagram
-  participant T as test
-  participant H as ccw hook subprocess
-  participant C as catalog.sqlite raw SQL
-  participant S as ccw share subprocess
-  participant O as out dir rglob
-  T->>H: stage JSONL, run hook
-  T->>C: SELECT short WHERE hash
-  T->>S: share --out
-  T->>O: read every html/md, assert
-              </pre>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">After: the interface is the test surface</p>
-              <pre class="mermaid">
-sequenceDiagram
-  participant T as test
-  participant D as detector / rewriter (pure)
-  T->>D: decoded text, mapping
-  D-->>T: hits / rewritten text
-              </pre>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> The correctness-critical logic of the two riskiest verbs is pure transformation, yet all of it is private and reachable only through Config-plus-disk entry points: share's detectors _scan_secrets / _is_generic_secret / _redact_tree (share.py:117-278, only share() public) and relocate's JSON-aware rewriter _form_patterns / _sub_text / _sub_tree / _rewrite_bytes (relocate.py:114-184, only plan/apply public). Locality is lost: a redaction miss lives in _scan_secrets, but the test that catches it runs three process boundaries away (test_share_regressions.py:30-49: hook subprocess, raw SQL, share subprocess, rglob). Every share/relocate/sweep/migrate test file drives the CLI only; direct imports are zero.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> Expose the transforms as public, I/O-free interfaces: decoded text in, hits out; text or JSON node plus mapping in, rewritten result out. The verbs keep the I/O shell around them. store.atomic_write already proves this shape works in this suite.</p>
-          <div class="rounded border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-200">
-            Timing update (2026-07-19 split): ticket 12b re-opens exactly the relocate rewriter surface - its carried-forward findings (locale-dependent read_text, JSON reformatting, silent scan drops) are all rewriter-core defects. Folding the I/O-free rewriter seam into 12b's work order costs almost nothing extra and gives that slice the in-memory test surface it currently lacks. The share half of this card stands alone and is not gated on 12b.
-          </div>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>interface becomes the test surface for the riskiest logic</li>
-            <li>a new redaction rule: one in-memory assertion</li>
-            <li>locality: boundary-case bugs land beside their logic</li>
-            <li>oracle tests stay locked; every future test gets cheaper</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> The two most dangerous features - scrubbing secrets before sharing, and rewriting paths when a project moves - keep their core logic locked away where tests cannot reach it directly. Checking one scrubbing rule today means building a fake warehouse, running two commands as separate programs, and digging through the output files. Expose the core as plain text-in, answer-out functions and a new rule becomes a one-line test.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6 (the call-pattern census is AGENT-REPORTED, spot-verified). Contract ties: ticket 12b for the rewriter half.</p>
-        </article>
-
-        <!-- ================= C4 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c4">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C4 &middot; Give the head concept one home: a catalog read seam</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-900/70 text-emerald-300 border border-emerald-700">Strong</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/catalog.py &middot; build.py &middot; share.py &middot; cli.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">Before: everyone knows the schema</p>
-              <pre class="mermaid">
-flowchart TB
-  H1[build._heads<br/>head SQL copy 1] --> DB[(catalog.sqlite)]
-  H2[build.head_for_short<br/>head SQL copy 2] --> DB
-  R[share._Resolved<br/>shape copy of _Head] --> H2
-  CLI[cli.py<br/>own SELECTs] --> DB
-  TESTS[tests conftest<br/>raw SQL readback] --> DB
-  classDef leak stroke:#ef4444,stroke-width:2px,fill:#450a0a,color:#fecaca;
-  class H1,H2,R,CLI,TESTS leak
-              </pre>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">After: one seam beside the schema</p>
-              <pre class="mermaid">
-flowchart TB
-  CAT[catalog: head predicate<br/>+ public record type<br/>+ read queries] --> DB[(catalog.sqlite)]
-  B[build] --> CAT
-  S[share] --> CAT
-  C[cli] --> CAT
-  M[v1.1 search / v1.2 MCP] -.-> CAT
-  classDef deep stroke:#94a3b8,stroke-width:3px,fill:#1e293b,color:#f1f5f9;
-  class CAT deep
-              </pre>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> "A head is a row no other row supersedes" is core version-chain semantics with no owner. The predicate SQL is typed verbatim twice (build.py:137 and build.py:167) while the head_for_short docstring claims one owner, R9 - an overclaim the code does not honor (R8/F6). _Head is private, so share re-declares the identical five-field shape as _Resolved and copies it field by field (share.py:73-82, 320-328). cli.py runs its own session and project SELECTs (cli.py:300, 422). Understanding one concept means bouncing catalog to build to share.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> catalog.py owns the head predicate, a public head-record type, and the handful of read queries; build, share, and the CLI consume them. Reads stay catalog-only (R6 unchanged).</p>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>locality: version-chain semantics live beside the schema</li>
-            <li>leverage: v1.1 search and v1.2 MCP read the same seam</li>
-            <li>deletes the _Resolved shape copy</li>
-            <li>makes the one-owner docstring true (R8)</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> The database question "which copy of this session is the current one?" is answered by query text pasted in two places, and a third file re-creates the same record shape because the original is private. Put the question, its answer, and the record type in one place next to the schema, and everyone asks it the same way.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6. Contract ties: R6, R8, R9.</p>
-        </article>
-
-        <!-- ================= C5 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c5">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C5 &middot; One turn walker, two serializers</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-900/60 text-amber-300 border border-amber-700">Worth exploring</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/render.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500">Before: two parallel walkers</p>
-              <div class="grid grid-cols-2 gap-2">
-                <div class="space-y-1">
-                  <p class="text-[10px] font-mono text-center text-slate-400">_render_turn (md)</p>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">synthetic guard</div>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">prompt</div>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">reminders loop</div>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">blocks loop</div>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-mono text-center text-slate-400">_turn_html</p>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">synthetic guard</div>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">prompt</div>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">reminders loop</div>
-                  <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">blocks loop</div>
-                </div>
-              </div>
-              <div class="band h-7 border border-slate-500 seam rounded text-[10px] text-slate-300">shared: per-block markdown fragment (the only shared piece)</div>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500">After: one spine</p>
-              <div class="band h-14 deepbox text-slate-100 rounded-lg text-xs font-semibold">one walker: typed units per turn<br/>(prompt, reminders, blocks)</div>
-              <div class="grid grid-cols-2 gap-2">
-                <div class="band h-9 border border-slate-600 bg-slate-800 rounded text-[10px]">markdown serializer<br/>(thin)</div>
-                <div class="band h-9 border border-slate-600 bg-slate-800 rounded text-[10px]">html serializer<br/>(thin)</div>
-              </div>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> Above the shared block fragment, the traversal is written twice: _render_turn (render.py:314) and _turn_html (render.py:675) carry the byte-identical synthetic-skip guard (render.py:315, 678) and the same prompt/reminders/blocks order. A change to turn grouping or the synthetic rule is two edits with no type keeping them in lockstep; this doubling is why render.py is 747 lines.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> Hoist the turn and page traversal into one walker yielding typed rendered units; markdown and HTML become thin serializers of those units. Outputs are frozen by black-box tests, so the refactor verifies itself.</p>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>locality: turn policy decided once</li>
-            <li>one implementation of the walk (R9)</li>
-            <li>pairs naturally with C1's single parse product</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> The markdown files and the web pages are produced by two separate loops that walk the conversation in exactly the same order with exactly the same rules. Change how turns are grouped and you must remember to change both. Walk the conversation once; let markdown and HTML just format what the walk hands them.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6. Contract ties: R9.</p>
-        </article>
-
-        <!-- ================= C6 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c6">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C6 &middot; cli.py: verbs hand back results, not cursors</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-900/60 text-amber-300 border border-amber-700">Worth exploring</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/cli.py &middot; build.py &middot; relocate.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-1 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">Before: cli.py cross-section (727 lines)</p>
-              <div class="band h-6 border border-slate-600 bg-slate-800 rounded text-[10px]">verb dispatch (fine)</div>
-              <div class="band h-6 border border-slate-600 bg-slate-800/50 text-slate-400 rounded text-[10px]">hand-rolled flag parsing x5 (ticket 13, scheduled)</div>
-              <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[10px]">catalog SELECTs in the CLI (cli.py:300, 422)</div>
-              <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[10px]">F9 out-guard _out_under_warehouse (cli.py:340-356)</div>
-              <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[10px]">relocate recovery keyed on relocate's action strings (608-614)</div>
-              <div class="band h-6 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[10px]">batch report printing x5 (C2)</div>
-              <div class="band h-6 border border-slate-600 bg-slate-800 rounded text-[10px]">consent gate _consented (shared, fine)</div>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-1 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">After: thin presentation edge</p>
-              <div class="band h-6 border border-slate-600 bg-slate-800 rounded text-[10px]">verb dispatch</div>
-              <div class="band h-6 border border-slate-600 bg-slate-800 rounded text-[10px]">parse flags, print, map exit codes</div>
-              <div class="band h-16 deepbox text-slate-100 rounded-lg text-[11px] font-semibold">verb modules own their reads and guards,<br/>return result + exit intent</div>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> The interface of cli.py is a trivial dispatch, but its implementation carries verb logic: it opens the catalog and encodes the no-row-vs-superseded policy for render (cli.py:297-310), runs the project-exists SELECT (cli.py:419-430), and holds the F9 warehouse-safety guard (cli.py:340-356). That guard does not travel: a future non-CLI caller of ad-hoc rendering, such as the v1.2 MCP server, bypasses it entirely. A verb behavior change routinely edits two files.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> Each verb module owns its catalog reads and safety guards and returns a result plus exit intent; cli.py keeps parsing, printing, and exit-code mapping. Scoped deliberately to exclude flag parsing and config layering, which ticket 13 already owns. Timing note (2026-07-19 split): cli.py is also on 12a's and 12b's TOUCHES lists, and 12a's carried-forward plan-advisory consent gap overlaps this card's action-string coupling; whatever 12a/12b decide for relocate's CLI surface should land before this card generalizes it.</p>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>locality: one file per verb change</li>
-            <li>the F9 guard travels with the operation, not the entry point</li>
-            <li>leverage: the v1.2 MCP surface reuses whole verbs</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> The command-line front door does more than route commands: it runs its own database lookups, holds the safety check that stops a render from overwriting the warehouse, and knows other files' internal status words. Move that knowledge into the feature files so the front door only parses, calls, and prints - and so the safety check still applies when something other than the command line calls the feature.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6. Contract ties: F9; tickets 12a, 12b, 13.</p>
-        </article>
-
-        <!-- ================= C7 ================= -->
-        <article class="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-lg" id="c7">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C7 &middot; Type the Block discriminant</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-900/60 text-amber-300 border border-amber-700">Worth exploring</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/parser.py &middot; render.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500">Before</p>
-              <div class="border-2 border-red-500 bg-red-950/60 rounded p-2 font-mono text-[11px] text-red-200">kind: str&nbsp; <span class="text-slate-400"># 9 values, listed in a docstring</span></div>
-              <div class="text-[11px] text-slate-300 space-y-1">
-                <p>consumers re-switch on string literals:</p>
-                <p class="font-mono">_render_block &middot; _render_machinery &middot; block.kind == "tool_result" x2</p>
-                <p>pyright strict cannot flag a missed or renamed kind: content silently drops (the F6 class)</p>
-              </div>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500">After</p>
-              <div class="deepbox text-slate-100 rounded p-2 font-mono text-[11px]">kind: Literal[9 kinds]&nbsp; <span class="text-slate-400"># stdlib, R7-safe</span></div>
-              <p class="text-[11px] text-slate-300">exhaustive matches are compile-checked; the field-validity rules (tool_name only with tool_use) move from prose into the type</p>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> Block.kind is a bare str spanning nine values whose taxonomy and field-validity rules live only in a docstring (parser.py:258-272). Producers and every consumer must independently know them; render.py re-derives the switch three ways (render.py:242, 262, 643/668). Adding or renaming a kind is a silent-drop hazard the type checker cannot see - exactly FINDINGS F6.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> Make kind a typed discriminant (Literal or a small per-kind type, both stdlib). A missed case becomes a pyright error instead of dropped content.</p>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>F6 silent loss becomes a compile-time error</li>
-            <li>interface carries the taxonomy; the docstring stops being load-bearing</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> Every piece of a conversation carries a plain text label like "thinking" or "tool_use", and the list of valid labels lives only in a comment. Add or rename a label and nothing warns the code that forgot to handle it - that content just quietly vanishes from the output. Make the label list a real type and the checker flags every forgotten spot before it ships.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6. Contract ties: F6, R7.</p>
-        </article>
-
-        <!-- ================= C8 ================= -->
-        <article class="rounded-xl border border-amber-700 bg-slate-900 p-6 space-y-4 shadow-lg" id="c8">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="font-serif text-xl font-bold grow text-slate-50">C8 &middot; A page-chrome seam in render_html</h2>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-900/60 text-amber-300 border border-amber-700">Worth exploring</span>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">in-process</span>
-          </div>
-          <p class="font-mono text-sm text-slate-400">src/cc_warehouse/render.py &middot; share.py</p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">Before: content and chrome fused</p>
-              <pre class="mermaid">
-flowchart TB
-  RP[_render_page:<br/>content + css + scripts<br/>+ highlight.js CDN, indivisible]
-  P[personal projections] --> RP
-  SH[shared site] --> RP
-  RP --> CDN[cdnjs.cloudflare.com<br/>every shared viewer fetches]
-  classDef leak stroke:#ef4444,stroke-width:2px,fill:#450a0a,color:#fecaca;
-  class CDN leak
-              </pre>
-            </div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900 p-3 overflow-x-auto">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">After: one content renderer, two chrome adapters</p>
-              <pre class="mermaid">
-flowchart TB
-  CR[conversation content renderer] --- S1[personal chrome adapter:<br/>keeps CDN per DESIGN s6]
-  CR --- S2[share chrome adapter:<br/>inline or none - open decision]
-  classDef deep stroke:#94a3b8,stroke-width:3px,fill:#1e293b,color:#f1f5f9;
-  class CR deep
-              </pre>
-            </div>
-          </div>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Problem.</span> render_html emits conversation content and page chrome as one indivisible page: the highlight.js script tag pointing at cdnjs.cloudflare.com is appended unconditionally (render.py:536-540, 710). share.py's only render path is build.write_projection (share.py:389), so every page on a published shared site makes every viewer's browser call out to a third-party CDN. There is no adapter between rendering the conversation and wrapping it in a page, so shares cannot differ from personal projections.</p>
-          <p class="text-sm text-slate-200"><span class="font-semibold text-slate-50">Solution.</span> A seam between content emission and chrome assembly. Personal projections keep the CDN plus fallback exactly as DESIGN section 6 sanctions; shares gain the ability to inline or omit it - once that decision is made.</p>
-          <div class="rounded border border-amber-600 bg-amber-950/50 px-3 py-2 text-sm text-amber-200">
-            Contract callout: DESIGN section 15 item 8 explicitly holds shares-inline-vs-CDN OPEN, and the grill round locked shares to the personal renderer and theme. This card proposes only the seam that makes the open decision implementable; choosing the share behavior is the principal's contract call, not a code change.
-          </div>
-          <ul class="text-sm text-slate-200 list-disc pl-5 space-y-0.5 marker:text-slate-500">
-            <li>two adapters justify the seam: personal chrome, share chrome</li>
-            <li>unblocks the section 15 item 8 decision</li>
-          </ul>
-          <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> Pages you share currently load their code-highlighting script from a public server, so everyone who views a shared page pings a third party. The renderer cannot do otherwise because the page wrapper and the conversation content are welded together. Separate them and shared pages can carry the script inside the page - once you decide they should; that call is yours, held open in the design doc.</div>
-          <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6, plus CONTRACT (DESIGN section 15 item 8; the grill-round renderer/theme ruling).</p>
-        </article>
-
-        <!-- ================= C9 + C10 minis ================= -->
-        <div class="grid md:grid-cols-2 gap-6">
-          <article class="rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-3 shadow-lg" id="c9">
-            <div class="flex items-center gap-2 flex-wrap">
-              <h2 class="font-serif text-base font-bold grow text-slate-50">C9 &middot; One source walker, two policies</h2>
-              <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-950/60 text-violet-300 border border-violet-700">PROPOSED</span>
-              <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-600">Speculative</span>
-            </div>
-            <p class="font-mono text-xs text-slate-400">sweep.py &middot; migrate.py</p>
-            <div class="grid grid-cols-2 gap-2">
-              <div class="space-y-1">
-                <p class="text-[10px] uppercase tracking-wider text-slate-500">Before</p>
-                <div class="band h-8 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">sweep: walk scaffold + skip agent-*</div>
-                <div class="band h-8 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">migrate: walk scaffold + name non-regular</div>
-              </div>
-              <div class="space-y-1">
-                <p class="text-[10px] uppercase tracking-wider text-slate-500">After</p>
-                <div class="band h-8 deepbox text-slate-100 rounded text-[9px]">one enumerator + classify callback</div>
-                <div class="grid grid-cols-2 gap-1"><div class="band h-8 border border-slate-600 bg-slate-800 rounded text-[9px]">sweep rule</div><div class="band h-8 border border-slate-600 bg-slate-800 rounded text-[9px]">migrate rule</div></div>
-              </div>
-            </div>
-            <p class="text-sm text-slate-200">sweep._walk_source (sweep.py:44-76) and migrate._walk (migrate.py:42-82) copy the same ~30-line os.walk onerror/suffix/sort scaffold; only the policy differs (sweep skips agent-*, migrate keeps them and names non-regular dirents). A shared enumerator taking a classify callback leaves each verb its one rule. Deletion test: concentrates, modestly.</p>
-            <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> Two commands carry near-identical copies of the same folder-scanning loop; only one small rule differs. One shared scanner with a pluggable rule removes the duplicate.</div>
-            <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6.</p>
-          </article>
-          <article class="rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-3 shadow-lg" id="c10">
-            <div class="flex items-center gap-2 flex-wrap">
-              <h2 class="font-serif text-base font-bold grow text-slate-50">C10 &middot; A catalog read-scope for relocate</h2>
-              <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-700">TICKETED-12b</span>
-            </div>
-            <p class="font-mono text-xs text-slate-400">relocate.py (also status.py, share.py ceremony)</p>
-            <div class="grid grid-cols-2 gap-2">
-              <div class="space-y-1">
-                <p class="text-[10px] uppercase tracking-wider text-slate-500">Before</p>
-                <div class="band h-8 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">per candidate: open catalog, query, close</div>
-                <div class="band h-8 border-2 border-red-500 bg-red-950/60 text-red-200 rounded text-[9px]">... repeated each loop pass</div>
-              </div>
-              <div class="space-y-1">
-                <p class="text-[10px] uppercase tracking-wider text-slate-500">After</p>
-                <div class="band h-8 deepbox text-slate-100 rounded text-[9px]">one read-scope per plan/apply</div>
-                <div class="band h-8 border border-slate-500 seam rounded text-[9px] text-slate-300">helpers take the open conn</div>
-              </div>
-            </div>
-            <p class="text-sm text-slate-200">relocate._catalog_conn opens and closes a fresh connection per helper call (relocate.py:335-359), and _cwds_for_encoded runs inside the per-candidate loop (relocate.py:313), so one plan churns connections. A read-only context manager threaded through the plan would hold one connection. Deletion test: mostly moves ceremony.</p>
-            <div class="rounded border border-indigo-700 bg-indigo-950/40 px-3 py-2 text-sm text-indigo-200">Superseded as a candidate (2026-07-19): ticket 12b's carried-forward findings now name this exact churn ("every candidate opens its own SQLite connection ... two full home reads before the first mutation", F5). It is scheduled work owned by 12b; the analysis is kept here for the record only.</div>
-            <div class="rounded border border-sky-800 bg-sky-950/40 px-3 py-2 text-sm text-sky-100"><span class="font-semibold text-sky-300">In plain English.</span> While planning a move, relocate opens and closes the database once per folder it checks instead of holding it open for the whole plan. Harmless at small scale, wasteful at large. Open it once per plan - already on the 12b work order.</div>
-            <p class="text-xs text-slate-500">Evidence: VERIFIED first-hand at snapshot 56262f6, plus CONTRACT (ticket 12b carried-forward list).</p>
-          </article>
+      <!-- ================= decay banner ================= -->
+      <section class="rounded-lg border border-amber-700 bg-amber-950/40 p-5 space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-amber-300">Line references have decayed - treat them as indicative</h2>
+        <p class="text-sm text-amber-100/80">20 commits have touched <code class="font-mono">src/</code> since the snapshot: +4,036 / -357 lines. Every <code class="font-mono">file:line</code> in cards C1 to C8 and C10 is approximate. Only C9 keeps exact references, because both files it cites are untouched.</p>
+        <div class="overflow-x-auto">
+          <table class="text-xs font-mono min-w-full">
+            <thead class="text-amber-400/70">
+              <tr><th class="text-left pr-8 font-normal pb-1">file</th><th class="text-right pr-8 font-normal pb-1">then</th><th class="text-right pr-8 font-normal pb-1">now</th><th class="text-right font-normal pb-1">change</th></tr>
+            </thead>
+            <tbody class="text-amber-100/80">
+              <tr><td class="pr-8">render.py</td><td class="text-right pr-8">747</td><td class="text-right pr-8">1836</td><td class="text-right">+1089</td></tr>
+              <tr><td class="pr-8">cli.py</td><td class="text-right pr-8">727</td><td class="text-right pr-8">1091</td><td class="text-right">+364</td></tr>
+              <tr><td class="pr-8">relocate.py</td><td class="text-right pr-8">641</td><td class="text-right pr-8">979</td><td class="text-right">+338</td></tr>
+              <tr><td class="pr-8">parser.py</td><td class="text-right pr-8">485</td><td class="text-right pr-8">756</td><td class="text-right">+271</td></tr>
+              <tr><td class="pr-8">config.py</td><td class="text-right pr-8">115</td><td class="text-right pr-8">305</td><td class="text-right">+190</td></tr>
+              <tr><td class="pr-8">share.py</td><td class="text-right pr-8">406</td><td class="text-right pr-8">543</td><td class="text-right">+137</td></tr>
+              <tr><td class="pr-8">build.py</td><td class="text-right pr-8">280</td><td class="text-right pr-8">286</td><td class="text-right">+6</td></tr>
+            </tbody>
+          </table>
         </div>
-
-      </section>
-
-      <!-- ================= scheduled ================= -->
-      <section class="rounded-lg border border-slate-700 bg-slate-900/60 p-5 space-y-2">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Seen, but already ticketed (not re-proposed)</h2>
-        <p class="text-sm text-slate-300">Two frictions every lens flagged are ticket 13's explicit scope, so they are recorded here rather than carded: (1) the five hand-rolled flag scanners in cli.py, each annotated "full flag layering lands in slice 13"; (2) config.toml parsed in three modules (config._webhooks_from_root, share._custom_patterns, relocate._relocate_roots) while Config's redact_patterns / relocate_roots / voice_* / inbox fields sit unpopulated - the ticket orders load_config completed in place, "a parallel loader is a rejection (R9)". Cards C2 and C6 are sized to complement that slice, not collide with it.</p>
-        <p class="text-sm text-slate-300">Post-scan additions (the 2026-07-19 slice-12 split, commits fcadd7e / 69f27e6 / 56262f6): C10's connection churn moved into this category when ticket 12b listed it as a carried-forward finding; the 12a/12b split also resolves the wait-for-slice-12 timing caveats this board placed on relocate-touching candidates, and DESIGN section 11 plus SPEC 10.2 now record the boundary-rule CORRECTION and the frozen relocate rulings (cross-device refused, no undo/resume, TOCTOU residual accepted, JSON keys included, backup covers content-rewritten files only).</p>
-        <p class="text-sm text-sky-200"><span class="font-semibold text-sky-300">In plain English.</span> Two known annoyances - hand-rolled flag parsing and the config file being read in three different places - are already on the roadmap as the final slice, so they are listed here only to show they were seen, not missed. Since this board's first pass, the risky "move a project" feature was split into two smaller, safer work orders, and one of this board's minor suggestions (C10) is now on that work order's list, so it stopped being a suggestion and became a plan.</p>
+        <p class="text-sm text-amber-100/80">The breadth is the signal a fresh review is due, not a rendering fault. This command flags decay and never silently re-derives a reference; only a fresh first-hand verification does that.</p>
+        <div class="plain bg-sky-950/30 pl-4 py-3 rounded-r">
+          <p class="text-sky-300 font-semibold text-sm">In plain English.</p>
+          <p class="text-slate-300 text-sm mt-1">The code has grown a lot since the last full review, so the exact line numbers quoted below have moved. Read them as pointers to roughly where something lives, not as addresses. The findings themselves were not re-checked in this update; only the statuses were.</p>
+        </div>
       </section>
 
       <!-- ================= top recommendation ================= -->
-      <section id="top-recommendation" class="rounded-xl deepbox text-slate-100 p-8 space-y-3 shadow-xl">
-        <p class="text-xs uppercase tracking-wider text-slate-400">Top recommendation</p>
-        <h2 class="font-serif text-2xl font-bold text-slate-50"><a href="#c1" class="underline decoration-slate-500 underline-offset-4">C1 - Parse once: one parse product</a></h2>
-        <p class="text-sm text-slate-300">Zero contract risk, no collision with in-flight slice work, and the modules it touches are done and frozen by black-box output tests, so the refactor verifies itself. It removes a 5x cost from the exact path the ~7k-session migration and v1.1 FTS5 indexing will hammer, makes DESIGN section 4's parse-ONCE sentence true, and lays the spine C5 serializes from. Next best: C2, best done before the queue ahead of it lands - 12a, 12b, and slice 13 all touch cli.py, and v1.1's ccw import would copy the batch protocol a fifth time. C3's relocate half has a new natural home: fold the I/O-free rewriter seam into ticket 12b's work order.</p>
-        <p class="text-sm text-sky-200"><span class="font-semibold text-sky-300">In plain English.</span> Start with the decode-once fix: it is safe (the existing tests prove the outputs stay identical), it cannot collide with the work in flight, and it speeds up exactly what the coming 7,000-session import will hammer hardest.</p>
+      <section class="rounded-lg border border-emerald-700 bg-emerald-950/30 p-5 space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-emerald-300">Top recommendation</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="text-xl font-semibold text-slate-50">C1 - Parse once: one parse product</span>
+          <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+          <span class="px-2 py-0.5 rounded text-[11px] bg-emerald-800/40 text-emerald-300">Strong</span>
+        </div>
+        <p class="text-sm text-slate-300">Recorded pick at the 2026-07-19 review, runner-up C2. Zero contract risk, no collision with the queue at the time, and the modules are frozen by black-box output tests, so the refactor verifies itself.</p>
+        <div class="rounded border border-amber-700 bg-amber-950/40 p-3">
+          <p class="text-amber-300 text-sm font-semibold">Ranking caveat, added 2026-07-24</p>
+          <p class="text-amber-100/80 text-sm mt-1">This ordering predates 1,089 new lines in <code class="font-mono">render.py</code> and was NOT re-derived in the state fold. C3 has a documented case for moving up (see its card). Treat the ranking as the last review's, not as current advice.</p>
+        </div>
       </section>
 
-      <footer class="text-xs text-slate-500 pt-4">
-        Rendered from SOURCE.md by /architecture. Review 2026-07-19; snapshot master 56262f6; updated the same day after the slice-12 escalation split landed (commits fcadd7e, 69f27e6, 56262f6). Only store.py changed among the reviewed sources (+13 lines) and its cited line ranges were re-verified at the new HEAD; all other citations are unchanged. Vocabulary: /codebase-design (module, interface, depth, seam, adapter, leverage, locality). Every file:line citation was read directly in source during this review; agent findings were independently spot-verified before ranking. Edit SOURCE.md, then regenerate; never hand-author findings here.
+      <!-- ================= the board ================= -->
+      <section class="space-y-6">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">The board - ten candidates, last review's order</h2>
+
+        <!-- C1 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">1st &middot; C1 - Parse once: one parse product</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-emerald-800/40 text-emerald-300">Strong</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">parser.py &middot; render.py &middot; build.py</p>
+          <div class="overflow-x-auto">
+            <pre class="mermaid">
+flowchart LR
+  A[raw bytes] --> B[parse_session]
+  A --> C[build_conversation]
+  B --> D[extract entries]
+  C --> E[extract entries again]
+  D --> F[metadata]
+  E --> G[conversation model]
+            </pre>
+          </div>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> parser sells two products over the same bytes, each re-running the extraction (parser.py:158, :403). render's emitters take raw bytes, so one projection extracts the payload five times (render.py:375-377, 726-727, 740; build.py:84-86). DESIGN section 4 says parse ONCE; the interface defeats it.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> One parse entry extracts once and yields metadata plus conversation together; emitters accept the parsed model, bytes kept only at the edge.</p>
+          <ul class="text-sm text-slate-300 list-disc pl-5 space-y-1">
+            <li><span class="text-slate-400">leverage</span> - one parse, three emitters</li>
+            <li><span class="text-slate-400">locality</span> - extraction quirks in one function</li>
+            <li>5x parse cost gone before the large migrate and v1.1 FTS5</li>
+            <li>makes the DESIGN parse-ONCE sentence true (R8)</li>
+          </ul>
+          <p class="text-xs text-slate-500">Contract ties: R8, R9; DESIGN section 4 &middot; Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C2 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">2nd &middot; C2 - Deepen the batch-verb protocol</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-emerald-800/40 text-emerald-300">Strong</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">reports.py &middot; cli.py &middot; sweep.py &middot; build.py &middot; migrate.py &middot; relocate.py</p>
+          <div class="overflow-x-auto flex gap-3 text-xs">
+            <div class="border-2 border-red-500 bg-red-950/40 rounded p-3 min-w-[150px]"><p class="text-red-300 font-semibold">sweep.py</p><p class="text-slate-400">sentinel triple<br>acquire or refuse<br>finally release</p></div>
+            <div class="border-2 border-red-500 bg-red-950/40 rounded p-3 min-w-[150px]"><p class="text-red-300 font-semibold">build.py</p><p class="text-slate-400">sentinel triple<br>acquire or refuse<br>finally release</p></div>
+            <div class="border-2 border-red-500 bg-red-950/40 rounded p-3 min-w-[150px]"><p class="text-red-300 font-semibold">migrate.py</p><p class="text-slate-400">sentinel triple<br>acquire or refuse<br>finally release</p></div>
+            <div class="border-2 border-red-500 bg-red-950/40 rounded p-3 min-w-[150px]"><p class="text-red-300 font-semibold">relocate.py</p><p class="text-slate-400">sentinel triple<br>acquire or refuse<br>finally release</p></div>
+            <div class="deepbox rounded p-3 min-w-[150px]"><p class="text-slate-200 font-semibold">store.py</p><p class="text-slate-400">the deep O_EXCL lock primitive</p></div>
+          </div>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> The lock primitive is deep (store.py:192-271) but its ceremony is copied across four verbs, and cli.py re-implements the lock-held detector, failure loop, count, summary and exit policy five times. reports.py is a 19-line pass-through that fails the deletion test.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> reports.py absorbs the protocol: run a batch body under a lock or return the standard lock-held report, with one console-plus-exit presenter. Verbs keep their bodies; the lock stays store's primitive.</p>
+          <ul class="text-sm text-slate-300 list-disc pl-5 space-y-1">
+            <li><span class="text-slate-400">leverage</span> - v1.1 <code class="font-mono">ccw import</code> inherits the protocol</li>
+            <li><span class="text-slate-400">locality</span> - R10 and R14 presentation in one module</li>
+            <li>deletes four sentinel triples and five CLI blocks</li>
+          </ul>
+          <p class="text-xs text-slate-500">Contract ties: R9, R10; R14 untouched &middot; Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C3 -->
+        <article class="rounded-lg border-2 border-red-600 bg-red-950/20 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">3rd &middot; C3 - Make the risky transforms public and I/O-free</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-emerald-800/40 text-emerald-300">Strong</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">share.py &middot; relocate.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> The correctness-critical logic of the two riskiest verbs is pure transformation, yet private behind Config-plus-disk entry points: share's secret detectors and relocate's JSON-aware rewriter. Locality is lost, because a redaction miss lives in one function while the catching test runs three process boundaries away.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> Public, I/O-free interfaces: decoded text in, hits out; text or JSON node plus mapping in, rewritten result out. Verbs keep the I/O shell.</p>
+
+          <div class="rounded border border-red-600 bg-red-950/50 p-4 space-y-2">
+            <p class="text-red-300 text-sm font-semibold">State change 2026-07-24: the natural home closed without taking it.</p>
+            <p class="text-red-100/80 text-sm">Ticket 12b is DONE and its work landed squarely on this surface, but the seam was never folded into its work order as this card recommended. Verified first-hand: the rewriter helpers are all still private, and the surface GREW by two more. Share's half is unchanged.</p>
+            <p class="text-red-100/80 text-sm">The argument got stronger while nobody acted on it. 12b's headline defect was exactly the class this card predicts: an escaped path form was invisible to the scan, so a file was never a candidate and verify confirmed success over it. It is now pinned by <code class="font-mono">tests/test_relocate_json_matrix.py</code>, whose 29 cases must each run a full CLI subprocess because the transform underneath is not callable directly. That test file is this card's own evidence.</p>
+            <p class="text-red-100/80 text-sm"><span class="font-semibold">Re-rank recommendation:</span> strongest un-built candidate on the board; move to 1st or 2nd at the next review. The timing objection that placed it 3rd is spent, because 12a, 12b and 13 have all landed.</p>
+          </div>
+          <p class="text-xs text-slate-500">Tier: VERIFIED (call-pattern census AGENT-REPORTED, spot-verified); state re-verified 2026-07-24</p>
+        </article>
+
+        <!-- C4 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">4th &middot; C4 - Give the head concept one home: a catalog read seam</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-emerald-800/40 text-emerald-300">Strong</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">catalog.py &middot; build.py &middot; share.py &middot; cli.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> "A head is a row no other row supersedes" has no owner: the predicate SQL is typed verbatim twice while a docstring claims one owner, an overclaim (R8/F6); a private shape is re-declared field-for-field in share; cli runs its own SELECTs; test helpers hardcode schema SQL.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> catalog.py owns the head predicate, a public head-record type, and the read queries; build, share and cli consume them. Reads stay catalog-only, R6 unchanged.</p>
+          <ul class="text-sm text-slate-300 list-disc pl-5 space-y-1">
+            <li><span class="text-slate-400">locality</span> - version-chain semantics beside the schema</li>
+            <li><span class="text-slate-400">leverage</span> - v1.1 search and v1.2 MCP read the same seam</li>
+            <li>makes the docstring true (R8)</li>
+          </ul>
+          <p class="text-xs text-slate-500">Contract ties: R6, R8, R9 &middot; Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C5 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">5th &middot; C5 - One turn walker, two serializers</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-amber-800/40 text-amber-300">Worth exploring</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">render.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> Above the shared per-block fragment the traversal is written twice, carrying a byte-identical synthetic-skip guard and the same prompt, reminders and blocks order. A turn-policy change is two edits with nothing keeping them in lockstep.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> Hoist the traversal into one walker yielding typed units; markdown and HTML become thin serializers. Outputs stay frozen by black-box tests.</p>
+          <div class="rounded border border-amber-700 bg-amber-950/30 p-3">
+            <p class="text-amber-100/80 text-sm">Note 2026-07-24: this card's file has grown from 747 to 1836 lines since the snapshot. The analysis was not re-derived; the doubling it describes may now be larger, smaller, or differently shaped.</p>
+          </div>
+          <p class="text-xs text-slate-500">Contract ties: R9 &middot; Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C6 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">6th &middot; C6 - cli.py: verbs hand back results, not cursors</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-amber-800/40 text-amber-300">Worth exploring</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">cli.py &middot; build.py &middot; relocate.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> The dispatch is thin but the implementation carries verb logic: catalog opens and policy, a project-exists SELECT, an out-guard that does not travel to non-CLI callers such as the v1.2 MCP server, and halted-run recovery keyed on relocate's action strings.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> Verbs own their reads and guards and return a result plus exit intent; cli keeps parsing, printing and exit codes. Scoped to exclude flag parsing and config layering.</p>
+          <div class="rounded border border-slate-700 bg-slate-900/60 p-3">
+            <p class="text-slate-300 text-sm">Note 2026-07-24: the card said "let 12a and 12b land first". They have, along with 13, so that timing gate is now clear. cli.py has grown 727 to 1091 lines in the meantime, and the <code class="font-mono">ccw project</code> verb gained four subcommands at the exit review.</p>
+          </div>
+          <p class="text-xs text-slate-500">Contract ties: F9 &middot; Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C7 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">7th &middot; C7 - Type the Block discriminant</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-amber-800/40 text-amber-300">Worth exploring</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">in-process</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">parser.py &middot; render.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> <code class="font-mono">Block.kind</code> is a bare string spanning nine values; the taxonomy and field-validity rules live only in a docstring, and render re-derives the switch three ways. A missed or renamed kind silently drops content, and pyright strict cannot see it. That is the F6 class.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> A typed discriminant, stdlib only and R7-safe, so exhaustiveness is compile-checked.</p>
+          <ul class="text-sm text-slate-300 list-disc pl-5 space-y-1">
+            <li>F6 silent loss becomes a type error</li>
+            <li>the interface carries the taxonomy</li>
+          </ul>
+          <p class="text-xs text-slate-500">Contract ties: F6, R7 &middot; Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C8 -->
+        <article class="rounded-lg border-2 border-emerald-600 bg-emerald-950/30 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">8th &middot; C8 - A page-chrome seam in render_html</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-emerald-900/50 text-emerald-300 border border-emerald-700/50">BUILT</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">was Worth exploring</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">render.py &middot; share.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem, as filed.</span> render_html emitted content and chrome as one indivisible page, with the highlight.js script tag appended unconditionally, so every page of a published share pinged a CDN per viewer. No adapter existed between conversation content and page chrome.</p>
+          <div class="rounded border border-emerald-600 bg-emerald-950/50 p-4 space-y-2">
+            <p class="text-emerald-300 text-sm font-semibold">Built 2026-07-24, commit 0cd4146.</p>
+            <p class="text-emerald-100/80 text-sm">The principal decided DESIGN 15 item 8 the same day, and the seam this card proposed is what implemented it: a <code class="font-mono">RenderOptions.hljs</code> mode (cdn / inline / off, default cdn) plus a chrome-selecting helper, with share setting inline at both render call sites.</p>
+            <p class="text-emerald-100/80 text-sm">Outcome exactly as predicted: personal projections keep the CDN plus its fallback for exporter parity, shared pages carry zero external references. The card's own "two adapters justify the seam" test was met by real adapters rather than hypothetical ones, which is the standard this board sets for a seam.</p>
+            <p class="text-emerald-100/80 text-sm">Board-validation datapoint: ranked 8th of 10 and only Worth-exploring, yet its amber contract callout is what made it actionable the moment the ruling came. The card waited for a decision instead of guessing, and was ready when the decision arrived.</p>
+          </div>
+          <p class="text-xs text-slate-500">Contract ties: DESIGN section 15 item 8, now RESOLVED &middot; Tier: VERIFIED; state re-verified 2026-07-24</p>
+        </article>
+
+        <!-- C9 -->
+        <article class="rounded-lg border border-slate-800 bg-slate-900/40 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">9th &middot; C9 - One source walker, two policies</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-violet-900/50 text-violet-300 border border-violet-700/50">PROPOSED</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">Speculative</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">sweep.py &middot; migrate.py</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem.</span> <code class="font-mono">sweep._walk_source</code> (sweep.py:44-76) and <code class="font-mono">migrate._walk</code> (migrate.py:42-82) copy the same roughly 30-line walk scaffold; only the per-file policy differs, since sweep skips agent sessions while migrate keeps them and names non-regular entries.</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Solution direction.</span> One enumerator taking a classify callback; each verb keeps its rule. Deletion test: concentrates, modestly.</p>
+          <div class="rounded border border-emerald-800 bg-emerald-950/30 p-3">
+            <p class="text-emerald-200/80 text-sm">The only card whose line references are still EXACT: both cited files are untouched since the snapshot.</p>
+          </div>
+          <p class="text-xs text-slate-500">Tier: VERIFIED at 56262f6</p>
+        </article>
+
+        <!-- C10 -->
+        <article class="rounded-lg border border-indigo-700 bg-indigo-950/20 p-5 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <h3 class="text-lg font-semibold text-slate-50">10th &middot; C10 - A catalog read-scope for relocate</h3>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-indigo-900/50 text-indigo-300 border border-indigo-700/50">TICKETED-12b</span>
+            <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">was Speculative</span>
+          </div>
+          <p class="font-mono text-xs text-slate-500">relocate.py (ceremony also in status.py, share.py)</p>
+          <p class="text-sm text-slate-300"><span class="text-slate-400 font-semibold">Problem, as filed.</span> The catalog helper opened and closed a fresh connection per call, and the per-candidate lookup ran inside the candidate loop, so one plan churned connections.</p>
+          <div class="rounded border border-indigo-700 bg-indigo-950/50 p-4 space-y-2">
+            <p class="text-indigo-300 text-sm font-semibold">Partially closed 2026-07-24, commit 8738423. Deliberately NOT marked BUILT.</p>
+            <p class="text-indigo-100/80 text-sm">The O(N) half, the one F5 actually named, is gone: one connection now serves the whole computation, so twelve candidates cost 1 connection instead of 13. The same commit removed the other half of that finding, the double full scan, by pruning at directory level: realpath calls dropped 5202 to 203 on a 200-directory, 5000-file tree.</p>
+            <p class="text-indigo-100/80 text-sm">What remains is ceremony, not the defect: two helpers still open their own connections, both called from pre-flight, which is O(1) per apply rather than O(N) per candidate. That is the same copied-ceremony-around-a-deep-primitive shape C2 is about.</p>
+          </div>
+          <p class="text-xs text-slate-500">Contract ties: F5; ticket 12b carried-forward list &middot; Tier: VERIFIED + CONTRACT; state re-verified 2026-07-24</p>
+        </article>
+
+        <div class="plain bg-sky-950/30 pl-4 py-3 rounded-r">
+          <p class="text-sky-300 font-semibold text-sm">In plain English.</p>
+          <p class="text-slate-300 text-sm mt-1">Ten ideas for making the code easier to change safely. One (C8) has now been built. One (C10) is half done. One (C3) has quietly become the most important, because the ticket that was supposed to absorb it finished without doing so, and a bug of exactly the kind it predicts showed up in the meantime.</p>
+        </div>
+      </section>
+
+      <!-- ================= healthy panel ================= -->
+      <section class="rounded-lg border border-emerald-800 bg-emerald-950/40 p-5 space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-emerald-300">Verified healthy - the deep end, leave it alone</h2>
+        <p class="text-sm text-slate-400">Cleared at the last review. No candidate, recorded so reviews stop re-examining them.</p>
+        <ul class="space-y-2 text-sm">
+          <li><span class="text-emerald-400 font-semibold">The store foundation.</span> <span class="text-slate-300">store.py hides O_EXCL takeover races and atomic writes behind put, get, acquire_lock and verify_walk. Deep by construction.</span></li>
+          <li><span class="text-emerald-400 font-semibold">The ingestion seam.</span> <span class="text-slate-300">capture_transcript is one deep leverage point with three adapters (hook, sweep, migrate); no caller re-implements dedupe or error paths.</span></li>
+          <li><span class="text-emerald-400 font-semibold">The render surface.</span> <span class="text-slate-300">Behind three public functions, the depth exemplar. C5 concerns its internals, not its interface.</span></li>
+          <li><span class="text-emerald-400 font-semibold">The oracle suite discipline.</span> <span class="text-slate-300">Black-box only, the F5 zero-object-reads negative proven with an audit hook, atomic_write fault-injected cleanly.</span></li>
+          <li><span class="text-emerald-400 font-semibold">atomic_write mode preservation (post-scan proof).</span> <span class="text-slate-300">relocate exposed a silent permission reset present since slice 01; fixed once in the one primitive and every caller inherited it. Locality doing exactly what this board keeps asking for.</span></li>
+        </ul>
+      </section>
+
+      <!-- ================= scheduled strip ================= -->
+      <section class="space-y-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Not on the board - owned elsewhere</h2>
+        <p class="text-sm text-slate-400">Recorded so reviews stop re-suggesting them. Both of the first two entries changed on 2026-07-24.</p>
+
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
+          <p class="text-slate-200 font-semibold text-sm">The hand-rolled flag scanners in cli.py</p>
+          <p class="text-xs text-slate-400">Was deferred to ticket 13.</p>
+          <div class="rounded border border-amber-700 bg-amber-950/30 p-3">
+            <p class="text-amber-100/80 text-sm">Update: ticket 13 is DONE and did NOT remove them. Two survive deliberately, and their docstrings now say why instead of promising a future slice: sweep takes one option, and the content flags reach build and render through the config layering instead. The three "lands in slice 13" annotations this entry cited are gone. Whether the survivors are a candidate is a fresh-review question; this entry no longer has a ticket to defer to.</p>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
+          <p class="text-slate-200 font-semibold text-sm">config.toml parsed in three modules</p>
+          <p class="text-xs text-slate-400">Was deferred to ticket 13.</p>
+          <div class="rounded border border-emerald-700 bg-emerald-950/40 p-3 space-y-2">
+            <p class="text-emerald-300 text-sm font-semibold">Resolved 2026-07-24, and not by the ticket it was deferred to.</p>
+            <p class="text-emerald-100/80 text-sm">A census now returns config.py as the only module in src/ importing tomllib. relocate's reader went in commit 03ca402 under ticket 12b; share's in f9b7bbd, a reopening of the tagged slice 11 on a principal ruling.</p>
+            <p class="text-emerald-100/80 text-sm">Two lessons recorded, both about deferral. First, deferring to a ticket is not the same as being fixed: ticket 13 closed with this untouched and the board would have gone on believing it was owned. Second, the entry understated the harm. Filed as duplication, it in fact meant a redaction rule set in the user config was ignored and the content it named was published, and that a dotfiles-managed relocate config repaired nothing while containers moved.</p>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+          <p class="text-slate-200 font-semibold text-sm">Relocate's catalog connection churn</p>
+          <p class="text-xs text-slate-400">Ticket 12b. Partially closed; see card C10.</p>
+        </div>
+
+        <div class="plain bg-sky-950/30 pl-4 py-3 rounded-r">
+          <p class="text-sky-300 font-semibold text-sm">In plain English.</p>
+          <p class="text-slate-300 text-sm mt-1">These were parked because a ticket was going to handle them. One of them was handled, but by a different ticket than expected, and it turned out to be far more serious than the note suggested. The lesson is written on the entry so the board does not repeat it.</p>
+        </div>
+      </section>
+
+      <!-- ================= provenance ================= -->
+      <footer class="border-t border-slate-800 pt-6 space-y-3 text-sm text-slate-400">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300">Provenance and change log</h2>
+        <p><span class="text-slate-300">2026-07-24</span> &middot; State fold, no fresh review. v1 closed; slices 12a, 12b and 13 landed, the exit review was held, and the principal ruled on --hljs and --theme. C8 to BUILT, C10 partially closed, C3 unbuilt and stronger, the config-parser entry resolved, the flag-scanner entry updated. Every state verified first-hand against the live tree rather than taken from a commit message. Problem analyses were NOT re-derived and the ranking was NOT re-computed.</p>
+        <p><span class="text-slate-300">2026-07-19</span> &middot; Board created from a review of three exploration lens scans over a git hot-spot census, with first-hand verification of every load-bearing claim; citations re-checked at 56262f6 after the slice-12 split landed. All candidates PROPOSED except C10.</p>
+        <p class="text-slate-500">Mermaid validation: mmdc is unavailable on this machine, so diagrams are browser-rendered only and were not validated by a headless render. Recorded rather than claimed.</p>
+        <p class="text-slate-500">This page is generated from SOURCE.md by the <code class="font-mono">/architecture</code> command. Edit SOURCE.md, then regenerate. The contract documents in docs/ are locked and are never edited by this board.</p>
       </footer>
 
     </main>
