@@ -26,8 +26,11 @@ dark-only.
 
 Next is v1.1: the deferred flag groups (per-file matrix, HTML chrome defaults,
 truncation, `--since`/`--until`), then FTS5 with `ccw search` and `ccw import`,
-then `ccw mcp` in v1.2. Before publishing: re-check the PyPI name and settle the
-registry export story (DESIGN section 15 items 6 and 7).
+then `ccw mcp` in v1.2.
+
+**Not published, and not planned for publication for now** (principal, 2026-07-24).
+The distribution name is `cc-warehouse` and the console scripts are `ccw` and
+`cc-warehouse`, but nothing is on PyPI. Install from a git checkout with `uv sync`.
 
 The contract lives in `contract/` (BRAINSTORM, SPEC, DESIGN, FINDINGS, HARNESS); the
 oracle suite in `tests/` was written before the implementation.

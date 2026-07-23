@@ -2,11 +2,11 @@
 
 All notable changes to cc-warehouse.
 
-**There have been no releases yet.** `cc-warehouse` is not published, and the version in
-`pyproject.toml` is still `0.1.0`. The entries below are BUILD MILESTONES, recorded as
-annotated git tags (`slice-01` .. `slice-13`, including `slice-12a` and `slice-12b`), not
-versions anyone could install. The first release entry will appear here when the PyPI name
-is confirmed (`contract/DESIGN.md` section 15 item 6).
+**There have been no releases, and none are planned for now** (principal, 2026-07-24).
+The distribution name is `cc-warehouse`, the version in `pyproject.toml` is `0.1.0`, and
+nothing is on PyPI. The entries below are BUILD MILESTONES, recorded as annotated git tags
+(`slice-01` .. `slice-13`, including `slice-12a` and `slice-12b`), not versions anyone
+could install. A release section will appear here if and when that changes.
 
 Each tag's own annotation carries the full record; `git show <tag>` is the primary source.
 The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions in
