@@ -17,11 +17,22 @@ user's data, or breaks a locked rule:
 - B6/B4/A2 (R5/F7): symlinked source, nested target, and a malformed config are refusals
   that change nothing, never half-applied runs.
 - A11/B12: `--to`'s operand must never be mistaken for the positional <repo>.
+
+Ticket 12a carried-forward findings (added 2026-07-23, each proven to FAIL against the
+pre-fix code before the fix landed, per the slice-12 escalation lesson):
+
+- 12a-1 (R4/F9): the warehouse and source-transcript exclusions compared UNRESOLVED
+  paths. A symlinked `CCW_ROOT` or a symlinked `~/.claude` (any dotfile-managed account)
+  meant the walk reached the REAL path while the exclusion held the SYMLINK path, so the
+  two never compared equal and the guard silently did nothing. This is the same locked
+  rule the slice-12 escalation caught ("source transcripts are never modified by
+  anything, ever"), left open for the symlinked case.
 """
 
 import hashlib
 import json
 import re
+import shutil
 import stat
 from pathlib import Path
 from typing import cast
@@ -370,6 +381,64 @@ def test_reference_to_a_renamed_encoded_dir_is_rewritten(
     expected = encode(world.new_repo) + "-sub"
     assert expected in text, "a reference to a dir this run renamed was left dangling"
     assert encode(world.sub) not in text
+
+
+def test_stored_objects_survive_a_symlinked_warehouse_root(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-1 (R4/F9): the warehouse exclusion must compare RESOLVED paths.
+
+    `CCW_ROOT` pointing at a symlink is ordinary (an external disk, a dotfile-managed
+    data dir). The scan reaches the object by its real path, so an exclusion that holds
+    the symlink path never matches it, and an immutable object gets string-edited. An
+    object that stopped hashing to its own name is indistinguishable from rot.
+    """
+    real_root = tmp_path / "real-warehouse"
+    real_root.mkdir()
+    Path(ccw_env["CCW_ROOT"]).symlink_to(real_root)
+    world = World(ccw_env, tmp_path, roots=[str(tmp_path)])
+    digest = hashlib.sha256(world.payload).hexdigest()
+    obj = real_root / "objects" / digest[:2] / f"{digest}.jsonl"
+    assert obj.exists(), "the capture did not land where the symlink resolves"
+    result = world.apply()
+    # The rule first, the exit code second: a run that violates R4 and THEN fails for an
+    # unrelated reason must still fail on the violation, not on the symptom.
+    assert hashlib.sha256(obj.read_bytes()).hexdigest() == digest, (
+        "a stored object was rewritten through a symlinked warehouse root"
+    )
+    assert str(real_root) not in result.err, "the warehouse subtree was touched at all"
+    assert result.code == 0, result.err
+    assert run_ccw(["verify"], ccw_env).code == 0, "verify no longer clean after relocate"
+
+
+def test_source_transcripts_survive_a_symlinked_claude_dir(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-1 (SPEC 10.2 / R4): the source-transcript exclusion must compare RESOLVED paths.
+
+    A dotfile-managed `~/.claude` is a symlink on a great many real accounts. The walk
+    enumerates the transcript by its real path, so an exclusion holding
+    `~/.claude/projects` never matches, and relocate string-edits a captured transcript:
+    the exact locked-rule violation the slice-12 escalation caught.
+    """
+    home = Path(ccw_env["HOME"])
+    real_claude = home / "dotfiles-claude"
+    shutil.move(str(home / ".claude"), str(real_claude))
+    (home / ".claude").symlink_to(real_claude)
+    world = World(ccw_env, tmp_path, roots=[str(home)])
+    result = world.apply()
+    # The rule first, the exit code second (see the sibling test): with the bug the run
+    # rewrites the transcript and only THEN fails, because the file it rewrote moved.
+    assert "rewritten: " + str(real_claude) not in result.err, (
+        "a SOURCE transcript was string-edited through a symlinked ~/.claude"
+    )
+    moved = real_claude / "projects" / encode(world.new_repo)
+    transcripts = list(moved.rglob("*.jsonl"))
+    assert transcripts, "the encoded dir should have been renamed, carrying its transcripts"
+    assert str(world.repo) in transcripts[0].read_text(), (
+        "a SOURCE transcript was string-edited through a symlinked ~/.claude"
+    )
+    assert result.code == 0, result.err
 
 
 def test_registry_gains_both_the_cwd_and_encoded_claims(

@@ -81,6 +81,27 @@ def _absolute(path: Path) -> Path:
     return Path(os.path.abspath(path.expanduser()))
 
 
+def _resolved(path: Path) -> Path:
+    """Fully resolve a path for EXCLUSION comparisons only (ticket 12a).
+
+    The scan enumerates files by their real paths, so an exclusion holding a symlink path
+    never compares equal to them and silently protects nothing. A symlinked `CCW_ROOT` (an
+    external disk) or a symlinked `~/.claude` (any dotfile-managed account) therefore let
+    relocate string-edit an immutable stored object or a captured transcript, breaking
+    R4/F9 and the locked "source transcripts are never modified by anything, ever" rule.
+    Both sides of every exclusion comparison are resolved so the guard cannot be defeated
+    by a link. A resolution failure (a symlink loop, a vanished parent) falls back to the
+    unresolved path rather than raising: the conservative branch keeps the candidate under
+    whichever comparison still works, it never opens the guard (R5/F7).
+    Proven by tests/test_relocate_regressions.py::test_stored_objects_survive_a_symlinked
+    _warehouse_root and ::test_source_transcripts_survive_a_symlinked_claude_dir.
+    """
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
 def _relocate_roots(root: Path) -> tuple[tuple[Path, ...], str | None]:
     """Read [relocate].roots from <root>/config.toml; returns (roots, parse_error).
 
@@ -191,17 +212,21 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
     can report it as unrepaired instead of claiming a clean sweep (R5/F7).
     """
     roots, config_error = _relocate_roots(config.root)
-    warehouse = _absolute(config.root)
-    projects = _claude_projects()
+    # RESOLVED on both sides (ticket 12a): the walk yields real paths, so an exclusion
+    # holding a symlink path never matches one and protects nothing. See _resolved.
+    warehouse = _resolved(_absolute(config.root))
+    projects_link = _claude_projects()
+    projects = _resolved(projects_link) if projects_link is not None else None
     targets: list[Path] = []
     skipped: list[tuple[Path, str]] = []
     for root in roots:
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*")):
-            if warehouse == path or warehouse in path.parents:
+            real = _resolved(path)
+            if warehouse == real or warehouse in real.parents:
                 continue  # never rewrite the warehouse (store objects are immutable)
-            if projects is not None and (projects == path or projects in path.parents):
+            if projects is not None and (projects == real or projects in real.parents):
                 # Captured transcripts are SOURCES: read-only forever (R4/F9). SPEC 10.2
                 # keeps the specimen's rule that nothing outside the memory roots is ever
                 # string-edited; the encoded dirs are renamed instead.
