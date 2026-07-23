@@ -604,6 +604,16 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   so `[share].redact_patterns` declared in the XDG tier are IGNORED. Verified by execution.
   Slice 11 is DONE and tagged, and share is the one outward-facing command, so reopening it
   is a process decision rather than a fix to make in passing.
+  RESOLVED same day: the principal chose to reopen slice 11 and fix it BEFORE the v1 exit
+  review (commit f9b7bbd, note appended to ticket 11), on the reasoning that entering the
+  review with a known publish-path defect open would make "v1 is complete" untrue in
+  exactly the way F6 exists to prevent. Process precedent worth keeping: a DONE, tagged
+  slice can be reopened, but the decision is the principal's and the reopening is recorded
+  on the ticket itself rather than left to git history. Fifth lesson from this pair of
+  slices: THE SAME DEFECT CLASS RECURS ACROSS MODULES, so when one is found, census the
+  others rather than fixing the instance. Grepping for the stale-promise phrasing that hid
+  the relocate one found two more in cli.py and the live leak in share.py; a grep for
+  `tomllib` now returns config.py alone.
 
 ---
 

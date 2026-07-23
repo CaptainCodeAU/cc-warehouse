@@ -1,5 +1,22 @@
 # Ticket 11: share + redaction
 
+REOPENED AND RE-CLOSED 2026-07-24 (principal ruling), commit f9b7bbd. Recorded here
+rather than in the completion tail because a tagged slice gaining a fix is exactly the
+kind of thing a reader of this ticket must not have to discover from git log.
+`share.py::_custom_patterns` parsed `<root>/config.toml` ITSELF, so DESIGN 8's layering
+never reached the redaction rules: a `[share] redact_patterns` entry declared in the XDG
+tier was invisible, and the content it named was PUBLISHED. Verified before the fix
+(load_config returned the pattern, share compiled none) and proven end-to-end by a red
+test in which the marker appeared in the published transcript.compact.md. share is the
+one outward-facing command, which is what made this the most serious of the three
+instances of that defect (relocate roots 03ca402, two cli.py docstrings a085c7c).
+It was hidden by a stale forward-looking docstring: "the config layering that folds this
+into load_config lands in slice 13", true when written, a lie from the day slice 13
+landed. Fixed by taking values from the Config that `share()` already receives; share.py
+no longer imports tomllib, and config.py is now the only module in src/ that parses TOML.
+Two regression tests, both red first, one of them an R9/F8 fence so a third reader cannot
+quietly return.
+
 Slice 11 of 13. Depends on: 06, 07, 08 (one renderer for personal and shared
 output; decided 2026-07-17).
 
