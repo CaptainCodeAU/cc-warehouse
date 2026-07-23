@@ -716,6 +716,13 @@ def _run_relocate(args: Sequence[str]) -> int:
         print("Error: relocate requires --to <new-path>", file=sys.stderr)
         return 2
     repo_str = positionals[0]
+    # Refuse BEFORE planning: with HOME unset every encoded-dir candidate and the
+    # source-transcript guard go inert, so even the dry-run would print a plan that
+    # cannot be honoured (ticket 12a finding 2, R5/F7).
+    home_problem = relocate.home_error()
+    if home_problem:
+        print(f"Error: {home_problem}", file=sys.stderr)
+        return 1
     config = load_config()
     repo_path, new_path = Path(repo_str), Path(new_str)
     plan = relocate.plan_relocate(config, repo_path, new_path, claim_ambiguous=claim_ambiguous)

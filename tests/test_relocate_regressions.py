@@ -441,6 +441,37 @@ def test_source_transcripts_survive_a_symlinked_claude_dir(
     assert result.code == 0, result.err
 
 
+def test_home_unset_is_refused_rather_than_running_with_guards_inert(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """12a-2 (R5/F7): HOME unset must REFUSE, not proceed blind.
+
+    Under cron or launchd there is often no HOME. `os.path.expanduser` still finds the
+    account's home through `pwd`, so the scan reaches the real tree, but every guard and
+    every encoded-dir lookup reads `os.environ["HOME"]` and goes inert: no encoded dir is
+    ever renamed, and the source-transcript exclusion protects nothing. Half a relocate is
+    worse than none, so the absence of HOME is the conservative branch (F7/F10 in spirit:
+    the absence of context is never permission).
+    """
+    home = Path(ccw_env["HOME"])
+    world = World(ccw_env, tmp_path, roots=[str(home)])
+    blind = {k: v for k, v in ccw_env.items() if k != "HOME"}
+    before_inventory = tree_snapshot(world.inventory)
+    before_projects = tree_snapshot(claude_projects(ccw_env))
+
+    dry = run_ccw(["relocate", str(world.repo), "--to", str(world.new_repo)], blind)
+    assert dry.code != 0, "a dry-run with HOME unset printed a plan it cannot honour"
+
+    result = run_ccw(
+        ["relocate", str(world.repo), "--to", str(world.new_repo), "--apply", "--yes"], blind
+    )
+    assert result.code != 0, "relocate ran with HOME unset"
+    assert "HOME" in result.err, "the refusal does not name the reason"
+    assert world.repo.is_dir() and not world.new_repo.exists(), "the repo moved anyway"
+    assert tree_snapshot(world.inventory) == before_inventory, "content was rewritten anyway"
+    assert tree_snapshot(claude_projects(ccw_env)) == before_projects, "a container moved anyway"
+
+
 def test_registry_gains_both_the_cwd_and_encoded_claims(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:

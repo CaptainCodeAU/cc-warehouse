@@ -71,6 +71,32 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+HOME_UNSET_ERROR = (
+    "HOME is not set: relocate cannot locate ~/.claude/projects, so the encoded-dir"
+    " renames and the source-transcript guard would both be inert while the content scan"
+    " still reaches the real home through pwd. Refusing rather than half-relocating."
+    " Set HOME and re-run."
+)
+
+
+def home_error() -> str | None:
+    """The refusal reason when HOME is unset, else None (ticket 12a).
+
+    Under cron or launchd there is frequently no HOME. `os.path.expanduser` still finds
+    the account's home through the `pwd` database, so the content scan reaches the real
+    tree, but `_claude_projects` reads the environment and returns None: no encoded dir is
+    ever a candidate, and the source-transcript exclusion silently protects nothing. That
+    asymmetry produces a half-relocated world that reports success. The absence of the
+    context needed to do the job is the conservative branch, exactly like the absence of a
+    human (R5/F7, and F10 in spirit).
+    One implementation, called by both the CLI (before planning) and _preflight (before
+    any mutation), so neither the dry-run nor the public module API can slip past it (R9).
+    Proven by tests/test_relocate_regressions.py::
+    test_home_unset_is_refused_rather_than_running_with_guards_inert.
+    """
+    return None if os.environ.get("HOME") else HOME_UNSET_ERROR
+
+
 def _claude_projects() -> Path | None:
     home = os.environ.get("HOME")
     return Path(home) / ".claude" / "projects" if home else None
@@ -435,6 +461,9 @@ def _preflight(
 ) -> list[ItemOutcome]:
     """Validate everything checkable BEFORE any mutation; any error changes nothing."""
     errors: list[ItemOutcome] = []
+    home_problem = home_error()
+    if home_problem:  # the CLI refuses earlier; this guards the public module API too
+        errors.append(ItemOutcome(str(old_repo), "error", home_problem))
     if scan.config_error:
         errors.append(ItemOutcome(str(config.root / "config.toml"), "error", scan.config_error))
     if old_repo.is_symlink():
