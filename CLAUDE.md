@@ -157,11 +157,31 @@ frozen map expanded with the principal), --no-config/--config added, and share g
 confirmation + non-tty abort); whole oracle suite GREEN (was 13 red) + 7 regression tests
 (tests/test_cli_flags_regressions.py); commits b723a71, c366a96. Contract docs reconciled
 to the approved decisions in the exit review (DESIGN 6/7/8/9/15, SPEC 8 note, ticket 13,
-this file). NO milestone tag yet; the render-chrome/entry-type work has no ticket of its
-own. OPEN / next: relocate ticket 12a (containers) then 12b (content) are STILL not done
-(slice 13 was built out of the DESIGN 16 order at the principal's direction); v1.1 flag
-groups (per-file matrix, HTML chrome defaults, truncation, --since/--until) and the
---hljs (DESIGN 15 item 8) + --theme rulings remain.
+this file). Tagged slice-13 at 440e264 (2026-07-24); its annotation also records the
+render-chrome/entry-type commits 652a8bf..14ae67e, which have no ticket of their own.
+Slice 12a (relocate containers) COMPLETE 2026-07-23 and 12b (relocate content) COMPLETE
+2026-07-24, both by direct build: ten findings closed across the two, each re-derived by
+EXECUTION before being fixed (four of the ten were mis-stated on their tickets, two
+understated and one mis-classified as duplication when it was a DESIGN 8 contract
+deviation). 12a: resolved-path exclusions (a symlinked CCW_ROOT or ~/.claude let relocate
+rewrite a stored object and a captured transcript), HOME-unset refusal, an uncreatable
+--to parent, the plan/apply consent gap, and skips counted as edits. 12b: JSON layout
+preserved with a decode fallback (the 29-shape matrix found an escaped path form is
+invisible to the SCAN, so such a file was never a candidate and verify confirmed success
+over it), a byte-exact pre-image plus the N1-N5 non-destructive hardening (each backup is
+read back and required byte-identical before the original is eligible to be touched), the
+os.walk scan restructure (8 silent drops -> 0; resolve calls 5202 -> 203; catalog
+connections 13 -> 1), and one config parser. Slice 11 was REOPENED and re-closed the same
+day (f9b7bbd): share.py parsed config.toml itself, so a [share] redact_patterns entry
+declared in the XDG tier was ignored and the content it named was PUBLISHED. config.py is
+now the only module in src/ that parses TOML. Milestone tags slice-01..13 incl. 12a/12b,
+14 in all; ticket 12 stays SUPERSEDED and untagged by design. Gates: ruff clean, pyright
+strict 0, suite 378 passed / 0 failed; zero stubs; zero forward-looking "lands in slice N"
+promises left in src/. **v1 IS CODE-COMPLETE.** OPEN / next: the DESIGN section 16 v1 EXIT
+REVIEW with the principal; then v1.1 flag groups (per-file matrix, HTML chrome defaults,
+truncation, --since/--until) and the --hljs (DESIGN 15 item 8) + --theme rulings; the
+architecture board is stale (18 commits / 2,565 lines of src/ since its 56262f6 snapshot)
+and this phase note is a candidate for compaction, neither blocking.
 `/refresh` (in `.claude/commands/`) is the currency sweep.
 Cross-project context lives in the claude-code-transcripts project memory
 (`cc-warehouse-and-cc-vantage`); sibling project: `../cc-vantage`.
