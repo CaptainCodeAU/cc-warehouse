@@ -19,7 +19,6 @@ import re
 import shutil
 import socket
 import tempfile
-import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
@@ -83,30 +82,26 @@ class _Resolved:
     first_ts: str | None
 
 
-def _custom_patterns(root: Path) -> tuple[tuple[str, re.Pattern[str]], ...]:
-    """Compile [share].redact_patterns from <root>/config.toml as regexes (R5/F7).
+def _custom_patterns(config: Config) -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """Compile [share].redact_patterns as regexes (R5/F7).
 
-    A missing/unparseable file, a non-list value, a pattern that fails to compile, or a
-    degenerate pattern that matches the empty string (which would insert a token between
-    every character and corrupt the payload) contributes nothing rather than crashing, so
-    one bad entry never breaks the whole share. Mirrors config._webhooks_from_root's
-    defensive parse; the config layering that folds this into load_config lands in slice
-    13.
+    Values come from load_config, so DESIGN 8's layering applies (XDG file, then data-root
+    file, then per-project). This module used to parse `<root>/config.toml` itself, which
+    was a second implementation of one behaviour (R9/F8) and meant a pattern declared in
+    the XDG tier was INVISIBLE here. That is the worst shape this defect can take: share
+    is the one outward-facing command, so a redaction rule the operator had set was
+    silently ignored and the content it named was published.
+
+    A pattern that fails to compile, or a degenerate one that matches the empty string
+    (which would insert a token between every character and corrupt the payload),
+    contributes nothing rather than crashing, so one bad entry never breaks a whole share.
+    Proven by tests/test_share_regressions.py::
+    test_redact_patterns_from_the_xdg_config_are_applied and
+    ::test_degenerate_custom_regex_does_not_corrupt.
     """
-    try:
-        with open(root / "config.toml", "rb") as fh:
-            data = cast(dict[str, object], tomllib.load(fh))
-    except (OSError, tomllib.TOMLDecodeError):
-        return ()
-    share_raw = data.get("share")
-    if not isinstance(share_raw, dict):
-        return ()
-    patterns_raw = cast(dict[str, object], share_raw).get("redact_patterns")
-    if not isinstance(patterns_raw, list):
-        return ()
     compiled: list[tuple[str, re.Pattern[str]]] = []
-    for entry in cast(list[object], patterns_raw):
-        if not isinstance(entry, str) or not entry:
+    for entry in config.redact_patterns:
+        if not entry:
             continue
         try:
             pat = re.compile(entry)
@@ -135,13 +130,13 @@ def _builtin_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
     return tuple(patterns)
 
 
-def _redaction_patterns(root: Path) -> tuple[tuple[str, re.Pattern[str]], ...]:
+def _redaction_patterns(config: Config) -> tuple[tuple[str, re.Pattern[str]], ...]:
     """All patterns most-specific-first: custom, then email, home, username, hostname.
 
     Ordering matters where patterns overlap (a username is a substring of an email); the
     more specific match is applied and attributed first.
     """
-    return _custom_patterns(root) + _builtin_patterns()
+    return _custom_patterns(config) + _builtin_patterns()
 
 
 def _redact_value(
@@ -346,7 +341,7 @@ def share(
     shared renderer, so nothing sensitive survives in the copy-as-markdown payloads.
     """
     root = config.root
-    patterns = _redaction_patterns(root)
+    patterns = _redaction_patterns(config)
     resolved, skipped = _resolve(root, sessions)
 
     # Phase 1: redact + scan every session in memory, writing nothing yet.
@@ -472,7 +467,7 @@ def prepare_comparison(config: Config, sessions: tuple[str, ...]) -> SiteCompari
     --out is untouched until commit_comparison; discard_comparison removes the
     staging area if the operator aborts."""
     root = config.root
-    patterns = _redaction_patterns(root)
+    patterns = _redaction_patterns(config)
     resolved, skipped = _resolve(root, sessions)
     staging_root = Path(tempfile.mkdtemp(prefix="ccw-exposed-"))
     scrubbed_dir = staging_root / "SCRUBBED"

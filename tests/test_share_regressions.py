@@ -49,6 +49,44 @@ def out_texts(out: Path) -> dict[Path, str]:
     }
 
 
+def test_redact_patterns_from_the_xdg_config_are_applied(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """DESIGN 8 layering reaches share's redaction rules (found closing ticket 12b).
+
+    `share.py` parsed `<root>/config.toml` itself instead of taking values from
+    load_config, so a `[share] redact_patterns` entry declared in the XDG tier was
+    invisible to it. The consequence is the worst shape this defect can take: share is
+    the one outward-facing command, so a redaction rule the operator set was silently
+    ignored and the content it named was PUBLISHED.
+    """
+    marker = "ACME-INTERNAL-4242"
+    data = basic_session(prompt=f"the code is {marker} do not share")
+    short = capture_and_short(ccw_env, data)
+
+    # Declared ONLY in the XDG tier; the data-root file names no [share] section.
+    warehouse_root(ccw_env).mkdir(parents=True, exist_ok=True)
+    (warehouse_root(ccw_env) / "config.toml").write_text("[notify]\nopen_folder = false\n")
+    xdg = Path(ccw_env["HOME"]) / ".config" / "cc-warehouse"
+    xdg.mkdir(parents=True, exist_ok=True)
+    (xdg / "config.toml").write_text('[share]\nredact_patterns = ["ACME-INTERNAL-[0-9]+"]\n')
+
+    out = tmp_path / "site"
+    result = run_ccw(["share", short, "--out", str(out)], ccw_env)
+    assert result.code == 0, result.err
+    for path, text in out_texts(out).items():
+        assert marker not in text, f"an XDG-declared redaction pattern was ignored: {path}"
+
+
+def test_share_does_not_parse_config_files_itself(ccw_env: dict[str, str]) -> None:
+    """R9/F8 fence: config.py owns config parsing. A second reader is exactly how the
+    layering silently diverged here and in relocate, so pin the absence of one."""
+    from cc_warehouse import share as share_mod
+
+    source = Path(share_mod.__file__).read_text()
+    assert "tomllib" not in source, "share.py parses config.toml itself again"
+
+
 def test_unicode_escaped_secret_is_detected_and_aborts(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
