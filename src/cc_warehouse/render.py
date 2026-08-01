@@ -79,34 +79,57 @@ class _Policy:
     toolresult_diff: bool
 
 
-# Compact variant note. The word "compact" is load-bearing (oracle test
-# test_compact_carries_a_variant_note). What follows "no" is DERIVED from the
-# policy rather than fixed: once the per-variant matrix can put tools back into a
-# compact file, a note that still claimed "no tools" would be the code
-# overclaiming its own guarantees (F6, and R8's rule that a guarantee word cites
-# the test that proves it). The same was already true of reminders, which
-# `reminders_compact = "show"` has been able to restore since slice 6.
-_COMPACT_NOTE_HEAD = "> Compact variant: conversation only, no "
+# The compact variant describes ITSELF in two places, and both sentences are
+# derived rather than fixed. The word "compact" is load-bearing in each (oracle
+# test test_compact_carries_a_variant_note). Once the per-variant matrix can put
+# tools back into a compact file, a sentence that still says "no tools" denies
+# the file it heads, which is the code overclaiming its own guarantees (F6, and
+# R8's rule that a guarantee word cites the test that proves it). The same was
+# already true of reminders, which `reminders_compact = "show"` has been able to
+# restore since slice 6.
+#
+# The two sentences keep their own vocabularies (the markdown note lists
+# "tools", the HTML meta strip says "tool detail") because both are v1 strings
+# the regression anchor pins. What they share is the RULE, and
+# test_the_compact_variant_note_never_denies_what_it_carries checks BOTH
+# emitters -- the first version of that test checked only the markdown one and
+# the HTML sentence went on lying.
 
 
-def _compact_note(*, include_tools: bool, reminder_mode: str) -> str:
-    """The compact variant's note, listing only what this policy actually drops.
+def _compact_note(options: RenderOptions) -> str:
+    """The compact markdown note, listing only what this variant actually drops.
 
     At the defaults the list is thinking, tools, reminders and the sentence is
     byte-identical to the v1 one, which is what keeps the regression anchor
     green (test_default_options_render_the_pre_slice_bytes).
     """
     dropped = ["thinking"]
-    if not include_tools:
+    if not options.tool_output_compact:
         dropped.append("tools")
-    if reminder_mode == "strip":
+    if options.reminders_compact == "strip":
         dropped.append("reminders")
-    if len(dropped) == 1:
-        tail = dropped[0]
+    if len(dropped) > 2:
+        tail = ", ".join(dropped[:-1]) + ", or " + dropped[-1]
     else:
-        joiner = ", or " if len(dropped) > 2 else " or "
-        tail = ", ".join(dropped[:-1]) + joiner + dropped[-1]
-    return f"{_COMPACT_NOTE_HEAD}{tail}."
+        tail = " or ".join(dropped)
+    return f"> Compact variant: conversation only, no {tail}."
+
+
+def _compact_meta_note(policy: _Policy) -> str:
+    """The compact HTML page's meta-strip sentence, derived from the POLICY.
+
+    Reads the policy rather than the options because this runs at emission time,
+    where the policy is the only thing that knows what the page in front of the
+    reader actually contains.
+    """
+    omitted = ["thinking"]
+    if not policy.include_tools:
+        omitted.append("tool detail")
+    return (
+        f'<span class="m-note">compact variant, {" and ".join(omitted)} omitted'
+        " (see conversation.html)</span>"
+    )
+
 
 _LIST_MARKER = re.compile(r"^\s*([-*+] |\d+[.)] )")
 
@@ -916,10 +939,7 @@ def _compact_policy(options: RenderOptions) -> _Policy:
         include_tools=options.tool_output_compact,
         include_machinery=False,
         reminder_mode=options.reminders_compact,
-        variant_note=_compact_note(
-            include_tools=options.tool_output_compact,
-            reminder_mode=options.reminders_compact,
-        ),
+        variant_note=_compact_note(options),
         breadcrumbs=options.breadcrumbs,
         # Exporter parity: the compact variant keeps the SAME header card as the
         # full one (its finalMdCompact reuses the built header verbatim), so the
@@ -1785,10 +1805,7 @@ def _header_html(
             )
         lean.append(f'<span class="{css}">{key}</span>: {shown}')
     if policy.variant_note:
-        lean.append(
-            '<span class="m-note">compact variant, thinking and tool detail omitted'
-            " (see conversation.html)</span>"
-        )
+        lean.append(_compact_meta_note(policy))
     grid: list[str] = []
     for row in _detail_rows(meta, conv, policy):
         label, _, value = row[2:].partition(":** ")

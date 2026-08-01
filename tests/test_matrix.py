@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from cc_warehouse import build, render
-from cc_warehouse.config import load_config
+from cc_warehouse.config import Config, load_config
 from conftest import matrix_session, rich_session, run_ccw
 
 GOLDEN = Path(__file__).resolve().parent / "golden" / "matrix-anchor"
@@ -37,24 +37,25 @@ PROJECTION_FILES = (
     "conversation.compact.html",
 )
 
-# One content class per row: (config key stem, the RenderOptions field the
-# UNSUFFIXED key drives, the marker that class's block carries in
-# conftest.matrix_session). The compact key is always the stem plus `_compact`
-# and its flag is that key with dashes (shared rule c).
-#
-# The stem and the full-variant field name differ for exactly one class: the
-# `tool_output` key has driven a field called `toolresult_diff` since slice 6.
-# That predates this slice and is left alone -- the field name is internal, the
-# manifest `config` block that exposes it is frozen v1 surface, and DESIGN 8
-# freezes CONFIG keys, not dataclass attributes. The NEW fields all match their
-# keys, so the bijection holds where this slice creates it.
+# One content class per row: (config key stem, the marker that class's block
+# carries in conftest.matrix_session). The compact key is always the stem plus
+# `_compact` and its flag is that key with dashes (shared rule c).
 CONTENT_CLASSES = (
-    ("subagents", "subagents", "SUBAGENTMARKER"),
-    ("attachments", "attachments", "ATTACHMARKER"),
-    ("commands", "commands", "COMMANDMARKER"),
-    ("extras", "extras", "EXTRAMARKER"),
-    ("tool_output", "toolresult_diff", "TOOLSTDOUTMARKER"),
+    ("subagents", "SUBAGENTMARKER"),
+    ("attachments", "ATTACHMARKER"),
+    ("commands", "COMMANDMARKER"),
+    ("extras", "EXTRAMARKER"),
+    ("tool_output", "TOOLSTDOUTMARKER"),
 )
+
+# Where a stem and the RenderOptions field its UNSUFFIXED key drives disagree.
+# Exactly one class does: the `tool_output` key has driven a field called
+# `toolresult_diff` since slice 6. That predates this slice and is left alone --
+# the field name is internal, the manifest `config` block that exposes it is
+# frozen v1 surface, and DESIGN 8 freezes CONFIG keys, not dataclass attributes.
+# The NEW fields all match their keys, so the bijection holds where this slice
+# creates it.
+_FULL_FIELD = {"tool_output": "toolresult_diff"}
 
 
 def _diff(name: str, expected: str, produced: str) -> str:
@@ -74,8 +75,17 @@ def _rendered(data: bytes, options: render.RenderOptions) -> dict[str, str]:
     return dict(zip(PROJECTION_FILES, produced, strict=True))
 
 
-def _compact_options(**kwargs: object) -> render.RenderOptions:
+def _options(**kwargs: object) -> render.RenderOptions:
+    """RenderOptions built from a computed field name (the tests sweep the five
+    classes rather than naming each field), which is the one thing pyright
+    cannot check for us."""
     return render.RenderOptions(**kwargs)  # pyright: ignore[reportArgumentType]
+
+
+def _variant_line(markdown: str) -> str:
+    """The compact header's `Variant:` row: the one sentence the file says about
+    itself."""
+    return markdown.split("**Variant:**")[1].split("\n")[0]
 
 
 # --- the regression anchor -------------------------------------------------
@@ -108,7 +118,7 @@ def test_the_anchor_session_carries_every_content_class() -> None:
     the full variant and absent from the compact one at defaults, or a green
     matrix test below would be proving nothing."""
     files = _rendered(matrix_session(), render.RenderOptions())
-    for _stem, _field, marker in CONTENT_CLASSES:
+    for _stem, marker in CONTENT_CLASSES:
         assert marker in files["transcript.md"], f"{marker} missing from the full variant"
         assert marker in files["conversation.html"], f"{marker} missing from the full page"
         assert marker not in files["transcript.compact.md"], f"{marker} leaked into compact"
@@ -118,44 +128,37 @@ def test_the_anchor_session_carries_every_content_class() -> None:
 # --- the matrix: a compact key opens its class in the compact variant -------
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
-def test_compact_key_opens_the_class_in_compact_markdown(
-    stem: str, field: str, marker: str
+@pytest.mark.parametrize("variant_file", ("transcript.compact.md", "conversation.compact.html"))
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
+def test_compact_key_opens_the_class_in_both_compact_files(
+    stem: str, marker: str, variant_file: str
 ) -> None:
-    """DESIGN 15 block 1: compact's hard-coded drops become its DEFAULTS. Turning
-    the key on renders that class in transcript.compact.md."""
-    data = matrix_session()
-    opened = _rendered(data, _compact_options(**{f"{stem}_compact": True}))
-    assert marker in opened["transcript.compact.md"]
+    """DESIGN 15 block 1: compact's hard-coded drops become its DEFAULTS.
+
+    Parametrized over BOTH compact files rather than split into two tests,
+    because one policy drives both emitters (R9) and a matrix cell that were
+    true of only one of them would be the bug worth catching.
+    """
+    opened = _rendered(matrix_session(), _options(**{f"{stem}_compact": True}))
+    assert marker in opened[variant_file]
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
-def test_compact_key_opens_the_class_in_compact_html(
-    stem: str, field: str, marker: str
-) -> None:
-    """The same key reaches conversation.compact.html: one policy drives both
-    emitters (R9), so a matrix cell can never be true of one file only."""
-    data = matrix_session()
-    opened = _rendered(data, _compact_options(**{f"{stem}_compact": True}))
-    assert marker in opened["conversation.compact.html"]
-
-
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
 def test_compact_key_leaves_the_full_variant_byte_identical(
-    stem: str, field: str, marker: str
+    stem: str, marker: str
 ) -> None:
     """Shared rule (b) read the other way: a `_compact` key is the door into
     compact ONLY. The full variant's bytes may not move."""
     data = matrix_session()
     base = _rendered(data, render.RenderOptions())
-    opened = _rendered(data, _compact_options(**{f"{stem}_compact": True}))
+    opened = _rendered(data, _options(**{f"{stem}_compact": True}))
     assert opened["transcript.md"] == base["transcript.md"], marker
     assert opened["conversation.html"] == base["conversation.html"], marker
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
 def test_unsuffixed_key_off_strips_full_and_leaves_compact_untouched(
-    stem: str, field: str, marker: str
+    stem: str, marker: str
 ) -> None:
     """Shared rule (b): an UNSUFFIXED key keeps its v1 meaning, the full variants.
     Turning it off must CHANGE the full variant and must not reach into the
@@ -169,7 +172,7 @@ def test_unsuffixed_key_off_strips_full_and_leaves_compact_untouched(
     """
     data = matrix_session()
     base = _rendered(data, render.RenderOptions())
-    stripped = _rendered(data, _compact_options(**{field: False}))
+    stripped = _rendered(data, _options(**{_FULL_FIELD.get(stem, stem): False}))
     assert marker in base["transcript.md"]
     assert stripped["transcript.md"] != base["transcript.md"], f"{stem} did nothing"
     assert stripped["transcript.compact.md"] == base["transcript.compact.md"]
@@ -195,7 +198,7 @@ def test_the_two_variants_are_independent_cells() -> None:
     assert "SUBAGENTMARKER" in files["transcript.compact.md"]
 
 
-def test_the_compact_variant_note_never_denies_what_it_carries() -> None:
+def test_the_compact_markdown_note_never_denies_what_it_carries() -> None:
     """F6, the code overclaiming its own guarantees, applied to the one sentence
     the compact file says about itself.
 
@@ -214,14 +217,34 @@ def test_the_compact_variant_note_never_denies_what_it_carries() -> None:
         data, render.RenderOptions(tool_output_compact=True)
     )
     assert "TOOLSTDOUTMARKER" in with_tools
-    assert "tools" not in with_tools.split("**Variant:**")[1].split("\n")[0]
+    assert "tools" not in _variant_line(with_tools)
 
     _, with_reminders = render.render_markdown(
         rich_session(), render.RenderOptions(reminders_compact="show")
     )
-    variant_line = with_reminders.split("**Variant:**")[1].split("\n")[0]
-    assert "reminders" not in variant_line
-    assert "compact" in variant_line.lower(), "the word compact stays load-bearing"
+    line = _variant_line(with_reminders)
+    assert "reminders" not in line
+    assert "compact" in line.lower(), "the word compact stays load-bearing"
+
+
+def test_the_compact_html_meta_note_never_denies_what_it_carries() -> None:
+    """The SAME rule for the SECOND place the compact variant describes itself.
+
+    conversation.compact.html carries its own sentence in the meta strip, worded
+    differently from the markdown note ("tool detail" rather than "tools"). The
+    first version of this slice derived only the markdown one and left the HTML
+    page saying "tool detail omitted" above rendered tool blocks - the same F6
+    overclaim, in the emitter nobody looked at. Censusing the class rather than
+    fixing the instance is what this test pins.
+    """
+    data = matrix_session()
+    _, default_page = render.render_html(data, render.RenderOptions())
+    assert "compact variant, thinking and tool detail omitted" in default_page
+
+    _, with_tools = render.render_html(data, render.RenderOptions(tool_output_compact=True))
+    assert "TOOLSTDOUTMARKER" in with_tools, "the page really does carry tool blocks"
+    assert "tool detail omitted" not in with_tools
+    assert "compact variant, thinking omitted" in with_tools
 
 
 def test_no_thinking_key_exists_on_either_variant() -> None:
@@ -235,29 +258,29 @@ def test_no_thinking_key_exists_on_either_variant() -> None:
 # --- config keys (shared rule a: flat, one-level merge) --------------------
 
 
+def _config_with_every_compact_key_on(tmp_path: Path) -> Config:
+    """An XDG config declaring all five flat `[render]` compact keys, resolved."""
+    cfg_dir = tmp_path / "xdg" / "cc-warehouse"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    keys = "\n".join(f"{stem}_compact = true" for stem, _m in CONTENT_CLASSES)
+    (cfg_dir / "config.toml").write_text(f"[render]\n{keys}\n")
+    return load_config(xdg_config_home=tmp_path / "xdg", env={"HOME": str(tmp_path)})
+
+
 def test_render_options_carry_the_five_compact_keys_from_config(tmp_path: Path) -> None:
     """build.render_options is the one bridge from Config to RenderOptions (R9):
     every compact key must cross it."""
-    cfg_dir = tmp_path / "xdg" / "cc-warehouse"
-    cfg_dir.mkdir(parents=True)
-    keys = "\n".join(f"{stem}_compact = true" for stem, _f, _m in CONTENT_CLASSES)
-    (cfg_dir / "config.toml").write_text(f"[render]\n{keys}\n")
-    config = load_config(xdg_config_home=tmp_path / "xdg", env={"HOME": str(tmp_path)})
-    options = build.render_options(config)
-    for stem, _field, _marker in CONTENT_CLASSES:
+    options = build.render_options(_config_with_every_compact_key_on(tmp_path))
+    for stem, _marker in CONTENT_CLASSES:
         assert getattr(options, f"{stem}_compact") is True, stem
 
 
 def test_config_compact_keys_reach_the_rendered_compact_files(tmp_path: Path) -> None:
     """End to end through the seam the operator actually uses: a flat `[render]`
     key opens every class in both compact files."""
-    cfg_dir = tmp_path / "xdg" / "cc-warehouse"
-    cfg_dir.mkdir(parents=True)
-    keys = "\n".join(f"{stem}_compact = true" for stem, _f, _m in CONTENT_CLASSES)
-    (cfg_dir / "config.toml").write_text(f"[render]\n{keys}\n")
-    config = load_config(xdg_config_home=tmp_path / "xdg", env={"HOME": str(tmp_path)})
+    config = _config_with_every_compact_key_on(tmp_path)
     files = _rendered(matrix_session(), build.render_options(config))
-    for _stem, _field, marker in CONTENT_CLASSES:
+    for _stem, marker in CONTENT_CLASSES:
         assert marker in files["transcript.compact.md"], marker
         assert marker in files["conversation.compact.html"], marker
 
@@ -275,9 +298,9 @@ def _render_to(env: dict[str, str], tmp_path: Path, name: str, *flags: str) -> d
     return {f: (out / f).read_text(encoding="utf-8") for f in PROJECTION_FILES}
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
 def test_compact_flag_opens_the_class(
-    ccw_env: dict[str, str], tmp_path: Path, stem: str, field: str, marker: str
+    ccw_env: dict[str, str], tmp_path: Path, stem: str, marker: str
 ) -> None:
     """`--x-compact` is the key with dashes, and it reaches both compact files."""
     flag = "--" + f"{stem}_compact".replace("_", "-")
@@ -286,9 +309,9 @@ def test_compact_flag_opens_the_class(
     assert marker in files["conversation.compact.html"]
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
 def test_no_compact_flag_beats_the_config_key(
-    ccw_env: dict[str, str], tmp_path: Path, stem: str, field: str, marker: str
+    ccw_env: dict[str, str], tmp_path: Path, stem: str, marker: str
 ) -> None:
     """DESIGN 8 precedence: a CLI flag is the highest tier, above the config file.
     `--no-x-compact` must win over `x_compact = true`."""
@@ -302,9 +325,9 @@ def test_no_compact_flag_beats_the_config_key(
     assert marker not in off["transcript.compact.md"]
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
 def test_the_compact_x_spelling_does_not_parse(
-    ccw_env: dict[str, str], tmp_path: Path, stem: str, field: str, marker: str
+    ccw_env: dict[str, str], tmp_path: Path, stem: str, marker: str
 ) -> None:
     """Shared rule (c) is a BIJECTION: `--compact-subagents` is not a spelling of
     `--subagents-compact`. It is not a flag, so it changes nothing."""
@@ -315,9 +338,9 @@ def test_the_compact_x_spelling_does_not_parse(
     assert marker not in misspelled["transcript.compact.md"]
 
 
-@pytest.mark.parametrize(("stem", "field", "marker"), CONTENT_CLASSES)
+@pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
 def test_the_unsuffixed_flag_still_means_full_only(
-    ccw_env: dict[str, str], tmp_path: Path, stem: str, field: str, marker: str
+    ccw_env: dict[str, str], tmp_path: Path, stem: str, marker: str
 ) -> None:
     """`--no-subagents` keeps its v1 meaning at the CLI too: full variants only.
 
@@ -383,7 +406,7 @@ def test_verb_help_lists_the_compact_flags(ccw_env: dict[str, str], verb: str) -
     them. Every compact flag the parser accepts is listed as the key with dashes."""
     result = run_ccw([verb, "-h"], ccw_env)
     assert result.code == 0, result.err
-    for stem, _field, _marker in CONTENT_CLASSES:
+    for stem, _marker in CONTENT_CLASSES:
         dashed = f"{stem}_compact".replace("_", "-")
         assert dashed in result.out, f"--{dashed} missing from `ccw {verb} -h`"
         assert f"--compact-{stem.replace('_', '-')}" not in result.out
@@ -397,14 +420,14 @@ def test_manifest_config_block_records_the_new_fields() -> None:
     """DESIGN section 6 freezes `config` as the RenderOptions actually used, so a
     per-variant decision is recoverable from the projection alone (F6: no silent
     behaviour). Every new key must appear, with its value."""
-    options = _compact_options(**{f"{stem}_compact": True for stem, _f, _m in CONTENT_CLASSES})
+    options = _options(**{f"{stem}_compact": True for stem, _m in CONTENT_CLASSES})
     manifest = render.build_manifest(matrix_session(), options)
     config = manifest["config"]
     assert isinstance(config, dict)
-    for stem, _field, _marker in CONTENT_CLASSES:
+    for stem, _marker in CONTENT_CLASSES:
         assert config[f"{stem}_compact"] is True, stem
     defaults = render.build_manifest(matrix_session(), render.RenderOptions())["config"]
     assert isinstance(defaults, dict)
-    for stem, _field, _marker in CONTENT_CLASSES:
+    for stem, _marker in CONTENT_CLASSES:
         assert defaults[f"{stem}_compact"] is False, stem
     json.dumps(manifest)  # the manifest stays JSON-serializable
