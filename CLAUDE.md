@@ -82,7 +82,12 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 - **v1.1 flag groups**: per-file matrix, HTML chrome defaults, truncation, date-locale,
   `--since`/`--until` (the five named in DESIGN section 7; date-locale was dropped from
   this line by the 2026-07-24 compaction, restored 2026-08-01). Defined 2026-08-01
-  (DESIGN 15 entry; slices 14-17).
+  (DESIGN 15 entry; slices 14-17). **Slice 14 (per-variant matrix) is DONE
+  2026-08-01**; slices 15 (chrome + date-locale), 16 (truncation) and 17 (window)
+  remain. Slice 14 left a regression anchor at `tests/golden/matrix-anchor` that
+  15-17 reuse: it pins the four projected files at their pre-v1.1 bytes, so any
+  slice that moves DEFAULT output breaks it on purpose. Never regenerate it to
+  make a change pass.
 - **then v1.1 proper**: FTS5 + `ccw search` + `ccw import`; **then v1.2**: `ccw mcp`.
 - **Pre-release, not pre-v1**: DESIGN 15 item 6 (PyPI name re-check before the repo goes
   public) and item 7 (registry backup/export story).
@@ -104,6 +109,11 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   mechanism was the reverse of the assumption. Re-derive every finding by execution first.
 - **The same defect class recurs across modules.** Fixing one instance of the private-config-
   reader bug would have left a live redaction leak in `ccw share`. Census the class.
+  Sharpened 2026-08-01 (slice 14): a census performed on ONE file is still an instance fix.
+  The F6 overclaim in the compact note was fixed and written up as a class fix, citing this
+  very lesson, while its twin sat live in the HTML emitter of the same module - green,
+  because the oracle test called one emitter and not the other. Knowing the lesson does not
+  apply it. Test shared behaviour across BOTH emitters by construction.
 - **Non-destructiveness is a precondition, not an intention.** Prove a backup before touching
   its original, so the worst outcome of a future defect is a refusal rather than a loss.
 

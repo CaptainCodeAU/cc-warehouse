@@ -640,6 +640,29 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   Config fields, section 14 rules vs their enforcing fences), performed by reading the
   contract and computing the code, never by re-reading the tickets. Both findings came from
   that pass; neither came from the ticket record.
+- 2026-08-01: SLICE 14 (per-variant content matrix), the first of the v1.1 flag-group
+  slices, DONE by direct build with oracle tests first and a four-angle quality review at
+  the close instead of reviewers A/B. Findings live on ticket 14; this records the process.
+  WHAT THE ORDER BOUGHT. Writing the regression anchor FIRST, from a tree verified clean
+  with `git status --porcelain src/`, is what makes "purely additive" a measurement rather
+  than a claim: the comparison bytes cannot have been influenced by the change they judge.
+  Cheap to do once, impossible to reconstruct afterwards, and slices 15-17 inherit it.
+  Second, classifying the 41 red tests by EXCEPTION TYPE rather than counting them caught a
+  test that was red for the wrong reason - it asserted a marker disappears from the full
+  variant when `tool_output` is off, which is not what that key has ever meant. A bare
+  "41 failed, red as expected" would have shipped a wrong test into a green suite.
+  THE LESSON, and it is uncomfortable because the ticket already contained the words:
+  A CENSUS YOU PERFORM ON ONE FILE IS STILL AN INSTANCE FIX. The F6 overclaim in the
+  compact variant note was found, fixed, and written up as a class fix citing the standing
+  "census the class" lesson - while the identical overclaim sat unfixed in the HTML emitter
+  twelve hundred lines down the same file. The suite stayed green because the oracle test
+  called `render_markdown` and never `render_html`. Knowing the lesson is not applying it;
+  what applied it was an independent reviewer with no stake in the fix being complete.
+  PROCESS CONSEQUENCE: when a slice touches behaviour shared by the markdown and HTML
+  emitters, its oracle tests must exercise BOTH by construction (parametrize over the
+  variant files) rather than by remembering to. Two of the four review angles also found
+  the same help-text misgrouping independently, which is the argument for keeping several
+  narrow lenses over one broad pass.
 
 ---
 
