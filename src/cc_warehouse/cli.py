@@ -107,11 +107,16 @@ def _bare() -> int:
 # second place for the bijection to drift. The stems ARE the bijection: flag =
 # key with dashes, zero exceptions (shared rule c), so `--compact-subagents` is
 # not a spelling of anything.
+# The GROUP a flag is listed under. Not a variant: `_FULL` and `_COMPACT` happen
+# to name variants, but `_CHROME` and `_LIMITS` name kinds of setting, and both
+# are variant-agnostic without being the same thing. Slice 16 proved the
+# distinction the hard way - filed under a single "not a variant" bucket, the
+# truncation cap printed beneath a heading that called it an initial state the
+# reader could click away, which it is not.
 _FULL = "full"
 _COMPACT = "compact"
-# Chrome is neither: shared rule (d) makes those keys page-level and
-# variant-agnostic, which is the case a two-way split could not express.
-_ANY = "any"
+_CHROME = "chrome"
+_LIMITS = "limits"
 
 _CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str, str], ...] = (
     ("subagents", "subagents", _FULL, "sub-agent (sidechain) exchanges"),
@@ -149,22 +154,26 @@ _CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
         (
             key.replace("_", "-"),
             key,
-            _ANY,
+            _CHROME,
             "{" + "|".join(allowed) + "}",
-            f"initial {key.replace('_', ' ')} ({default} by default)",
+            f"{blurb} ({default})",
         )
-        for key, (allowed, default) in CHROME_KEYS.items()
+        for key, (allowed, default, blurb) in CHROME_KEYS.items()
     ),
     # The truncation cap (block 3). Variant-agnostic like the chrome keys, but
     # its value is a NUMBER rather than one of a word list, which is why the
     # value column belongs to the row rather than to a shared constant.
-    (CAP_KEY.replace("_", "-"), CAP_KEY, _ANY, "N",
+    (CAP_KEY.replace("_", "-"), CAP_KEY, _LIMITS, "N",
      "cap each rendered tool result at N characters (0 = off)"),
 )
 
 
-def value_flag_problem(args: Sequence[str]) -> str | None:
-    """The first illegal VALUE among these args, as an error message.
+def _value_flag_problem(args: Sequence[str]) -> str | None:
+    """An illegal VALUE among these args, as an error message.
+
+    Reported in table order rather than in the order the operator typed, so with
+    two bad flags this names whichever key comes first here. Saying "the first"
+    would be an overclaim of exactly the kind R8 exists to stop.
 
     Flags are validated UP FRONT and refused as a usage error, unlike a config
     file whose problems are recorded so a capture can still run (R5). The
@@ -253,7 +262,8 @@ def _verb_help(verb: str, specific: tuple[tuple[str, str], ...], *, content: boo
         groups = (
             (_FULL, "content, full variants (default on; --no-X drops it):"),
             (_COMPACT, "content, compact variant (default off; --X adds it):"),
-            (_ANY, "page chrome (initial state only; the reader's own clicks win after that):"),
+            (_CHROME, "page chrome (initial state only; the reader's own clicks win after that):"),
+            (_LIMITS, "limits (opt-in; off unless set):"),
         )
         for variant, heading in groups:
             lines.append("")
@@ -478,7 +488,7 @@ def _run_build(args: Sequence[str]) -> int:
             content=True,
         ))
         return 0
-    problem = value_flag_problem(rest)
+    problem = _value_flag_problem(rest)
     if problem is not None:
         print(f"Error: {problem}", file=sys.stderr)
         return 1
@@ -644,7 +654,7 @@ def _run_render(args: Sequence[str]) -> int:
             content=True,
         ))
         return 0
-    problem = value_flag_problem(rest)
+    problem = _value_flag_problem(rest)
     if problem is not None:
         print(f"Error: {problem}", file=sys.stderr)
         return 1

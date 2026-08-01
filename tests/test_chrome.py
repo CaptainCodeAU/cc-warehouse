@@ -1,4 +1,4 @@
-"""Oracle tests: HTML chrome initial states (slice 15, block 2).
+"""Oracle tests: HTML chrome initial states and date display (slice 15).
 
 Contract: DESIGN section 15 entry 2026-08-01, block 2, plus shared rules (c)
 flag = key with dashes and (d) chrome keys are page-level and VARIANT-AGNOSTIC,
@@ -10,10 +10,15 @@ position moves. Values are words, never the DOM's s/m/l letters, because config
 is a human surface. LocalStorage interplay: config sets the fallback a fresh
 browser sees, and a reader's own clicks win thereafter.
 
-Block 4 (`html_dates`) is NOT here. Ticket 15 asks for two things that cannot
-both be true - defaults byte-identical to post-slice-14 output, AND the date
-conversion JS present by default - and that fork is the principal's to settle.
-The four keys below are all default-PRESERVING, so they land without needing it.
+Both blocks live here. Ticket 15 asked for two things that could not both be
+true - defaults byte-identical to post-slice-14 output, AND the date conversion
+JS present by default - and the principal settled it on 2026-08-01: keep the
+frozen `local` default and re-baseline. The four block-2 keys are all
+default-PRESERVING; `html_dates` is the one that moved the anchor's two HTML
+files, and that move is recorded beside the anchor in test_matrix.py.
+
+The anchor itself is owned by test_matrix.py, which diffs on failure. Nothing
+here re-asserts it.
 
 Seams: `render.render_html`, `render.render_markdown`, `config.load_config`,
 `build.render_options`, and `ccw` itself. The emitted JS is read back out of the
@@ -30,11 +35,15 @@ from conftest import matrix_session, run_ccw
 
 # (config key, the word values it accepts, its default). The flag is the key
 # with dashes and the config key is flat in [render], exactly like every other.
+# Deliberately a SECOND copy of what config.CHROME_KEYS holds, not an import:
+# these tests assert the module's defaults, so taking the expected values from
+# the module under test would make them self-certifying.
 CHROME_KEYS = (
     ("html_width", ("small", "medium", "large"), "large"),
     ("html_font", ("small", "medium", "large"), "small"),
     ("html_turns", ("expanded", "collapsed"), "expanded"),
     ("details", ("closed", "open"), "closed"),
+    ("html_dates", ("local", "iso"), "local"),
 )
 
 # Word -> the letter the DOM and localStorage already use. The mapping exists so
@@ -75,17 +84,6 @@ def test_chrome_key_defaults_to_the_contract_value(
     assert getattr(load_config(env={"HOME": "/home/alice"}, no_config=True), f"render_{key}") == (
         default
     )
-
-
-@pytest.mark.parametrize("name", (
-    "transcript.md", "transcript.compact.md", "conversation.html", "conversation.compact.html",
-))
-def test_chrome_defaults_keep_the_slice_14_anchor(name: str) -> None:
-    """The four chrome keys move only STARTING positions, and their defaults are
-    the positions v1 already had, so an empty config still renders the pre-v1.1
-    bytes (shared rule b). The anchor is reused, never regenerated."""
-    golden = Path(__file__).resolve().parent / "golden" / "matrix-anchor" / name
-    assert _pages()[name] == golden.read_text(encoding="utf-8")
 
 
 def test_chrome_keys_have_no_variant_forms() -> None:
@@ -340,3 +338,28 @@ def test_rendering_never_reads_the_machine_clock_or_timezone() -> None:
 def test_the_same_payload_renders_to_the_same_bytes(mode: str) -> None:
     """The invariant block 4 exists to protect, asserted directly."""
     assert _pages(html_dates=mode) == _pages(html_dates=mode)
+
+
+def test_the_two_places_config_states_a_chrome_default_agree() -> None:
+    """config.py declares each chrome default TWICE: once as a Config dataclass
+    field default, once in the CHROME_KEYS table the loader validates against.
+    Nothing structural keeps them equal, and a Config built directly (which
+    tests do) reads the first while load_config resolves the second, so a drift
+    would be invisible until the two disagreed in production."""
+    from cc_warehouse.config import CHROME_KEYS as TABLE
+    from cc_warehouse.config import Config
+
+    bare = Config(root=Path("/tmp/unused"))
+    for key, (_allowed, default, _blurb) in TABLE.items():
+        assert getattr(bare, f"render_{key}") == default, key
+
+
+def test_the_render_layer_agrees_with_the_config_layer_on_defaults() -> None:
+    """RenderOptions is the third declaration of the same defaults, and it is
+    the one that must stay independent: render.py sits BELOW config.py and must
+    not import it. Independent, but not allowed to disagree."""
+    from cc_warehouse.config import CHROME_KEYS as TABLE
+
+    options = render.RenderOptions()
+    for key, (_allowed, default, _blurb) in TABLE.items():
+        assert getattr(options, key) == default, key

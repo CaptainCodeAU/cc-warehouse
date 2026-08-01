@@ -104,6 +104,14 @@ def _variant_line(markdown: str) -> str:
 #   date-conversion script. The delta was reviewed before the goldens moved:
 #   +14 lines each, ZERO deletions, zero modified lines, and both MARKDOWN
 #   goldens untouched (they still hold their original pre-slice-14 bytes).
+#
+#   2026-08-01, slice 15 again, COMPLETING the same approved change rather than
+#   making a new one. A correctness census found the date pass reached the turn
+#   stamps but not the header's own `Captured:` span, so one page showed two
+#   clocks with nothing saying which was which. Wrapping that span moved ONE
+#   line in each HTML file. All 21 data-copy-src payloads stayed byte-identical
+#   and the header payload still reproduces transcript.md verbatim, so the
+#   copy-as-markdown invariant is untouched; the markdown goldens did not move.
 
 
 @pytest.mark.parametrize("name", PROJECTION_FILES)

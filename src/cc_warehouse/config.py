@@ -39,12 +39,12 @@ _DEFAULT_ROOT_NAME = "cc-warehouse-data"
 # catch. This module owns the frozen key map, so it owns the legal values too -
 # the CLI validates against this same table rather than keeping its own copy,
 # because two lists of legal words would eventually disagree.
-CHROME_KEYS: dict[str, tuple[tuple[str, ...], str]] = {
-    "html_width": (("small", "medium", "large"), "large"),
-    "html_font": (("small", "medium", "large"), "small"),
-    "html_turns": (("expanded", "collapsed"), "expanded"),
-    "details": (("closed", "open"), "closed"),
-    "html_dates": (("local", "iso"), "local"),
+CHROME_KEYS: dict[str, tuple[tuple[str, ...], str, str]] = {
+    "html_width": (("small", "medium", "large"), "large", "page width a fresh browser opens at"),
+    "html_font": (("small", "medium", "large"), "small", "text size a fresh browser opens at"),
+    "html_turns": (("expanded", "collapsed"), "expanded", "whether turns start folded"),
+    "details": (("closed", "open"), "closed", "whether <details> blocks start open (md too)"),
+    "html_dates": (("local", "iso"), "local", "timestamps in the reader's zone, or raw ISO"),
 }
 
 
@@ -69,7 +69,7 @@ def cap_problem(value: str) -> str | None:
 
 def chrome_problem(key: str, value: str) -> str | None:
     """The error message for an illegal chrome value, or None when it is legal."""
-    allowed, _default = CHROME_KEYS[key]
+    allowed, _default, _blurb = CHROME_KEYS[key]
     if value in allowed:
         return None
     return f"[render].{key} must be one of {'|'.join(allowed)}, not {value!r}"
@@ -246,7 +246,7 @@ def _chrome(
     load_config records rather than raises, while the CLI validates its own flags
     up front and refuses as a usage error before any work begins.
     """
-    allowed, default = CHROME_KEYS[key]
+    _allowed, default, _blurb = CHROME_KEYS[key]
     value = default
     for tier in (render.get(key), flags.get(key)):
         if tier is None:
@@ -257,7 +257,6 @@ def _chrome(
             problems.append(problem)
             continue
         value = text
-    assert value in allowed
     return value
 
 

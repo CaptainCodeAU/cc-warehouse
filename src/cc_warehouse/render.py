@@ -103,10 +103,11 @@ class _Policy:
     include_commands: bool
     include_extras: bool
     toolresult_diff: bool
-    # Chrome, carried here because every emitter already receives a policy.
-    # These two are VARIANT-AGNOSTIC (shared rule d): both builders below read
-    # them from the same option, and a future edit that lets them diverge would
-    # be a category error, not a feature.
+    # Chrome, carried here because the SECTION emitters all receive a policy.
+    # The file's layer rule, which predates this field: section emitters take
+    # the policy, leaf block renderers take derived scalars. Both are
+    # VARIANT-AGNOSTIC (shared rule d), so both builders read them from the same
+    # option and an edit letting them diverge would be a category error.
     details_open: bool
     turns_collapsed: bool
     tool_output_max_chars: int
@@ -305,7 +306,7 @@ def _render_todos(todos: object) -> list[str] | None:
     return lines
 
 
-def _render_tool_use(block: Block, details_tag: str) -> list[str]:
+def _render_tool_use(block: Block, *, details_tag: str) -> list[str]:
     name = block.tool_name or "tool"
     tool_input = block.tool_input or {}
     if name == "Bash":
@@ -415,7 +416,9 @@ def _truncation_marker(omitted: int) -> str:
     )
 
 
-def _render_tool_result(block: Block, structured: bool = True, cap: int = 0) -> list[str]:
+def _render_tool_result(
+    block: Block, *, structured: bool = True, cap: int = 0
+) -> list[str]:
     text = block.text
     body: list[str] = [
         f"- commit `{commit.sha}`: {commit.message}" for commit in detect_commits(text)
@@ -463,7 +466,7 @@ def _render_attachment(block: Block) -> list[str]:
     return out
 
 
-def _render_reminder(reminder: str, mode: str, details_tag: str) -> list[str]:
+def _render_reminder(reminder: str, *, mode: str, details_tag: str) -> list[str]:
     if mode == "show":
         return ["", f"> system-reminder: {reminder}"]
     if mode == "collapse":
@@ -490,7 +493,7 @@ def _thinking_label(block: Block) -> str:
     return f"Thinking | {caption}" if caption else "Thinking"
 
 
-def _render_machinery(block: Block, details_tag: str) -> list[str]:
+def _render_machinery(block: Block, *, details_tag: str) -> list[str]:
     if block.kind == "continuation":
         return [
             "",
@@ -523,14 +526,16 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
         label = f"> \N{THOUGHT BALLOON} {_thinking_label(block)}"
         return ["", label, "", *_fence(block.text, "md")]
     if kind == "tool_use":
-        return ["", *_render_tool_use(block, _details_tag(policy))] if policy.include_tools else []
+        if not policy.include_tools:
+            return []
+        return ["", *_render_tool_use(block, details_tag=_details_tag(policy))]
     if kind == "tool_result":
         if not policy.include_tools:
             return []
         return [
             "",
             *_render_tool_result(
-                block, policy.toolresult_diff, policy.tool_output_max_chars
+                block, structured=policy.toolresult_diff, cap=policy.tool_output_max_chars
             ),
         ]
     if kind == "subagent":
@@ -543,7 +548,7 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
         return _render_extra(block) if policy.include_extras else []
     if not policy.include_machinery:
         return []
-    return _render_machinery(block, _details_tag(policy))
+    return _render_machinery(block, details_tag=_details_tag(policy))
 
 
 # --------------------------------------------------------------------------
@@ -923,7 +928,9 @@ def _user_md(turn: Turn, total: int, policy: _Policy, elapsed: str | None) -> li
     if turn.prompt:
         lines.append(_harden(turn.prompt))
     for reminder in turn.reminders:
-        lines.extend(_render_reminder(reminder, policy.reminder_mode, _details_tag(policy)))
+        lines.extend(_render_reminder(
+                reminder, mode=policy.reminder_mode, details_tag=_details_tag(policy)
+            ))
     return _strip_separators(lines)
 
 
@@ -1387,8 +1394,8 @@ _COPY_SCRIPT_TEMPLATE = """\
     try { saved = localStorage.getItem(key) || fallback; } catch (e) { /* private mode */ }
     apply(["s", "m", "l"].indexOf(saved) >= 0 ? saved : fallback);
   }
-  toggler("ccw_html_width", "w-", ".wbtns button", "__W__");
-  toggler("ccw_html_font", "f-", ".fbtns button", "__F__");
+  toggler("ccw_html_width", "w-", ".wbtns button", "__WIDTH_FALLBACK__");
+  toggler("ccw_html_font", "f-", ".fbtns button", "__FONT_FALLBACK__");
   var pos = document.getElementById("turnpos");
   var turns = [].slice.call(document.querySelectorAll("section.turn"));
   var ticking = false;
@@ -1467,8 +1474,8 @@ def _copy_script(options: RenderOptions) -> str:
     and the saved value would stop agreeing about what they mean.
     """
     return _COPY_SCRIPT_TEMPLATE.replace(
-        "__W__", _SIZE_LETTER[options.html_width]
-    ).replace("__F__", _SIZE_LETTER[options.html_font])
+        "__WIDTH_FALLBACK__", _SIZE_LETTER[options.html_width]
+    ).replace("__FONT_FALLBACK__", _SIZE_LETTER[options.html_font])
 
 
 # Catppuccin-Macchiato-derived palette and chrome (DESIGN section 6; the
@@ -1643,7 +1650,7 @@ class _AnchorAllocator:
         return anchor
 
 
-def _document_head(title: str) -> list[str]:
+def _document_head(title: str, options: RenderOptions) -> list[str]:
     return [
         "<!DOCTYPE html>",
         '<html lang="en">',
@@ -1653,7 +1660,8 @@ def _document_head(title: str) -> list[str]:
         f"<title>{_escape(title)}</title>",
         f"<style>\n{_CSS}</style>",
         "</head>",
-        '<body class="w-l f-s">',
+        f'<body class="w-{_SIZE_LETTER[options.html_width]}'
+        f' f-{_SIZE_LETTER[options.html_font]}">',
     ]
 
 
@@ -1717,6 +1725,10 @@ def _block_html(
     css = "reply" if block.kind == "assistant_text" else f"block block-{block.kind}"
     return _copy_block(anchors, ordinal, css, fragment, body)
 
+
+# An ISO stamp exactly as _lean_rows emits it, so the header's Captured row can
+# be wrapped without touching the markdown the copy payload carries.
+_ISO_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})?")
 
 _ROW_ICONS = {
     "thinking": "\N{THOUGHT BALLOON}",
@@ -1909,7 +1921,9 @@ def _turn_html(
         user_inner.append(_copy_block(anchors, turn.ordinal, "prompt", prompt_md, body))
     for reminder in turn.reminders:
         lines = _strip_separators(
-            _render_reminder(reminder, policy.reminder_mode, _details_tag(policy))
+            _render_reminder(
+                reminder, mode=policy.reminder_mode, details_tag=_details_tag(policy)
+            )
         )
         if lines:
             reminder_md = "\n".join(lines)
@@ -1965,7 +1979,15 @@ def _header_html(
         key = _escape(label.replace("**", ""))
         css = "m-warn" if "\N{WARNING SIGN}" in row else "m-key"
         shown = _escape(value)
-        if key == "Model" and value:
+        if key == "Captured":
+            # DESIGN block 4 says EACH timestamp, and the header's captured span
+            # is one. Without this the same page shows turn stamps in the
+            # reader's zone and the session's own span in UTC - a split clock
+            # with nothing telling the reader which is which.
+            shown = _ISO_STAMP_RE.sub(
+                lambda m: f'<span class="timestamp">{m.group(0)}</span>', shown
+            )
+        elif key == "Model" and value:
             shown = f'<span class="m-model">{shown}</span>'
         elif key == "Turns":
             # Colour the split the way the exporter does: you in blue, Claude
@@ -2026,7 +2048,7 @@ def _render_page(
     anchors = _AnchorAllocator()
     whole = _render(conv, meta, policy, source_hash)
     whole_payload = base64.b64encode(whole.encode("utf-8")).decode("ascii")
-    parts = _document_head(_title(meta))
+    parts = _document_head(_title(meta), options)
     parts.append(f'<div id="whole-transcript" hidden data-copy-src="{whole_payload}"></div>')
     variant = ' <span class="badges">(compact)</span>' if policy.variant_note else ""
     parts.append(f"<h1>{_escape(_title(meta))}{variant}</h1>")
@@ -2041,8 +2063,13 @@ def _render_page(
     index = _files_index_html(conv, anchors)
     if index is not None:
         parts.append(index)
-    tail = [_hljs_block(options.hljs), _copy_script(options), _date_block(options)]
-    parts.extend(["</main>", *[piece for piece in tail if piece], "</body>", "</html>"])
+    # _hljs_block can return "" (hljs="off") and its blank line is part of the
+    # v1 output, so it goes in unfiltered. Only the date block is conditional.
+    parts.extend(["</main>", _hljs_block(options.hljs), _copy_script(options)])
+    date_block = _date_block(options)
+    if date_block:
+        parts.append(date_block)
+    parts.extend(["</body>", "</html>"])
     return "\n".join(parts) + "\n"
 
 
