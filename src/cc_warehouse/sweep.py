@@ -9,10 +9,11 @@ racing the hook harmless. Item failures are reported and the batch continues pas
 """
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import capture, catalog, store
+from cc_warehouse import capture, catalog, parser, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -123,7 +124,28 @@ def _capture_item(config: Config, path: Path) -> ItemOutcome:
     return ItemOutcome(path.name, result.action, result.detail)
 
 
-def sweep(config: Config, source: Path | None = None) -> BatchReport:
+def _in_window(path: Path, keep: "Callable[[str | None], bool] | None") -> bool:
+    """Whether this transcript's R12 FIRST timestamp falls inside the window.
+
+    Read from the PAYLOAD, never from the file's mtime (R12): a copied or
+    restored transcript keeps its recorded time and would otherwise sweep into
+    the wrong window. An unreadable or timestamp-less file is left OUT of a
+    bounded window and swept by the next unwindowed run, because narrowing an
+    import must never be the thing that loses a session.
+    """
+    if keep is None:
+        return True
+    try:
+        return keep(parser.parse_session(path.read_bytes()).first_ts)
+    except OSError:
+        return False
+
+
+def sweep(
+    config: Config,
+    source: Path | None = None,
+    window: "Callable[[str | None], bool] | None" = None,
+) -> BatchReport:
     """Capture whatever the hook missed, then adopt orphan store objects (slice 5).
 
     Walks `source` (default ~/.claude/projects), skipping agent-* transcripts, and hands
@@ -132,7 +154,13 @@ def sweep(config: Config, source: Path | None = None) -> BatchReport:
     continues (R5/R10). A live lock holder makes the sweep a no-op that reports a lock-held
     refusal and captures nothing (R14/F3). After the source walk, store objects with no
     catalog row are re-adopted through the same routine (DESIGN section 13). Sources are
-    read-only throughout (F9)."""
+    read-only throughout (F9).
+
+    A `window` narrows the import to sessions whose R12 first timestamp falls
+    inside it (DESIGN 15 entry, block 5). Safe on sweep precisely because import
+    is ADDITIVE and re-runnable: narrowing loses nothing, since a later
+    unwindowed sweep still picks up whatever was skipped. That is the property
+    `ccw build` lacks, which is why block 5 refuses the pair there."""
     walk_root = source if source is not None else _default_source()
     if not store.acquire_lock(config.root, _SWEEP_LOCK):
         return BatchReport(
@@ -140,7 +168,11 @@ def sweep(config: Config, source: Path | None = None) -> BatchReport:
         )
     try:
         transcripts, outcomes = _walk_source(walk_root)
-        outcomes.extend(_capture_item(config, path) for path in transcripts)
+        outcomes.extend(
+            _capture_item(config, path)
+            for path in transcripts
+            if _in_window(path, window)
+        )
         cataloged = _cataloged_hashes(config.root)
         outcomes.extend(
             _capture_item(config, path)

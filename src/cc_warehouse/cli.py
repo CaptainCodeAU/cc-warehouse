@@ -8,12 +8,14 @@ handle and removes nothing itself: build.py owns projection removal and the stor
 owns the one write primitive (R2/R4 fences).
 """
 
+import functools
 import json
+import re
 import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -216,6 +218,96 @@ def _content_flags(args: Sequence[str]) -> dict[str, str]:
             elif arg.startswith(f"--{stem}="):
                 flags[key] = arg.split("=", 1)[1]
     return flags
+
+
+# --- the --since / --until window (DESIGN 15 entry 2026-08-01, block 5) -----
+#
+# Parsing lives here because it is CLI work; share.py and sweep.py receive an
+# already-resolved pair of instants and only APPLY it. That keeps one parser
+# (the tracer bullet's "one shared window parser/validator") without either
+# module importing the other.
+#
+# This is the ONE place local time is contract-correct. Rendering must never
+# learn the machine's zone - slice 15 has a fence asserting that - but a date
+# the operator TYPED means their calendar day, so selection reads their clock.
+# The principal chose wall-clock intent over agreement with the projection
+# folder names, which slice UTC days; the consequence is stated in block 5 and
+# tested rather than hidden.
+Window = tuple[datetime | None, datetime | None]
+
+_BARE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_boundary(text: str, *, end_of_day: bool) -> datetime:
+    """One --since / --until value as an absolute instant.
+
+    A bare YYYY-MM-DD is the operator's LOCAL calendar day: --since takes its
+    00:00:00 and --until the last instant of it, so a one-day window is
+    inclusive at both ends. A naive datetime reads as local for the same reason.
+    A datetime carrying an offset is taken literally, because the operator
+    already said exactly which instant they meant.
+
+    Raises ValueError on anything else. No relative forms in v1.1: "7d" and
+    "yesterday" are refused rather than guessed at, since a guessed window
+    silently selects the wrong sessions.
+    """
+    if _BARE_DATE_RE.match(text):
+        day = datetime.fromisoformat(text)
+        moment = day + timedelta(days=1, microseconds=-1) if end_of_day else day
+        return moment.astimezone()
+    parsed = datetime.fromisoformat(text)
+    return parsed if parsed.tzinfo is not None else parsed.astimezone()
+
+
+def _window_flags(args: Sequence[str]) -> tuple[Window, str | None]:
+    """(since, until) parsed from these args, plus an error message or None.
+
+    One-sided windows are valid; since after until is a usage error, because it
+    selects nothing and is far more likely to be a typo than an intent.
+    """
+    values: dict[str, str] = {}
+    for i, arg in enumerate(args):
+        for stem in ("since", "until"):
+            if arg == f"--{stem}" and i + 1 < len(args):
+                values[stem] = args[i + 1]
+            elif arg.startswith(f"--{stem}="):
+                values[stem] = arg.split("=", 1)[1]
+    bounds: dict[str, datetime | None] = {"since": None, "until": None}
+    for stem, raw in values.items():
+        try:
+            bounds[stem] = _parse_boundary(raw, end_of_day=stem == "until")
+        except ValueError:
+            return (None, None), (
+                f"--{stem} {raw!r} is not a date or datetime; use YYYY-MM-DD or an "
+                "ISO datetime (no relative forms in v1.1)"
+            )
+    since, until = bounds["since"], bounds["until"]
+    if since is not None and until is not None and since > until:
+        return (None, None), "--since is after --until, which selects nothing"
+    return (since, until), None
+
+
+def in_window(first_ts: str | None, window: Window) -> bool:
+    """Whether a session's R12 FIRST timestamp falls inside the window.
+
+    The first timestamp is what every listing already presents, so selection
+    counts time the way the operator already reads it. A session with no
+    timestamp cannot be placed and is excluded from any bounded window.
+    """
+    since, until = window
+    if since is None and until is None:
+        return True
+    if not first_ts:
+        return False
+    try:
+        stamp = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.astimezone()
+    if since is not None and stamp < since:
+        return False
+    return not (until is not None and stamp > until)
 
 
 def _config_source(args: Sequence[str]) -> tuple[bool, Path | None]:
@@ -425,8 +517,13 @@ def _run_sweep(args: Sequence[str]) -> int:
     if source_error is not None:
         print(source_error, file=sys.stderr)
         return 2
+    window, problem = _window_flags(args)
+    if problem is not None:
+        print(f"Error: {problem}", file=sys.stderr)
+        return 1
+    keep = functools.partial(in_window, window=window) if window != (None, None) else None
     config = load_config()
-    report = sweep.sweep(config, source)
+    report = sweep.sweep(config, source, keep)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         print("sweep refused: lock held by a live holder", file=sys.stderr)
         return 2
@@ -478,16 +575,20 @@ def _run_build(args: Sequence[str]) -> int:
     without projecting anything (R14). Otherwise prints a one-line report and names any
     failed item (R10); exits non-zero when the build was refused or an item failed."""
     rest = args[1:]
-    if _wants_help(rest):
-        print(_verb_help(
-            "build",
-            (
-                ("--rebuild", "regenerate every file, not just changed ones"),
-                ("--include-hidden", "also project warmup / no-summary sessions"),
-            ),
-            content=True,
-        ))
-        return 0
+    if any(
+        a in ("--since", "--until") or a.startswith(("--since=", "--until="))
+        for a in rest
+    ):
+        # REFUSED in DESIGN 15 block 5, recorded rather than deferred: a windowed
+        # build either deletes out-of-window projections (R4) or emits an index
+        # that silently omits sessions. Refusing loudly is the whole point.
+        print(
+            "Error: ccw build does not take --since/--until; a windowed build would "
+            "either delete out-of-window projections or hide sessions. Use ccw share "
+            "or ccw sweep",
+            file=sys.stderr,
+        )
+        return 1
     problem = _value_flag_problem(rest)
     if problem is not None:
         print(f"Error: {problem}", file=sys.stderr)
@@ -643,17 +744,6 @@ def _render_adhoc(source: str, out: str | None, rest: Sequence[str]) -> int:
 def _run_render(args: Sequence[str]) -> int:
     """`ccw render`: dispatch the --session (catalog) and ad-hoc (path) forms."""
     rest = args[1:]
-    if _wants_help(rest):
-        print(_verb_help(
-            "render",
-            (
-                ("--session s:<key>", "(re)project one stored session"),
-                ("<path>", "render a transcript outside the store"),
-                ("--out DIR", "ad-hoc destination (default: a temp dir, path printed)"),
-            ),
-            content=True,
-        ))
-        return 0
     problem = _value_flag_problem(rest)
     if problem is not None:
         print(f"Error: {problem}", file=sys.stderr)
@@ -1062,6 +1152,10 @@ def _share_flags(rest: Sequence[str]) -> tuple[list[str], str | None, bool, bool
         elif arg == "--EXPOSED":
             exposed = True
             i += 1
+        elif arg in ("--since", "--until"):
+            i += 2  # the value belongs to the flag, never to the session list
+        elif arg.startswith(("--since=", "--until=")):
+            i += 1
         elif not arg.startswith("-"):
             sessions.append(arg)
             i += 1
@@ -1088,12 +1182,17 @@ def _exposed_choice() -> str:
     return "A"
 
 
-def _run_share_exposed(config: Config, sessions: list[str], out_path: Path) -> int:
+def _run_share_exposed(
+    config: Config,
+    sessions: list[str],
+    out_path: Path,
+    window: "share.WindowFilter | None" = None,
+) -> int:
     """The `ccw share ... --EXPOSED` gate: render a scrubbed and an unscrubbed site
     to staging, print the byte-size + redaction comparison, and publish per the
     operator's typed choice. Nothing reaches --out until they confirm; a non-TTY
     aborts (DESIGN section 9 amendment, 2026-07-23)."""
-    comparison = share.prepare_comparison(config, tuple(sessions))
+    comparison = share.prepare_comparison(config, tuple(sessions), window)
     warn = sys.stderr
     print("!! --EXPOSED: this would publish UNSCRUBBED content. Nothing published yet.", file=warn)
     print("   Both versions rendered for comparison:", file=warn)
@@ -1132,12 +1231,28 @@ def _run_share(args: Sequence[str]) -> int:
     non-zero unless --allow-findings ships it verbatim (DESIGN section 9). A short with no
     current/visible head is skipped and named, and makes the exit non-zero (R10), while
     the resolvable sessions are still shared."""
-    sessions, out, allow, exposed = _share_flags(args[1:])
+    rest = args[1:]
+    sessions, out, allow, exposed = _share_flags(rest)
+    window, problem = _window_flags(rest)
+    if problem is not None:
+        print(f"Error: {problem}", file=sys.stderr)
+        return 1
+    windowed = window != (None, None)
+    if sessions and windowed:
+        print(
+            "Error: ccw share selects by s:<key> hashes OR by --since/--until, "
+            "never both; pick one",
+            file=sys.stderr,
+        )
+        return 1
     if not out:
         print("Error: ccw share requires --out DIR", file=sys.stderr)
         return 2
-    if not sessions:
-        print("Error: ccw share requires at least one s:<key>", file=sys.stderr)
+    if not sessions and not windowed:
+        print(
+            "Error: ccw share requires at least one s:<key> or a --since/--until window",
+            file=sys.stderr,
+        )
         return 2
     out_path = Path(out)
     if out_path.exists() and not out_path.is_dir():
@@ -1145,7 +1260,8 @@ def _run_share(args: Sequence[str]) -> int:
         return 2
     if exposed:
         # The unscrubbed-publish gate owns its own comparison + consent + writes.
-        return _run_share_exposed(load_config(), sessions, out_path)
+        keep = functools.partial(in_window, window=window) if windowed else None
+        return _run_share_exposed(load_config(), sessions, out_path, keep)
     # Refuse to write into a populated dir we do not recognize as a prior share, so a
     # stray --out never overwrites unrelated files (F9-conservative; the export deletes
     # nothing, but it does overwrite its own filenames).
@@ -1161,7 +1277,10 @@ def _run_share(args: Sequence[str]) -> int:
         )
         return 2
     config = load_config()
-    report = share.share(config, tuple(sessions), out_path, allow_findings=allow)
+    keep = functools.partial(in_window, window=window) if windowed else None
+    report = share.share(
+        config, tuple(sessions), out_path, allow_findings=allow, window=keep
+    )
     if report.findings and not allow:
         for finding in report.findings:
             print(
@@ -1179,6 +1298,73 @@ def _run_share(args: Sequence[str]) -> int:
     return 1 if (report.skipped or report.errored) else 0
 
 
+# Per-verb help: (verb -> (verb-specific options, takes the content flags)).
+#
+# The dispatcher consults this BEFORE handing a verb its arguments, so `-h` can
+# never reach code that does work. That single point is the fix, not ten
+# scattered checks: on 2026-08-01 eight of the ten verbs had no check at all and
+# `ccw sweep -h` performed a real sweep of 13,836 sessions. A per-verb guard is
+# only ever as complete as whoever remembered to add it; this one is structural,
+# and test_help_is_inert enumerates _VERBS so a new verb is covered on arrival.
+_VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
+    "hook": ((("(stdin)", "a SessionEnd JSON payload on standard input"),), False),
+    "sweep": (
+        (
+            ("--source DIR", "walk DIR instead of ~/.claude/projects"),
+            ("--since DATE", "import only sessions from DATE onward (local day)"),
+            ("--until DATE", "import only sessions up to DATE, inclusive"),
+        ),
+        False,
+    ),
+    "render": (
+        (
+            ("--session s:<key>", "(re)project one stored session"),
+            ("<path>", "render a transcript outside the store"),
+            ("--out DIR", "ad-hoc destination (default: a temp dir, path printed)"),
+        ),
+        True,
+    ),
+    "build": (
+        (
+            ("--rebuild", "regenerate every file, not just changed ones"),
+            ("--include-hidden", "also project warmup / no-summary sessions"),
+        ),
+        True,
+    ),
+    "migrate": ((("<archive>", "one-shot import of a legacy archive directory"),), False),
+    "relocate": (
+        (
+            ("<repo> --to <new-path>", "move / rename a project across the external world"),
+            ("--claim-ambiguous", "adopt references this scan could not attribute"),
+        ),
+        False,
+    ),
+    "project": ((("<subcommand>", _PROJECT_SUBCOMMANDS),), False),
+    "share": (
+        (
+            ("s:<key> ...", "sessions to publish, by short hash"),
+            ("--out DIR", "destination directory (required)"),
+            ("--since DATE", "select by window instead of hashes (local calendar day)"),
+            ("--until DATE", "window end, inclusive (local calendar day)"),
+            ("--allow-findings", "publish secret-shaped content verbatim"),
+            ("--EXPOSED", "open the unscrubbed-publish comparison gate"),
+        ),
+        False,
+    ),
+    "status": ((("(no options)", "recent captures, counts, store size, last errors"),), False),
+    "verify": ((("(no options)", "re-hash objects and cross-check the catalog"),), False),
+    "version": ((("(no options)", "print the ccw version"),), False),
+}
+
+
+def _verb_help_if_asked(verb: str, args: Sequence[str]) -> str | None:
+    """The verb's help text when these args ask for it, else None."""
+    if verb not in _VERB_OPTIONS or not _wants_help(args):
+        return None
+    specific, content = _VERB_OPTIONS[verb]
+    return _verb_help(verb, specific, content=content)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch one ccw invocation; returns the process exit code."""
     args = list(argv) if argv is not None else sys.argv[1:]
@@ -1189,6 +1375,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _print_version()
     if verb in _HELP_FLAGS:
         print(_usage())
+        return 0
+    # Help BEFORE dispatch: no verb handler ever sees `-h`, so none of them can
+    # act on it. Placed here rather than in each handler because completeness is
+    # the whole property being bought.
+    helped = _verb_help_if_asked(verb, args[1:])
+    if helped is not None:
+        print(helped)
         return 0
     if verb == "hook":
         return _run_hook()

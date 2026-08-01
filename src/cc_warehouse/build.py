@@ -13,6 +13,7 @@ projection dir names carry the payload-internal date, never a file mtime (R12).
 import json
 import shutil
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -170,6 +171,18 @@ def _heads(conn: sqlite3.Connection, include_hidden: bool) -> list[_Head]:
             _Head(hash=hash_, short=short, label=label, first_ts=first_ts, slug=slug)
         )
     return heads
+
+
+def heads_for_window(
+    conn: sqlite3.Connection, keep: Callable[[str | None], bool]
+) -> list[_Head]:
+    """Every current, visible head whose R12 first timestamp satisfies `keep`.
+
+    Shares _heads' join and head predicate (R9), so a windowed `ccw share`
+    selects among exactly the sessions a build would project - never a second
+    notion of what a session is.
+    """
+    return [head for head in _heads(conn, include_hidden=False) if keep(head.first_ts)]
 
 
 def head_for_short(conn: sqlite3.Connection, short: str) -> _Head | None:

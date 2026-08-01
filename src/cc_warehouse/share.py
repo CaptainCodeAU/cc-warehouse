@@ -19,12 +19,17 @@ import re
 import shutil
 import socket
 import tempfile
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
 from cc_warehouse import build, catalog, render, store
 from cc_warehouse.config import Config
+
+# A predicate over a head's R12 first timestamp. The CLI owns parsing the
+# --since/--until values into one of these; this module only applies it.
+WindowFilter = Callable[[str | None], bool]
 
 _TOKEN = "[REDACTED]"
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -298,15 +303,40 @@ def _index_html(entries: list[tuple[str, str]]) -> str:
     )
 
 
-def _resolve(root: Path, sessions: tuple[str, ...]) -> tuple[list[_Resolved], list[str]]:
+def _resolve(
+    root: Path,
+    sessions: tuple[str, ...],
+    window: "WindowFilter | None" = None,
+) -> tuple[list[_Resolved], list[str]]:
     """Map each s:<short> key to a current, visible head; the rest are skipped (R10).
 
     A missing, superseded, or hidden short all resolve to no head and are named as
     skipped rather than aborting the batch (operator decision, skip-and-continue).
+
+    With a `window` and no keys, the selection is every current visible head whose
+    R12 first timestamp falls inside it (DESIGN 15 entry, block 5). The two modes
+    are MUTUALLY EXCLUSIVE and the CLI refuses a mix before reaching here; both
+    read the same catalog heads, so a window selects among exactly the sessions a
+    build would project.
     """
     resolved: list[_Resolved] = []
     skipped: list[str] = []
     conn = catalog.open_catalog(root)
+    if window is not None:
+        try:
+            for head in build.heads_for_window(conn, window):
+                resolved.append(
+                    _Resolved(
+                        short=head.short,
+                        hash=head.hash,
+                        label=head.label,
+                        slug=head.slug,
+                        first_ts=head.first_ts,
+                    )
+                )
+        finally:
+            conn.close()
+        return resolved, skipped
     try:
         for key in sessions:
             short = key[2:] if key.startswith("s:") else key
@@ -334,15 +364,17 @@ def share(
     out_dir: Path,
     *,
     allow_findings: bool = False,
+    window: "WindowFilter | None" = None,
 ) -> ShareReport:
-    """Build the sanitized share site for the given s:<short> keys; multi-session gets
+    """Build the sanitized share site for the given s:<short> keys, or for every
+    head inside `window` when one is given; multi-session gets
     one index. Secret-shaped strings abort the whole share (no pages written) unless
     allow_findings ships them verbatim. Redaction runs on the parsed payload before the
     shared renderer, so nothing sensitive survives in the copy-as-markdown payloads.
     """
     root = config.root
     patterns = _redaction_patterns(config)
-    resolved, skipped = _resolve(root, sessions)
+    resolved, skipped = _resolve(root, sessions, window)
 
     # Phase 1: redact + scan every session in memory, writing nothing yet.
     prepared: list[tuple[_Resolved, bytes]] = []
@@ -464,14 +496,18 @@ def _write_site_index(
     store.atomic_write(out_dir / "redaction-report.json", report)
 
 
-def prepare_comparison(config: Config, sessions: tuple[str, ...]) -> SiteComparison:
+def prepare_comparison(
+    config: Config,
+    sessions: tuple[str, ...],
+    window: "WindowFilter | None" = None,
+) -> SiteComparison:
     """Render BOTH a scrubbed and an exposed (UN-redacted) site into a private
     temp staging area so the --EXPOSED gate can compare them. The caller's real
     --out is untouched until commit_comparison; discard_comparison removes the
     staging area if the operator aborts."""
     root = config.root
     patterns = _redaction_patterns(config)
-    resolved, skipped = _resolve(root, sessions)
+    resolved, skipped = _resolve(root, sessions, window)
     staging_root = Path(tempfile.mkdtemp(prefix="ccw-exposed-"))
     scrubbed_dir = staging_root / "SCRUBBED"
     exposed_dir = staging_root / "EXPOSED"
