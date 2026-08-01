@@ -1,5 +1,28 @@
 # Ticket 17: --since/--until on share and sweep
 
+DONE 2026-08-01. Commit 21e7f9d. Gates: ruff clean, pyright strict 0 errors, 627
+tests. Last of the v1.1 flag-group run. FINDINGS:
+
+1. TWO FIXTURE DEFECTS, each of which looked exactly like a window bug and was
+   not. Sessions sharing conftest's default UUID form a supersede CHAIN, so
+   three fixture "sessions" were three versions of one and only the newest was a
+   head - a window then correctly selected nothing and the test read as broken
+   selection. Fixing the UUID was invisible because the slug was never threaded
+   either, so all three still shared one identity. Diagnosed both by querying the
+   catalog rather than by re-reading the code. `_capture` now asserts it stored,
+   because a fixture that silently fails to capture makes every window assertion
+   vacuously true.
+
+2. Local time is contract-correct HERE and nowhere else in the product. Slice 15
+   added a fence asserting rendering never reads the machine clock; selection
+   deliberately does, because a typed date means the operator's calendar. The two
+   rules coexist and the reason is worth keeping: rendering must be reproducible
+   on any machine, selection must match what a person meant.
+
+3. build refuses the pair explicitly rather than ignoring it as an unknown
+   argument, so block 5's REFUSED paragraph is enforced rather than merely
+   recorded.
+
 Slice 17 of 17 (v1.1 flag groups; DESIGN 15 entry 2026-08-01, block 5). Depends
 on: slice 13 (CLI surface); independent of the render slices - it lands last
 only to keep render territory contiguous, per the entry's build order.

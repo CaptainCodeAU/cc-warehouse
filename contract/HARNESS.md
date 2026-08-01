@@ -664,6 +664,30 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   the same help-text misgrouping independently, which is the argument for keeping several
   narrow lenses over one broad pass.
 
+- 2026-08-01: SLICES 15, 16 and 17 DONE, closing the v1.1 flag-group run the same day it
+  was defined. Findings live on the tickets; this records the process.
+  THE LESSON, and it is not about code: A COMMAND THAT LOOKS READ-ONLY MUST BE PROVED
+  READ-ONLY. While checking help text I had just written, `ccw sweep -h` imported 13,836
+  sessions into a real warehouse. Eight of the ten verbs never checked for the flag, and
+  three of those mutate the world. It exited 0 and printed output, so every cheap test of
+  "did help work" would have passed; only asking whether the WORLD CHANGED separates help
+  from work. Nothing was lost because the store is append-only and sources are read-only,
+  which is the product's invariants bounding my mistake rather than the code being right.
+  PROCESS CONSEQUENCE: a guard whose value is completeness belongs at the single point
+  every path crosses, not per-site. The per-verb version of this check existed on two
+  verbs for three slices and its absence on the other eight was invisible the entire time.
+  SECOND LESSON, cheaper: the same census failure recurred twice more this run. Slice 15's
+  date pass reached the turn stamps and not the header's, and two chrome keys reached the
+  JS and not the markup - both found by an independent reviewer after I had already
+  written "census the class" into a commit body. Reviewers ran EARLY on slice 15 rather
+  than at the close, which is what caught them before the run ended; that timing is worth
+  keeping.
+  THIRD, on tests: two slice-17 failures looked like window bugs and were fixture bugs -
+  sessions sharing a UUID form a supersede chain, so three fixtures were three versions of
+  one. Both were diagnosed by querying the catalog, never by re-reading the code, and the
+  fixture now asserts its own precondition so a silent capture failure cannot make every
+  assertion vacuously true.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

@@ -1,5 +1,58 @@
 # Ticket 15: HTML chrome defaults + date-locale display
 
+DONE 2026-08-01. Commits 51ed851 (chrome), e286a2b (dates), c09cb72 (review
+fixes). Gates: ruff clean, pyright strict 0 errors, suite green. FINDINGS, each
+re-derived by execution:
+
+1. THE TICKET CONTRADICTED ITSELF and the fork was taken to the principal rather
+   than resolved in passing, because it changes what every reader sees. Oracle
+   test 1 asked for defaults byte-identical to post-slice-14 output; oracle test
+   5 asked for the conversion JS present by default. With `html_dates` frozen at
+   `local` those cannot both hold. RULED (option 1 of a presented table): keep
+   the frozen default, move the baseline. DESIGN outranks the ticket, and shared
+   rule (d) scopes rule (b)'s byte-identity promise to CONTENT toggles, which
+   chrome is not.
+
+2. The ticket's map of the code was wrong in two places. ADJACENT says "index
+   page emission (timestamps there get the same JS treatment)" and TOUCHES lists
+   build.py "(index pages only)". Executed: `ccw build` emits NO index page (a
+   real build produced four projections plus manifest.json), and share's
+   `_index_html` emits only `<li><a href>title</a></li>` with no timestamp of any
+   kind. There was nothing to treat and nothing to touch; build.py is not in this
+   slice's diff. A ticket's map is evidence, not a specification.
+
+3. THE `<details open>` TRAP, caught before it shipped. `_MD_PASSTHROUGH_RE`
+   whitelisted a BARE `<details>` only, so emitting the opened spelling without
+   widening it would have put literal `&lt;details open&gt;` text on the page -
+   visible, broken, and green under every other test. The regex and the seven
+   emission sites moved in one commit for that reason.
+
+4. TWO KEYS WERE INERT, found by a correctness census after the slice was
+   pushed. `html_width` and `html_font` reached the JS fallback only; the <body>
+   class was frozen at the v1 pair, so with JS unavailable the config was
+   silently ignored and with JS available the page painted at the wrong size
+   until the end-of-body script ran. The tell was the asymmetry: `html_turns`,
+   the third key of the same block, was already implemented in markup. In-spec
+   as the ticket worded it, and wrong anyway - block 2 says the four INITIAL
+   STATES become config, and the body class is the initial state.
+
+5. THE SPLIT CLOCK, the same defect class for the third time in this run. The
+   date pass reached the per-turn stamps and not the header's own `Captured:`
+   span, so under the default one page showed the turns in the reader's zone and
+   the session's own span in UTC with nothing saying which was which. Fixed in
+   `_header_html`, not in the markdown, so the .md files stay ISO; verified
+   afterwards that all 21 data-copy-src payloads are byte-identical and the
+   header payload still reproduces transcript.md verbatim.
+
+6. The anchor moved TWICE, both recorded beside it with what was verified: once
+   for the approved date script (+14 lines per HTML file), once to complete the
+   same change (one line per file). Markdown goldens never moved.
+
+7. Shares verified unaffected by personal chrome: `ccw share` builds a bare
+   RenderOptions, so all five keys take defaults. Shared pages DO ship the date
+   pass, which is the strongest case for the feature - a share is read by other
+   people, in other timezones.
+
 Slice 15 of 17 (v1.1 flag groups; DESIGN 15 entry 2026-08-01, blocks 2 and 4 +
 shared rules). Depends on: slice 14 landing first (same files; sequential order
 per the entry's build-order paragraph), slice 7 (HTML emitter).

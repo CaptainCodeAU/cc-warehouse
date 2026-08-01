@@ -1,5 +1,26 @@
 # Ticket 16: tool-output truncation
 
+DONE 2026-08-01. Commit e541f3f. Gates: ruff clean, pyright strict 0 errors,
+suite green. FINDINGS:
+
+1. The renderer and the manifest counter must agree about WHICH strings the cap
+   applies to, or the marker on the page and the number in the manifest would
+   describe different things. Both go through one `_result_payloads` and one
+   `_truncate`, so they cannot disagree by construction rather than by care.
+
+2. Blocks are counted ONCE, not once per file. The cap is variant-agnostic, so a
+   block cut in transcript.md is cut identically in the compact variant when
+   slice 14's matrix opened tool output there; counting per variant would
+   double-report a single loss.
+
+3. The marker's second clause is load-bearing and is not decoration. "The stored
+   session is complete; only this projection is capped" is what stops a reader
+   inferring archive damage from a projection choice (F6). Both clauses have a
+   test standing behind them, which is what R8 asks of a guarantee.
+
+4. Projection-only is asserted, not assumed: a capped render leaves the source
+   payload hash-identical.
+
 Slice 16 of 17 (v1.1 flag groups; DESIGN 15 entry 2026-08-01, block 3 + shared
 rules). Depends on: slice 14 (the cap applies wherever a tool-result block
 renders, including compact when the matrix opened it). The manifest amendment

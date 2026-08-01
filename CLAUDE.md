@@ -79,25 +79,28 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 
 ## OPEN / next (no silent omissions)
 
-- **v1.1 flag groups**: per-file matrix, HTML chrome defaults, truncation, date-locale,
-  `--since`/`--until` (the five named in DESIGN section 7; date-locale was dropped from
-  this line by the 2026-07-24 compaction, restored 2026-08-01). Defined 2026-08-01
-  (DESIGN 15 entry; slices 14-17). **Slice 14 (per-variant matrix) is DONE
-  2026-08-01**; slices 15 (chrome + date-locale), 16 (truncation) and 17 (window)
-  remain. Slice 14 left a regression anchor at `tests/golden/matrix-anchor` that
-  15-17 reuse: it pins the four projected files at their pre-v1.1 bytes, so any
-  slice that moves DEFAULT output breaks it on purpose. Never regenerate it to
-  make a change pass.
-- **then v1.1 proper**: FTS5 + `ccw search` + `ccw import`; **then v1.2**: `ccw mcp`.
+- **v1.1 flag groups: COMPLETE 2026-08-01.** All four slices landed the day they were
+  defined: 14 per-variant matrix, 15 chrome + date-locale, 16 truncation, 17 the
+  `--since`/`--until` window. Tags slice-14..slice-17. The regression anchor at
+  `tests/golden/matrix-anchor` outlives the run and future slices reuse it: it pins
+  the four projected files, so a slice that moves DEFAULT output breaks it ON PURPOSE.
+  Never regenerate it to make a change pass. It moved twice, both times by a recorded
+  principal ruling with the delta measured first; the two rulings are written beside
+  the anchor in `tests/test_matrix.py`.
+- **NEXT: v1.1 proper**: FTS5 + `ccw search` (session AND message hits) + HTML archive
+  search + `ccw import`/inbox; **then v1.2**: `ccw mcp`. `ccw import` adopts slice 17's
+  window definition when it lands.
 - **Pre-release, not pre-v1**: DESIGN 15 item 6 (PyPI name re-check before the repo goes
   public) and item 7 (registry backup/export story).
 - **Named v1.1 candidate, recorded not dropped**: honouring the reader's OS setting via
   `prefers-color-scheme` for SHARED pages. Same reader-respect argument that decided
   `--hljs`; needs a light palette designed and the highlight.js token colours re-checked
   for contrast.
-- **Non-blocking**: a fresh architecture review is due. The board's line refs have decayed
-  across 20 commits and +4,036 lines of `src/`; `cc-warehouse-architecture/SOURCE.md`
-  carries the measured per-file table and flags every affected card.
+- **Non-blocking**: the architecture review was HELD 2026-07-24 at `1517bba` (commit
+  18fa5be) and its decay banner is retired; this line previously said a review was still
+  due, which was stale. Since that snapshot `src/` has moved again (slices 14-17), so the
+  board's line refs will have drifted and a re-derive is worth doing before its cards are
+  acted on. `cc-warehouse-architecture/SOURCE.md` is canonical.
 
 ## Standing lessons (full form in HARNESS section 8)
 
@@ -116,6 +119,11 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   apply it. Test shared behaviour across BOTH emitters by construction.
 - **Non-destructiveness is a precondition, not an intention.** Prove a backup before touching
   its original, so the worst outcome of a future defect is a refusal rather than a loss.
+- **A read-only-looking command must be proved read-only.** `ccw sweep -h` printed no help
+  and imported 13,836 sessions into a real warehouse (2026-08-01): eight of ten verbs never
+  checked for the flag. Exit 0 plus output is NOT evidence nothing happened; the test that
+  catches it asks whether the world changed. Fixed at the dispatcher, because per-verb
+  guards are only as complete as whoever remembered to add them.
 
 `/refresh` (in `.claude/commands/`) is the currency sweep; `/architecture` owns the review
 board and is outside `/refresh`'s scope. Cross-project context lives in the
