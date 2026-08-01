@@ -174,7 +174,10 @@ system-reminder blocks COLLAPSED in full variants, STRIPPED in compact variants,
 config-overridable for PERSONAL projections only (share builds ignore the override,
 section 9); message anchors are unique (turn ordinal + short content hash, fixing
 SPEC's `make_msg_id` collision); `manifest.json` records config, counts, and loss
-telemetry so "did we lose anything" is always answerable (exporter principle).
+telemetry so "did we lose anything" is always answerable (exporter principle). The
+`loss` key set is skipped_lines + truncated_blocks + truncated_chars + unencodable_chars
+(amended twice on 2026-08-01: section 15's block 3 added the truncation pair, and the
+lone-surrogate ruling the same day added the last).
 
 **Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
 JSONL format found 13 entry types where the render consumed only `user`/`assistant`.
@@ -632,6 +635,24 @@ territory). REFUSED: the pair on `ccw build` - a windowed build either deletes
 out-of-window projections (R4) or emits an index that silently omits sessions; no
 consumer justifies designing around that hazard. `ccw status` adds nothing (it IS a
 recency view). `ccw import` (v1.1 proper) adopts this definition when it lands.
+
+**LONE SURROGATES: DECIDED, 2026-08-01 (principal), found on real data.** The first
+`ccw build` at scale (13,608 sessions) failed on 9 of them with `UnicodeEncodeError:
+surrogates not allowed`; a census found 11 of 13,836 stored objects affected. The cause
+is upstream: Claude Code truncates a field mid-emoji and leaves the HIGH half of a
+surrogate pair, which `json.loads` decodes into a legal Python str that has no utf-8
+encoding at all, so the render succeeds and the WRITE fails. RULED: replace each lone
+surrogate with U+FFFD, the character the standard defines for exactly this, and COUNT it
+into the manifest `loss` block as `unencodable_chars` (section 6 amended accordingly).
+REJECTED: `errors="surrogatepass"`, which preserves the bits but emits files that are not
+valid utf-8; and replacing silently, which is F6 by definition. The reasoning for
+replacement over preservation is that the character was ALREADY destroyed upstream, so
+this chooses how to represent something broken rather than discarding something whole. The
+store is untouched by construction: the original bytes, escape and all, stay recoverable.
+The scrub walks the DECODED object, never the raw text, so a well-formed astral character
+- which arrives as a proper surrogate PAIR and decodes to one legal character - is never
+touched. Batch behaviour needed no change: R10 already reported each failed item by name
+and carried on, which is how the 9 were found at all.
 
 Build order: four slices, render-first - 14 matrix, 15 chrome + date-locale (one key
 family, one JS file), 16 truncation (the manifest amendment rides alone in the smallest

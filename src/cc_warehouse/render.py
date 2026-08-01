@@ -2131,10 +2131,13 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
     counts.prompts / counts.tool_calls, loss (a malformed line is loss, never a
     silent drop, F6), and config (the RenderOptions used).
 
-    The `loss` key set was AMENDED 2026-08-01 (DESIGN 15 entry, block 3) from
-    skipped_lines alone to skipped_lines + truncated_blocks + truncated_chars,
-    so that an opt-in cap is telemetry rather than a quiet subtraction. Both new
-    counts are 0 whenever the cap is off, which is the default.
+    The `loss` key set was AMENDED 2026-08-01, twice. Block 3 grew it from
+    skipped_lines alone to skipped_lines + truncated_blocks + truncated_chars, so
+    an opt-in cap is telemetry rather than a quiet subtraction; both are 0
+    whenever the cap is off, which is the default. The same day's
+    lone-surrogate ruling added unencodable_chars, which counts characters the
+    payload could not represent in utf-8 and that the projection replaced with
+    U+FFFD rather than failing to write at all.
     """
     conv = build_conversation(data)
     truncated_blocks, truncated_chars = _truncation_loss(conv, options)
@@ -2145,6 +2148,7 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
             "skipped_lines": conv.skipped_lines,
             "truncated_blocks": truncated_blocks,
             "truncated_chars": truncated_chars,
+            "unencodable_chars": conv.unencodable_chars,
         },
         "config": asdict(options),
     }

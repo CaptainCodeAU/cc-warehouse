@@ -39,6 +39,9 @@ class ParsedSession:
     last_ts: str | None
     line_count: int
     skipped_lines: int
+    # Lone surrogates replaced with U+FFFD so the projection can be written at
+    # all (2026-08-01 ruling). Loss telemetry, never a silent substitution (F6).
+    unencodable_chars: int
     summary: str
     hidden: bool
     # The assistant model that answered, from the first entry carrying
@@ -119,8 +122,60 @@ def _summary_candidate(entries: list[dict[str, object]]) -> str | None:
     return None
 
 
-def _extract_entries(data: bytes) -> tuple[list[dict[str, object]], int, int]:
-    """Route a raw payload to (entries, line_count, skipped_lines).
+# U+FFFD, what the Unicode standard defines for a character that cannot be
+# represented. Used for LONE SURROGATES, which arrive when Claude Code truncates
+# a field mid-emoji and leaves half a surrogate pair behind: json.loads decodes
+# that escape into a legal Python str with no utf-8 encoding at all, so the
+# render succeeds and the WRITE fails. Found on real data 2026-08-01 (9 of
+# 13,608 sessions; 11 of 13,836 stored objects).
+#
+# The character was already destroyed upstream, so this represents something
+# broken rather than discarding something whole - but the count still travels to
+# the manifest's `loss` block, because a projection that quietly substituted
+# characters is exactly F6. The stored payload keeps the original bytes.
+_REPLACEMENT = "\ufffd"
+
+
+def _scrub_surrogates(value: object) -> tuple[object, int]:
+    """Replace lone surrogates anywhere in a decoded JSON value.
+
+    Returns (scrubbed, replaced count). Walks the decoded object rather than the
+    raw text so that a WELL-FORMED astral character, which reaches json.loads as
+    a proper surrogate PAIR and decodes to one legal character, is never touched.
+    """
+    if isinstance(value, str):
+        if not any("\ud800" <= char <= "\udfff" for char in value):
+            return value, 0
+        out: list[str] = []
+        count = 0
+        for char in value:
+            if "\ud800" <= char <= "\udfff":
+                out.append(_REPLACEMENT)
+                count += 1
+            else:
+                out.append(char)
+        return "".join(out), count
+    if isinstance(value, dict):
+        scrubbed: dict[str, object] = {}
+        total = 0
+        for key, item in cast(dict[str, object], value).items():
+            new_item, n = _scrub_surrogates(item)
+            scrubbed[key] = new_item
+            total += n
+        return scrubbed, total
+    if isinstance(value, list):
+        items: list[object] = []
+        total = 0
+        for item in cast(list[object], value):
+            new_item, n = _scrub_surrogates(item)
+            items.append(new_item)
+            total += n
+        return items, total
+    return value, 0
+
+
+def _extract_entries(data: bytes) -> tuple[list[dict[str, object]], int, int, int]:
+    """Route a raw payload to (entries, line_count, skipped_lines, unencodable).
 
     Shared by parse_session and build_conversation so the JSONL-vs-loglines
     routing has one implementation (R9): a whole-payload JSON object carrying a
@@ -149,13 +204,29 @@ def _extract_entries(data: bytes) -> tuple[list[dict[str, object]], int, int]:
         if isinstance(raw_loglines, list):
             raw_entries = cast(list[object], raw_loglines)
             entries, skipped_lines = _entries_from_loglines(raw_entries)
-            return entries, len(raw_entries), skipped_lines
+            entries, unencodable = _scrubbed_entries(entries)
+            return entries, len(raw_entries), skipped_lines, unencodable
         # Present but not a list: a malformed payload, not an empty one. Counted
         # so it is never indistinguishable from a genuinely empty session (F6).
-        return [], 1, 1
+        return [], 1, 1, 0
 
     entries, skipped_lines = _entries_from_jsonl(text)
-    return entries, len(text.splitlines()), skipped_lines
+    entries, unencodable = _scrubbed_entries(entries)
+    return entries, len(text.splitlines()), skipped_lines, unencodable
+
+
+def _scrubbed_entries(
+    entries: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], int]:
+    """Scrub every entry, summing what was replaced. One call site per routing
+    branch, so both parse_session and build_conversation inherit it (R9)."""
+    out: list[dict[str, object]] = []
+    total = 0
+    for item in entries:
+        scrubbed, count = _scrub_surrogates(item)
+        out.append(cast(dict[str, object], scrubbed))
+        total += count
+    return out, total
 
 
 def parse_session(data: bytes) -> ParsedSession:
@@ -164,7 +235,7 @@ def parse_session(data: bytes) -> ParsedSession:
     Malformed lines are counted (skipped_lines), never silently dropped: the
     parseable lines are still parsed even when others fail (F6).
     """
-    entries, line_count, skipped_lines = _extract_entries(data)
+    entries, line_count, skipped_lines, unencodable = _extract_entries(data)
 
     session_uuid: str | None = None
     cwd: str | None = None
@@ -220,6 +291,7 @@ def parse_session(data: bytes) -> ParsedSession:
         last_ts=last_ts,
         line_count=line_count,
         skipped_lines=skipped_lines,
+        unencodable_chars=unencodable,
         summary=summary,
         hidden=hidden,
         model=model,
@@ -334,6 +406,7 @@ class Conversation:
     prompt_count: int
     tool_call_count: int
     skipped_lines: int
+    unencodable_chars: int = 0
 
 
 @dataclass(frozen=True)
@@ -611,7 +684,7 @@ def build_conversation(data: bytes) -> Conversation:
     a block array are session metadata owned by parse_session, not part of this
     model.
     """
-    entries, _line_count, skipped_lines = _extract_entries(data)
+    entries, _line_count, skipped_lines, unencodable = _extract_entries(data)
 
     turns: list[Turn] = []
     ordinal = 0
@@ -753,4 +826,5 @@ def build_conversation(data: bytes) -> Conversation:
         prompt_count=prompt_count,
         tool_call_count=tool_call_count,
         skipped_lines=skipped_lines,
+        unencodable_chars=unencodable,
     )

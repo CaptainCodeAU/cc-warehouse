@@ -186,9 +186,18 @@ def test_no_marker_when_nothing_was_truncated() -> None:
 def test_manifest_loss_gains_the_two_truncation_keys() -> None:
     """DESIGN 6's frozen `loss` key set grows to skipped_lines +
     truncated_blocks + truncated_chars. This is the whole reason the slice
-    travels alone."""
+    travels alone.
+
+    `unencodable_chars` joined the set later the same day, on the lone-surrogate
+    ruling; the assertion is exact rather than a subset because the point of a
+    FROZEN key set is that a key cannot appear or vanish unnoticed."""
     loss = _manifest_loss(MULTILINE_BODY, 100)
-    assert set(loss) == {"skipped_lines", "truncated_blocks", "truncated_chars"}
+    assert set(loss) == {
+        "skipped_lines",
+        "truncated_blocks",
+        "truncated_chars",
+        "unencodable_chars",
+    }
 
 
 def test_manifest_counts_are_zero_when_the_cap_is_off() -> None:
