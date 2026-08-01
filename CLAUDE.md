@@ -87,7 +87,13 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   Never regenerate it to make a change pass. It moved twice, both times by a recorded
   principal ruling with the delta measured first; the two rulings are written beside
   the anchor in `tests/test_matrix.py`.
-- **NEXT: v1.1 proper**: FTS5 + `ccw search` (session AND message hits) + HTML archive
+- **ARCHIVE-FIRST LAYOUT decided 2026-08-02** (DESIGN 15 entry; R1 and R4 amended in
+  section 14). The product is a READABLE archive: the folder tree is the deliverable,
+  each session folder holds its own JSONL beside the projections, `objects/` retires,
+  and the catalog becomes a disposable index. Tickets 18 (real-data coverage) then 19
+  (the layout itself), in that order - a migration is the worst moment to meet a new
+  entry type. This is closer to a version cut than a slice.
+- **NEXT after those: v1.1 proper**: FTS5 + `ccw search` (session AND message hits) + HTML archive
   search + `ccw import`/inbox; **then v1.2**: `ccw mcp`. `ccw import` adopts slice 17's
   window definition when it lands.
 - **Pre-release, not pre-v1**: DESIGN 15 item 6 (PyPI name re-check before the repo goes

@@ -397,6 +397,11 @@ is logged, never raised (capture must survive notification infrastructure).
 ## 14. Enforceable design rules (reviewers reject code against these by number)
 
 - R1 Identity is sha256; no size or path ever decides equality (F1, F4).
+  AMENDED 2026-08-02 (archive-first, section 15): sha256 remains the ONLY answer to
+  "are these the same bytes". A session UUID answers a DIFFERENT question, "are these
+  the same session", and size answers a third, "which of two payloads KNOWN to differ
+  is larger". Using UUID or size for either of those is not an R1 breach; using either
+  to decide byte-equality still is, and remains the bug F1 exists to prevent.
 - R2 `atomic_write` is the only write path for files; direct `write_text`/`open("w")`
   on final paths is a rejection (F2). Sanctioned exceptions, closed list: SQLite's own
   catalog writes, the O_APPEND audit log, O_EXCL lock create/remove (section 13).
@@ -405,6 +410,12 @@ is logged, never raised (capture must survive notification infrastructure).
 - R4 Warehouse data is delete-free: no deletion primitives against the store, the
   catalog, or capture/import/migrate SOURCES (append/soft-flag only, F9); sources are
   read-only. Deletions are sanctioned ONLY in the projections/shares rebuild module.
+  AMENDED 2026-08-02 (archive-first, section 15): once the source JSONL lives INSIDE an
+  archive folder, that file is store-class data sitting in the one tree the rebuild
+  module is allowed to delete from. The rebuild module may therefore delete only files
+  it GENERATED (the markdown, HTML and manifest); the session JSONL is never deletable
+  by it, and neither is a folder that still contains one. This is the load-bearing rule
+  of the whole redesign: without it, maintenance code can destroy the only copy.
   External-world writers, closed list: `relocate` apply (after backup, section 11),
   `migrate --retire` (one rename, section 10), lock release (section 13).
 - R5 Errors default to the conservative branch: report and leave alone (F7).
@@ -635,6 +646,75 @@ territory). REFUSED: the pair on `ccw build` - a windowed build either deletes
 out-of-window projections (R4) or emits an index that silently omits sessions; no
 consumer justifies designing around that hazard. `ccw status` adds nothing (it IS a
 recency view). `ccw import` (v1.1 proper) adopts this definition when it lands.
+
+**ARCHIVE-FIRST LAYOUT: DECIDED, 2026-08-02 (principal, working session).** The
+product is a READABLE ARCHIVE, not a forensic one. The deliverable is the projected
+folder tree: it gets backed up, it outlives `~/.claude`, and different consumers take
+the markdown, the HTML or the raw JSONL from it. Everything below follows from that one
+sentence, and each was measured against the live 13,836-session corpus before deciding.
+
+FOLDER NAME. `<root>/<project>/<YYYYMMDD-HHMMSS><offset>_<session-uuid>/`, e.g.
+`20260507-134745+1000_006b0875-8f20-4ae1-9d62-ac38ab4af8bf`. Local wall time in a zone
+PINNED IN CONFIG (`archive_timezone`, e.g. Australia/Melbourne), never read from the
+machine clock: converting a fixed UTC instant to a NAMED zone is deterministic, so the
+same session yields the same folder name on any machine forever, which reading `TZ`
+would not. The offset is carried because Melbourne's moves (+1100 AEDT / +1000 AEST),
+and without it a folder name is ambiguous once the tooling is gone. Sorts correctly by
+name; the UUID makes it greppable.
+
+SLUG: DROPPED. Measured: 13,549 of 13,836 sessions (97.9%) have no slug at all, so
+almost every folder was already named `<date>_session_<hash>`. The 2% that exist read
+like `tax-bhencho-spicy-lerdorf` - a prompt fragment plus a random word pair. It cost
+length and delivered nothing.
+
+KEYED ON THE SESSION START (`first_ts`), overriding the principal's stated instinct to
+follow "whatever Claude Code defaults to" - it defaults to nothing, since its files are
+named `<uuid>.jsonl` with no date, and its mtime is a filesystem artefact, not payload
+data (R12). START wins because a start-keyed name is IMMUTABLE: an end-keyed one is
+only final when the session is truly dead, so a session already backed up could sprout
+a second folder later. For a tree that gets archived, that is the worse failure.
+
+VERSIONING: DROPPED, and the evidence is unusually clean. Across 15,466 source files
+there are 172 duplicate-UUID cases; 171 are byte-identical copies and the remaining one
+is not a session at all (workflow `journal.jsonl` files sharing a stem). NOT ONE genuine
+two-version session exists in the corpus. On re-capture the larger payload replaces the
+smaller IN PLACE, and a refusal (new payload smaller) is recorded in `manifest.json`
+rather than being silent. This honours the principal's stated preference - minimise
+duplication, but not as a hard line - without a second folder.
+
+`objects/` RETIRED. With a real JSONL in every archive folder, the content-addressed
+store becomes a second copy of what already ships. It was also earning nothing: 0
+supersede links and 13,829 distinct UUIDs across 13,836 rows, so it had deduplicated
+nothing. The `projections/` level is dropped with it: `<root>/<project>/<session>/`.
+Reserve `locks` and `catalog.sqlite` as project names so the flattened root cannot
+collide.
+
+CATALOG: DEMOTED TO A DISPOSABLE INDEX. Project LABELS survive without it, because the
+label IS the parent folder name. What does not survive is `project_alias` (121 rows,
+~1.9 encoded paths per project), which maps the paths Claude Code used to the name the
+operator chose; losing it splits a renamed project in two on the next capture. A small
+`project.json` per project folder carries label plus known paths, after which the
+archive is genuinely self-describing and the catalog can be deleted and rebuilt by a
+rescan.
+
+REJECTED, recorded so they are not re-proposed: HARDLINKING the store object into each
+archive folder (elegant and free - verified same-inode, zero extra bytes - but it makes
+the deliverable depend on a vault that may not be shipped); NAMING ARCHIVE FILES BY
+HASH (the principal's ruling: a hash filename adds nothing for a human and only
+confuses); END-KEYED folders allowing two folders per UUID (loses the immutable-name
+property above); and GZIPPING payloads (a measured 69% saving, but the file stops being
+readable in place, which is the opposite of the goal).
+
+CONSEQUENCES for section 14: R1 and R4 are amended above. R4's amendment is the
+load-bearing one - the rebuild module may delete only what it GENERATED.
+
+STILL OPEN, for a later ruling: (a) the `journal.jsonl` filter - 7 workflow journals
+were captured as sessions and are exactly the 7 rows with a NULL session_uuid, so they
+are junk rather than a naming edge case; (b) what `ccw verify` becomes once filenames
+are not hashes (proposed: check each folder's JSONL against the `source_hash` already in
+its manifest, plus folder completeness and name-vs-payload agreement); (c) migration
+order - the migration MUST read from `objects/` and not from `~/.claude/projects`,
+because 4 stored objects have no surviving source and reversing that order loses them.
 
 **LONE SURROGATES: DECIDED, 2026-08-01 (principal), found on real data.** The first
 `ccw build` at scale (13,608 sessions) failed on 9 of them with `UnicodeEncodeError:
