@@ -91,9 +91,19 @@ def _variant_line(markdown: str) -> str:
 # --- the regression anchor -------------------------------------------------
 # Purely additive is the whole promise of shared rule (b). These goldens were
 # generated from the slice-13 tree (c075c5d, src/ clean) BEFORE any slice-14
-# edit, so they are literally the pre-slice bytes. Slices 15-17 reuse them: none
-# of those slices may move a default either. They are never regenerated to make
-# a change pass -- a break here is the change being non-additive.
+# edit, so they started as literally the pre-slice bytes. Slices 15-17 reuse
+# them. They are never regenerated to make a change pass -- a break here means
+# the change moved DEFAULT output, which is a ruling, not a fixup.
+#
+# ONE approved re-baseline so far, recorded so the anchor never quietly becomes
+# "whatever the code does now":
+#
+#   2026-08-01, slice 15 block 4, principal's ruling (option 1 of a presented
+#   fork). `html_dates` defaults to `local`, and DESIGN 15 block 4 froze that
+#   default on the reader-respect principle, so the two HTML files gained the
+#   date-conversion script. The delta was reviewed before the goldens moved:
+#   +14 lines each, ZERO deletions, zero modified lines, and both MARKDOWN
+#   goldens untouched (they still hold their original pre-slice-14 bytes).
 
 
 @pytest.mark.parametrize("name", PROJECTION_FILES)

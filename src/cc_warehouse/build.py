@@ -67,6 +67,7 @@ def render_options(config: Config) -> render.RenderOptions:
         html_font=config.render_html_font,
         html_turns=config.render_html_turns,
         details=config.render_details,
+        html_dates=config.render_html_dates,
     )
 
 

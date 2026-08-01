@@ -67,6 +67,13 @@ class RenderOptions:
     # Unprefixed on purpose: the initial <details> state is emitted MARKUP and
     # reaches the markdown files too, so `html_details` would name it dishonestly.
     details: str = "closed"  # closed | open
+    # Date display (block 4). CLIENT-SIDE by design: the markup always carries the
+    # raw ISO stamp, so an unchanged session re-projects to identical bytes
+    # forever and build.py's incremental byte-compare keeps working. A baked
+    # local time would rewrite the warehouse on every timezone move and every DST
+    # transition. `local` shows each stamp in the READER's own zone; `iso` leaves
+    # the page exactly as its markup reads.
+    html_dates: str = "local"  # local | iso
     # highlight.js delivery: cdn | inline | off (DESIGN 15 item 8, principal 2026-07-24).
     # Personal projections keep `cdn` for exporter parity; `ccw share` sets `inline` so a
     # published page makes no third-party request. See _hljs_block.
@@ -1346,6 +1353,35 @@ _COPY_SCRIPT_TEMPLATE = """\
 </script>"""
 _SIZE_LETTER = {"small": "s", "medium": "m", "large": "l"}
 
+# The date pass (block 4). It reads the ISO stamp out of the span's OWN TEXT,
+# which is why the markup needs no data attribute and no extra byte: under `iso`
+# the page is exactly what it always was, and under `local` the only difference
+# is this one script block. The original stamp moves to `title`, so hovering
+# still recovers the exact recorded instant (the audit form is never lost).
+#
+# Nothing here runs at render time. The reader's browser holds the timezone, and
+# this file never learns it -- that is the whole determinism argument.
+_DATE_SCRIPT = """\
+<script id="ccw-local-dates">
+(function () {
+  var nodes = document.querySelectorAll(".timestamp");
+  for (var i = 0; i < nodes.length; i += 1) {
+    var el = nodes[i];
+    var iso = (el.textContent || "").trim();
+    if (!iso) { continue; }
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) { continue; }
+    el.setAttribute("title", iso);
+    el.textContent = when.toLocaleString();
+  }
+})();
+</script>"""
+
+
+def _date_block(options: RenderOptions) -> str:
+    """The date pass, or nothing when the page is asked to stay ISO."""
+    return _DATE_SCRIPT if options.html_dates == "local" else ""
+
 
 def _copy_script(options: RenderOptions) -> str:
     """The page script, with the two size togglers' FALLBACKS filled in.
@@ -1934,9 +1970,8 @@ def _render_page(
     index = _files_index_html(conv, anchors)
     if index is not None:
         parts.append(index)
-    parts.extend(
-        ["</main>", _hljs_block(options.hljs), _copy_script(options), "</body>", "</html>"]
-    )
+    tail = [_hljs_block(options.hljs), _copy_script(options), _date_block(options)]
+    parts.extend(["</main>", *[piece for piece in tail if piece], "</body>", "</html>"])
     return "\n".join(parts) + "\n"
 
 

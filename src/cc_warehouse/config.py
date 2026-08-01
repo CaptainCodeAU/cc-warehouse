@@ -8,7 +8,7 @@ render toggles): top-level `root`; [notify] voice_url voice_id open_folder;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
 attachments_compact commands_compact extras_compact tool_output_compact, and the
-chrome keys html_width html_font html_turns details;
+chrome keys html_width html_font html_turns details html_dates;
 [share] redact_patterns; [relocate] roots; [import] inbox;
 [[notify.webhook]] name url events template; [project.<id>.<table>] overrides.
 """
@@ -43,6 +43,7 @@ CHROME_KEYS: dict[str, tuple[tuple[str, ...], str]] = {
     "html_font": (("small", "medium", "large"), "small"),
     "html_turns": (("expanded", "collapsed"), "expanded"),
     "details": (("closed", "open"), "closed"),
+    "html_dates": (("local", "iso"), "local"),
 }
 
 
@@ -95,6 +96,7 @@ class Config:
     render_html_font: str = "small"
     render_html_turns: str = "expanded"
     render_details: str = "closed"
+    render_html_dates: str = "local"
     redact_patterns: tuple[str, ...] = ()
     relocate_roots: tuple[Path, ...] = ()
     inbox: Path | None = None
@@ -367,6 +369,7 @@ def load_config(
         render_html_font=_chrome(render, flag_map, "html_font", problems),
         render_html_turns=_chrome(render, flag_map, "html_turns", problems),
         render_details=_chrome(render, flag_map, "details", problems),
+        render_html_dates=_chrome(render, flag_map, "html_dates", problems),
         redact_patterns=redact_patterns,
         relocate_roots=relocate_roots,
         config_errors=tuple(problems),

@@ -299,5 +299,19 @@ ul,ol { padding-left:24px; } li { margin:4px 0; }
   }, { passive: true });
 })();
 </script>
+<script id="ccw-local-dates">
+(function () {
+  var nodes = document.querySelectorAll(".timestamp");
+  for (var i = 0; i < nodes.length; i += 1) {
+    var el = nodes[i];
+    var iso = (el.textContent || "").trim();
+    if (!iso) { continue; }
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) { continue; }
+    el.setAttribute("title", iso);
+    el.textContent = when.toLocaleString();
+  }
+})();
+</script>
 </body>
 </html>

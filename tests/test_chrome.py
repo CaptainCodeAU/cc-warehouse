@@ -262,3 +262,81 @@ def test_verb_help_lists_the_chrome_flags_with_their_words(
         dashed = "--" + key.replace("_", "-")
         assert dashed in result.out, f"{dashed} missing from `ccw {verb} -h`"
         assert "|".join(values) in result.out, f"{dashed} does not show its word values"
+
+
+# --- html_dates (block 4): client-side display, ISO markup ------------------
+# The determinism argument is the whole design: markup keeps the raw ISO stamp,
+# so an unchanged session re-projects to the same bytes forever. A baked local
+# time would rewrite the warehouse on every timezone change and every DST
+# transition, and would break build.py's incremental byte-compare with it.
+
+ISO_STAMP = "2026-01-05T10:00:00.000Z"
+DATE_SCRIPT_MARK = "ccw-local-dates"
+
+
+def test_html_dates_defaults_to_local() -> None:
+    """DESIGN 15 block 4: `html_dates` local|iso, default local. The third
+    consecutive product decision on reader-respect, after hljs and the
+    prefers-color-scheme candidate."""
+    assert render.RenderOptions().html_dates == "local"
+    assert load_config(env={"HOME": "/home/alice"}, no_config=True).render_html_dates == "local"
+
+
+def test_local_emits_the_conversion_pass() -> None:
+    assert DATE_SCRIPT_MARK in _pages(html_dates="local")["conversation.html"]
+
+
+def test_iso_omits_the_conversion_pass() -> None:
+    """`iso` is the audit-shaped choice: no JS at all, so what the reader sees is
+    exactly what the markup says."""
+    assert DATE_SCRIPT_MARK not in _pages(html_dates="iso")["conversation.html"]
+
+
+@pytest.mark.parametrize("mode", ("local", "iso"))
+def test_the_markup_carries_the_raw_iso_stamp_under_both_values(mode: str) -> None:
+    """The stamp in the HTML is ISO whichever mode is set: `local` converts in
+    the READER's browser, never at render time. This is what keeps the bytes
+    deterministic and the incremental build's byte-compare meaningful."""
+    page = _pages(html_dates=mode)["conversation.html"]
+    assert f'<span class="timestamp">{ISO_STAMP}</span>' in page
+
+
+@pytest.mark.parametrize("mode", ("local", "iso"))
+def test_markdown_files_stay_iso_under_both_values(mode: str) -> None:
+    """The machine-adjacent projection keeps the audit form. No JS can reach a
+    .md file, so this is structural, but it is the promise block 4 makes."""
+    pages = _pages(html_dates=mode)
+    for name in ("transcript.md", "transcript.compact.md"):
+        assert ISO_STAMP in pages[name], name
+
+
+def test_the_conversion_keeps_the_iso_stamp_on_hover() -> None:
+    """Hover keeps the ISO stamp: the reader can always recover the exact
+    recorded instant, which is the whole reason the audit form is preserved."""
+    page = _pages(html_dates="local")["conversation.html"]
+    assert "title" in page.split(DATE_SCRIPT_MARK)[1][:600]
+
+
+def test_rendering_never_reads_the_machine_clock_or_timezone() -> None:
+    """R12 and the incremental byte-compare both rest on this. A baked local time
+    would make the same payload render differently on two machines, or on the
+    same machine after a DST change."""
+    import ast
+
+    source = (Path(__file__).resolve().parent.parent / "src" / "cc_warehouse" / "render.py")
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    banned = {"now", "today", "utcnow", "astimezone", "localtime", "fromtimestamp"}
+    offenders = [
+        f"render.py:{node.lineno} {node.func.attr}()"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in banned
+    ]
+    assert not offenders, f"machine-clock use in rendering: {offenders}"
+
+
+@pytest.mark.parametrize("mode", ("local", "iso"))
+def test_the_same_payload_renders_to_the_same_bytes(mode: str) -> None:
+    """The invariant block 4 exists to protect, asserted directly."""
+    assert _pages(html_dates=mode) == _pages(html_dates=mode)
