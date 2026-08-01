@@ -74,6 +74,13 @@ class RenderOptions:
     # transition. `local` shows each stamp in the READER's own zone; `iso` leaves
     # the page exactly as its markup reads.
     html_dates: str = "local"  # local | iso
+    # Opt-in truncation (DESIGN 15 entry 2026-08-01, block 3). 0 (or absent) is
+    # OFF and is the default: an audit-trail product does not start dropping
+    # content because you upgraded. CHARACTERS, said in the name, because the
+    # renderer's native unit is decoded str, the archetypal offender is a
+    # single-line blob a line cap would miss, and a KB cap means different
+    # amounts per alphabet. One cap, variant-agnostic.
+    tool_output_max_chars: int = 0
     # highlight.js delivery: cdn | inline | off (DESIGN 15 item 8, principal 2026-07-24).
     # Personal projections keep `cdn` for exporter parity; `ccw share` sets `inline` so a
     # published page makes no third-party request. See _hljs_block.
@@ -102,6 +109,7 @@ class _Policy:
     # be a category error, not a feature.
     details_open: bool
     turns_collapsed: bool
+    tool_output_max_chars: int
 
 
 # The compact variant describes ITSELF in two places, and both sentences are
@@ -337,7 +345,41 @@ def _render_tool_use(block: Block, details_tag: str) -> list[str]:
     ]
 
 
-def _structured_result(result: Mapping[str, object]) -> list[str] | None:
+def _truncate(text: str, cap: int) -> tuple[str, int]:
+    """Cut `text` to at most `cap` characters. Returns (kept, characters omitted).
+
+    The cut lands at the LAST line boundary at or below the cap, because half a
+    line reads as corrupted data rather than as omitted data. A single-line blob
+    has no boundary to fall back to and is cut at the cap exactly - that case is
+    the whole reason block 3 counts characters instead of lines.
+    """
+    if cap <= 0 or len(text) <= cap:
+        return text, 0
+    window = text[:cap]
+    boundary = window.rfind("\n")
+    kept = window[:boundary] if boundary > 0 else window
+    return kept, len(text) - len(kept)
+
+
+def _result_payloads(block: Block, structured: bool) -> list[str]:
+    """The strings a tool-result block puts inside code fences.
+
+    The single definition of what the cap applies to. `_render_tool_result` cuts
+    these and `_truncation_loss` counts them, so the marker on the page and the
+    number in the manifest can never disagree about the same block.
+    """
+    if structured and block.result is not None:
+        rich = _structured_result(block.result)
+        if rich is not None:
+            streams = (
+                _as_str(block.result.get("stdout")),
+                _as_str(block.result.get("stderr")),
+            )
+            return [value for value in streams if value]
+    return [block.text]
+
+
+def _structured_result(result: Mapping[str, object], cap: int = 0) -> list[str] | None:
     """Render a tool_result's structured `toolUseResult` payload: stdout and
     stderr as separate fenced blocks, plus an interrupted marker (item 5).
 
@@ -348,8 +390,8 @@ def _structured_result(result: Mapping[str, object]) -> list[str] | None:
     so the caller falls back to the plain result text.
     """
     lines: list[str] = []
-    stdout = _as_str(result.get("stdout"))
-    stderr = _as_str(result.get("stderr"))
+    stdout, _ = _truncate(_as_str(result.get("stdout")) or "", cap)
+    stderr, _ = _truncate(_as_str(result.get("stderr")) or "", cap)
     if stdout:
         lines.extend(["stdout:", *_fence(stdout)])
     if stderr:
@@ -359,7 +401,21 @@ def _structured_result(result: Mapping[str, object]) -> list[str] | None:
     return lines or None
 
 
-def _render_tool_result(block: Block, structured: bool = True) -> list[str]:
+# The marker. Both halves are load-bearing: the COUNT makes the loss legible and
+# the second clause stops the reader inferring that the archive lost something
+# (F6 - a projection that quietly dropped content would be the product lying
+# about its own completeness). Proven by
+# test_the_marker_states_what_was_omitted and
+# test_the_marker_says_the_stored_session_is_complete.
+def _truncation_marker(omitted: int) -> str:
+    return (
+        "> \N{BLACK SCISSORS} "
+        f"{omitted:,} characters omitted here by tool_output_max_chars. "
+        "The stored session is complete; only this projection is capped."
+    )
+
+
+def _render_tool_result(block: Block, structured: bool = True, cap: int = 0) -> list[str]:
     text = block.text
     body: list[str] = [
         f"- commit `{commit.sha}`: {commit.message}" for commit in detect_commits(text)
@@ -367,15 +423,21 @@ def _render_tool_result(block: Block, structured: bool = True) -> list[str]:
     repo = detect_github_repo(text)
     if repo is not None:
         body.append(f"- repo: {repo}")
+    omitted = sum(
+        _truncate(payload, cap)[1] for payload in _result_payloads(block, structured)
+    )
     rich: list[str] | None = None
     if structured and block.result is not None:
-        rich = _structured_result(block.result)
+        rich = _structured_result(block.result, cap)
     if rich is not None:
         body.extend(rich)
     else:
         # Always keep the raw result text (safe-fenced), in addition to any
         # commit/repo cards, so detection never drops the rest of the result (F6).
-        body.extend(_fence(text))
+        kept, _ = _truncate(text, cap)
+        body.extend(_fence(kept))
+    if omitted:
+        body.extend(["", _truncation_marker(omitted)])
     return ["**Result:**", "", *body]
 
 
@@ -465,7 +527,12 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
     if kind == "tool_result":
         if not policy.include_tools:
             return []
-        return ["", *_render_tool_result(block, policy.toolresult_diff)]
+        return [
+            "",
+            *_render_tool_result(
+                block, policy.toolresult_diff, policy.tool_output_max_chars
+            ),
+        ]
     if kind == "subagent":
         return _render_subagent(block) if policy.include_subagents else []
     if kind == "command":
@@ -952,6 +1019,7 @@ def _full_policy(options: RenderOptions) -> _Policy:
         toolresult_diff=options.toolresult_diff,
         details_open=options.details == "open",
         turns_collapsed=options.html_turns == "collapsed",
+        tool_output_max_chars=options.tool_output_max_chars,
     )
 
 
@@ -994,6 +1062,9 @@ def _compact_policy(options: RenderOptions) -> _Policy:
         # Identical to the full policy's, by contract: chrome is page-level.
         details_open=options.details == "open",
         turns_collapsed=options.html_turns == "collapsed",
+        # One cap, variant-agnostic (block 3): the same value as the full
+        # policy's, so a block cut in one file is cut identically in the other.
+        tool_output_max_chars=options.tool_output_max_chars,
     )
 
 
@@ -1995,18 +2066,59 @@ def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
     return full, compact
 
 
+def _truncation_loss(conv: Conversation, options: RenderOptions) -> tuple[int, int]:
+    """(blocks cut, characters omitted) for one session at this cap.
+
+    Counts each tool-result BLOCK once, not once per file. The cap is
+    variant-agnostic, so a block cut in transcript.md is cut identically in
+    transcript.compact.md when the matrix opened tool output there; counting per
+    variant would double-report the same loss.
+
+    Walks the same payloads the renderer cuts, through the same two helpers, so
+    the number in the manifest and the marker on the page cannot disagree.
+    """
+    cap = options.tool_output_max_chars
+    if cap <= 0:
+        return 0, 0
+    structured = options.toolresult_diff or options.tool_output_compact
+    blocks = 0
+    chars = 0
+    for turn in conv.turns:
+        for block in turn.blocks:
+            if block.kind != "tool_result":
+                continue
+            omitted = sum(
+                _truncate(payload, cap)[1]
+                for payload in _result_payloads(block, structured)
+            )
+            if omitted:
+                blocks += 1
+                chars += omitted
+    return blocks, chars
+
+
 def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
     """Per-session render manifest: source hash, counts, loss telemetry, config.
 
     Frozen keys (DESIGN section 6): source_hash (the payload's sha256),
-    counts.prompts / counts.tool_calls, loss.skipped_lines (a malformed line is
-    loss, never a silent drop, F6), and config (the RenderOptions used).
+    counts.prompts / counts.tool_calls, loss (a malformed line is loss, never a
+    silent drop, F6), and config (the RenderOptions used).
+
+    The `loss` key set was AMENDED 2026-08-01 (DESIGN 15 entry, block 3) from
+    skipped_lines alone to skipped_lines + truncated_blocks + truncated_chars,
+    so that an opt-in cap is telemetry rather than a quiet subtraction. Both new
+    counts are 0 whenever the cap is off, which is the default.
     """
     conv = build_conversation(data)
+    truncated_blocks, truncated_chars = _truncation_loss(conv, options)
     manifest: dict[str, object] = {
         "source_hash": sha256_hex(data),
         "counts": {"prompts": conv.prompt_count, "tool_calls": conv.tool_call_count},
-        "loss": {"skipped_lines": conv.skipped_lines},
+        "loss": {
+            "skipped_lines": conv.skipped_lines,
+            "truncated_blocks": truncated_blocks,
+            "truncated_chars": truncated_chars,
+        },
         "config": asdict(options),
     }
     return manifest

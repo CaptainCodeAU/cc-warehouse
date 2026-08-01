@@ -30,7 +30,14 @@ from cc_warehouse import (
     store,
     sweep,
 )
-from cc_warehouse.config import CHROME_KEYS, Config, chrome_problem, load_config
+from cc_warehouse.config import (
+    CAP_KEY,
+    CHROME_KEYS,
+    Config,
+    cap_problem,
+    chrome_problem,
+    load_config,
+)
 from cc_warehouse.render import RenderOptions
 
 # The v1 verb table (DESIGN section 7). The order is the help listing order;
@@ -148,11 +155,16 @@ _CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
         )
         for key, (allowed, default) in CHROME_KEYS.items()
     ),
+    # The truncation cap (block 3). Variant-agnostic like the chrome keys, but
+    # its value is a NUMBER rather than one of a word list, which is why the
+    # value column belongs to the row rather than to a shared constant.
+    (CAP_KEY.replace("_", "-"), CAP_KEY, _ANY, "N",
+     "cap each rendered tool result at N characters (0 = off)"),
 )
 
 
-def chrome_flag_problem(args: Sequence[str]) -> str | None:
-    """The first illegal chrome VALUE among these args, as an error message.
+def value_flag_problem(args: Sequence[str]) -> str | None:
+    """The first illegal VALUE among these args, as an error message.
 
     Flags are validated UP FRONT and refused as a usage error, unlike a config
     file whose problems are recorded so a capture can still run (R5). The
@@ -167,6 +179,9 @@ def chrome_flag_problem(args: Sequence[str]) -> str | None:
             problem = chrome_problem(key, value)
             if problem is not None:
                 return problem
+    cap = flags.get(CAP_KEY)
+    if cap is not None:
+        return cap_problem(cap)
     return None
 
 
@@ -463,7 +478,7 @@ def _run_build(args: Sequence[str]) -> int:
             content=True,
         ))
         return 0
-    problem = chrome_flag_problem(rest)
+    problem = value_flag_problem(rest)
     if problem is not None:
         print(f"Error: {problem}", file=sys.stderr)
         return 1
@@ -629,7 +644,7 @@ def _run_render(args: Sequence[str]) -> int:
             content=True,
         ))
         return 0
-    problem = chrome_flag_problem(rest)
+    problem = value_flag_problem(rest)
     if problem is not None:
         print(f"Error: {problem}", file=sys.stderr)
         return 1

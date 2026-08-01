@@ -8,7 +8,8 @@ render toggles): top-level `root`; [notify] voice_url voice_id open_folder;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
 attachments_compact commands_compact extras_compact tool_output_compact, and the
-chrome keys html_width html_font html_turns details html_dates;
+chrome keys html_width html_font html_turns details html_dates, and the
+truncation cap tool_output_max_chars;
 [share] redact_patterns; [relocate] roots; [import] inbox;
 [[notify.webhook]] name url events template; [project.<id>.<table>] overrides.
 """
@@ -45,6 +46,25 @@ CHROME_KEYS: dict[str, tuple[tuple[str, ...], str]] = {
     "details": (("closed", "open"), "closed"),
     "html_dates": (("local", "iso"), "local"),
 }
+
+
+CAP_KEY = "tool_output_max_chars"
+
+
+def cap_problem(value: str) -> str | None:
+    """The error message for an illegal truncation cap, or None when it is legal.
+
+    0 is legal and means OFF, which is also the default. Negative is not: it has
+    no reading, and silently treating it as off would hide a typo in the one
+    setting whose whole job is to remove content.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return f"[render].{CAP_KEY} must be a whole number of characters, not {value!r}"
+    if number < 0:
+        return f"[render].{CAP_KEY} must not be negative, got {number}"
+    return None
 
 
 def chrome_problem(key: str, value: str) -> str | None:
@@ -97,6 +117,8 @@ class Config:
     render_html_turns: str = "expanded"
     render_details: str = "closed"
     render_html_dates: str = "local"
+    # Opt-in truncation cap (block 3). 0 is OFF and is the default.
+    render_tool_output_max_chars: int = 0
     redact_patterns: tuple[str, ...] = ()
     relocate_roots: tuple[Path, ...] = ()
     inbox: Path | None = None
@@ -239,6 +261,30 @@ def _chrome(
     return value
 
 
+def _cap(
+    render: Mapping[str, object],
+    flags: Mapping[str, str],
+    problems: list[str],
+) -> int:
+    """The truncation cap, file tier then flag tier, checked at each.
+
+    Same split as the chrome keys: an illegal value is RECORDED and the default
+    kept, because load_config must never be able to stop a capture (R5), while
+    the CLI refuses its own flags up front as a usage error.
+    """
+    value = 0
+    for tier in (render.get(CAP_KEY), flags.get(CAP_KEY)):
+        if tier is None:
+            continue
+        text = str(tier)
+        problem = cap_problem(text)
+        if problem is not None:
+            problems.append(problem)
+            continue
+        value = int(text)
+    return value
+
+
 def load_config(
     *,
     xdg_config_home: Path | None = None,
@@ -370,6 +416,7 @@ def load_config(
         render_html_turns=_chrome(render, flag_map, "html_turns", problems),
         render_details=_chrome(render, flag_map, "details", problems),
         render_html_dates=_chrome(render, flag_map, "html_dates", problems),
+        render_tool_output_max_chars=_cap(render, flag_map, problems),
         redact_patterns=redact_patterns,
         relocate_roots=relocate_roots,
         config_errors=tuple(problems),
