@@ -84,8 +84,18 @@ def _bare() -> int:
     return 0
 
 
-# Group-A content toggles: (flag stem, load_config key, help blurb). All default
-# ON; `--stem` forces on, `--no-stem` forces off (DESIGN section 8 flag tier).
+# Content toggles: (flag stem, load_config key, help blurb). `--stem` forces on,
+# `--no-stem` forces off (DESIGN section 8 flag tier).
+#
+# The first block is the Group-A toggles, which drive the FULL variants and
+# default ON. The second is the v1.1 per-variant matrix (DESIGN 15 entry
+# 2026-08-01, block 1): the same content classes for the COMPACT variant, which
+# default OFF. One table and one parser, because the two blocks differ only in
+# which variant they reach and what they default to -- a second parser would be
+# a second place for the bijection to drift.
+#
+# The stems ARE the bijection: flag = key with dashes, zero exceptions (shared
+# rule c). `--compact-subagents` is therefore not a spelling of anything.
 _CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("subagents", "subagents", "sub-agent (sidechain) exchanges"),
     ("attachments", "attachments", "file / plan attachments"),
@@ -93,12 +103,33 @@ _CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("extras", "extras", "bridge / queue / last-prompt / agent-name events"),
     ("tool-output", "tool_output", "structured stdout / stderr on tool results"),
     ("breadcrumbs", "breadcrumbs", "per-phase caption strips (compact variant)"),
+    ("subagents-compact", "subagents_compact", "sub-agent (sidechain) exchanges"),
+    ("attachments-compact", "attachments_compact", "file / plan attachments"),
+    ("commands-compact", "commands_compact", "slash commands the user ran"),
+    ("extras-compact", "extras_compact", "bridge / queue / last-prompt / agent-name events"),
+    ("tool-output-compact", "tool_output_compact", "tool calls and their results"),
 )
+
+# Value-taking content toggles: (flag stem, load_config key, value list, blurb).
+# `--reminders` is the one pre-v1.1 flag whose stem is not its config key
+# (`reminders_full`): DESIGN section 7 names that spelling explicitly, so it is a
+# documented exception the 2026-08-01 bijection inherited rather than created.
+_CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("reminders", "reminders", "system-reminder handling (full variants)"),
+    ("reminders-compact", "reminders_compact", "system-reminder handling (compact)"),
+)
+
+_REMINDER_VALUES = "{collapse|strip|show}"
 
 
 def _content_flags(args: Sequence[str]) -> dict[str, str]:
-    """Group-A content toggles parsed into a load_config flags mapping. `--x` ->
-    on, `--no-x` -> off; `--reminders VALUE` sets the full-variant reminder mode."""
+    """Content toggles parsed into a load_config flags mapping. `--x` -> on,
+    `--no-x` -> off; `--reminders VALUE` and `--reminders-compact VALUE` set the
+    full and compact reminder modes.
+
+    Every comparison is exact equality, which is what keeps `--subagents` and
+    `--subagents-compact` (and `--reminders` and `--reminders-compact`) from
+    shadowing each other now that both spellings exist."""
     flags: dict[str, str] = {}
     for arg in args:
         for stem, key, _blurb in _CONTENT_BOOL_FLAGS:
@@ -107,10 +138,11 @@ def _content_flags(args: Sequence[str]) -> dict[str, str]:
             elif arg == f"--no-{stem}":
                 flags[key] = "0"
     for i, arg in enumerate(args):
-        if arg == "--reminders" and i + 1 < len(args):
-            flags["reminders"] = args[i + 1]
-        elif arg.startswith("--reminders="):
-            flags["reminders"] = arg.split("=", 1)[1]
+        for stem, key, _blurb in _CONTENT_VALUE_FLAGS:
+            if arg == f"--{stem}" and i + 1 < len(args):
+                flags[key] = args[i + 1]
+            elif arg.startswith(f"--{stem}="):
+                flags[key] = arg.split("=", 1)[1]
     return flags
 
 
@@ -144,16 +176,32 @@ def _wants_help(args: Sequence[str]) -> bool:
 
 def _verb_help(verb: str, specific: tuple[tuple[str, str], ...], *, content: bool) -> str:
     """Per-verb help: verb-specific options, then (for build/render) the shared
-    content toggles and the config-source switches."""
+    content toggles and the config-source switches.
+
+    The toggles are GROUPED by the variant they reach, which shared rule (c)
+    explicitly allows ("help text may group flags for readability") as long as no
+    flag is respelled. Every stem below is printed exactly as the parser accepts
+    it, straight out of the same tables.
+    """
     lines = [f"usage: ccw {verb} [options]", ""]
     for name, blurb in specific:
         lines.append(f"  {name:<28} {blurb}")
     if content:
-        lines.append("")
-        lines.append("content (default on; --no-X drops it):")
-        for stem, _key, blurb in _CONTENT_BOOL_FLAGS:
-            lines.append(f"  --[no-]{stem:<21} {blurb}")
-        lines.append(f"  {'--reminders {collapse|strip|show}':<28} system-reminder handling")
+        groups = (
+            ("content, full variants (--no-X drops it):", False),
+            ("content, compact variant (default off; --X adds it):", True),
+        )
+        for heading, want_compact in groups:
+            lines.append("")
+            lines.append(heading)
+            for stem, _key, blurb in _CONTENT_BOOL_FLAGS:
+                if stem.endswith("-compact") is not want_compact:
+                    continue
+                lines.append(f"  --[no-]{stem:<21} {blurb}")
+            for stem, _key, blurb in _CONTENT_VALUE_FLAGS:
+                if stem.endswith("-compact") is not want_compact:
+                    continue
+                lines.append(f"  {f'--{stem} {_REMINDER_VALUES}':<28} {blurb}")
     lines.append("")
     lines.append("config:")
     lines.append(f"  {'--config PATH':<28} read one config file instead of the usual two")
