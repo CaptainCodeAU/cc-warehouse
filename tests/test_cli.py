@@ -131,31 +131,24 @@ def test_build_and_render_accept_the_matrix_flag_pairs(
             assert (out / "transcript.compact.md").exists()
 
 
-def test_matrix_flags_are_listed_in_the_content_help_group(ccw_env: dict[str, str]) -> None:
-    """The flags are discoverable: `ccw build -h` and `ccw render -h` list each
-    one in its bijection spelling, and `--reminders-compact` beside them."""
+def test_matrix_flags_are_listed_under_the_compact_help_group(
+    ccw_env: dict[str, str],
+) -> None:
+    """Help GROUPS the toggles by the variant they reach (shared rule c allows
+    grouping, never respelling), so each compact flag has to appear AFTER the
+    compact heading, not merely somewhere in the output.
+
+    test_matrix.py owns the bijection spellings; this owns the verb surface -
+    that the heading exists and that every compact flag, `--reminders-compact`
+    and the compact-only `--breadcrumbs` are filed under it rather than under
+    the full-variant heading, which would tell the reader the opposite of the
+    truth."""
     for verb in ("build", "render"):
         result = run_ccw([verb, "-h"], ccw_env)
         assert result.code == 0, result.err
-        for stem in MATRIX_FLAG_STEMS:
-            assert stem in result.out, f"--{stem} missing from `ccw {verb} -h`"
-        assert "--reminders-compact" in result.out
-
-
-def test_the_reversed_compact_spelling_is_not_a_flag(
-    ccw_env: dict[str, str], tmp_path: Path
-) -> None:
-    """`--compact-subagents` is NOT a spelling of `--subagents-compact`. The
-    bijection has zero exceptions, so the reversed form carries no meaning and
-    leaves the projection exactly as it was."""
-    source = tmp_path / "s.jsonl"
-    source.write_bytes(basic_session())
-    plain = tmp_path / "plain"
-    assert run_ccw(["render", str(source), "--out", str(plain)], ccw_env).code == 0
-    reversed_out = tmp_path / "reversed"
-    result = run_ccw(
-        ["render", str(source), "--out", str(reversed_out), "--compact-subagents"], ccw_env
-    )
-    assert result.code == 0, result.err
-    for name in ("transcript.md", "transcript.compact.md", "conversation.compact.html"):
-        assert (reversed_out / name).read_bytes() == (plain / name).read_bytes(), name
+        head = "content, compact variant"
+        assert head in result.out, f"no compact group in `ccw {verb} -h`"
+        _full_group, _, compact_group = result.out.partition(head)
+        compact_group = compact_group.split("\nconfig:")[0]
+        for stem in (*MATRIX_FLAG_STEMS, "reminders-compact", "breadcrumbs"):
+            assert stem in compact_group, f"--{stem} not filed under the compact group"

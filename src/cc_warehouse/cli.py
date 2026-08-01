@@ -84,42 +84,54 @@ def _bare() -> int:
     return 0
 
 
-# Content toggles: (flag stem, load_config key, help blurb). `--stem` forces on,
-# `--no-stem` forces off (DESIGN section 8 flag tier).
+# Content toggles: (flag stem, load_config key, VARIANT, help blurb). `--stem`
+# forces on, `--no-stem` forces off (DESIGN section 8 flag tier).
 #
-# The first block is the Group-A toggles, which drive the FULL variants and
-# default ON. The second is the v1.1 per-variant matrix (DESIGN 15 entry
-# 2026-08-01, block 1): the same content classes for the COMPACT variant, which
-# default OFF. One table and one parser, because the two blocks differ only in
-# which variant they reach and what they default to -- a second parser would be
-# a second place for the bijection to drift.
+# The variant a row reaches is a FIELD, not something recovered from the stem's
+# spelling. Deriving it from a `-compact` suffix looked equivalent and was not:
+# `--breadcrumbs` is compact-only without carrying the suffix, so a suffix test
+# files it under the full-variant heading and tells the reader the opposite of
+# the truth. It would also have no way to express "neither", which the next
+# slice needs -- DESIGN 15 shared rule (d) makes chrome keys variant-agnostic,
+# and block 3's truncation cap is explicitly "one cap, variant-agnostic".
 #
-# The stems ARE the bijection: flag = key with dashes, zero exceptions (shared
-# rule c). `--compact-subagents` is therefore not a spelling of anything.
-_CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str], ...] = (
-    ("subagents", "subagents", "sub-agent (sidechain) exchanges"),
-    ("attachments", "attachments", "file / plan attachments"),
-    ("commands", "commands", "slash commands the user ran"),
-    ("extras", "extras", "bridge / queue / last-prompt / agent-name events"),
-    ("tool-output", "tool_output", "structured stdout / stderr on tool results"),
-    ("breadcrumbs", "breadcrumbs", "per-phase caption strips (compact variant)"),
-    ("subagents-compact", "subagents_compact", "sub-agent (sidechain) exchanges"),
-    ("attachments-compact", "attachments_compact", "file / plan attachments"),
-    ("commands-compact", "commands_compact", "slash commands the user ran"),
-    ("extras-compact", "extras_compact", "bridge / queue / last-prompt / agent-name events"),
-    ("tool-output-compact", "tool_output_compact", "tool calls and their results"),
+# One table and one parser for both variants: the blocks differ only in which
+# variant they reach and what they default to, and a second parser would be a
+# second place for the bijection to drift. The stems ARE the bijection: flag =
+# key with dashes, zero exceptions (shared rule c), so `--compact-subagents` is
+# not a spelling of anything.
+_FULL = "full"
+_COMPACT = "compact"
+
+_CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str, str], ...] = (
+    ("subagents", "subagents", _FULL, "sub-agent (sidechain) exchanges"),
+    ("attachments", "attachments", _FULL, "file / plan attachments"),
+    ("commands", "commands", _FULL, "slash commands the user ran"),
+    ("extras", "extras", _FULL, "bridge / queue / last-prompt / agent-name events"),
+    ("tool-output", "tool_output", _FULL, "structured stdout / stderr on tool results"),
+    ("subagents-compact", "subagents_compact", _COMPACT, "sub-agent (sidechain) exchanges"),
+    ("attachments-compact", "attachments_compact", _COMPACT, "file / plan attachments"),
+    ("commands-compact", "commands_compact", _COMPACT, "slash commands the user ran"),
+    ("extras-compact", "extras_compact", _COMPACT,
+     "bridge / queue / last-prompt / agent-name events"),
+    ("tool-output-compact", "tool_output_compact", _COMPACT, "tool calls and their results"),
+    ("breadcrumbs", "breadcrumbs", _COMPACT, "per-phase caption strips"),
 )
 
-# Value-taking content toggles: (flag stem, load_config key, value list, blurb).
+# Value-taking content toggles: (flag stem, load_config key, variant, value list,
+# help blurb). The value list belongs to the ROW: these two happen to share one
+# today, but slice 15's chrome flags each take their own (small|medium|large,
+# expanded|collapsed, closed|open, local|iso), and a shared constant would print
+# the wrong values beside them.
+#
 # `--reminders` is the one pre-v1.1 flag whose stem is not its config key
 # (`reminders_full`): DESIGN section 7 names that spelling explicitly, so it is a
 # documented exception the 2026-08-01 bijection inherited rather than created.
-_CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str], ...] = (
-    ("reminders", "reminders", "system-reminder handling (full variants)"),
-    ("reminders-compact", "reminders_compact", "system-reminder handling (compact)"),
+_CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("reminders", "reminders", _FULL, "{collapse|strip|show}", "system-reminder handling"),
+    ("reminders-compact", "reminders_compact", _COMPACT, "{collapse|strip|show}",
+     "system-reminder handling"),
 )
-
-_REMINDER_VALUES = "{collapse|strip|show}"
 
 
 def _content_flags(args: Sequence[str]) -> dict[str, str]:
@@ -132,13 +144,13 @@ def _content_flags(args: Sequence[str]) -> dict[str, str]:
     shadowing each other now that both spellings exist."""
     flags: dict[str, str] = {}
     for arg in args:
-        for stem, key, _blurb in _CONTENT_BOOL_FLAGS:
+        for stem, key, _variant, _blurb in _CONTENT_BOOL_FLAGS:
             if arg == f"--{stem}":
                 flags[key] = "1"
             elif arg == f"--no-{stem}":
                 flags[key] = "0"
     for i, arg in enumerate(args):
-        for stem, key, _blurb in _CONTENT_VALUE_FLAGS:
+        for stem, key, _variant, _values, _blurb in _CONTENT_VALUE_FLAGS:
             if arg == f"--{stem}" and i + 1 < len(args):
                 flags[key] = args[i + 1]
             elif arg.startswith(f"--{stem}="):
@@ -188,20 +200,18 @@ def _verb_help(verb: str, specific: tuple[tuple[str, str], ...], *, content: boo
         lines.append(f"  {name:<28} {blurb}")
     if content:
         groups = (
-            ("content, full variants (--no-X drops it):", False),
-            ("content, compact variant (default off; --X adds it):", True),
+            (_FULL, "content, full variants (default on; --no-X drops it):"),
+            (_COMPACT, "content, compact variant (default off; --X adds it):"),
         )
-        for heading, want_compact in groups:
+        for variant, heading in groups:
             lines.append("")
             lines.append(heading)
-            for stem, _key, blurb in _CONTENT_BOOL_FLAGS:
-                if stem.endswith("-compact") is not want_compact:
-                    continue
-                lines.append(f"  --[no-]{stem:<21} {blurb}")
-            for stem, _key, blurb in _CONTENT_VALUE_FLAGS:
-                if stem.endswith("-compact") is not want_compact:
-                    continue
-                lines.append(f"  {f'--{stem} {_REMINDER_VALUES}':<28} {blurb}")
+            for stem, _key, row_variant, blurb in _CONTENT_BOOL_FLAGS:
+                if row_variant == variant:
+                    lines.append(f"  --[no-]{stem:<21} {blurb}")
+            for stem, _key, row_variant, values, blurb in _CONTENT_VALUE_FLAGS:
+                if row_variant == variant:
+                    lines.append(f"  {f'--{stem} {values}':<28} {blurb}")
     lines.append("")
     lines.append("config:")
     lines.append(f"  {'--config PATH':<28} read one config file instead of the usual two")
