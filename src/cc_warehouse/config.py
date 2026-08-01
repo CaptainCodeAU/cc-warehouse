@@ -6,7 +6,9 @@ CCW_* environment variables -> CLI flags. Slice 13.
 The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for the
 render toggles): top-level `root`; [notify] voice_url voice_id open_folder;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
-extras tool_output; [share] redact_patterns; [relocate] roots; [import] inbox;
+extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
+attachments_compact commands_compact extras_compact tool_output_compact;
+[share] redact_patterns; [relocate] roots; [import] inbox;
 [[notify.webhook]] name url events template; [project.<id>.<table>] overrides.
 """
 
@@ -55,6 +57,16 @@ class Config:
     render_commands: bool = True
     render_extras: bool = True
     render_tool_output: bool = True
+    # The per-VARIANT matrix keys (frozen-map expansion 2026-08-01, DESIGN 15
+    # entry block 1). Flat keys in [render], never a sub-table: a sub-table
+    # replaces wholesale at level two and would silently break section 8's
+    # key-by-key promise (shared rule a). All default OFF, so an empty config
+    # renders byte-identical output before and after v1.1 (shared rule b).
+    render_subagents_compact: bool = False
+    render_attachments_compact: bool = False
+    render_commands_compact: bool = False
+    render_extras_compact: bool = False
+    render_tool_output_compact: bool = False
     redact_patterns: tuple[str, ...] = ()
     relocate_roots: tuple[Path, ...] = ()
     inbox: Path | None = None
@@ -261,7 +273,9 @@ def load_config(
         render_reminders_full=_str_or_none(flag_map.get("reminders"))
         or _str_or_none(render.get("reminders_full"))
         or "collapse",
-        render_reminders_compact=_str_or_none(render.get("reminders_compact")) or "strip",
+        render_reminders_compact=_str_or_none(flag_map.get("reminders_compact"))
+        or _str_or_none(render.get("reminders_compact"))
+        or "strip",
         render_subagents=_flag_bool(
             flag_map, "subagents", _bool(render.get("subagents"), True)
         ),
@@ -274,6 +288,23 @@ def load_config(
         render_extras=_flag_bool(flag_map, "extras", _bool(render.get("extras"), True)),
         render_tool_output=_flag_bool(
             flag_map, "tool_output", _bool(render.get("tool_output"), True)
+        ),
+        # Same layering path as their unsuffixed siblings, only the default flips:
+        # the full-variant toggles default ON, the `_compact` ones default OFF.
+        render_subagents_compact=_flag_bool(
+            flag_map, "subagents_compact", _bool(render.get("subagents_compact"), False)
+        ),
+        render_attachments_compact=_flag_bool(
+            flag_map, "attachments_compact", _bool(render.get("attachments_compact"), False)
+        ),
+        render_commands_compact=_flag_bool(
+            flag_map, "commands_compact", _bool(render.get("commands_compact"), False)
+        ),
+        render_extras_compact=_flag_bool(
+            flag_map, "extras_compact", _bool(render.get("extras_compact"), False)
+        ),
+        render_tool_output_compact=_flag_bool(
+            flag_map, "tool_output_compact", _bool(render.get("tool_output_compact"), False)
         ),
         redact_patterns=redact_patterns,
         relocate_roots=relocate_roots,
