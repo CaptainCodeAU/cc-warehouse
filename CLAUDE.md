@@ -81,7 +81,8 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 
 - **v1.1 flag groups**: per-file matrix, HTML chrome defaults, truncation, date-locale,
   `--since`/`--until` (the five named in DESIGN section 7; date-locale was dropped from
-  this line by the 2026-07-24 compaction, restored 2026-08-01).
+  this line by the 2026-07-24 compaction, restored 2026-08-01). Defined 2026-08-01
+  (DESIGN 15 entry; slices 14-17).
 - **then v1.1 proper**: FTS5 + `ccw search` + `ccw import`; **then v1.2**: `ccw mcp`.
 - **Pre-release, not pre-v1**: DESIGN 15 item 6 (PyPI name re-check before the repo goes
   public) and item 7 (registry backup/export story).

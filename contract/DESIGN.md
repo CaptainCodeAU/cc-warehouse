@@ -206,13 +206,13 @@ emit plus the hardening rules from SPEC section 7.
 | Verb | Does |
 |---|---|
 | `ccw hook` | SessionEnd capture from stdin payload (section 4) |
-| `ccw sweep` | import anything the hook missed from `~/.claude/projects` (or `--source`) |
+| `ccw sweep` | import anything the hook missed from `~/.claude/projects` (or `--source`); `--since`/`--until` import window (section 15, 2026-08-01) |
 | `ccw render` | (re)build the 4 files for `--session s:<hash>`; or render an ad-hoc `<path>` outside the store to `--out` (default: a temp dir, path printed), never under `projections/`, never touching the catalog; honors the content flags |
 | `ccw build` | rebuild projections from the catalog; incremental by default, `--rebuild` for full, `--include-hidden` for hidden sessions; honors the content flags |
 | `ccw migrate` | one-shot import of the legacy archive (section 10) |
 | `ccw relocate` | move/rename a project across the external world (section 11) |
 | `ccw project` | `list` / `show` / `rename` (label) / `move OLD NEW` (alias) / `merge A B` |
-| `ccw share` | build a sanitized static site for chosen sessions (section 9) |
+| `ccw share` | build a sanitized static site for chosen sessions (section 9); sessions chosen by hashes OR a `--since`/`--until` window, never both |
 | `ccw status` | recent captures, counts, store size, last errors (reads catalog + log only) |
 | `ccw verify` | re-hash objects against their names; catalog/object cross-check |
 | `ccw version` | version (also `-v`) |
@@ -243,8 +243,10 @@ the same `[render]` config keys (section 8) so a flag overrides config for one r
 `--breadcrumbs`, plus `--reminders {collapse|strip|show}`. Global config-source
 switches on every verb: `--no-config` (ignore both config files; defaults + env +
 flags only) and `--config PATH` (read one named file instead of the usual two). `share`
-adds `--EXPOSED` (section 9). Later flag groups (per-file matrix, HTML chrome defaults,
-truncation, date-locale, `--since`/`--until`) are the v1.1 surface.
+adds `--EXPOSED` (section 9). The five v1.1 flag groups (per-file matrix, HTML chrome
+defaults, truncation, date-locale, `--since`/`--until`) are DEFINED in the section 15
+entry of 2026-08-01: eleven new `[render]` keys, their bijection-derived flags, and
+`--since`/`--until` on `share` and `sweep`.
 
 ## 8. Configuration
 
@@ -266,9 +268,13 @@ instead of the two.
 The frozen TOML key map (Phase 2, `[render]` expanded 2026-07-23 with the principal for
 the content toggles): top-level `root`; `[notify]` voice_url voice_id open_folder;
 `[render]` breadcrumbs reminders_full reminders_compact **subagents attachments commands
-extras tool_output**; `[share]` redact_patterns; `[relocate]` roots; `[import]` inbox;
-`[[notify.webhook]]` name url events template; `[project.<id>.<table>]` overrides. The
-render toggles all default ON. Desktop notification is ALWAYS on (locked); voice,
+extras tool_output** + the 2026-08-01 v1.1 keys: **subagents_compact attachments_compact
+commands_compact extras_compact tool_output_compact** (default OFF) **html_width html_font
+html_turns details html_dates tool_output_max_chars**; `[share]` redact_patterns;
+`[relocate]` roots; `[import]` inbox; `[[notify.webhook]]` name url events template;
+`[project.<id>.<table>]` overrides. The full-variant render toggles default ON; the
+`_compact` toggles default OFF; chrome defaults are large/small/expanded/closed/local;
+the truncation cap defaults off. Desktop notification is ALWAYS on (locked); voice,
 open-folder, and webhooks are opt-in. TOML parsing is stdlib `tomllib`.
 
 ## 9. Share: static-site export (v1)
@@ -544,9 +550,99 @@ wording is deliberately neutral between "deferred" and "abandoned": the principa
 "at least not now", and only the principal settles which. Reactivating publication
 reactivates item 6 and this posture is re-decided here with a new dated line.
 
+**v1.1 FLAG GROUPS: DEFINED, 2026-08-01 (principal, 17-decision planning interview).** The
+five groups section 7 names (per-file matrix, HTML chrome defaults, truncation,
+date-locale, `--since`/`--until`) were labels without definitions: none is a specimen
+port (the specimen's whole flag surface is output / repo / gist / json / open / limit /
+token / org-uuid / source / include-agents / dry-run / quiet), and the slice-13 plan that
+coined the names was never written into the repo. This entry defines all five. Section
+7's flag paragraph and verb table, section 8's key map and section 16's build order are
+amended the same day; BRAINSTORM and SPEC are untouched (all four files stay mandatory).
+
+Shared rules, all groups: (a) config keys are FLAT in `[render]`, layering key-by-key
+under the existing one-level merge; no nested sub-tables (a sub-table replaces wholesale
+at level two, silently breaking section 8's key-by-key promise, or forces a rewrite of
+tested layering code). (b) An UNSUFFIXED content key or flag keeps its v1 meaning, the
+full variants; `_compact` keys are the only door into compact. Purely additive: an empty
+config renders byte-identical output before and after v1.1. (c) Flag spelling is a
+mechanical bijection, flag = key with dashes (`--subagents-compact`,
+`--tool-output-max-chars`); help text may group flags for readability, never respell
+them. (d) Chrome keys are page-level and variant-agnostic; the unsuffixed-means-full
+rule governs CONTENT toggles only.
+
+**1) Per-file matrix** (truer name: per-VARIANT matrix). The five Group-A content
+toggles become settable per variant. Compact's hard-coded drops (render.py
+`_compact_policy`) become its DEFAULTS, changeable by five new keys: `subagents_compact`,
+`attachments_compact`, `commands_compact`, `extras_compact`, `tool_output_compact` (all
+default OFF), generalizing the shape `reminders_compact` already has. Full CLI parity
+ships with it: `--x-compact` / `--no-x-compact` pairs plus `--reminders-compact VALUE`
+(principal's call over a config-only cut). Defaults stated as contract for the first
+time: full = all five ON (the 2026-07-23 ruling restated), compact = all five OFF.
+NON-SCOPE: thinking has no key on either variant; BRAINSTORM locks thinking ON in full
+variants and compact keeps it welded OFF; a thinking toggle would be its own future
+proposal.
+
+**2) HTML chrome defaults.** The four initial states the page already models become
+config defaults; every chrome element remains (exporter parity), only starting positions
+move: `html_width` small|medium|large (today large), `html_font` small|medium|large
+(today small), `html_turns` expanded|collapsed (today expanded), `details` closed|open
+(today closed). `details` is deliberately unprefixed: initial `<details>` state is
+emitted markup and reaches the markdown files too, the one knob of the four that is not
+HTML-only, named honestly. Values are words, not the DOM's s/m/l letters (config is a
+human surface). LocalStorage interplay: config sets the fallback a fresh browser sees; a
+reader's own clicks win thereafter. REFUSED: visibility knobs (hiding toolbar / copy
+buttons / position indicator) - exporter-parity divergence with no named consumer;
+recorded so it is proposed someday, not drifted into. The `prefers-color-scheme`
+candidate stays a SEPARATE entry (2026-07-24, above): share-facing design work, not
+chrome plumbing.
+
+**3) Truncation.** Opt-in, projection-only cap on rendered tool-result blocks:
+`tool_output_max_chars` (absent or 0 = off, the default; positive = per-block char cap).
+Characters because the renderer's native unit is decoded str, the archetypal offender is
+a single-line blob that a line cap would miss, and a KB cap means different amounts per
+alphabet. The cut lands at the last line boundary at or below the cap. Loss is never
+silent (F6): an in-page marker states what was omitted AND that the stored session is
+complete; the manifest `loss` key set grows to skipped_lines + truncated_blocks +
+truncated_chars. The cap applies wherever a tool-result block renders (full by default;
+compact if the matrix opened it). One cap, variant-agnostic. Store, sources, catalog:
+untouched by construction.
+
+**4) Date-locale.** Client-side display, no baked dates: markup keeps the raw ISO stamp,
+so bytes stay deterministic forever - the incremental build's byte-compare and the
+"unchanged session re-projects to the same bytes" invariant survive untouched, where a
+baked local time would rewrite the warehouse on every timezone or DST change. A small JS
+pass shows each timestamp in the READER's local time and locale, on session pages and
+indexes alike; hover keeps the ISO stamp; markdown files stay ISO (the machine-adjacent
+projection keeps the audit form). One chrome-family key: `html_dates` local|iso, default
+local. Third consecutive product decision on the reader-respect principle (hljs,
+prefers-color-scheme, now this).
+
+**5) `--since` / `--until`.** On `ccw share` (a window as an alternative selector to
+hashes; the two modes are MUTUALLY EXCLUSIVE, mixing is a usage error; union is addable
+later, additively) and `ccw sweep` (an import window; additive and re-runnable, nothing
+lost by narrowing). A session matches on its R12 date, the payload-internal FIRST
+timestamp, the same one every listing presents. Bare dates are the OPERATOR'S LOCAL
+calendar days, inclusive both ends (principal's call over UTC-day string-compare:
+wall-clock intent wins); naive datetimes read as local, offset-carrying ones literal;
+one-sided windows are valid; since after until is a usage error; no relative forms in
+v1.1. CONSEQUENCE, stated once: folders slice UTC days (build.py `first_ts[:10]`), so a
+morning session can match a date its folder name does not show. NAMED CANDIDATE, not
+designed here: re-filing the projection tree under local days (rebuild-module
+territory). REFUSED: the pair on `ccw build` - a windowed build either deletes
+out-of-window projections (R4) or emits an index that silently omits sessions; no
+consumer justifies designing around that hazard. `ccw status` adds nothing (it IS a
+recency view). `ccw import` (v1.1 proper) adopts this definition when it lands.
+
+Build order: four slices, render-first - 14 matrix, 15 chrome + date-locale (one key
+family, one JS file), 16 truncation (the manifest amendment rides alone in the smallest
+slice), 17 window. Contract amendments land first; each slice runs the standard loop,
+oracle tests first.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
 migrate + retire, relocate, share static site, status/verify, config. v1.1: FTS5 +
 `ccw search` (session AND message hits) + HTML archive search + `ccw import`/inbox.
 v1.2: `ccw mcp` (search, get-session, list-projects, stats). Later per BRAINSTORM.
+v1.1 opens with the flag-group slices 14-17 (section 15 entry, 2026-08-01) before
+FTS5/search/import.
