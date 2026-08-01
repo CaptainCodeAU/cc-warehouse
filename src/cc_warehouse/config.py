@@ -7,7 +7,8 @@ The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for 
 render toggles): top-level `root`; [notify] voice_url voice_id open_folder;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
-attachments_compact commands_compact extras_compact tool_output_compact;
+attachments_compact commands_compact extras_compact tool_output_compact, and the
+chrome keys html_width html_font html_turns details;
 [share] redact_patterns; [relocate] roots; [import] inbox;
 [[notify.webhook]] name url events template; [project.<id>.<table>] overrides.
 """
@@ -30,6 +31,27 @@ ENV_VARS = (
 )
 
 _DEFAULT_ROOT_NAME = "cc-warehouse-data"
+
+# The HTML chrome keys and the WORDS each accepts (DESIGN 15 entry 2026-08-01,
+# block 2). Config is a human surface, so the values are words and never the
+# DOM's s/m/l letters; `--html-width l` is the mistake that decision exists to
+# catch. This module owns the frozen key map, so it owns the legal values too -
+# the CLI validates against this same table rather than keeping its own copy,
+# because two lists of legal words would eventually disagree.
+CHROME_KEYS: dict[str, tuple[tuple[str, ...], str]] = {
+    "html_width": (("small", "medium", "large"), "large"),
+    "html_font": (("small", "medium", "large"), "small"),
+    "html_turns": (("expanded", "collapsed"), "expanded"),
+    "details": (("closed", "open"), "closed"),
+}
+
+
+def chrome_problem(key: str, value: str) -> str | None:
+    """The error message for an illegal chrome value, or None when it is legal."""
+    allowed, _default = CHROME_KEYS[key]
+    if value in allowed:
+        return None
+    return f"[render].{key} must be one of {'|'.join(allowed)}, not {value!r}"
 
 
 @dataclass(frozen=True)
@@ -67,6 +89,12 @@ class Config:
     render_commands_compact: bool = False
     render_extras_compact: bool = False
     render_tool_output_compact: bool = False
+    # HTML chrome initial states (block 2). Variant-agnostic by contract, so
+    # there is deliberately no `_full` or `_compact` sibling for any of them.
+    render_html_width: str = "large"
+    render_html_font: str = "small"
+    render_html_turns: str = "expanded"
+    render_details: str = "closed"
     redact_patterns: tuple[str, ...] = ()
     relocate_roots: tuple[Path, ...] = ()
     inbox: Path | None = None
@@ -178,6 +206,35 @@ def _flag_bool(flags: Mapping[str, str], key: str, current: bool) -> bool:
     if raw is None:
         return current
     return raw.lower() in ("1", "true", "yes", "on")
+
+
+def _chrome(
+    render: Mapping[str, object],
+    flags: Mapping[str, str],
+    key: str,
+    problems: list[str],
+) -> str:
+    """One chrome key, file tier then flag tier, with the value CHECKED at each.
+
+    An illegal value never silently becomes the default: it is recorded in
+    `config_errors` and the default is kept. That split is deliberate - a
+    config-file typo must not stop a capture from storing a session (R5), so
+    load_config records rather than raises, while the CLI validates its own flags
+    up front and refuses as a usage error before any work begins.
+    """
+    allowed, default = CHROME_KEYS[key]
+    value = default
+    for tier in (render.get(key), flags.get(key)):
+        if tier is None:
+            continue
+        text = str(tier)
+        problem = chrome_problem(key, text)
+        if problem is not None:
+            problems.append(problem)
+            continue
+        value = text
+    assert value in allowed
+    return value
 
 
 def load_config(
@@ -306,6 +363,10 @@ def load_config(
         render_tool_output_compact=_flag_bool(
             flag_map, "tool_output_compact", _bool(render.get("tool_output_compact"), False)
         ),
+        render_html_width=_chrome(render, flag_map, "html_width", problems),
+        render_html_font=_chrome(render, flag_map, "html_font", problems),
+        render_html_turns=_chrome(render, flag_map, "html_turns", problems),
+        render_details=_chrome(render, flag_map, "details", problems),
         redact_patterns=redact_patterns,
         relocate_roots=relocate_roots,
         config_errors=tuple(problems),

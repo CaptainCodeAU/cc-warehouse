@@ -30,7 +30,7 @@ from cc_warehouse import (
     store,
     sweep,
 )
-from cc_warehouse.config import Config, load_config
+from cc_warehouse.config import CHROME_KEYS, Config, chrome_problem, load_config
 from cc_warehouse.render import RenderOptions
 
 # The v1 verb table (DESIGN section 7). The order is the help listing order;
@@ -102,6 +102,9 @@ def _bare() -> int:
 # not a spelling of anything.
 _FULL = "full"
 _COMPACT = "compact"
+# Chrome is neither: shared rule (d) makes those keys page-level and
+# variant-agnostic, which is the case a two-way split could not express.
+_ANY = "any"
 
 _CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str, str], ...] = (
     ("subagents", "subagents", _FULL, "sub-agent (sidechain) exchanges"),
@@ -131,7 +134,40 @@ _CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
     ("reminders", "reminders", _FULL, "{collapse|strip|show}", "system-reminder handling"),
     ("reminders-compact", "reminders_compact", _COMPACT, "{collapse|strip|show}",
      "system-reminder handling"),
+    # Chrome initial states (DESIGN 15 block 2). Variant-agnostic per shared rule
+    # (d), so they group under `any` rather than under either variant. The legal
+    # words come from config.CHROME_KEYS, which owns the frozen key map: a second
+    # list of legal values here would eventually disagree with the loader's.
+    *(
+        (
+            key.replace("_", "-"),
+            key,
+            _ANY,
+            "{" + "|".join(allowed) + "}",
+            f"initial {key.replace('_', ' ')} ({default} by default)",
+        )
+        for key, (allowed, default) in CHROME_KEYS.items()
+    ),
 )
+
+
+def chrome_flag_problem(args: Sequence[str]) -> str | None:
+    """The first illegal chrome VALUE among these args, as an error message.
+
+    Flags are validated UP FRONT and refused as a usage error, unlike a config
+    file whose problems are recorded so a capture can still run (R5). The
+    asymmetry is deliberate: a flag is a thing the operator just typed, so
+    failing loudly costs them one retry, while a bad config file must never be
+    able to stop a session being stored.
+    """
+    flags = _content_flags(args)
+    for key in CHROME_KEYS:
+        value = flags.get(key)
+        if value is not None:
+            problem = chrome_problem(key, value)
+            if problem is not None:
+                return problem
+    return None
 
 
 def _content_flags(args: Sequence[str]) -> dict[str, str]:
@@ -202,6 +238,7 @@ def _verb_help(verb: str, specific: tuple[tuple[str, str], ...], *, content: boo
         groups = (
             (_FULL, "content, full variants (default on; --no-X drops it):"),
             (_COMPACT, "content, compact variant (default off; --X adds it):"),
+            (_ANY, "page chrome (initial state only; the reader's own clicks win after that):"),
         )
         for variant, heading in groups:
             lines.append("")
@@ -426,6 +463,10 @@ def _run_build(args: Sequence[str]) -> int:
             content=True,
         ))
         return 0
+    problem = chrome_flag_problem(rest)
+    if problem is not None:
+        print(f"Error: {problem}", file=sys.stderr)
+        return 1
     rebuild = "--rebuild" in rest
     include_hidden = "--include-hidden" in rest
     config = _load(rest)
@@ -588,6 +629,10 @@ def _run_render(args: Sequence[str]) -> int:
             content=True,
         ))
         return 0
+    problem = chrome_flag_problem(rest)
+    if problem is not None:
+        print(f"Error: {problem}", file=sys.stderr)
+        return 1
     session, out, source = _render_flags(rest)
     if session is not None:
         return _render_session(session, rest)

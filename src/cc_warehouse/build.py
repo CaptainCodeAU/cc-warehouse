@@ -47,7 +47,8 @@ def render_options(config: Config) -> render.RenderOptions:
     (the Group-A content toggles land here from config + flags, DESIGN section 8).
 
     The `_compact` half is the per-variant matrix (DESIGN 15, 2026-08-01): the
-    same five content classes for the compact variant, defaulting OFF."""
+    same five content classes for the compact variant, defaulting OFF. The
+    chrome half is block 2: page-level initial states, variant-agnostic."""
     return render.RenderOptions(
         reminders_full=config.render_reminders_full,
         reminders_compact=config.render_reminders_compact,
@@ -62,6 +63,10 @@ def render_options(config: Config) -> render.RenderOptions:
         commands_compact=config.render_commands_compact,
         extras_compact=config.render_extras_compact,
         tool_output_compact=config.render_tool_output_compact,
+        html_width=config.render_html_width,
+        html_font=config.render_html_font,
+        html_turns=config.render_html_turns,
+        details=config.render_details,
     )
 
 

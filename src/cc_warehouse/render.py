@@ -55,6 +55,18 @@ class RenderOptions:
     commands_compact: bool = False
     extras_compact: bool = False
     tool_output_compact: bool = False
+    # HTML chrome initial states (DESIGN 15 entry 2026-08-01, block 2). Every
+    # chrome element stays on the page (exporter parity); only the STARTING
+    # position moves, and each default below is the position v1 already had.
+    # Values are WORDS, never the DOM's s/m/l letters, because config is a human
+    # surface. Shared rule (d): these are page-level and VARIANT-AGNOSTIC, so
+    # neither a `_full` nor a `_compact` form exists.
+    html_width: str = "large"  # small | medium | large
+    html_font: str = "small"  # small | medium | large
+    html_turns: str = "expanded"  # expanded | collapsed
+    # Unprefixed on purpose: the initial <details> state is emitted MARKUP and
+    # reaches the markdown files too, so `html_details` would name it dishonestly.
+    details: str = "closed"  # closed | open
     # highlight.js delivery: cdn | inline | off (DESIGN 15 item 8, principal 2026-07-24).
     # Personal projections keep `cdn` for exporter parity; `ccw share` sets `inline` so a
     # published page makes no third-party request. See _hljs_block.
@@ -77,6 +89,12 @@ class _Policy:
     include_commands: bool
     include_extras: bool
     toolresult_diff: bool
+    # Chrome, carried here because every emitter already receives a policy.
+    # These two are VARIANT-AGNOSTIC (shared rule d): both builders below read
+    # them from the same option, and a future edit that lets them diverge would
+    # be a category error, not a feature.
+    details_open: bool
+    turns_collapsed: bool
 
 
 # The compact variant describes ITSELF in two places, and both sentences are
@@ -94,6 +112,17 @@ class _Policy:
 # test_the_compact_variant_note_never_denies_what_it_carries checks BOTH
 # emitters -- the first version of that test checked only the markdown one and
 # the HTML sentence went on lying.
+
+
+def _details_tag(policy: _Policy) -> str:
+    """The `<details>` open tag for this render.
+
+    `details = "open"` is the one chrome knob that reaches the MARKDOWN files as
+    well as the HTML, which is why DESIGN 15 names it without an `html_` prefix.
+    Every emission site goes through here so the two formats cannot drift, and
+    so the markdown-to-HTML whitelist has exactly one spelling to admit.
+    """
+    return "<details open>" if policy.details_open else "<details>"
 
 
 def _compact_note(options: RenderOptions) -> str:
@@ -261,7 +290,7 @@ def _render_todos(todos: object) -> list[str] | None:
     return lines
 
 
-def _render_tool_use(block: Block) -> list[str]:
+def _render_tool_use(block: Block, details_tag: str) -> list[str]:
     name = block.tool_name or "tool"
     tool_input = block.tool_input or {}
     if name == "Bash":
@@ -292,7 +321,7 @@ def _render_tool_use(block: Block) -> list[str]:
     return [
         f"**{name}**",
         "",
-        "<details>",
+        details_tag,
         f"<summary>\N{GEAR} raw {safe}</summary>",
         "",
         *_fence(payload, "json"),
@@ -365,13 +394,13 @@ def _render_attachment(block: Block) -> list[str]:
     return out
 
 
-def _render_reminder(reminder: str, mode: str) -> list[str]:
+def _render_reminder(reminder: str, mode: str, details_tag: str) -> list[str]:
     if mode == "show":
         return ["", f"> system-reminder: {reminder}"]
     if mode == "collapse":
         return [
             "",
-            "<details>",
+            details_tag,
             "<summary>system-reminder</summary>",
             "",
             *_fence(reminder),
@@ -392,11 +421,11 @@ def _thinking_label(block: Block) -> str:
     return f"Thinking | {caption}" if caption else "Thinking"
 
 
-def _render_machinery(block: Block) -> list[str]:
+def _render_machinery(block: Block, details_tag: str) -> list[str]:
     if block.kind == "continuation":
         return [
             "",
-            "<details>",
+            details_tag,
             "<summary>continued conversation</summary>",
             "",
             block.text,
@@ -425,7 +454,7 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
         label = f"> \N{THOUGHT BALLOON} {_thinking_label(block)}"
         return ["", label, "", *_fence(block.text, "md")]
     if kind == "tool_use":
-        return ["", *_render_tool_use(block)] if policy.include_tools else []
+        return ["", *_render_tool_use(block, _details_tag(policy))] if policy.include_tools else []
     if kind == "tool_result":
         if not policy.include_tools:
             return []
@@ -440,7 +469,7 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
         return _render_extra(block) if policy.include_extras else []
     if not policy.include_machinery:
         return []
-    return _render_machinery(block)
+    return _render_machinery(block, _details_tag(policy))
 
 
 # --------------------------------------------------------------------------
@@ -739,7 +768,7 @@ def _header(
         lines.extend(
             [
                 "",
-                "<details>",
+                _details_tag(policy),
                 "<summary>More details</summary>",
                 "",
                 "> \N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} More details",
@@ -774,7 +803,7 @@ def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
     # (the spacing class the exporter fixed in v8.7).
     return [
         "",
-        "<details>",
+        _details_tag(policy),
         f"<summary>{meta.head()}</summary>",
         "",
         f"> {meta.head()}",
@@ -820,7 +849,7 @@ def _user_md(turn: Turn, total: int, policy: _Policy, elapsed: str | None) -> li
     if turn.prompt:
         lines.append(_harden(turn.prompt))
     for reminder in turn.reminders:
-        lines.extend(_render_reminder(reminder, policy.reminder_mode))
+        lines.extend(_render_reminder(reminder, policy.reminder_mode, _details_tag(policy)))
     return _strip_separators(lines)
 
 
@@ -914,6 +943,8 @@ def _full_policy(options: RenderOptions) -> _Policy:
         include_commands=options.commands,
         include_extras=options.extras,
         toolresult_diff=options.toolresult_diff,
+        details_open=options.details == "open",
+        turns_collapsed=options.html_turns == "collapsed",
     )
 
 
@@ -953,6 +984,9 @@ def _compact_policy(options: RenderOptions) -> _Policy:
         include_commands=options.commands_compact,
         include_extras=options.extras_compact,
         toolresult_diff=options.tool_output_compact,
+        # Identical to the full policy's, by contract: chrome is page-level.
+        details_open=options.details == "open",
+        turns_collapsed=options.html_turns == "collapsed",
     )
 
 
@@ -982,7 +1016,12 @@ def render_markdown(data: bytes, options: RenderOptions) -> tuple[str, str]:
 _MD_HEADING_RE = re.compile(r"^(#{1,6}) +(.*)$")
 _MD_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +(.*)$")
 # Only the block-level HTML we emit ourselves passes through unescaped.
-_MD_PASSTHROUGH_RE = re.compile(r"^(?:<details>|</details>|<summary>[^<]*</summary>)$")
+# `<details open>` is admitted alongside the bare tag: `details = "open"` puts
+# the opened spelling into the markdown WE emit, and a whitelist that only
+# knew the bare one would escape it onto the page as literal text.
+_MD_PASSTHROUGH_RE = re.compile(
+    r"^(?:<details(?: open)?>|</details>|<summary>[^<]*</summary>)$"
+)
 _MD_INLINE_RE = re.compile(
     r"(?P<code>`[^`\n]+`)"
     r"|(?P<link>\[[^\]\n]+\]\([^)\n]+\))"
@@ -1187,7 +1226,7 @@ _TOOLBAR = (
 )
 # Double-click a block to copy its exact transcript.md markdown from the
 # base64 data-copy-src payload. Best-effort; the page renders without it.
-_COPY_SCRIPT = """\
+_COPY_SCRIPT_TEMPLATE = """\
 <script>
 (function () {
   function decode(value) {
@@ -1270,8 +1309,8 @@ _COPY_SCRIPT = """\
     try { saved = localStorage.getItem(key) || fallback; } catch (e) { /* private mode */ }
     apply(["s", "m", "l"].indexOf(saved) >= 0 ? saved : fallback);
   }
-  toggler("ccw_html_width", "w-", ".wbtns button", "l");
-  toggler("ccw_html_font", "f-", ".fbtns button", "s");
+  toggler("ccw_html_width", "w-", ".wbtns button", "__W__");
+  toggler("ccw_html_font", "f-", ".fbtns button", "__F__");
   var pos = document.getElementById("turnpos");
   var turns = [].slice.call(document.querySelectorAll("section.turn"));
   var ticking = false;
@@ -1305,6 +1344,26 @@ _COPY_SCRIPT = """\
   }, { passive: true });
 })();
 </script>"""
+_SIZE_LETTER = {"small": "s", "medium": "m", "large": "l"}
+
+
+def _copy_script(options: RenderOptions) -> str:
+    """The page script, with the two size togglers' FALLBACKS filled in.
+
+    A fallback is only what a fresh browser sees: the emitted JS still reads
+    `localStorage.getItem(key) || fallback`, so a reader who has clicked the S/M/L
+    buttons keeps their own choice forever after. Config sets the starting point,
+    never the answer (DESIGN 15 block 2's localStorage-interplay sentence).
+
+    The config values are WORDS and the DOM speaks s/m/l, so the mapping happens
+    here, once, rather than letting `medium` leak into markup where the buttons
+    and the saved value would stop agreeing about what they mean.
+    """
+    return _COPY_SCRIPT_TEMPLATE.replace(
+        "__W__", _SIZE_LETTER[options.html_width]
+    ).replace("__F__", _SIZE_LETTER[options.html_font])
+
+
 # Catppuccin-Macchiato-derived palette and chrome (DESIGN section 6; the
 # structure, class names and colour roles follow exporter v8.10.1 so a
 # cc-warehouse page and an exporter page read as the same product).
@@ -1654,7 +1713,7 @@ def _phase_html(
     anchor = anchors.allocate(ordinal, f"phase:{fragment}")
     payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
     return (
-        f'<div class="phase" id="{anchor}" data-copy-src="{payload}"><details>'
+        f'<div class="phase" id="{anchor}" data-copy-src="{payload}">{_details_tag(policy)}'
         f"<summary><span>{head}</span>{_COPY_BUTTON_SUB}</summary>"
         f'<div class="phase-body">{"".join(rows)}</div></details></div>'
     )
@@ -1662,6 +1721,7 @@ def _phase_html(
 
 def _section_html(
     *,
+    policy: _Policy,
     role: str,
     label: str,
     stamp: str,
@@ -1677,10 +1737,11 @@ def _section_html(
         return []
     section_id = anchors.allocate(ordinal, f"{role}:{ordinal}:{fragment}")
     payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
+    start = " collapsed" if policy.turns_collapsed else ""
     time_span = f'<span class="timestamp">{_escape(stamp)}</span>' if stamp else ""
     clock = f'<span class="elapsed">⏱ {_escape(elapsed)}</span>' if elapsed else ""
     return [
-        f'<section class="turn {role}" id="{section_id}" data-copy-src="{payload}">',
+        f'<section class="turn {role}{start}" id="{section_id}" data-copy-src="{payload}">',
         f'<div class="turn-head"><span class="role">{label}{time_span}{clock}</span>'
         f"{_COPY_BUTTON}</div>",
         '<div class="turn-body">',
@@ -1724,6 +1785,7 @@ def _turn_html(
         if not policy.include_machinery:
             return []
         return _section_html(
+            policy=policy,
             role="assistant",
             label="\N{ELECTRIC PLUG} Pre-conversation",
             stamp=turn.first_ts or "",
@@ -1739,7 +1801,9 @@ def _turn_html(
         body = _md_to_html(prompt_md, allow_block_html=False)
         user_inner.append(_copy_block(anchors, turn.ordinal, "prompt", prompt_md, body))
     for reminder in turn.reminders:
-        lines = _strip_separators(_render_reminder(reminder, policy.reminder_mode))
+        lines = _strip_separators(
+            _render_reminder(reminder, policy.reminder_mode, _details_tag(policy))
+        )
         if lines:
             reminder_md = "\n".join(lines)
             body = _md_to_html(reminder_md, allow_block_html=True)
@@ -1747,6 +1811,7 @@ def _turn_html(
                 _copy_block(anchors, turn.ordinal, "reminder", reminder_md, body)
             )
     out = _section_html(
+        policy=policy,
         role="user",
         label="\N{BUST IN SILHOUETTE} User",
         stamp=turn.first_ts or "",
@@ -1760,6 +1825,7 @@ def _turn_html(
     if claude_md:
         out.extend(
             _section_html(
+                policy=policy,
                 role="assistant",
                 label="\N{ROBOT FACE} Claude",
                 stamp=turn.last_ts or "",
@@ -1818,7 +1884,7 @@ def _header_html(
     return (
         f'<div class="meta" data-copy-src="{payload}">{_COPY_BUTTON}'
         + "<br>".join(lean)
-        + '<div class="more"><details><summary>More details</summary>'
+        + f'<div class="more">{_details_tag(policy)}<summary>More details</summary>'
         f'<div class="more-grid">{"".join(grid)}</div></details></div></div>'
     )
 
@@ -1848,7 +1914,7 @@ def _render_page(
     policy: _Policy,
     repo: str | None,
     source_hash: str,
-    hljs: str,
+    options: RenderOptions,
 ) -> str:
     anchors = _AnchorAllocator()
     whole = _render(conv, meta, policy, source_hash)
@@ -1868,7 +1934,9 @@ def _render_page(
     index = _files_index_html(conv, anchors)
     if index is not None:
         parts.append(index)
-    parts.extend(["</main>", _hljs_block(hljs), _COPY_SCRIPT, "</body>", "</html>"])
+    parts.extend(
+        ["</main>", _hljs_block(options.hljs), _copy_script(options), "</body>", "</html>"]
+    )
     return "\n".join(parts) + "\n"
 
 
@@ -1887,8 +1955,8 @@ def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
     meta = parse_session(data)
     repo = _session_repo(conv)
     source_hash = sha256_hex(data)
-    full = _render_page(conv, meta, _full_policy(options), repo, source_hash, options.hljs)
-    compact = _render_page(conv, meta, _compact_policy(options), repo, source_hash, options.hljs)
+    full = _render_page(conv, meta, _full_policy(options), repo, source_hash, options)
+    compact = _render_page(conv, meta, _compact_policy(options), repo, source_hash, options)
     return full, compact
 
 
