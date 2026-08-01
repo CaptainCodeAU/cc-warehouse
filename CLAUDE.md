@@ -119,6 +119,11 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   apply it. Test shared behaviour across BOTH emitters by construction.
 - **Non-destructiveness is a precondition, not an intention.** Prove a backup before touching
   its original, so the worst outcome of a future defect is a refusal rather than a loss.
+- **A green suite is a statement about the inputs you imagined.** 639 tests and three
+  gates did not contain a payload with a lone surrogate, because nobody invents one; 11 of
+  13,836 real sessions had one, and the first `ccw build` at scale failed on 9 (2026-08-01).
+  Run the product on real data before believing it works. R10 is why it was diagnosable:
+  the batch named each failed item and carried on instead of aborting on the first.
 - **A read-only-looking command must be proved read-only.** `ccw sweep -h` printed no help
   and imported 13,836 sessions into a real warehouse (2026-08-01): eight of ten verbs never
   checked for the flag. Exit 0 plus output is NOT evidence nothing happened; the test that

@@ -688,6 +688,25 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   fixture now asserts its own precondition so a silent capture failure cannot make every
   assertion vacuously true.
 
+- 2026-08-01: FIRST BUILD AT SCALE, and what it was worth. `ccw build` was run against a
+  real 13,608-session warehouse and failed on 9 with `UnicodeEncodeError: surrogates not
+  allowed` - a truncated emoji upstream leaving half a surrogate pair, which json.loads
+  turns into a legal Python str with no utf-8 encoding, so every render SUCCEEDED and
+  every write failed. Ruled and fixed the same day (DESIGN 15, U+FFFD plus an
+  unencodable_chars loss key); the second build was 13,608 of 13,608.
+  THE LESSON: A GREEN SUITE IS A STATEMENT ABOUT THE INPUTS YOU IMAGINED. 639 tests, an
+  oracle suite written from the contract, three gates, and a fence for machine-clock use
+  did not contain one payload with a lone surrogate, because nobody thinks to invent one.
+  Eleven of 13,836 real objects had one. Running the product on the operator's own corpus
+  found in four minutes a defect class the whole apparatus was not shaped to reach.
+  WHAT EARNED ITS KEEP: R10. Because the batch reported each failed item BY NAME and
+  carried on, the run finished 13,599 of 13,608 and handed over nine shorts to diagnose,
+  instead of aborting on the first one and hiding the other eight. A design decision made
+  for robustness paid as diagnosability.
+  PROCESS CONSEQUENCE for the next version cut: an exit review should include a RUN AT
+  SCALE on real data, not only a contract-vs-code reconciliation. The v1 exit review found
+  what reading could find; this found what only executing could.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
