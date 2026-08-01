@@ -708,13 +708,34 @@ readable in place, which is the opposite of the goal).
 CONSEQUENCES for section 14: R1 and R4 are amended above. R4's amendment is the
 load-bearing one - the rebuild module may delete only what it GENERATED.
 
-STILL OPEN, for a later ruling: (a) the `journal.jsonl` filter - 7 workflow journals
-were captured as sessions and are exactly the 7 rows with a NULL session_uuid, so they
-are junk rather than a naming edge case; (b) what `ccw verify` becomes once filenames
-are not hashes (proposed: check each folder's JSONL against the `source_hash` already in
-its manifest, plus folder completeness and name-vs-payload agreement); (c) migration
-order - the migration MUST read from `objects/` and not from `~/.claude/projects`,
-because 4 stored objects have no surviving source and reversing that order loses them.
+THE THREE OPEN ITEMS WERE CLOSED THE SAME DAY (principal):
+
+(a) WHAT COUNTS AS A SESSION. Two questions were being conflated and are now answered
+separately. "Is this a Claude Code session file at all?" is answered by the presence of
+a `sessionId` anywhere in the payload; measured across all 14,066 non-agent source
+files, that test skips EXACTLY the 7 workflow journals and nothing else. "Does this
+session have anything worth reading?" is a different question, already answered by the
+existing hidden flag. The principal first chose a single semantic rule ("skip anything
+with no conversation"), and it was re-measured before being written down: it would also
+have skipped 139 UUID-named sessions that carry only machinery entries, silently
+superseding the locked stored-but-hidden decision. RULED after that measurement: junk is
+filtered by the sessionId test; the 139 conversation-free sessions are ARCHIVED (their
+JSONL is kept) but get no markdown or HTML, which is exactly today's hidden behaviour.
+Recorded because it is the second time this week a rule was measured before adoption and
+turned out to reach further than intended.
+
+(b) `ccw verify` BECOMES AN ARCHIVE INTEGRITY CHECK. Per folder: the JSONL still matches
+the `source_hash` already recorded in its manifest, all five files are present, and the
+folder name agrees with the payload's own UUID and start time. It verifies the thing
+actually shipped and needs no vault to exist.
+
+(c) `ccw share` KEEPS THE SAME LAYOUT, continuing to call the one shared
+directory-naming function it already uses. One implementation (R9); a shared bundle
+looks exactly like the archive it came from.
+
+MIGRATION ORDER, unchanged and not negotiable: read from `objects/`, NOT from
+`~/.claude/projects`. Four stored objects have no surviving source, and reversing the
+order loses them permanently.
 
 **LONE SURROGATES: DECIDED, 2026-08-01 (principal), found on real data.** The first
 `ccw build` at scale (13,608 sessions) failed on 9 of them with `UnicodeEncodeError:

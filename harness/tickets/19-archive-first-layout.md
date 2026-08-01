@@ -82,16 +82,25 @@ function of the payload's own contents.
 Build the new tree BESIDE the old one and verify before swapping. Never rename
 in place: the existing 13,608 folders are the operator's live archive.
 
-## Open items, to rule on BEFORE implementation
+## Rulings that were open and are now closed (2026-08-02)
 
-(a) The `journal.jsonl` filter. 7 workflow journals were captured as sessions and
-    are exactly the 7 rows with a NULL session_uuid. They are junk, not a naming
-    edge case, so the fix is a capture-time filter. Confirm they should be
-    excluded rather than named.
-(b) What `ccw verify` becomes. Proposed: check each folder's JSONL against the
-    `source_hash` already in its manifest, plus folder completeness and
-    name-vs-payload agreement. That is a verifier for the thing actually shipped.
-(c) Whether `ccw share` adopts the same layout, or keeps its own.
+(a) A file is a SESSION if any entry carries a `sessionId`. Measured over all 14,066
+    non-agent source files, that skips exactly the 7 workflow journals. Emptiness is a
+    SEPARATE question: the 139 UUID-named sessions carrying only machinery entries are
+    archived (JSONL kept) but get no markdown or HTML, which is today's hidden
+    behaviour. Do NOT collapse these into one rule - the single "no conversation" test
+    was measured and would have discarded all 139.
+(b) `ccw verify` = archive integrity: JSONL vs the manifest's `source_hash`, all five
+    files present, folder name agrees with the payload's UUID and start time.
+(c) `ccw share` keeps the same layout via the one shared naming function (R9).
+
+Extra oracle tests these imply:
+  - a payload with no `sessionId` anywhere is refused at capture and REPORTED by name;
+  - a payload WITH a sessionId but no user/assistant entry is captured, its JSONL is
+    written, and NO markdown or HTML is generated for it;
+  - verify fails a folder whose JSONL no longer matches its manifest source_hash;
+  - verify fails a folder missing any of its five files;
+  - verify fails a folder whose name disagrees with the UUID or start time inside it.
 
 ## Process
 
