@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-07-20T10:03:01Z"
+exclude-newer = "2026-07-29T10:05:23Z"
 
 [[package]]
 name = "cc-warehouse"
