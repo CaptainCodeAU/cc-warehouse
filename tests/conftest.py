@@ -348,6 +348,114 @@ def rich_session(cwd: str = DEFAULT_CWD, session_id: str = DEFAULT_UUID) -> byte
     )
 
 
+def matrix_session(cwd: str = DEFAULT_CWD, session_id: str = DEFAULT_UUID) -> bytes:
+    """A session carrying one block of EVERY per-variant content class (slice 14).
+
+    rich_session covers thinking, tools, commits and reminders but emits no
+    sub-agent, attachment, command or extra block, so it cannot exercise the
+    variant x toggle matrix. Each class here carries a unique marker string, so a
+    test asserts on presence rather than on layout, and the four rendered files
+    are the byte-identical regression anchor for the whole v1.1 flag-group run
+    (DESIGN section 15, 2026-08-01, shared rule b).
+    """
+
+    def raw(kind: str, ts: str, **extra: object) -> dict[str, object]:
+        record: dict[str, object] = {
+            "type": kind,
+            "timestamp": ts,
+            "sessionId": session_id,
+            "cwd": cwd,
+        }
+        record.update(extra)
+        return record
+
+    return jsonl(
+        entry(
+            "user",
+            "Prompt about widgets",
+            "2026-01-05T10:00:00.000Z",
+            session_id=session_id,
+            cwd=cwd,
+            gitBranch="main",
+            slug="widget-work",
+            version="2.0.0",
+        ),
+        entry(
+            "assistant",
+            [
+                {"type": "thinking", "thinking": "deep thoughts about widgets"},
+                {"type": "text", "text": "Working on it."},
+                {
+                    "type": "tool_use",
+                    "id": "tu1",
+                    "name": "Bash",
+                    "input": {"command": "ls widgets", "description": "List widgets"},
+                },
+            ],
+            "2026-01-05T10:00:05.000Z",
+            session_id=session_id,
+            cwd=cwd,
+        ),
+        entry(
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu1",
+                    "content": "TOOLRAWMARKER alpha beta",
+                }
+            ],
+            "2026-01-05T10:00:06.000Z",
+            session_id=session_id,
+            cwd=cwd,
+            # The structured payload matters: the unsuffixed `tool_output` key
+            # chooses between THIS rendering and the raw text fence above, so a
+            # fixture without it cannot observe that key at all.
+            toolUseResult={"stdout": "TOOLSTDOUTMARKER alpha", "stderr": "TOOLSTDERRMARKER"},
+        ),
+        raw(
+            "user",
+            "2026-01-05T10:00:07.000Z",
+            isSidechain=True,
+            agentId="scout",
+            message={"role": "user", "content": "SUBAGENTMARKER investigate the widget"},
+        ),
+        raw(
+            "assistant",
+            "2026-01-05T10:00:08.000Z",
+            isSidechain=True,
+            agentId="scout",
+            message={
+                "role": "assistant",
+                "content": [{"type": "text", "text": "SUBAGENTREPLY found it"}],
+            },
+        ),
+        raw(
+            "attachment",
+            "2026-01-05T10:00:09.000Z",
+            attachment={
+                "type": "file",
+                "filename": "ATTACHMARKER.txt",
+                "content": {"file": {"content": "attachment body line"}},
+            },
+        ),
+        raw(
+            "system",
+            "2026-01-05T10:00:10.000Z",
+            subtype="local_command",
+            content="/COMMANDMARKER --flag",
+        ),
+        raw("agent-name", "2026-01-05T10:00:11.000Z", agentName="EXTRAMARKER"),
+        entry(
+            "assistant",
+            [{"type": "text", "text": "All done."}],
+            "2026-01-05T10:00:12.000Z",
+            session_id=session_id,
+            cwd=cwd,
+        ),
+    )
+
+
 def write_transcript(
     env: Mapping[str, str],
     data: bytes,

@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>widget-work</title>
+<style>
+:root {
+  --bg:#1f202f; --text:#ccd3f3; --muted:#6f738b;
+  --yellow:#ddca9d; --blue:#93acef; --green:#afd89b;
+  --peach:#e5a982; --sky:#8ec2e1; --mauve:#c2a2f1;
+  --surface:#262838; --deep:#181925; --line:#34364a;
+  --mono:"JetBrainsMono Nerd Font Mono","JetBrains Mono","Fira Code",ui-monospace,monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--mono),system-ui,sans-serif;
+  margin:0 auto; padding:24px; line-height:1.7; font-weight:300; transition:max-width .2s; }
+body.f-s { font-size:0.8em; } body.f-m { font-size:0.875em; } body.f-l { font-size:1em; }
+body.w-s { max-width:min(950px, 94vw); }
+body.w-m { max-width:min(1400px, 94vw); }
+body.w-l { max-width:min(1900px, 92vw); }
+strong, summary, .role, th, button { font-weight:700; }
+h1 { color:var(--mauve); border-bottom:1px solid var(--line); padding-bottom:12px;
+  font-size:1.5em; }
+h2,h3,h4,h5,h6 { color:var(--mauve); }
+.role { font-weight:bold; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;
+  display:flex; align-items:center; margin:0; }
+.user .role { color:var(--blue); } .assistant .role { color:var(--peach); }
+.timestamp { color:var(--muted); font-size:0.85em; margin-left:12px; font-weight:normal;
+  text-transform:none; letter-spacing:normal; }
+.elapsed { color:var(--green); font-size:0.85em; margin-left:12px; font-weight:normal;
+  text-transform:none; letter-spacing:normal; }
+details { margin:8px 0; background:var(--deep); border-radius:8px; padding:8px 12px;
+  border:1px solid var(--line); }
+details > summary { cursor:pointer; font-weight:bold; color:var(--sky);
+  display:flex; align-items:center; gap:8px; list-style-position:inside; }
+pre { background:var(--deep); padding:14px 16px; border-radius:8px; overflow-x:auto;
+  border:1px solid var(--line); }
+code { font-family:var(--mono); font-size:0.9em; }
+p code, li code, td code { background:rgba(175,216,155,0.12); color:var(--green);
+  padding:2px 6px; border-radius:4px; }
+a { color:var(--sky); } img { max-width:100%; border-radius:8px; margin:8px 0; }
+strong { color:var(--yellow); }
+table { border-collapse:collapse; margin:12px 0; width:100%; }
+th,td { border:1px solid var(--line); padding:6px 10px; text-align:left; }
+th { background:var(--surface); color:var(--blue); }
+blockquote { border-left:3px solid var(--muted); margin:8px 0; padding:4px 12px;
+  color:var(--muted); }
+ul,ol { padding-left:24px; } li { margin:4px 0; }
+.toolbar { display:flex; gap:8px; margin:0 0 20px; flex-wrap:wrap; align-items:center;
+  position:sticky; top:0; z-index:5; background:var(--bg); padding:10px 0;
+  border-bottom:1px solid var(--line); }
+.toolbar button, .copy-md { background:transparent; border:1px solid var(--line);
+  color:var(--muted);
+  padding:5px 12px; border-radius:7px; cursor:pointer; font-size:12px; font-weight:600;
+  font-family:var(--mono); transition:color .15s, border-color .15s; }
+.toolbar button:hover, .copy-md:hover { color:var(--text); border-color:var(--muted); }
+.toolbar button.active { border-color:var(--sky); color:var(--sky); }
+.wbtns, .fbtns { display:flex; gap:6px; } .wbtns { margin-left:auto; }
+.fbtns { border-left:1px solid var(--line); padding-left:12px; margin-left:6px; }
+.turnpos { margin:0 auto; font-size:12px; color:var(--muted); background:var(--surface);
+  border:1px solid var(--line); border-radius:999px; padding:4px 14px; white-space:nowrap; }
+.turnpos b { color:var(--sky); font-weight:700; }
+/* The class lives on a wrapper, never on the details element itself: every
+   disclosure tag the page emits stays bare so opening and closing literals
+   balance (test_user_details_line_is_escaped_and_page_balanced). Note this
+   comment must not spell that tag out either, for the same reason. */
+.turn { margin:24px 0; border-radius:10px; border:1px solid var(--line); padding:0;
+  overflow:hidden; background:transparent; }
+.turn.user { background:rgba(147,172,239,0.06); border-left:3px solid var(--blue); }
+.turn.assistant { background:rgba(229,169,130,0.05); border-left:3px solid var(--peach); }
+/* A turn collapses by CLASS, not by a disclosure element: the body is visible
+   in plain HTML, so a reader with scripting off still sees the whole
+   conversation, and the toolbar drives the same class. */
+.turn-head { cursor:pointer; padding:12px 20px; display:flex; align-items:center;
+  gap:10px; user-select:none; }
+.turn-head::before { content:"\25B6"; font-size:10px; color:var(--muted);
+  transition:transform .15s; line-height:1; align-self:center; transform:rotate(90deg); }
+.turn.collapsed .turn-head::before { transform:none; }
+.turn.collapsed .turn-body { display:none; }
+.turn-body { padding:0 20px 16px; }
+.copy-md { margin-left:auto; flex-shrink:0; font-size:15px; line-height:1; padding:5px 11px; }
+.copy-md.sub { padding:2px 9px; font-size:14px; margin-left:auto; }
+.meta { position:relative; line-height:1.9; background:var(--surface); border:1px solid var(--line);
+  border-radius:10px; padding:14px 20px 10px; margin-bottom:12px; color:var(--muted);
+  font-size:0.9em; }
+.meta > .copy-md { position:absolute; top:12px; right:14px; margin:0; }
+.meta .m-key { color:var(--sky); }
+.meta .m-warn { color:var(--yellow); }
+.meta .m-model { color:var(--mauve); font-weight:700; background:rgba(194,162,241,0.12);
+  padding:1px 9px; border-radius:6px; }
+.meta .m-you { color:var(--blue); } .meta .m-claude { color:var(--peach); }
+.more-grid .full { grid-column:1 / -1; font-style:italic; color:var(--muted); }
+.row .rbody p { margin:6px 0; }
+.row .rlabel .q { color:var(--green); }
+.meta .m-note { color:var(--muted); font-size:0.88em; }
+.meta .m-note::before { content:"\2022"; color:var(--yellow); margin-right:7px; }
+.more > details { background:transparent; border:none; border-top:1px solid var(--line);
+  border-radius:0; padding:8px 0 0; margin:10px 0 0; }
+.more > details > summary { color:var(--sky); font-size:0.9em; font-weight:700;
+  display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+.more > details > summary:hover { text-decoration:underline; }
+.more > details > summary::before { content:"\25B8"; font-size:11px; transition:transform .15s;
+  line-height:1; }
+.more > details[open] > summary::before { transform:rotate(90deg); }
+.more-grid { display:grid; grid-template-columns:max-content 1fr; gap:2px 18px;
+  font-size:0.88em; color:var(--muted); padding:8px 0 0 4px; }
+.more-grid .k { color:var(--sky); }
+.more-grid .v { color:var(--text); font-weight:300; }
+.phase { background:var(--deep); border:1px solid var(--line);
+  border-left:3px solid var(--sky);
+  border-radius:10px; margin:14px 0; padding:0; overflow:hidden; }
+.phase > details { margin:0; background:transparent; border:none; border-radius:0; padding:0; }
+.phase > details > summary { cursor:pointer; padding:10px 16px; color:var(--sky);
+  font-weight:700; display:flex; align-items:center; gap:10px; list-style-position:inside; }
+.phase > details > summary .badges { color:var(--muted); font-weight:300; font-size:0.85em;
+  margin-left:4px; }
+.phase-body { padding:4px 16px 12px; }
+.phase-line { color:var(--muted); font-size:0.92em; padding:8px 14px; margin:12px 0;
+  background:var(--deep); border:1px solid var(--line); border-left:3px solid var(--sky);
+  border-radius:8px; }
+.row { display:flex; gap:10px; margin:10px 0; align-items:flex-start; }
+.row .ic { flex-shrink:0; width:1.6em; text-align:center; opacity:0.85; }
+.row .rw { flex:1; min-width:0; }
+.row .rlabel { color:var(--text); display:flex; align-items:center; gap:8px; }
+.row.err .rlabel { color:var(--yellow); }
+.row .rbody { color:var(--muted); margin-top:4px; }
+.reply { border-left:3px solid var(--mauve); background:rgba(194,162,241,0.05);
+  border-radius:0 10px 10px 0; padding:6px 18px; margin:16px 0; }
+.file-ref { background:rgba(194,162,241,0.08); border:1px solid var(--line);
+  border-left:3px solid var(--mauve); border-radius:6px; padding:8px 12px; margin:8px 0;
+  font-size:0.9em; }
+.idx { margin:24px 0; padding:16px 20px; border-radius:10px; border:1px solid var(--line);
+  border-left:3px solid var(--mauve); background:var(--surface); position:relative; }
+#totop { position:fixed; right:22px; bottom:22px; width:42px; height:42px; border-radius:10px;
+  background:var(--surface); border:1px solid var(--line); color:var(--muted); font-size:18px;
+  cursor:pointer; opacity:0; pointer-events:none; transition:opacity .2s; z-index:9; }
+#totop.show { opacity:0.3; pointer-events:auto; }
+#totop:hover { opacity:1; color:var(--text); }
+/* highlight.js token colours, inlined (tokyo-night-dark roles mapped onto the
+   palette above) so the page needs no second external stylesheet. */
+.hljs-comment, .hljs-quote { color:var(--muted); font-style:italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type { color:var(--mauve); }
+.hljs-string, .hljs-attr, .hljs-addition { color:var(--green); }
+.hljs-number, .hljs-symbol, .hljs-meta { color:var(--peach); }
+.hljs-title, .hljs-name, .hljs-section, .hljs-built_in { color:var(--blue); }
+.hljs-variable, .hljs-template-variable, .hljs-attribute { color:var(--yellow); }
+.hljs-deletion { color:var(--peach); }
+.hljs-emphasis { font-style:italic; } .hljs-strong { font-weight:700; }
+</style>
+</head>
+<body class="w-l f-s">
+<div id="whole-transcript" hidden data-copy-src="IyBUcmFuc2NyaXB0OiB3aWRnZXQtd29yawoKPiAqKlNvdXJjZToqKiBzLWQxYjkxNzA3MjE5ZiDCtyBzaGEyNTYgYGQxYjkxNzA3MjE5ZmNiOTU3ZTZkNGM0NDgyNTI4ZWU1MzAyODlhOTU1ZGZmMjNhOWIxYTIwYTg3MzhiNDI0NDNgCj4gKipQcm9qZWN0OioqIC9ob21lL2FsaWNlL3Byb2plY3RzL3dpZGdldAo+ICoqQnJhbmNoOioqIG1haW4KPiAqKlNlc3Npb246KiogMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1Cj4gKipDYXB0dXJlZDoqKiAyMDI2LTAxLTA1VDEwOjAwOjAwLjAwMFog4oaSIDIwMjYtMDEtMDVUMTA6MDA6MTIuMDAwWgo+ICoqTW9kZWw6KiogCj4gKipUdXJuczoqKiAxIMK3IDEgeW91IC8gMSBDbGF1ZGUgKHNvdXJjZTogY2xhdWRlLWNvZGUpCgo8ZGV0YWlscz4KPHN1bW1hcnk+TW9yZSBkZXRhaWxzPC9zdW1tYXJ5PgoKPiDihLnvuI8gTW9yZSBkZXRhaWxzCgotICoqU3BsaXQ6KiogMSB5b3UgLyAxIENsYXVkZQotICoqQ29udGVudDoqKiB+MzMgd29yZHMgwrcgMSB0aGlua2luZyBibG9ja3MgwrcgMSB0b29sIGNhbGxzCi0gKipGaWxlcyB0b3VjaGVkOioqIDAKLSAqKkxvc3M6KiogMCBza2lwcGVkIGxpbmUocykKLSAqKlNsdWc6Kiogd2lkZ2V0LXdvcmsKLSAqKk1vZGVsOioqIAotICoqQ0xJIHZlcnNpb246KiogMi4wLjAKLSAqKlNvdXJjZSBsaW5lczoqKiA5Ci0gKipIaWRkZW46Kiogbm8KLSAqKlJlbmRlcmVyOioqIGNjLXdhcmVob3VzZSAocmVmZXJlbmNlOiBleHBvcnRlciB2OC4xMC4xKQotICoqU3VtbWFyeToqKiAqUHJvbXB0IGFib3V0IHdpZGdldHMqCgo8L2RldGFpbHM+CgoqKioKCiMjIPCfkaQgVXNlciDCtyAyMDI2LTAxLTA1VDEwOjAwOjAwLjAwMFogwrcg4o+xIDAKClByb21wdCBhYm91dCB3aWRnZXRzCgoqKioKCiMjIPCfpJYgQ2xhdWRlIMK3IDIwMjYtMDEtMDVUMTA6MDA6MTIuMDAwWgoKPGRldGFpbHM+CjxzdW1tYXJ5PvCflKwgZGVlcCB0aG91Z2h0cyBhYm91dCB3aWRnZXRzIMK3IDEgdGhvdWdodDwvc3VtbWFyeT4KCj4g8J+UrCBkZWVwIHRob3VnaHRzIGFib3V0IHdpZGdldHMgwrcgMSB0aG91Z2h0Cgo+IPCfkq0gVGhpbmtpbmcgfCBkZWVwIHRob3VnaHRzIGFib3V0IHdpZGdldHMKCmBgYG1kCmRlZXAgdGhvdWdodHMgYWJvdXQgd2lkZ2V0cwpgYGAKCjwvZGV0YWlscz4KCldvcmtpbmcgb24gaXQuCgo8ZGV0YWlscz4KPHN1bW1hcnk+8J+nqSBCYXNoIMK3IDEgdG9vbDwvc3VtbWFyeT4KCj4g8J+nqSBCYXNoIMK3IDEgdG9vbAoKKipCYXNoKiogKExpc3Qgd2lkZ2V0cykKCmBgYGJhc2gKbHMgd2lkZ2V0cwpgYGAKCioqUmVzdWx0OioqCgpzdGRvdXQ6CmBgYApUT09MU1RET1VUTUFSS0VSIGFscGhhCmBgYAoKc3RkZXJyOgpgYGAKVE9PTFNUREVSUk1BUktFUgpgYGAKCjwvZGV0YWlscz4KCjxkZXRhaWxzPgo8c3VtbWFyeT7wn6SWIHN1Yi1hZ2VudDogc2NvdXQgwrcgMiBzdWItYWdlbnQgc3RlcHM8L3N1bW1hcnk+Cgo+IPCfpJYgc3ViLWFnZW50OiBzY291dCDCtyAyIHN1Yi1hZ2VudCBzdGVwcwoKLSBwcm9tcHQ6IFNVQkFHRU5UTUFSS0VSIGludmVzdGlnYXRlIHRoZSB3aWRnZXQKLSBTVUJBR0VOVFJFUExZIGZvdW5kIGl0Cgo8L2RldGFpbHM+Cgo8ZGV0YWlscz4KPHN1bW1hcnk+8J+nqSBhdHRhY2htZW50czwvc3VtbWFyeT4KCj4g8J+nqSBhdHRhY2htZW50cwoKKiphdHRhY2htZW50IChmaWxlKTogQVRUQUNITUFSS0VSLnR4dCoqCgpgYGAKYXR0YWNobWVudCBib2R5IGxpbmUKYGBgCgo8L2RldGFpbHM+Cgo8ZGV0YWlscz4KPHN1bW1hcnk+8J+nqSBjb21tYW5kczwvc3VtbWFyeT4KCj4g8J+nqSBjb21tYW5kcwoKYC9DT01NQU5ETUFSS0VSIC0tZmxhZ2AKCjwvZGV0YWlscz4KCjxkZXRhaWxzPgo8c3VtbWFyeT7wn6epIHNlc3Npb24gZXZlbnRzPC9zdW1tYXJ5PgoKPiDwn6epIHNlc3Npb24gZXZlbnRzCgotIGFnZW50LW5hbWU6IGFnZW50TmFtZT1FWFRSQU1BUktFUgoKPC9kZXRhaWxzPgoKQWxsIGRvbmUuCg=="></div>
+<h1>widget-work</h1>
+<div class="meta" data-copy-src="IyBUcmFuc2NyaXB0OiB3aWRnZXQtd29yawoKPiAqKlNvdXJjZToqKiBzLWQxYjkxNzA3MjE5ZiDCtyBzaGEyNTYgYGQxYjkxNzA3MjE5ZmNiOTU3ZTZkNGM0NDgyNTI4ZWU1MzAyODlhOTU1ZGZmMjNhOWIxYTIwYTg3MzhiNDI0NDNgCj4gKipQcm9qZWN0OioqIC9ob21lL2FsaWNlL3Byb2plY3RzL3dpZGdldAo+ICoqQnJhbmNoOioqIG1haW4KPiAqKlNlc3Npb246KiogMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1Cj4gKipDYXB0dXJlZDoqKiAyMDI2LTAxLTA1VDEwOjAwOjAwLjAwMFog4oaSIDIwMjYtMDEtMDVUMTA6MDA6MTIuMDAwWgo+ICoqTW9kZWw6KiogCj4gKipUdXJuczoqKiAxIMK3IDEgeW91IC8gMSBDbGF1ZGUgKHNvdXJjZTogY2xhdWRlLWNvZGUpCgo8ZGV0YWlscz4KPHN1bW1hcnk+TW9yZSBkZXRhaWxzPC9zdW1tYXJ5PgoKPiDihLnvuI8gTW9yZSBkZXRhaWxzCgotICoqU3BsaXQ6KiogMSB5b3UgLyAxIENsYXVkZQotICoqQ29udGVudDoqKiB+MzMgd29yZHMgwrcgMSB0aGlua2luZyBibG9ja3MgwrcgMSB0b29sIGNhbGxzCi0gKipGaWxlcyB0b3VjaGVkOioqIDAKLSAqKkxvc3M6KiogMCBza2lwcGVkIGxpbmUocykKLSAqKlNsdWc6Kiogd2lkZ2V0LXdvcmsKLSAqKk1vZGVsOioqIAotICoqQ0xJIHZlcnNpb246KiogMi4wLjAKLSAqKlNvdXJjZSBsaW5lczoqKiA5Ci0gKipIaWRkZW46Kiogbm8KLSAqKlJlbmRlcmVyOioqIGNjLXdhcmVob3VzZSAocmVmZXJlbmNlOiBleHBvcnRlciB2OC4xMC4xKQotICoqU3VtbWFyeToqKiAqUHJvbXB0IGFib3V0IHdpZGdldHMqCgo8L2RldGFpbHM+"><button class="copy-md" title="Copy as Markdown">⧉</button><span class="m-key">Source</span>: s-d1b91707219f · sha256 `d1b91707219fcb957e6d4c4482528ee530289a955dff23a9b1a20a8738b42443`<br><span class="m-key">Project</span>: /home/alice/projects/widget<br><span class="m-key">Branch</span>: main<br><span class="m-key">Session</span>: 11111111-2222-3333-4444-555555555555<br><span class="m-key">Captured</span>: 2026-01-05T10:00:00.000Z → 2026-01-05T10:00:12.000Z<br><span class="m-key">Model</span>: <br><span class="m-key">Turns</span>: 1 · <span class="m-you">1 you</span> / <span class="m-claude">1 Claude</span> (source: claude-code)<div class="more"><details><summary>More details</summary><div class="more-grid"><span class="k">Split</span><span class="v">1 you / 1 Claude</span><span class="k">Content</span><span class="v">~33 words · 1 thinking blocks · 1 tool calls</span><span class="k">Files touched</span><span class="v">0</span><span class="k">Loss</span><span class="v">0 skipped line(s)</span><span class="k">Slug</span><span class="v">widget-work</span><span class="k">Model</span><span class="v"></span><span class="k">CLI version</span><span class="v">2.0.0</span><span class="k">Source lines</span><span class="v">9</span><span class="k">Hidden</span><span class="v">no</span><span class="k">Renderer</span><span class="v">cc-warehouse (reference: exporter v8.10.1)</span><span class="full">Prompt about widgets</span></div></details></div></div>
+<div class="toolbar"><button data-act="collapse">Collapse all</button><button data-act="expand-turns">Expand turns</button><button data-act="expand-all">Expand all</button><button data-act="copyall">Copy ALL as Markdown</button><span class="turnpos" id="turnpos"></span><span class="wbtns"><button data-w="s" title="950px">S</button><button data-w="m" title="1400px">M</button><button data-w="l" title="1900px">L</button></span><span class="fbtns"><button data-f="s" title="12.8px">A-</button><button data-f="m" title="14px">A</button><button data-f="l" title="16px">A+</button></span></div>
+<main class="transcript">
+<section class="turn user" id="turn-1-7b98d1a0" data-copy-src="IyMg8J+RpCBVc2VyIMK3IDIwMjYtMDEtMDVUMTA6MDA6MDAuMDAwWiDCtyDij7EgMAoKUHJvbXB0IGFib3V0IHdpZGdldHM=">
+<div class="turn-head"><span class="role">👤 User<span class="timestamp">2026-01-05T10:00:00.000Z</span><span class="elapsed">⏱ 0</span></span><button class="copy-md" title="Copy as Markdown">⧉</button></div>
+<div class="turn-body">
+<div class="prompt" id="turn-1-c8c0ce5d" data-copy-src="UHJvbXB0IGFib3V0IHdpZGdldHM="><p>Prompt about widgets</p></div>
+</div>
+</section>
+<section class="turn assistant" id="turn-1-01fe1754" data-copy-src="IyMg8J+kliBDbGF1ZGUgwrcgMjAyNi0wMS0wNVQxMDowMDoxMi4wMDBaCgo8ZGV0YWlscz4KPHN1bW1hcnk+8J+UrCBkZWVwIHRob3VnaHRzIGFib3V0IHdpZGdldHMgwrcgMSB0aG91Z2h0PC9zdW1tYXJ5PgoKPiDwn5SsIGRlZXAgdGhvdWdodHMgYWJvdXQgd2lkZ2V0cyDCtyAxIHRob3VnaHQKCj4g8J+SrSBUaGlua2luZyB8IGRlZXAgdGhvdWdodHMgYWJvdXQgd2lkZ2V0cwoKYGBgbWQKZGVlcCB0aG91Z2h0cyBhYm91dCB3aWRnZXRzCmBgYAoKPC9kZXRhaWxzPgoKV29ya2luZyBvbiBpdC4KCjxkZXRhaWxzPgo8c3VtbWFyeT7wn6epIEJhc2ggwrcgMSB0b29sPC9zdW1tYXJ5PgoKPiDwn6epIEJhc2ggwrcgMSB0b29sCgoqKkJhc2gqKiAoTGlzdCB3aWRnZXRzKQoKYGBgYmFzaApscyB3aWRnZXRzCmBgYAoKKipSZXN1bHQ6KioKCnN0ZG91dDoKYGBgClRPT0xTVERPVVRNQVJLRVIgYWxwaGEKYGBgCgpzdGRlcnI6CmBgYApUT09MU1RERVJSTUFSS0VSCmBgYAoKPC9kZXRhaWxzPgoKPGRldGFpbHM+CjxzdW1tYXJ5PvCfpJYgc3ViLWFnZW50OiBzY291dCDCtyAyIHN1Yi1hZ2VudCBzdGVwczwvc3VtbWFyeT4KCj4g8J+kliBzdWItYWdlbnQ6IHNjb3V0IMK3IDIgc3ViLWFnZW50IHN0ZXBzCgotIHByb21wdDogU1VCQUdFTlRNQVJLRVIgaW52ZXN0aWdhdGUgdGhlIHdpZGdldAotIFNVQkFHRU5UUkVQTFkgZm91bmQgaXQKCjwvZGV0YWlscz4KCjxkZXRhaWxzPgo8c3VtbWFyeT7wn6epIGF0dGFjaG1lbnRzPC9zdW1tYXJ5PgoKPiDwn6epIGF0dGFjaG1lbnRzCgoqKmF0dGFjaG1lbnQgKGZpbGUpOiBBVFRBQ0hNQVJLRVIudHh0KioKCmBgYAphdHRhY2htZW50IGJvZHkgbGluZQpgYGAKCjwvZGV0YWlscz4KCjxkZXRhaWxzPgo8c3VtbWFyeT7wn6epIGNvbW1hbmRzPC9zdW1tYXJ5PgoKPiDwn6epIGNvbW1hbmRzCgpgL0NPTU1BTkRNQVJLRVIgLS1mbGFnYAoKPC9kZXRhaWxzPgoKPGRldGFpbHM+CjxzdW1tYXJ5PvCfp6kgc2Vzc2lvbiBldmVudHM8L3N1bW1hcnk+Cgo+IPCfp6kgc2Vzc2lvbiBldmVudHMKCi0gYWdlbnQtbmFtZTogYWdlbnROYW1lPUVYVFJBTUFSS0VSCgo8L2RldGFpbHM+CgpBbGwgZG9uZS4=">
+<div class="turn-head"><span class="role">🤖 Claude<span class="timestamp">2026-01-05T10:00:12.000Z</span></span><button class="copy-md" title="Copy as Markdown">⧉</button></div>
+<div class="turn-body">
+<div class="phase" id="turn-1-31f4e97e" data-copy-src="PGRldGFpbHM+CjxzdW1tYXJ5PvCflKwgZGVlcCB0aG91Z2h0cyBhYm91dCB3aWRnZXRzIMK3IDEgdGhvdWdodDwvc3VtbWFyeT4KCj4g8J+UrCBkZWVwIHRob3VnaHRzIGFib3V0IHdpZGdldHMgwrcgMSB0aG91Z2h0Cgo+IPCfkq0gVGhpbmtpbmcgfCBkZWVwIHRob3VnaHRzIGFib3V0IHdpZGdldHMKCmBgYG1kCmRlZXAgdGhvdWdodHMgYWJvdXQgd2lkZ2V0cwpgYGAKCjwvZGV0YWlscz4="><details><summary><span>🔬 deep thoughts about widgets · 1 thought</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></summary><div class="phase-body"><div class="row" id="turn-1-5f66a7a9" data-copy-src="PiDwn5KtIFRoaW5raW5nIHwgZGVlcCB0aG91Z2h0cyBhYm91dCB3aWRnZXRzCgpgYGBtZApkZWVwIHRob3VnaHRzIGFib3V0IHdpZGdldHMKYGBg"><span class="ic">💭</span><div class="rw"><div class="rlabel">Thinking | deep thoughts about widgets<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><p>&gt; 💭 Thinking | deep thoughts about widgets</p>
+<pre><code class="language-md">deep thoughts about widgets</code></pre></div></div></div></div></details></div>
+<div class="reply" id="turn-1-1208a05c" data-copy-src="V29ya2luZyBvbiBpdC4="><p>Working on it.</p></div>
+<div class="phase" id="turn-1-c5e68c0a" data-copy-src="PGRldGFpbHM+CjxzdW1tYXJ5PvCfp6kgQmFzaCDCtyAxIHRvb2w8L3N1bW1hcnk+Cgo+IPCfp6kgQmFzaCDCtyAxIHRvb2wKCioqQmFzaCoqIChMaXN0IHdpZGdldHMpCgpgYGBiYXNoCmxzIHdpZGdldHMKYGBgCgoqKlJlc3VsdDoqKgoKc3Rkb3V0OgpgYGAKVE9PTFNURE9VVE1BUktFUiBhbHBoYQpgYGAKCnN0ZGVycjoKYGBgClRPT0xTVERFUlJNQVJLRVIKYGBgCgo8L2RldGFpbHM+"><details><summary><span>🧩 Bash · 1 tool</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></summary><div class="phase-body"><div class="row" id="turn-1-171d14cc" data-copy-src="KipCYXNoKiogKExpc3Qgd2lkZ2V0cykKCmBgYGJhc2gKbHMgd2lkZ2V0cwpgYGA="><span class="ic">🔧</span><div class="rw"><div class="rlabel">Bash <span class="badges">List widgets</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><p><strong>Bash</strong> (List widgets)</p>
+<pre><code class="language-bash">ls widgets</code></pre></div></div></div><div class="row" id="turn-1-645d0808" data-copy-src="KipSZXN1bHQ6KioKCnN0ZG91dDoKYGBgClRPT0xTVERPVVRNQVJLRVIgYWxwaGEKYGBgCgpzdGRlcnI6CmBgYApUT09MU1RERVJSTUFSS0VSCmBgYA=="><span class="ic">📋</span><div class="rw"><div class="rlabel">Result<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><p><strong>Result:</strong></p>
+<p>stdout:</p>
+<pre><code>TOOLSTDOUTMARKER alpha</code></pre>
+<p>stderr:</p>
+<pre><code>TOOLSTDERRMARKER</code></pre></div></div></div></div></details></div>
+<div class="phase" id="turn-1-da3a43fd" data-copy-src="PGRldGFpbHM+CjxzdW1tYXJ5PvCfpJYgc3ViLWFnZW50OiBzY291dCDCtyAyIHN1Yi1hZ2VudCBzdGVwczwvc3VtbWFyeT4KCj4g8J+kliBzdWItYWdlbnQ6IHNjb3V0IMK3IDIgc3ViLWFnZW50IHN0ZXBzCgotIHByb21wdDogU1VCQUdFTlRNQVJLRVIgaW52ZXN0aWdhdGUgdGhlIHdpZGdldAotIFNVQkFHRU5UUkVQTFkgZm91bmQgaXQKCjwvZGV0YWlscz4="><details><summary><span>🤖 sub-agent: scout · 2 sub-agent steps</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></summary><div class="phase-body"><div class="row" id="turn-1-63169fa0" data-copy-src="LSBwcm9tcHQ6IFNVQkFHRU5UTUFSS0VSIGludmVzdGlnYXRlIHRoZSB3aWRnZXQ="><span class="ic">🤖</span><div class="rw"><div class="rlabel">sub-agent<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><ul><li>prompt: SUBAGENTMARKER investigate the widget</li></ul></div></div></div><div class="row" id="turn-1-a3f3cbeb" data-copy-src="LSBTVUJBR0VOVFJFUExZIGZvdW5kIGl0"><span class="ic">🤖</span><div class="rw"><div class="rlabel">sub-agent<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><ul><li>SUBAGENTREPLY found it</li></ul></div></div></div></div></details></div>
+<div class="phase" id="turn-1-249d7f8f" data-copy-src="PGRldGFpbHM+CjxzdW1tYXJ5PvCfp6kgYXR0YWNobWVudHM8L3N1bW1hcnk+Cgo+IPCfp6kgYXR0YWNobWVudHMKCioqYXR0YWNobWVudCAoZmlsZSk6IEFUVEFDSE1BUktFUi50eHQqKgoKYGBgCmF0dGFjaG1lbnQgYm9keSBsaW5lCmBgYAoKPC9kZXRhaWxzPg=="><details><summary><span>🧩 attachments</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></summary><div class="phase-body"><div class="row" id="turn-1-1299ec2e" data-copy-src="KiphdHRhY2htZW50IChmaWxlKTogQVRUQUNITUFSS0VSLnR4dCoqCgpgYGAKYXR0YWNobWVudCBib2R5IGxpbmUKYGBg"><span class="ic">📎</span><div class="rw"><div class="rlabel">attachment (file): ATTACHMARKER.txt<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><p><strong>attachment (file): ATTACHMARKER.txt</strong></p>
+<pre><code>attachment body line</code></pre></div></div></div></div></details></div>
+<div class="phase" id="turn-1-22c865a7" data-copy-src="PGRldGFpbHM+CjxzdW1tYXJ5PvCfp6kgY29tbWFuZHM8L3N1bW1hcnk+Cgo+IPCfp6kgY29tbWFuZHMKCmAvQ09NTUFORE1BUktFUiAtLWZsYWdgCgo8L2RldGFpbHM+"><details><summary><span>🧩 commands</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></summary><div class="phase-body"><div class="row" id="turn-1-034fff66" data-copy-src="YC9DT01NQU5ETUFSS0VSIC0tZmxhZ2A="><span class="ic">⌨</span><div class="rw"><div class="rlabel">command<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><p><code>/COMMANDMARKER --flag</code></p></div></div></div></div></details></div>
+<div class="phase" id="turn-1-5ffac098" data-copy-src="PGRldGFpbHM+CjxzdW1tYXJ5PvCfp6kgc2Vzc2lvbiBldmVudHM8L3N1bW1hcnk+Cgo+IPCfp6kgc2Vzc2lvbiBldmVudHMKCi0gYWdlbnQtbmFtZTogYWdlbnROYW1lPUVYVFJBTUFSS0VSCgo8L2RldGFpbHM+"><details><summary><span>🧩 session events</span><button class="copy-md sub" title="Copy as Markdown">⧉</button></summary><div class="phase-body"><div class="row" id="turn-1-200ca104" data-copy-src="LSBhZ2VudC1uYW1lOiBhZ2VudE5hbWU9RVhUUkFNQVJLRVI="><span class="ic">ℹ</span><div class="rw"><div class="rlabel">session event<button class="copy-md sub" title="Copy as Markdown">⧉</button></div><div class="rbody"><ul><li>agent-name: agentName=EXTRAMARKER</li></ul></div></div></div></div></details></div>
+<div class="reply" id="turn-1-e3120d61" data-copy-src="QWxsIGRvbmUu"><p>All done.</p></div>
+</div>
+</section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" onload="hljs.highlightAll()" onerror="void 0"></script>
+<script>
+(function () {
+  function decode(value) {
+    var binary = atob(value);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+  function payload(node) {
+    return node ? decode(node.getAttribute("data-copy-src")) : "";
+  }
+  function flash(btn, text) {
+    var old = btn.textContent;
+    btn.textContent = text;
+    setTimeout(function () { btn.textContent = old; }, 1200);
+  }
+  function copy(btn, text) {
+    if (!navigator.clipboard) { flash(btn, "no clipboard"); return; }
+    navigator.clipboard.writeText(text).then(
+      function () { flash(btn, "Copied"); },
+      function () { flash(btn, "Copy failed"); }
+    );
+  }
+  // Every copy button reads the data-copy-src of its nearest carrier, so the
+  // page has ONE payload mechanism: the per-fragment transcript.md markdown.
+  document.querySelectorAll(".copy-md").forEach(function (btn) {
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      copy(btn, payload(btn.closest("[data-copy-src]")));
+    });
+  });
+  document.addEventListener("dblclick", function (event) {
+    var node = event.target.closest("[data-copy-src]");
+    if (!node || !navigator.clipboard) { return; }
+    navigator.clipboard.writeText(payload(node));
+  });
+  document.querySelectorAll(".turn-head").forEach(function (head) {
+    head.addEventListener("click", function (event) {
+      if (event.target.closest(".copy-md")) { return; }
+      var section = head.closest("section.turn");
+      if (section) { section.classList.toggle("collapsed"); }
+    });
+  });
+  document.querySelectorAll(".toolbar button[data-act]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var act = btn.dataset.act;
+      if (act === "copyall") {
+        copy(btn, payload(document.getElementById("whole-transcript")));
+        return;
+      }
+      document.querySelectorAll("section.turn").forEach(function (s) {
+        s.classList.toggle("collapsed", act === "collapse");
+      });
+      if (act !== "expand-turns") {
+        document.querySelectorAll("section.turn details").forEach(function (d) {
+          d.open = act === "expand-all";
+        });
+      }
+    });
+  });
+  function toggler(key, prefix, selector, fallback) {
+    var btns = document.querySelectorAll(selector);
+    var apply = function (value) {
+      document.body.classList.remove(prefix + "s", prefix + "m", prefix + "l");
+      document.body.classList.add(prefix + value);
+      btns.forEach(function (b) {
+        b.classList.toggle("active", b.dataset[prefix === "w-" ? "w" : "f"] === value);
+      });
+      try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+    };
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        apply(b.dataset[prefix === "w-" ? "w" : "f"]);
+      });
+    });
+    var saved = fallback;
+    try { saved = localStorage.getItem(key) || fallback; } catch (e) { /* private mode */ }
+    apply(["s", "m", "l"].indexOf(saved) >= 0 ? saved : fallback);
+  }
+  toggler("ccw_html_width", "w-", ".wbtns button", "l");
+  toggler("ccw_html_font", "f-", ".fbtns button", "s");
+  var pos = document.getElementById("turnpos");
+  var turns = [].slice.call(document.querySelectorAll("section.turn"));
+  var ticking = false;
+  function updatePos() {
+    ticking = false;
+    if (!pos || !turns.length) { return; }
+    var bar = document.querySelector(".toolbar");
+    var edge = (bar ? bar.getBoundingClientRect().bottom : 0) + 4;
+    var cur = 0;
+    for (var i = 0; i < turns.length; i += 1) {
+      cur = i;
+      if (turns[i].getBoundingClientRect().bottom > edge) { break; }
+    }
+    var who = turns[cur].classList.contains("user") ? "\u{1F464}" : "\u{1F916}";
+    pos.innerHTML = who + " turn <b>" + (cur + 1) + "</b> / " + turns.length;
+  }
+  addEventListener("scroll", function () {
+    if (!ticking) { ticking = true; requestAnimationFrame(updatePos); }
+  }, { passive: true });
+  updatePos();
+  var top = document.createElement("button");
+  top.id = "totop";
+  top.textContent = "\u2191";
+  top.title = "Scroll to top";
+  document.body.appendChild(top);
+  top.addEventListener("click", function () {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  addEventListener("scroll", function () {
+    top.classList.toggle("show", scrollY > innerHeight);
+  }, { passive: true });
+})();
+</script>
+</body>
+</html>

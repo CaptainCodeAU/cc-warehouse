@@ -122,3 +122,102 @@ def test_webhook_entries_default_to_ok_and_error_events(tmp_path: Path) -> None:
     hook = cfg.webhooks[0]
     assert hook.name == "tg"
     assert hook.events == ("ok", "error")
+
+
+# --- the v1.1 per-variant matrix keys (slice 14, DESIGN 15 entry 2026-08-01) ---
+# Frozen key map addition: five FLAT `[render]` keys, all default OFF. Shared rule
+# (a) is what these pin -- flat keys layering key-by-key under the existing
+# one-level merge, never nested sub-tables.
+
+MATRIX_KEYS = (
+    "subagents_compact",
+    "attachments_compact",
+    "commands_compact",
+    "extras_compact",
+    "tool_output_compact",
+)
+
+
+def test_matrix_compact_keys_default_off() -> None:
+    """DESIGN section 8 defaults sentence: the full-variant render toggles default
+    ON, the `_compact` toggles default OFF. An empty config changes nothing."""
+    cfg = load_config(env={"HOME": "/home/alice"}, no_config=True)
+    for key in MATRIX_KEYS:
+        assert getattr(cfg, f"render_{key}") is False, key
+
+
+def test_matrix_compact_keys_are_read_from_the_render_table(tmp_path: Path) -> None:
+    """Each of the five flat `[render]` keys reaches Config on its own."""
+    for key in MATRIX_KEYS:
+        xdg = write_xdg(tmp_path, f"[render]\n{key} = true\n")
+        cfg = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+        assert getattr(cfg, f"render_{key}") is True, key
+        others = [k for k in MATRIX_KEYS if k != key]
+        for other in others:
+            assert getattr(cfg, f"render_{other}") is False, f"{key} leaked into {other}"
+
+
+def test_matrix_compact_key_layers_key_by_key(tmp_path: Path) -> None:
+    """Shared rule (a): flat keys layer key by key, so the data-root file changes
+    only the key it names. A nested sub-table would replace [render] wholesale."""
+    data_root = tmp_path / "data"
+    xdg = write_xdg(
+        tmp_path,
+        f'root = "{data_root}"\n\n[render]\n'
+        "subagents_compact = true\nattachments_compact = true\n",
+    )
+    data_root.mkdir()
+    (data_root / "config.toml").write_text("[render]\nsubagents_compact = false\n")
+    cfg = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+    assert cfg.render_subagents_compact is False
+    assert cfg.render_attachments_compact is True, "the untouched key lost its XDG value"
+
+
+def test_matrix_compact_key_honors_per_project_sections(tmp_path: Path) -> None:
+    """DESIGN section 8: a per-project override is keyed by stable registry ID and
+    reaches the new keys like any other."""
+    xdg = write_xdg(
+        tmp_path,
+        "[render]\nextras_compact = false\n\n[project.4.render]\nextras_compact = true\n",
+    )
+    base = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+    scoped = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"}, project_id=4)
+    assert base.render_extras_compact is False
+    assert scoped.render_extras_compact is True
+
+
+def test_matrix_flag_tier_beats_the_config_file(tmp_path: Path) -> None:
+    """DESIGN section 8 precedence: CLI flags are the highest tier."""
+    xdg = write_xdg(tmp_path, "[render]\ncommands_compact = true\n")
+    assert load_config(
+        xdg_config_home=xdg, env={"HOME": "/home/alice"}
+    ).render_commands_compact is True
+    overridden = load_config(
+        xdg_config_home=xdg,
+        env={"HOME": "/home/alice"},
+        flags={"commands_compact": "0"},
+    )
+    assert overridden.render_commands_compact is False
+
+
+def test_reminders_compact_gains_a_flag_tier(tmp_path: Path) -> None:
+    """`reminders_compact` predates the matrix but had no flag. Full CLI parity
+    (the principal's call over a config-only cut) gives it one."""
+    xdg = write_xdg(tmp_path, "[render]\nreminders_compact = \"collapse\"\n")
+    base = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+    assert base.render_reminders_compact == "collapse"
+    overridden = load_config(
+        xdg_config_home=xdg,
+        env={"HOME": "/home/alice"},
+        flags={"reminders_compact": "show"},
+    )
+    assert overridden.render_reminders_compact == "show"
+
+
+def test_unsuffixed_keys_keep_their_v1_meaning(tmp_path: Path) -> None:
+    """Shared rule (b): an unsuffixed key is the FULL variant's toggle and setting
+    it must not move its `_compact` sibling."""
+    xdg = write_xdg(tmp_path, "[render]\nsubagents = false\n")
+    cfg = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+    assert cfg.render_subagents is False
+    assert cfg.render_subagents_compact is False, "an unsuffixed key reached compact"
