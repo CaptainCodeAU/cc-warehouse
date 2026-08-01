@@ -44,6 +44,17 @@ class RenderOptions:
     commands: bool = True
     extras: bool = True  # bridge-session / queue-operation / last-prompt / agent-name
     toolresult_diff: bool = True
+    # The per-VARIANT matrix (DESIGN 15 entry 2026-08-01, block 1). The five
+    # fields above are the FULL variant's toggles and keep their v1 meaning; the
+    # five below are the same content classes for the COMPACT variant, where the
+    # v1 hard-coded drops become the DEFAULTS. All default OFF, so an empty
+    # config renders byte-identical output before and after v1.1 (shared rule b,
+    # proven by tests/test_matrix.py against tests/golden/matrix-anchor).
+    subagents_compact: bool = False
+    attachments_compact: bool = False
+    commands_compact: bool = False
+    extras_compact: bool = False
+    tool_output_compact: bool = False
     # highlight.js delivery: cdn | inline | off (DESIGN 15 item 8, principal 2026-07-24).
     # Personal projections keep `cdn` for exporter parity; `ccw share` sets `inline` so a
     # published page makes no third-party request. See _hljs_block.
@@ -69,8 +80,33 @@ class _Policy:
 
 
 # Compact variant note. The word "compact" is load-bearing (oracle test
-# test_compact_carries_a_variant_note).
-_COMPACT_NOTE = "> Compact variant: conversation only, no thinking, tools, or reminders."
+# test_compact_carries_a_variant_note). What follows "no" is DERIVED from the
+# policy rather than fixed: once the per-variant matrix can put tools back into a
+# compact file, a note that still claimed "no tools" would be the code
+# overclaiming its own guarantees (F6, and R8's rule that a guarantee word cites
+# the test that proves it). The same was already true of reminders, which
+# `reminders_compact = "show"` has been able to restore since slice 6.
+_COMPACT_NOTE_HEAD = "> Compact variant: conversation only, no "
+
+
+def _compact_note(*, include_tools: bool, reminder_mode: str) -> str:
+    """The compact variant's note, listing only what this policy actually drops.
+
+    At the defaults the list is thinking, tools, reminders and the sentence is
+    byte-identical to the v1 one, which is what keeps the regression anchor
+    green (test_default_options_render_the_pre_slice_bytes).
+    """
+    dropped = ["thinking"]
+    if not include_tools:
+        dropped.append("tools")
+    if reminder_mode == "strip":
+        dropped.append("reminders")
+    if len(dropped) == 1:
+        tail = dropped[0]
+    else:
+        joiner = ", or " if len(dropped) > 2 else " or "
+        tail = ", ".join(dropped[:-1]) + joiner + dropped[-1]
+    return f"{_COMPACT_NOTE_HEAD}{tail}."
 
 _LIST_MARKER = re.compile(r"^\s*([-*+] |\d+[.)] )")
 
@@ -859,24 +895,44 @@ def _full_policy(options: RenderOptions) -> _Policy:
 
 
 def _compact_policy(options: RenderOptions) -> _Policy:
+    """The compact variant's policy. Its v1 hard-coded drops are now DEFAULTS:
+    each per-variant key (DESIGN 15 entry 2026-08-01, block 1) turns one content
+    class back on for this variant alone, and every one of them defaults OFF.
+
+    Thinking is the deliberate exception and has no key on either variant:
+    BRAINSTORM locks it ON in full variants and welded OFF here, so a toggle for
+    it would be its own future proposal (the entry's NON-SCOPE line).
+    """
     return _Policy(
         include_thinking=False,
-        include_tools=False,
+        # `tool_output_compact` lifts BOTH tool gates, not just the diff one. In
+        # the full variant tool blocks always render and the unsuffixed
+        # `tool_output` key chooses only how a RESULT is drawn; compact drops the
+        # blocks outright, so binding the compact key to `toolresult_diff` alone
+        # would make it a key that can never change a byte. DESIGN 15 block 3
+        # settles which reading is intended: the truncation cap applies
+        # "wherever a tool-result block renders (full by default; compact if the
+        # matrix opened it)" -- so the matrix must be able to open it.
+        include_tools=options.tool_output_compact,
         include_machinery=False,
         reminder_mode=options.reminders_compact,
-        variant_note=_COMPACT_NOTE,
+        variant_note=_compact_note(
+            include_tools=options.tool_output_compact,
+            reminder_mode=options.reminders_compact,
+        ),
         breadcrumbs=options.breadcrumbs,
         # Exporter parity: the compact variant keeps the SAME header card as the
         # full one (its finalMdCompact reuses the built header verbatim), so the
         # two files stay comparable and the HTML page matches its markdown.
         header_details=True,
-        # Compact is prose conversation only: sub-agents, attachments, commands
-        # and the informational extras are all detail the compact variant drops.
-        include_subagents=False,
-        include_attachments=False,
-        include_commands=False,
-        include_extras=False,
-        toolresult_diff=False,
+        # Compact is prose conversation only BY DEFAULT: sub-agents, attachments,
+        # commands and the informational extras are detail it drops until the
+        # matching key says otherwise.
+        include_subagents=options.subagents_compact,
+        include_attachments=options.attachments_compact,
+        include_commands=options.commands_compact,
+        include_extras=options.extras_compact,
+        toolresult_diff=options.tool_output_compact,
     )
 
 
