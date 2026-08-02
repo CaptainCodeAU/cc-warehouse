@@ -1085,11 +1085,14 @@ def _run_archive(args: Sequence[str]) -> int:
 
     target.mkdir(parents=True, exist_ok=True)
     report = archive.migrate(config.root, target, build.render_options(config), zone)
+    # After the folders, because a project.json for a project with no surviving
+    # session folder would describe nothing.
+    projects = archive.write_project_files(config.root, target)
     for hash_, why in report.failed:
         print(f"archive: FAILED {hash_[:16]}: {why}", file=sys.stderr)
     for hash_ in report.skipped_not_a_session:
         print(f"archive: not a session (no sessionId) {hash_[:16]}", file=sys.stderr)
-    print(report.summary())
+    print(f"{report.summary()}, {projects} project.json written")
     return 1 if report.failed else 0
 
 

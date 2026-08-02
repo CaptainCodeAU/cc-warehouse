@@ -28,6 +28,7 @@ import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from cc_warehouse import build, catalog, render, store
 from cc_warehouse.parser import parse_session
@@ -229,6 +230,102 @@ def _session_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     for row in conn.execute(sql).fetchall():
         out.append((str(row[0]), str(row[1]), f"session-{row[2]}"))
+    return out
+
+
+PROJECT_JSON = "project.json"
+
+
+@dataclass(frozen=True)
+class Alias:
+    path: str
+    kind: str
+
+
+@dataclass(frozen=True)
+class ProjectRecord:
+    label: str
+    aliases: tuple[Alias, ...]
+
+
+def write_project_files(warehouse_root: Path, archive_root: Path) -> int:
+    """One `project.json` per project folder: label plus every known path.
+
+    This is what makes the catalog a DISPOSABLE INDEX rather than a load-bearing
+    database (DESIGN 15, 2026-08-02). The LABEL survives without it, because the
+    label IS the parent folder name. What does not survive is `project_alias`,
+    which maps the encoded dirs and cwds Claude Code used to the name the
+    operator chose; lose it and the next capture splits a renamed project in
+    two. Until this file exists, "the catalog can be deleted and rebuilt by a
+    rescan" is a claim the product cannot honour, and an unhonoured guarantee is
+    the F6 class this project exists to ban.
+    """
+    conn = catalog.open_catalog(warehouse_root)
+    try:
+        rows = conn.execute(
+            "SELECT p.label, a.path, a.kind FROM project_alias a"
+            " JOIN project p ON p.id = a.project_id"
+            " ORDER BY p.label, a.kind, a.path"
+        ).fetchall()
+        labels = [str(row[0]) for row in conn.execute("SELECT label FROM project").fetchall()]
+    finally:
+        conn.close()
+
+    grouped: dict[str, list[Alias]] = {label: [] for label in labels}
+    for row in rows:
+        grouped.setdefault(str(row[0]), []).append(Alias(str(row[1]), str(row[2])))
+
+    written = 0
+    for label, aliases in grouped.items():
+        directory = archive_root / (build.component(label) or "_unlabeled")
+        if not directory.is_dir():
+            # A project with no surviving session has no folder to describe.
+            continue
+        payload = {
+            "label": label,
+            "aliases": [{"path": a.path, "kind": a.kind} for a in aliases],
+        }
+        store.atomic_write(
+            directory / PROJECT_JSON,
+            json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n",
+        )
+        written += 1
+    return written
+
+
+def read_projects(archive_root: Path) -> list[ProjectRecord]:
+    """Every project the TREE describes, read without touching a database.
+
+    The round trip that proves the catalog is disposable: delete it, call this,
+    and the labels and aliases come back. A folder with no sidecar, or a corrupt
+    one, is SKIPPED rather than fatal (R5) - a rescan that dies on the first gap
+    is a rescan nobody can run on a real archive.
+    """
+    out: list[ProjectRecord] = []
+    for label_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
+        sidecar = label_dir / PROJECT_JSON
+        if not sidecar.is_file():
+            continue
+        try:
+            loaded: object = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(loaded, dict):
+            continue
+        payload = cast(dict[str, object], loaded)
+        label = payload.get("label")
+        raw = payload.get("aliases")
+        if not isinstance(label, str) or not isinstance(raw, list):
+            continue
+        aliases: list[Alias] = []
+        for element in cast(list[object], raw):
+            if not isinstance(element, dict):
+                continue
+            item = cast(dict[str, object], element)
+            path, kind = item.get("path"), item.get("kind")
+            if isinstance(path, str) and isinstance(kind, str):
+                aliases.append(Alias(path, kind))
+        out.append(ProjectRecord(label, tuple(aliases)))
     return out
 
 

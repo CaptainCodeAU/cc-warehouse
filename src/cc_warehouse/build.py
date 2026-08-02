@@ -76,6 +76,17 @@ def render_options(config: Config) -> render.RenderOptions:
     )
 
 
+def component(value: str | None) -> str:
+    """Public alias of the path-segment sanitizer.
+
+    archive.py needs the SAME label-to-folder mapping `archive_dir` uses when it
+    writes a project's sidecar, and a second copy of the sanitizing rules would
+    be the F8 class: two implementations of one truth, drifting apart the first
+    time either is touched.
+    """
+    return _component(value)
+
+
 def _component(value: str | None) -> str:
     """A single safe path segment for a projection dir name.
 
