@@ -791,6 +791,31 @@ thinking). They render nothing and count nothing today, which is the same F6 cla
 level below the dispatch, inside a NAMED branch. Surfacing them is a further visible
 change of 41,458 markers and therefore its own ruling.
 
+PROVENANCE, established 2026-08-02 against the corpus and the public record, and recorded
+because the obvious reading of the data is the wrong one. This is a MODEL property, not a
+date property. Every `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`,
+`claude-fable-5` and `claude-sonnet-5` block in the corpus is empty and always was: 0 of
+25,470 opus-4-8 blocks carry text, across both eras. All 1,602 readable blocks come from
+just two models, `claude-haiku-4-5-20251001` (1,391) and `claude-sonnet-4-6` (211).
+Upstream, `anthropics/claude-code` issue 30958 (opened 2026-03-05, still open, no
+maintainer response) names v2.1.69 as where thinking text stopped reaching the JSONL, with
+v2.1.68 the last working release; issue 32810 (opened 2026-03-10, closed as not planned)
+reports the same against v2.1.72. Both predate this warehouse, whose first capture is
+2026-05-01, so the change itself is not observable here, only its result. What IS
+observable is the tail closing: haiku-4-5 wrote text on every one of its blocks up to
+2026-07-01 under CLI 2.1.197 and none from 2026-07-02 under 2.1.198 onward, 22 consecutive
+versions and 21,670 blocks with zero. CAUSE UNPROVEN: CLI version and date are confounded
+on an auto-updating machine and no pre-2.1.198 version appears after the boundary to break
+the tie. Circumstantial only, 2.1.198 shipped 2026-07-01 carrying both "subagents and
+context compaction now inherit the session's extended thinking configuration" and the
+Explore agent moving off haiku. Neither change was ever documented as affecting transcript
+storage.
+
+CONSEQUENCE for the pending ruling: a marker saying "thinking omitted" would be honest,
+but a marker implying the text was ever available for an Opus session would not. For 96%
+of this corpus there is nothing that was lost at capture time; there is something that
+never arrived.
+
 **LONE SURROGATES: DECIDED, 2026-08-01 (principal), found on real data.** The first
 `ccw build` at scale (13,608 sessions) failed on 9 of them with `UnicodeEncodeError:
 surrogates not allowed`; a census found 11 of 13,836 stored objects affected. The cause
