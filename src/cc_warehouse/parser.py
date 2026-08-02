@@ -53,6 +53,13 @@ class ParsedSession:
     # prefers it over the summary-derived fallback (principal ruling 2026-07-23,
     # SPEC 8 title source extended). None when the session predates the field.
     ai_title: str | None = None
+    # The title the OPERATOR set, from a `type: "custom-title"` entry's
+    # `customTitle` field. It outranks ai_title, which the model generated: a
+    # name a person chose beats a name a model invented (ticket 18, principal
+    # ruling 2026-08-02). Measured: 910 custom-title ENTRIES across just 26
+    # sessions, because each rename appends another entry, so last-wins below
+    # is what makes the field mean the CURRENT name.
+    custom_title: str | None = None
 
 
 def _as_nonempty_str(value: object) -> str | None:
@@ -246,6 +253,7 @@ def parse_session(data: bytes) -> ParsedSession:
     last_ts: str | None = None
     model: str | None = None
     ai_title: str | None = None
+    custom_title: str | None = None
 
     for entry in entries:
         session_uuid = session_uuid or _as_nonempty_str(entry.get("sessionId"))
@@ -259,6 +267,12 @@ def parse_session(data: bytes) -> ParsedSession:
             title = _as_nonempty_str(entry.get("aiTitle"))
             if title is not None:
                 ai_title = title
+        # Same last-wins rule: an operator who renames a session twice meant the
+        # second name.
+        if entry.get("type") == "custom-title":
+            chosen = _as_nonempty_str(entry.get("customTitle"))
+            if chosen is not None:
+                custom_title = chosen
         if model is None:
             message = entry.get("message")
             if isinstance(message, dict):
@@ -296,6 +310,7 @@ def parse_session(data: bytes) -> ParsedSession:
         hidden=hidden,
         model=model,
         ai_title=ai_title,
+        custom_title=custom_title,
     )
 
 
@@ -349,6 +364,63 @@ _TASK_NOTIFICATION_PATTERN = re.compile(
 # SPEC 6: prompts opening with this marker are excluded from turn-starts.
 _STOP_HOOK_PREFIX = "Stop hook feedback:"
 
+# ---------------------------------------------------------------------------
+# The entry types this parser NAMES, grouped by what it does with each.
+#
+# Ticket 18 (principal ruling 2026-08-02, option 4). A field census of all
+# 13,836 stored objects found eight entry types and three content-block types
+# that rendered NOTHING and incremented NO counter: 62,577 entries dropped with
+# `loss: 0` recorded beside them, which is silent loss by FINDINGS F6's own
+# definition and a gap against DESIGN section 6's "the model now surfaces the
+# rest". The rule adopted is: everything named here is surfaced, and anything
+# NOT named here is surfaced as a marker AND counted into the manifest's
+# top-level `unrecognised` block. `unrecognised` deliberately sits OUTSIDE the
+# frozen `loss` key set, because an entry that rendered a marker was not lost,
+# and filing it as loss would be F6 pointing the other way.
+#
+# The ROOT CAUSE these sets exist to fix: the previous census ran once, on
+# 2026-07-23, and `frame-link` first appears 2026-07-03 with `file-history-delta`
+# on 2026-07-14. A one-time census of a living format goes stale by
+# construction. tests/test_real_shapes.py reads these sets off this source with
+# an AST fence, so the fence cannot rot separately from the dispatch it fences;
+# the `_ENTRY_TYPES` suffix is what that fence matches on, which is why the
+# block-level sets below are named `_BLOCK_KINDS` instead.
+# ---------------------------------------------------------------------------
+
+# Carry the conversation itself; each has its own branch in build_conversation.
+_CONVERSATION_ENTRY_TYPES = frozenset({"user", "assistant", "attachment", "system"})
+# Informational, surfaced verbatim as `extra` blocks (principal ruling 2026-07-23).
+_EXTRA_ENTRY_TYPES = frozenset(
+    {"bridge-session", "queue-operation", "last-prompt", "agent-name"}
+)
+# Session METADATA owned by parse_session (title and summary sources), so
+# build_conversation names them and deliberately emits nothing.
+_METADATA_ENTRY_TYPES = frozenset({"summary", "ai-title", "custom-title"})
+# Machinery: real, but not conversation. One compact marker each, exactly as
+# `attachment`'s machinery kinds already do.
+_MACHINERY_ENTRY_TYPES = frozenset(
+    {"permission-mode", "mode", "file-history-snapshot", "file-history-delta", "started"}
+)
+# A sub-agent's RETURNED WORK. Measured at mean 2,234 bytes and max 6,908 across
+# 173 real entries, so a one-line marker would bury a deliverable; it renders as
+# its own block under the sub-agent phase.
+_AGENT_RESULT_ENTRY_TYPES = frozenset({"result"})
+# An artifact the session produced: a title plus the URL it lives at.
+_LINK_ENTRY_TYPES = frozenset({"frame-link"})
+
+KNOWN_ENTRY_TYPES = (
+    _CONVERSATION_ENTRY_TYPES
+    | _EXTRA_ENTRY_TYPES
+    | _METADATA_ENTRY_TYPES
+    | _MACHINERY_ENTRY_TYPES
+    | _AGENT_RESULT_ENTRY_TYPES
+    | _LINK_ENTRY_TYPES
+)
+
+# Content-block kinds inside message.content. `image` and `document` wrap a
+# base64 `source`; `fallback` records a model swap mid-reply.
+_MEDIA_BLOCK_KINDS = frozenset({"image", "document"})
+
 
 @dataclass(frozen=True)
 class Block:
@@ -356,8 +428,9 @@ class Block:
 
     `kind` is one of: thinking, assistant_text, tool_use, tool_result,
     task_notification, stop_hook, continuation, machinery, reminder, subagent,
-    command, attachment, extra. `text` carries the primary content; tool_name/tool_input
-    carry a tool call's typed payload (both None for non-tool blocks).
+    agent_result, command, attachment, extra. `text` carries the primary content;
+    tool_name/tool_input carry a tool call's typed payload (both None for
+    non-tool blocks).
     """
 
     kind: str
@@ -407,6 +480,13 @@ class Conversation:
     tool_call_count: int
     skipped_lines: int
     unencodable_chars: int = 0
+    # Entry and content-block type names the parser does not name, sorted and
+    # de-duplicated, with the total number of occurrences (ticket 18). Each one
+    # still RENDERED a marker, so this is not loss telemetry: it is the tripwire
+    # that says Claude Code's format moved. `()` / 0 for every session in the
+    # 2026-08-02 corpus, by construction.
+    unrecognised: tuple[str, ...] = ()
+    unrecognised_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -428,6 +508,9 @@ class Segment:
 
 _PHASE_CATEGORY = {
     "subagent": "subagent",
+    # A `result` entry is the same sub-agent's returned work, so it folds into
+    # the sub-agent phase rather than opening one of its own.
+    "agent_result": "subagent",
     "command": "command",
     "attachment": "attachment",
     "extra": "extra",
@@ -507,8 +590,12 @@ def _tool_result_text(block: dict[str, object]) -> str:
     return extract_text(content)
 
 
-def _assistant_blocks(content: object) -> list[Block]:
-    """Blocks from an assistant message: thinking, text, and typed tool calls."""
+def _assistant_blocks(content: object, unknown: list[str]) -> list[Block]:
+    """Blocks from an assistant message: thinking, text, and typed tool calls.
+
+    `unknown` collects the names of block types this function does not handle,
+    so a type Claude Code adds later is counted rather than dropped (ticket 18).
+    """
     out: list[Block] = []
     if isinstance(content, str):
         if content.strip():
@@ -542,16 +629,80 @@ def _assistant_blocks(content: object) -> list[Block]:
                     else None,
                 )
             )
+        elif block_type == "fallback":
+            # One real case: the reply switched models mid-flight. Machinery,
+            # but machinery that explains why a transcript changes voice.
+            out.append(Block("machinery", _fallback_text(block)))
+        elif block_type in _MEDIA_BLOCK_KINDS:
+            out.append(_media_block(block))
+        else:
+            out.append(_unknown_block(block, unknown))
     return out
 
 
+def _fallback_text(block: dict[str, object]) -> str:
+    """`{"type": "fallback", "from": {"model": ...}, "to": {"model": ...}}`."""
+
+    def model_of(key: str) -> str:
+        value = block.get(key)
+        if isinstance(value, dict):
+            return _as_nonempty_str(cast(dict[str, object], value).get("model")) or "?"
+        return "?"
+
+    return f"model fallback: {model_of('from')} -> {model_of('to')}"
+
+
+def _media_block(block: dict[str, object]) -> Block:
+    """An `image` or `document` content block as an attachment marker.
+
+    The base64 `source.data` is NEVER inlined. The corpus' largest single object
+    is 114,154,804 bytes and 97% of it is block content; a projection that
+    embedded such a payload would be neither readable nor writable. The media
+    type and the decoded size are what a reader can actually act on.
+    """
+    kind = _as_nonempty_str(block.get("type")) or "media"
+    media_type = ""
+    decoded = 0
+    source = block.get("source")
+    if isinstance(source, dict):
+        src = cast(dict[str, object], source)
+        media_type = _as_nonempty_str(src.get("media_type")) or ""
+        data = src.get("data")
+        if isinstance(data, str):
+            # base64 encodes 3 bytes per 4 characters; padding makes this an
+            # upper bound off by at most two bytes, which is honest at this
+            # resolution and needs no decode of a multi-megabyte string.
+            decoded = len(data) * 3 // 4
+    detail = " \N{MIDDLE DOT} ".join(
+        part for part in (media_type, f"{decoded:,} bytes" if decoded else "") if part
+    )
+    return Block("attachment", f"attachment ({kind})" + (f": {detail}" if detail else ""))
+
+
+def _unknown_block(block: dict[str, object], unknown: list[str]) -> Block:
+    """A content block whose `type` the parser does not name: surfaced as a
+    marker and recorded, never dropped (ticket 18 tripwire)."""
+    name = _as_nonempty_str(block.get("type")) or "(untyped)"
+    unknown.append(f"block:{name}")
+    return Block("machinery", f"block:{name}")
+
+
 def _user_list_blocks(
-    content: list[object], result: Mapping[str, object] | None = None
+    content: list[object],
+    unknown: list[str],
+    result: Mapping[str, object] | None = None,
 ) -> list[Block]:
     """Blocks from a user message whose content is a block array: tool results
     (machinery replies) and any embedded text blocks. `result` is the entry's
     `toolUseResult`, attached to the tool_result block so the emitter can render
-    a structured diff or stdout/stderr rather than only the text (item 5)."""
+    a structured diff or stdout/stderr rather than only the text (item 5).
+
+    Before ticket 18 this returned an empty list for a message whose blocks were
+    all `image` or `document`, and an empty list meant the WHOLE message vanished
+    with `loss: 0` beside it: 87 image and 2 document blocks in the corpus, and
+    one of them sits in the largest session there is. `unknown` collects the
+    names of block types this function does not name.
+    """
     out: list[Block] = []
     for raw in content:
         if not isinstance(raw, dict):
@@ -564,6 +715,10 @@ def _user_list_blocks(
             text = block.get("text")
             if isinstance(text, str) and text.strip():
                 out.append(Block("assistant_text", text.strip()))
+        elif block_type in _MEDIA_BLOCK_KINDS:
+            out.append(_media_block(block))
+        else:
+            out.append(_unknown_block(block, unknown))
     return out
 
 
@@ -618,7 +773,7 @@ def _attachment_text(attachment: dict[str, object]) -> str:
     return ""
 
 
-def _subagent_blocks(entry: dict[str, object]) -> list[Block]:
+def _subagent_blocks(entry: dict[str, object], unknown: list[str]) -> list[Block]:
     """A sidechain (sub-agent) entry rendered as `subagent` blocks tagged with
     its agentId, so a run of them folds under one labelled phase (item 2).
 
@@ -639,7 +794,7 @@ def _subagent_blocks(entry: dict[str, object]) -> list[Block]:
         if text:
             lines.append(f"prompt: {_one_line(text)}")
     else:
-        for block in _assistant_blocks(content):
+        for block in _assistant_blocks(content, unknown):
             if block.kind == "thinking":
                 lines.append(f"thinking: {_one_line(block.text)}")
             elif block.kind == "assistant_text":
@@ -667,6 +822,81 @@ def _value_summary(entry: dict[str, object], keys: tuple[str, ...]) -> str:
     return " ".join(parts)
 
 
+def _machinery_marker(entry: dict[str, object], kind: str) -> str:
+    """One compact line for a machinery entry type (ticket 18).
+
+    Every shape here was read off a real sample of that type, so each marker
+    carries the ONE field a reader can act on and nothing else. The bodies are
+    deliberately not inlined: a `file-history-snapshot` reaches 15,507 bytes in
+    the corpus and 14,315 of them exist, so dumping them would drown the
+    conversation the projection is for.
+    """
+    if kind == "permission-mode":
+        return f"permission-mode: {_as_nonempty_str(entry.get('permissionMode')) or '?'}"
+    if kind == "mode":
+        return f"mode: {_as_nonempty_str(entry.get('mode')) or '?'}"
+    if kind == "started":
+        return f"sub-agent started: {_as_nonempty_str(entry.get('agentId')) or '?'}"
+    if kind == "file-history-delta":
+        path = _as_nonempty_str(entry.get("trackingPath")) or "?"
+        return f"file-history-delta: {path}"
+    # file-history-snapshot: the count of tracked files is the only part a
+    # reader can use; the backups themselves are Claude Code's own bookkeeping.
+    tracked = 0
+    snapshot = entry.get("snapshot")
+    if isinstance(snapshot, dict):
+        backups = cast(dict[str, object], snapshot).get("trackedFileBackups")
+        if isinstance(backups, dict):
+            tracked = len(cast(dict[str, object], backups))
+    update = " (update)" if entry.get("isSnapshotUpdate") is True else ""
+    return f"file-history-snapshot: {tracked} tracked file(s){update}"
+
+
+def _agent_result_block(entry: dict[str, object]) -> Block:
+    """A `result` entry as the sub-agent's returned work, in full.
+
+    Measured across all 173 real cases: mean 2,234 bytes, max 6,908. This is a
+    deliverable, not machinery, so it keeps its content instead of being cut to
+    a marker (principal ruling 2026-08-02).
+
+    There is NO single result schema, which cost a first implementation here:
+    reading only `summary` covered 12 of the 173, and the other 161 carry
+    `verdict`/`evidence` (71), `candidates` (41), `verdicts` (45), `files`,
+    `decisions` and more, one shape per agent. So `summary` leads when present
+    and the structured payload travels alongside it in `result`, where the
+    emitters fence it. Nothing about the shape is assumed.
+    """
+    agent_id = _as_nonempty_str(entry.get("agentId")) or "sub-agent"
+    result = entry.get("result")
+    if isinstance(result, str):
+        return Block("agent_result", result.strip(), agent_id=agent_id)
+    if not isinstance(result, dict):
+        return Block("machinery", f"sub-agent result: {agent_id} (empty)")
+    payload = cast(dict[str, object], result)
+    summary = _as_nonempty_str(payload.get("summary")) or ""
+    rest = {key: value for key, value in payload.items() if key != "summary"}
+    return Block(
+        "agent_result",
+        summary,
+        result=cast("Mapping[str, object]", rest) if rest else None,
+        agent_id=agent_id,
+    )
+
+
+def _frame_link_text(entry: dict[str, object]) -> str:
+    """An artifact the session produced: its title and the URL it lives at.
+
+    Kept as plain text rather than a markdown link because the same string is
+    rendered by BOTH emitters and only one of them runs it through the markdown
+    renderer; a link here would render differently in the two files (R9).
+    """
+    title = _as_nonempty_str(entry.get("title")) or ""
+    url = _as_nonempty_str(entry.get("frameUrl")) or ""
+    path = _as_nonempty_str(entry.get("path")) or ""
+    parts = [part for part in (title, url, path) if part]
+    return "frame-link: " + " ".join(parts) if parts else "frame-link"
+
+
 def build_conversation(data: bytes) -> Conversation:
     """Normalized conversation model shared by every emitter (DESIGN section 6).
 
@@ -679,12 +909,16 @@ def build_conversation(data: bytes) -> Conversation:
     prompt are kept in a synthetic turn rather than silently dropped (SPEC 6
     CHANGE, F6).
 
-    Scope is the conversation only: non-conversation entries (e.g. type
-    "summary"/"system") and user messages whose content is neither a string nor
-    a block array are session metadata owned by parse_session, not part of this
-    model.
+    Metadata entries (`summary`, `ai-title`, `custom-title`) are named here and
+    deliberately emit nothing: parse_session owns them. Every OTHER entry type
+    surfaces, machinery as a one-line marker; a type this parser does not name
+    surfaces as a marker AND is counted into `unrecognised` (ticket 18,
+    principal ruling 2026-08-02). Before that ruling this method dropped eight
+    real entry types and three content-block types outright, 62,577 entries
+    across the corpus, with `loss: 0` recorded beside them.
     """
     entries, _line_count, skipped_lines, unencodable = _extract_entries(data)
+    unknown: list[str] = []
 
     turns: list[Turn] = []
     ordinal = 0
@@ -724,12 +958,23 @@ def build_conversation(data: bytes) -> Conversation:
                 first_ts = stamp
             last_ts = stamp
 
+        # THE TRIPWIRE (ticket 18). Anything this parser does not name is
+        # surfaced as a marker and counted, so the next entry type Claude Code
+        # ships is visible in the projection AND answerable from the manifest,
+        # rather than waiting for someone to re-run a census. Placed FIRST so no
+        # later branch can silently swallow an unnamed type.
+        if not isinstance(kind, str) or kind not in KNOWN_ENTRY_TYPES:
+            name = kind if isinstance(kind, str) and kind else "(untyped)"
+            unknown.append(f"entry:{name}")
+            blocks.append(Block("machinery", f"entry:{name}"))
+            continue
+
         # Sidechain entries are a sub-agent's own exchange, not the main
         # thread: fold them in as subagent blocks rather than letting them start
         # or join a top-level turn (item 2). Checked before role dispatch so a
         # sidechain user prompt never opens a main turn.
         if entry.get("isSidechain") is True and kind in ("user", "assistant"):
-            blocks.extend(_subagent_blocks(entry))
+            blocks.extend(_subagent_blocks(entry, unknown))
             continue
 
         if kind == "attachment":
@@ -763,9 +1008,22 @@ def build_conversation(data: bytes) -> Conversation:
             if summary:
                 blocks.append(Block("extra", f"{kind}: {summary}"))
             continue
+        if kind in _MACHINERY_ENTRY_TYPES:
+            blocks.append(Block("machinery", _machinery_marker(entry, kind)))
+            continue
+        if kind in _AGENT_RESULT_ENTRY_TYPES:
+            blocks.append(_agent_result_block(entry))
+            continue
+        if kind in _LINK_ENTRY_TYPES:
+            blocks.append(Block("extra", _frame_link_text(entry)))
+            continue
+        if kind in _METADATA_ENTRY_TYPES:
+            # Named, and deliberately silent: parse_session owns the title and
+            # summary sources, so emitting them here would duplicate the header.
+            continue
 
         if kind == "assistant":
-            blocks.extend(_assistant_blocks(content))
+            blocks.extend(_assistant_blocks(content, unknown))
             continue
         if kind != "user":
             continue
@@ -778,7 +1036,9 @@ def build_conversation(data: bytes) -> Conversation:
             blocks.append(Block("continuation", extract_text(content)))
             continue
         if isinstance(content, list):
-            blocks.extend(_user_list_blocks(cast(list[object], content), result_map))
+            blocks.extend(
+                _user_list_blocks(cast(list[object], content), unknown, result_map)
+            )
             continue
         if not isinstance(content, str):
             continue
@@ -827,4 +1087,8 @@ def build_conversation(data: bytes) -> Conversation:
         tool_call_count=tool_call_count,
         skipped_lines=skipped_lines,
         unencodable_chars=unencodable,
+        # Sorted and de-duplicated for the manifest; the COUNT keeps every
+        # occurrence, so ten of one new type reads as ten, not as one.
+        unrecognised=tuple(sorted(set(unknown))),
+        unrecognised_count=len(unknown),
     )

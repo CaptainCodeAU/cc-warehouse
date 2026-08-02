@@ -450,6 +450,29 @@ def _render_subagent(block: Block) -> list[str]:
     return [f"- {block.text}"]
 
 
+def _render_agent_result(block: Block) -> list[str]:
+    """A sub-agent's RETURNED WORK, in full (ticket 18).
+
+    Its own renderer rather than a `subagent` bullet because the content is
+    prose, mean 2,234 bytes across the 173 real cases and up to 6,908, and a
+    bullet cannot hold a paragraph. Hardened exactly like assistant_text, so a
+    fenced code block inside a returned summary cannot break out of the
+    transcript.
+
+    Only 12 of the 173 carry a `summary`; the rest return a STRUCTURED result
+    whose keys differ per agent (verdict/evidence, candidates, verdicts, files).
+    That payload rides in `block.result` and is fenced as JSON here, so an
+    unknown result schema is preserved verbatim rather than summarised away.
+    """
+    label = f"**sub-agent result**{' (' + block.agent_id + ')' if block.agent_id else ''}"
+    out = ["", label]
+    if block.text:
+        out.extend(["", _harden(block.text)])
+    if block.result:
+        out.extend(["", *_fence(json.dumps(block.result, indent=2, sort_keys=True), "json")])
+    return out
+
+
 def _render_command(block: Block) -> list[str]:
     return ["", f"`{block.text}`"]
 
@@ -540,6 +563,10 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
         ]
     if kind == "subagent":
         return _render_subagent(block) if policy.include_subagents else []
+    if kind == "agent_result":
+        # Same gate as `subagent`: it IS sub-agent content, so it needs no key of
+        # its own and the compact variant's `subagents_compact` already governs it.
+        return _render_agent_result(block) if policy.include_subagents else []
     if kind == "command":
         return _render_command(block) if policy.include_commands else []
     if kind == "attachment":
@@ -742,10 +769,18 @@ def _file_targets(conv: Conversation) -> list[tuple[str, str]]:
 
 
 def _title(meta: ParsedSession) -> str:
-    """The page/document title. Priority (principal ruling 2026-07-23): Claude
-    Code's own ai-title, then the slug, then the first line of the summary, then
-    a bare fallback. The summary can be a machine-generated CONTEXT: wrapper, so
-    it ranks below the real title."""
+    """The page/document title. Priority: the OPERATOR's own custom-title, then
+    Claude Code's ai-title, then the slug, then the first line of the summary,
+    then a bare fallback. The summary can be a machine-generated CONTEXT:
+    wrapper, so it ranks below the real title.
+
+    custom-title heads the list from ticket 18 (principal ruling 2026-08-02): a
+    name a person chose outranks a name a model generated. Measured on the real
+    corpus, this changes the title of 26 sessions of 13,836, not the 910 the raw
+    entry count suggests, because a rename appends an entry rather than
+    replacing one. Everything below it is the 2026-07-23 ruling, unchanged."""
+    if meta.custom_title:
+        return meta.custom_title
     if meta.ai_title:
         return meta.ai_title
     if meta.slug:
@@ -804,6 +839,25 @@ def _lean_rows(
     return rows
 
 
+def _unrecognised_rows(conv: Conversation) -> list[str]:
+    """The `Unrecognised` detail row, emitted ONLY when there is something to
+    say (ticket 18).
+
+    Conditional on purpose. Every session in the 2026-08-02 corpus has nothing
+    unrecognised, so an unconditional row would rewrite 13,608 projections and
+    move tests/golden/matrix-anchor for a line that reads "0" forever. When it
+    DOES appear it is the signal that Claude Code's format moved.
+    """
+    if not conv.unrecognised_count:
+        return []
+    names = ", ".join(conv.unrecognised)
+    plural = "y" if conv.unrecognised_count == 1 else "ies"
+    return [
+        f"- **Unrecognised:** {conv.unrecognised_count} entr{plural}"
+        f" of {len(conv.unrecognised)} new type(s) ({names})"
+    ]
+
+
 def _detail_rows(meta: ParsedSession, conv: Conversation, policy: _Policy) -> list[str]:
     """The collapsed "More details" grid. Counts are computed from the model, so
     they describe THIS render rather than restating the source."""
@@ -819,6 +873,7 @@ def _detail_rows(meta: ParsedSession, conv: Conversation, policy: _Policy) -> li
         f"{dot}{conv.tool_call_count} tool calls",
         f"- **Files touched:** {len(files)}",
         f"- **Loss:** {conv.skipped_lines} skipped line(s)",
+        *_unrecognised_rows(conv),
         f"- **Slug:** {meta.slug or ''}",
         f"- **Model:** {meta.model or ''}",
         f"- **CLI version:** {meta.version or ''}",
@@ -1740,6 +1795,7 @@ _ROW_ICONS = {
     "machinery": "\N{GEAR}",
     "reminder": "\N{INFORMATION SOURCE}",
     "subagent": "\N{ROBOT FACE}",
+    "agent_result": "\N{ROBOT FACE}",
     "command": "\N{KEYBOARD}",
     "attachment": "\N{PAPERCLIP}",
     "extra": "\N{INFORMATION SOURCE}",
@@ -1774,6 +1830,7 @@ def _row_label(block: Block) -> str:
     # nothing is shown twice.
     labels = {
         "subagent": "sub-agent",
+        "agent_result": "sub-agent result",
         "command": "command",
         "extra": "session event",
     }
@@ -2138,6 +2195,15 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
     lone-surrogate ruling added unencodable_chars, which counts characters the
     payload could not represent in utf-8 and that the projection replaced with
     U+FFFD rather than failing to write at all.
+
+    `unrecognised` is a TOP-LEVEL key, added by ticket 18 (principal ruling
+    2026-08-02) and deliberately NOT a fourth `loss` amendment: every entry it
+    counts rendered a marker, so nothing was lost, and filing a rendered entry
+    under loss would be the same guarantee drift F6 exists to ban. It answers a
+    different question from `loss`, namely "has Claude Code's format moved since
+    the last census", which is the failure this project has actually suffered:
+    the previous entry-type census ran once, on 2026-07-23, and two of the types
+    it missed first appeared earlier that same month.
     """
     conv = build_conversation(data)
     truncated_blocks, truncated_chars = _truncation_loss(conv, options)
@@ -2149,6 +2215,10 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
             "truncated_blocks": truncated_blocks,
             "truncated_chars": truncated_chars,
             "unencodable_chars": conv.unencodable_chars,
+        },
+        "unrecognised": {
+            "count": conv.unrecognised_count,
+            "types": list(conv.unrecognised),
         },
         "config": asdict(options),
     }
