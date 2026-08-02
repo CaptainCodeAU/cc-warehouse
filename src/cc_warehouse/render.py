@@ -81,6 +81,13 @@ class RenderOptions:
     # single-line blob a line cap would miss, and a KB cap means different
     # amounts per alphabet. One cap, variant-agnostic.
     tool_output_max_chars: int = 0
+    # What the projections do about thinking blocks Claude Code left empty
+    # (ticket 20, principal ruling 2026-08-02). `caption` folds the count into
+    # the phase caption that already prints, adding NO lines to any file;
+    # `marker` gives one line per block; `off` draws nothing. The manifest counts
+    # them at every position. Variant-agnostic in spelling because compact welds
+    # thinking off entirely, so a `_compact` sibling could only ever mean "off".
+    thinking_withheld: str = "caption"
     # highlight.js delivery: cdn | inline | off (DESIGN 15 item 8, principal 2026-07-24).
     # Personal projections keep `cdn` for exporter parity; `ccw share` sets `inline` so a
     # published page makes no third-party request. See _hljs_block.
@@ -111,6 +118,10 @@ class _Policy:
     details_open: bool
     turns_collapsed: bool
     tool_output_max_chars: int
+    # caption | marker | off (ticket 20). The compact policy welds it to `off`
+    # because it already welds thinking off, and a note about thinking is still
+    # a note about thinking.
+    thinking_withheld: str
 
 
 # The compact variant describes ITSELF in two places, and both sentences are
@@ -561,6 +572,15 @@ def _render_block(block: Block, policy: _Policy) -> list[str]:
                 block, structured=policy.toolresult_diff, cap=policy.tool_output_max_chars
             ),
         ]
+    if kind == "thinking_withheld":
+        # `caption` draws nothing HERE on purpose: the count rides in the phase
+        # header instead, which is what makes the default cost zero lines.
+        if policy.thinking_withheld != "marker":
+            return []
+        # Never "lost" or "dropped": for 96% of the real corpus the text never
+        # arrived, and claiming otherwise would overclaim about OUR behaviour,
+        # which is F6 pointed inward.
+        return ["", "> [thinking withheld] no text was provided for this block"]
     if kind == "subagent":
         return _render_subagent(block) if policy.include_subagents else []
     if kind == "agent_result":
@@ -670,7 +690,7 @@ class _PhaseMeta:
         return f"{self.icon} {self.caption}{warn}{dot + tail if tail else ''}"
 
 
-def _phase_meta(blocks: tuple[Block, ...]) -> _PhaseMeta:
+def _phase_meta(blocks: tuple[Block, ...], policy: _Policy) -> _PhaseMeta:
     """Caption, duration bits and tool counts for one phase (exporter groupMeta).
 
     Caption priority mirrors the exporter: the LAST thinking block's caption
@@ -720,6 +740,13 @@ def _phase_meta(blocks: tuple[Block, ...]) -> _PhaseMeta:
     if thinking:
         count = len(thinking)
         bits.append("1 thought" if count == 1 else f"{count} thoughts")
+    # Ticket 20's DEFAULT, and the reason it costs no lines: the fact rides in a
+    # header that already exists. `marker` prints per-block lines instead and
+    # would double-report if it also appeared here.
+    if policy.thinking_withheld == "caption":
+        withheld = sum(1 for b in blocks if b.kind == "thinking_withheld")
+        if withheld:
+            bits.append(f"{withheld} thinking withheld")
     if subagent:
         icon = "\N{ROBOT FACE}"
     elif thinking:
@@ -916,6 +943,17 @@ def _header(
     return lines
 
 
+def _withheld_only(blocks: tuple[Block, ...], policy: _Policy) -> bool:
+    """True when a phase carries withheld thinking and nothing that renders.
+
+    Shared by both emitters so the header-only case cannot appear in one file
+    and not the other (R9), which is exactly the divergence slice 14 recorded.
+    """
+    if policy.thinking_withheld != "caption":
+        return False
+    return any(b.kind == "thinking_withheld" for b in blocks)
+
+
 def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
     """One phase as markdown: a collapsible section whose summary is the caption
     line, with a blockquote breadcrumb repeating it inside.
@@ -925,13 +963,21 @@ def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
     exporter's v8.7 hybrid-label finding). In the compact variant the section
     collapses to that breadcrumb alone, and only when breadcrumbs are on.
     """
-    meta = _phase_meta(segment.blocks)
+    meta = _phase_meta(segment.blocks, policy)
     inner: list[str] = []
     for block in segment.blocks:
         inner.extend(_render_block(block, policy))
     inner = _strip_separators(inner)
     if not inner:
-        return ["", f"> {meta.head()}", ""] if policy.breadcrumbs else []
+        # A phase whose every block renders nothing is normally suppressed. The
+        # exception is a phase that exists ONLY because thinking was withheld:
+        # suppressing it would put the fact back in the dark, which is what
+        # ticket 20 exists to stop. It costs one breadcrumb line, and only for a
+        # phase that is entirely withheld thinking; where the phase also ran
+        # tools the bit joins a header that already prints.
+        if policy.breadcrumbs or _withheld_only(segment.blocks, policy):
+            return ["", f"> {meta.head()}", ""]
+        return []
     # The leading blank is required, not cosmetic: CommonMark needs a blank line
     # before an HTML block, or a preceding paragraph swallows the open tag
     # (the spacing class the exporter fixed in v8.7).
@@ -1082,6 +1128,7 @@ def _full_policy(options: RenderOptions) -> _Policy:
         details_open=options.details == "open",
         turns_collapsed=options.html_turns == "collapsed",
         tool_output_max_chars=options.tool_output_max_chars,
+        thinking_withheld=options.thinking_withheld,
     )
 
 
@@ -1127,6 +1174,10 @@ def _compact_policy(options: RenderOptions) -> _Policy:
         # One cap, variant-agnostic (block 3): the same value as the full
         # policy's, so a block cut in one file is cut identically in the other.
         tool_output_max_chars=options.tool_output_max_chars,
+        # WELDED off, not read from options (ticket 20). Compact drops thinking
+        # outright, so a note saying thinking was withheld would be the only
+        # thinking-related thing on a page that has none.
+        thinking_withheld="off",
     )
 
 
@@ -1857,7 +1908,7 @@ def _phase_html(
     each row carries its block's fragment, so every copy button on the page
     yields text that appears verbatim in the transcript file.
     """
-    meta = _phase_meta(segment.blocks)
+    meta = _phase_meta(segment.blocks, policy)
     rows: list[str] = []
     for block in segment.blocks:
         lines = _strip_separators(_render_block(block, policy))
@@ -1884,7 +1935,9 @@ def _phase_html(
         )
     head = _escape(meta.head())
     if not rows:
-        return f'<div class="phase-line">{head}</div>' if policy.breadcrumbs else None
+        if policy.breadcrumbs or _withheld_only(segment.blocks, policy):
+            return f'<div class="phase-line">{head}</div>'
+        return None
     fragment = "\n".join(_strip_separators(_phase_md(segment, policy)))
     anchor = anchors.allocate(ordinal, f"phase:{fragment}")
     payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
@@ -2220,6 +2273,12 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
             "count": conv.unrecognised_count,
             "types": list(conv.unrecognised),
         },
+        # Third top-level key, and a third distinct question (ticket 20).
+        # `loss` is what WE dropped, `unrecognised` is what the format grew, and
+        # `withheld` is what never arrived: Claude Code stopped writing thinking
+        # text into the JSONL at v2.1.69. Counted at every display position,
+        # because what the emitters draw is a choice and the count is a fact.
+        "withheld": {"thinking_blocks": conv.withheld_thinking},
         "config": asdict(options),
     }
     return manifest

@@ -69,6 +69,7 @@ def render_options(config: Config) -> render.RenderOptions:
         html_turns=config.render_html_turns,
         details=config.render_details,
         html_dates=config.render_html_dates,
+        thinking_withheld=config.render_thinking_withheld,
         tool_output_max_chars=config.render_tool_output_max_chars,
     )
 

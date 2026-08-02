@@ -35,10 +35,12 @@ from cc_warehouse import (
 from cc_warehouse.config import (
     CAP_KEY,
     CHROME_KEYS,
+    CONTENT_WORD_KEYS,
+    WORD_KEYS,
     Config,
     cap_problem,
-    chrome_problem,
     load_config,
+    word_problem,
 )
 from cc_warehouse.render import RenderOptions
 
@@ -167,6 +169,20 @@ _CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
     # value column belongs to the row rather than to a shared constant.
     (CAP_KEY.replace("_", "-"), CAP_KEY, _LIMITS, "N",
      "cap each rendered tool result at N characters (0 = off)"),
+    # Ticket 20. Filed under _FULL rather than _CHROME: the chrome keys are
+    # initial states a reader can click away, this decides what is on the page
+    # at all, and slice 16 recorded what filing a setting under the wrong
+    # heading does to the reader. Compact welds it off, so it is full-only.
+    *(
+        (
+            key.replace("_", "-"),
+            key,
+            _FULL,
+            "{" + "|".join(allowed) + "}",
+            f"{blurb} ({default})",
+        )
+        for key, (allowed, default, blurb) in CONTENT_WORD_KEYS.items()
+    ),
 )
 
 
@@ -184,10 +200,10 @@ def _value_flag_problem(args: Sequence[str]) -> str | None:
     able to stop a session being stored.
     """
     flags = _content_flags(args)
-    for key in CHROME_KEYS:
+    for key in WORD_KEYS:
         value = flags.get(key)
         if value is not None:
-            problem = chrome_problem(key, value)
+            problem = word_problem(key, value)
             if problem is not None:
                 return problem
     cap = flags.get(CAP_KEY)

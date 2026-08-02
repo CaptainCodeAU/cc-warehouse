@@ -487,6 +487,10 @@ class Conversation:
     # 2026-08-02 corpus, by construction.
     unrecognised: tuple[str, ...] = ()
     unrecognised_count: int = 0
+    # Thinking blocks that arrived with no text (ticket 20). Counted here rather
+    # than derived at render time so the manifest reports the same number
+    # whatever the emitters were told to draw.
+    withheld_thinking: int = 0
 
 
 @dataclass(frozen=True)
@@ -612,6 +616,17 @@ def _assistant_blocks(content: object, unknown: list[str]) -> list[Block]:
             thinking = block.get("thinking")
             if isinstance(thinking, str) and thinking.strip():
                 out.append(Block("thinking", thinking.strip()))
+            else:
+                # WITHHELD UPSTREAM, not dropped here (ticket 20). Claude Code
+                # stopped writing thinking text into the JSONL at v2.1.69
+                # (2026-03-05); 41,458 of 43,060 real blocks arrive like this,
+                # and zero opus blocks have ever carried text. Emitting a block
+                # with no text is what makes the count survive to the phase
+                # caption and the manifest; the emitters decide what, if
+                # anything, it draws. The `signature` is deliberately NOT read:
+                # it is documented as opaque, and building visible behaviour on
+                # an undocumented encoding is the overclaim this project bans.
+                out.append(Block("thinking_withheld", ""))
         elif block_type == "text":
             text = block.get("text")
             if isinstance(text, str) and text.strip():
@@ -1091,4 +1106,7 @@ def build_conversation(data: bytes) -> Conversation:
         # occurrence, so ten of one new type reads as ten, not as one.
         unrecognised=tuple(sorted(set(unknown))),
         unrecognised_count=len(unknown),
+        withheld_thinking=sum(
+            1 for turn in turns for block in turn.blocks if block.kind == "thinking_withheld"
+        ),
     )

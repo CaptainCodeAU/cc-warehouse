@@ -8,8 +8,8 @@ render toggles): top-level `root`; [notify] voice_url voice_id open_folder;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
 attachments_compact commands_compact extras_compact tool_output_compact, and the
-chrome keys html_width html_font html_turns details html_dates, and the
-truncation cap tool_output_max_chars;
+chrome keys html_width html_font html_turns details html_dates, the
+truncation cap tool_output_max_chars, and thinking_withheld (ticket 20, 2026-08-02);
 [share] redact_patterns; [relocate] roots; [import] inbox;
 [[notify.webhook]] name url events template; [project.<id>.<table>] overrides.
 """
@@ -48,6 +48,27 @@ CHROME_KEYS: dict[str, tuple[tuple[str, ...], str, str]] = {
 }
 
 
+# Content keys whose value is a WORD rather than a bool (ticket 20). Kept in a
+# table of their own rather than added to CHROME_KEYS: chrome keys are initial
+# states a reader can click away, this one decides what is on the page at all,
+# and slice 16 already proved the hard way that filing a setting under the wrong
+# heading tells the reader the opposite of the truth.
+THINKING_KEY = "thinking_withheld"
+
+CONTENT_WORD_KEYS: dict[str, tuple[tuple[str, ...], str, str]] = {
+    THINKING_KEY: (
+        ("caption", "marker", "off"),
+        "caption",
+        "thinking blocks Claude Code left empty: fold the count into the phase"
+        " caption, one marker line each, or nothing",
+    ),
+}
+
+# Every word-valued render key, for VALIDATION only. Group membership stays with
+# the CLI's own table, which is what decides the heading a flag prints under.
+WORD_KEYS: dict[str, tuple[tuple[str, ...], str, str]] = {**CHROME_KEYS, **CONTENT_WORD_KEYS}
+
+
 CAP_KEY = "tool_output_max_chars"
 
 
@@ -67,12 +88,27 @@ def cap_problem(value: str) -> str | None:
     return None
 
 
-def chrome_problem(key: str, value: str) -> str | None:
-    """The error message for an illegal chrome value, or None when it is legal."""
-    allowed, _default, _blurb = CHROME_KEYS[key]
+def word_problem(key: str, value: str) -> str | None:
+    """The error message for an illegal word-valued render key, or None.
+
+    One implementation for every such key (R9). Ticket 20 added the second
+    family; a second validator would have been a second place for the legal
+    words to drift from the loader's.
+    """
+    allowed, _default, _blurb = WORD_KEYS[key]
     if value in allowed:
         return None
     return f"[render].{key} must be one of {'|'.join(allowed)}, not {value!r}"
+
+
+def chrome_problem(key: str, value: str) -> str | None:
+    """The error message for an illegal chrome value, or None when it is legal.
+
+    A named entry point into word_problem, kept because the chrome keys are a
+    contract-named family (DESIGN 15 block 2) and callers that mean CHROME
+    should say so.
+    """
+    return word_problem(key, value)
 
 
 @dataclass(frozen=True)
@@ -117,6 +153,12 @@ class Config:
     render_html_turns: str = "expanded"
     render_details: str = "closed"
     render_html_dates: str = "local"
+    # What the projections do about thinking blocks Claude Code left empty
+    # (ticket 20, principal ruling 2026-08-02). `caption` is the default and
+    # adds no lines to any file; `marker` gives one line per block; `off` shows
+    # nothing. The manifest counts them at every position, because display is a
+    # choice and the count is a fact.
+    render_thinking_withheld: str = "caption"
     # Opt-in truncation cap (block 3). 0 is OFF and is the default.
     render_tool_output_max_chars: int = 0
     redact_patterns: tuple[str, ...] = ()
@@ -246,13 +288,13 @@ def _chrome(
     load_config records rather than raises, while the CLI validates its own flags
     up front and refuses as a usage error before any work begins.
     """
-    _allowed, default, _blurb = CHROME_KEYS[key]
+    _allowed, default, _blurb = WORD_KEYS[key]
     value = default
     for tier in (render.get(key), flags.get(key)):
         if tier is None:
             continue
         text = str(tier)
-        problem = chrome_problem(key, text)
+        problem = word_problem(key, text)
         if problem is not None:
             problems.append(problem)
             continue
@@ -415,6 +457,9 @@ def load_config(
         render_html_turns=_chrome(render, flag_map, "html_turns", problems),
         render_details=_chrome(render, flag_map, "details", problems),
         render_html_dates=_chrome(render, flag_map, "html_dates", problems),
+        # Ticket 20: same word-key resolver as the chrome family, different
+        # family. The resolver is shared; the tables are not.
+        render_thinking_withheld=_chrome(render, flag_map, THINKING_KEY, problems),
         render_tool_output_max_chars=_cap(render, flag_map, problems),
         redact_patterns=redact_patterns,
         relocate_roots=relocate_roots,
