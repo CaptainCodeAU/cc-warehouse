@@ -131,6 +131,14 @@ class Config:
     # zone that is correct everywhere and never surprises; an operator who wants
     # their own wall clock sets it.
     archive_timezone: str = "UTC"
+    # Where the archive-first tree lives, if the operator wants one kept CURRENT
+    # (ticket 19, slice 19i). None means the capture path behaves exactly as it
+    # did before the slice landed, which is what lets this ship against a live
+    # warehouse without risking it. Set it and the hook's own render child
+    # writes the archive folder beside the projection it already writes, so both
+    # trees stay current until the swap and the swap stays a decision rather
+    # than a leap.
+    archive_root: Path | None = None
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -439,6 +447,11 @@ def load_config(
         # default kept (R5): a bad zone in a config file must never be able to
         # stop a capture from storing a session.
         archive_timezone=_archive_timezone(merged, problems),
+        archive_root=(
+            Path(_str_or_none(merged.get("archive_root")) or "").expanduser()
+            if _str_or_none(merged.get("archive_root"))
+            else None
+        ),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

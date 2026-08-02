@@ -659,6 +659,45 @@ def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | No
     return session, out, source
 
 
+def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> None:
+    """Keep the archive-first tree CURRENT from the capture path (slice 19i).
+
+    Before this, `ccw archive` filled a tree once and nothing kept it there, so
+    every new session landed in the old store and the tree drifted from the
+    moment the command finished. It was an export, not an archive.
+
+    OPT-IN and NEVER FATAL. No `archive_root` means this is a no-op and the
+    capture path behaves exactly as it did before, which is what lets the slice
+    ship against a live warehouse. When it is set, a failure here is swallowed:
+    the session is already in the store by the time this runs, the projections
+    are already written, and DESIGN 12's rule is that the detached child must
+    never turn a STORED capture into a lost one. The archive is the new tree and
+    the old one is still the live one; an archive problem must not cost the
+    operator the tree they actually use today.
+
+    Takes the two fields it needs rather than the catalog head object: the
+    head type is private to build.py, and reaching across a module boundary
+    for a private name is coupling this function does not need.
+
+    It calls the same folder writer `ccw archive` calls (R9), so a session
+    captured live and the same session migrated land in the same folder. A
+    second implementation here would silently double the tree.
+    """
+    if config.archive_root is None:
+        return
+    try:
+        archive.write_session_folder(
+            config.archive_root,
+            label,
+            data,
+            build.render_options(config),
+            config.archive_timezone,
+            fallback_stem=f"session-{short}",
+        )
+    except Exception:
+        return
+
+
 def _render_session(session_key: str, rest: Sequence[str]) -> int:
     """`ccw render --session s:<key>`: (re)project one stored session, the hook's
     detached child (DESIGN section 4). Projects only a CURRENT head through the shared
@@ -692,6 +731,7 @@ def _render_session(session_key: str, rest: Sequence[str]) -> int:
     try:
         data = store.get(config.root, head.hash)
         build.write_projection(directory, data, build.render_options(config), force=False)
+        _mirror_to_archive(config, head.label, head.short, data)
     except Exception as exc:  # the detached child's only surviving signal (DESIGN 4)
         try:
             notify.report(config, notify.NotifyEvent("error", short, None, repr(exc), None))
