@@ -41,7 +41,9 @@ edits to the principal instead.
 ## Layout (grows during the build)
 
 - `contract/` the five LOCKED contract documents + `contract/diagrams/` | `docs/`
-  user-facing guides (install, quickstart, configuration, sharing) | `harness/prompts/` role
+  user-facing guides (TODAY: only `sharing-and-redaction.md`; install, quickstart and
+  configuration guides are NAMED HERE BUT DO NOT EXIST, corrected 2026-08-02 after this
+  line claimed four for weeks) | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
   (gitignored once git init lands) | `cc-warehouse-architecture/` the code-architecture
   review board (SOURCE.md is canonical, index.html is rendered from it by
@@ -54,7 +56,8 @@ edits to the principal instead.
 
 **v1 is CLOSED (2026-07-24).** Every slice in the DESIGN section 16 build order landed and
 carries its milestone tag: slice-01..13, with slice 12 split into 12a (containers) and 12b
-(content), 14 tags in all. Gates green (ruff, pyright strict, 403 tests, zero stubs) and
+(content), 14 tags in all. Gates green at that point (ruff, pyright strict, 403 tests
+at v1 close; the live count moves with the suite and is not restated here) and
 zero forward-looking "lands in slice N" promises left in `src/`.
 
 The DESIGN section 16 **v1 exit review was held and closed** the same day. It found two

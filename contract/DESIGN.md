@@ -238,6 +238,7 @@ emit plus the hardening rules from SPEC section 7.
 | `ccw share` | build a sanitized static site for chosen sessions (section 9); sessions chosen by hashes OR a `--since`/`--until` window, never both |
 | `ccw status` | recent captures, counts, store size, last errors (reads catalog + log only) |
 | `ccw verify` | re-hash objects against their names; catalog/object cross-check |
+| `ccw archive` | build the archive-first tree at `--to DIR`, or `--verify` an existing one; `--zone NAME` overrides `archive_timezone` (section 15, 2026-08-02, ticket 19). `--to` is required and refuses the warehouse itself; `--verify` writes nothing; honors the content flags |
 | `ccw version` | version (also `-v`) |
 | v1.1: `ccw search`, `ccw import`; v1.2: `ccw mcp` | per BRAINSTORM cut |
 
@@ -299,6 +300,17 @@ html_turns details html_dates tool_output_max_chars**; `[share]` redact_patterns
 `_compact` toggles default OFF; chrome defaults are large/small/expanded/closed/local;
 the truncation cap defaults off. Desktop notification is ALWAYS on (locked); voice,
 open-folder, and webhooks are opt-in. TOML parsing is stdlib `tomllib`.
+
+EXPANDED 2026-08-02 with two more keys, both recorded here because a live config key
+absent from this map is exactly the contract-vs-code gap the v1 exit review existed to
+catch. `[render] thinking_withheld` (ticket 20): `caption` | `marker` | `off`, default
+`caption`, deciding what the projections say about thinking blocks Claude Code left
+empty; it takes `--thinking-withheld` under the same bijection as every other render
+key (shared rule c). And TOP-LEVEL `archive_timezone` (ticket 19), an IANA zone name
+defaulting to `UTC`, which pins the zone the archive folder name is rendered in; it is
+top-level rather than `[render]` because it is a property of the WAREHOUSE layout, not
+of rendering, and an unknown zone is recorded with the default kept rather than raised,
+because load_config runs inside `ccw hook` and a typo must never stop a capture (R5).
 
 ## 9. Share: static-site export (v1)
 

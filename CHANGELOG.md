@@ -16,6 +16,44 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+### v1.1 flag groups, closed 2026-08-01
+
+The four deferred flag groups, each landing the day it was defined: the per-variant
+content matrix (`slice-14`), the HTML chrome initial states plus date locale
+(`slice-15`), an opt-in truncation cap (`slice-16`), and a `--since`/`--until` window on
+`share` and `sweep` (`slice-17`). Named one by one rather than as a range: the currency
+sweep checks that every real tag is named here, and a range satisfies a reader while
+leaving the probe correct to complain. A byte-for-byte regression
+anchor at `tests/golden/matrix-anchor` pins the four projected files under default
+options, so any slice that moves DEFAULT output breaks it on purpose; it has moved twice,
+both times by a recorded ruling with the delta measured first.
+
+### Real-data coverage, 2026-08-02 (`ticket-18`, `ticket-20`)
+
+A census of a real 13,836-session corpus found that the suite had been proving the
+product against inputs someone imagined rather than inputs that exist.
+
+- **`ticket-18`** Eight entry types and three content-block types rendered nothing and
+  incremented no counter: 62,577 entries with `loss: 0` recorded beside them. All of them
+  now surface, `result` keeps a sub-agent's returned work in full, `custom-title` outranks
+  the model's `ai-title`, and anything the parser does not name renders a marker AND
+  increments a new top-level `unrecognised` manifest key. That last part is the durable
+  half: the previous census ran once, and Claude Code's format kept moving after it.
+- **`ticket-20`** 41,458 of 43,060 thinking blocks arrive empty, because the text stopped
+  reaching the JSONL upstream at Claude Code v2.1.69 and it is a model property, not a
+  date one. The count now folds into the phase caption the transcript already prints, a
+  top-level `withheld` manifest key records it, and `--thinking-withheld` lets the
+  operator overrule the display.
+
+### Archive-first layout, 2026-08-02 (`slice-19d`, `slice-19f`)
+
+Six of seven slices. One self-contained folder per session holding the raw JSONL beside
+its projections, named `<YYYYMMDD-HHMMSS><offset>_<uuid>` in a config-pinned zone so the
+same session yields the same folder on any machine and the migration is idempotent.
+`ccw archive` builds or `--verify`s it; `project.json` per project makes the catalog a
+genuinely disposable index. Run on the real corpus: 13,829 folders in six minutes, zero
+failures, verified with zero problems. **Nothing has been swapped.**
+
 ### v1, closed 2026-07-24
 
 Every slice in the `contract/DESIGN.md` section 16 build order landed and carries its
