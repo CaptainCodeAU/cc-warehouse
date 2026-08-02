@@ -150,6 +150,16 @@ class Config:
     # sessions and produces nothing readable. The refusal is recorded, not
     # obeyed (R5, F6).
     keep_projections: bool = True
+    # Whether the content-addressed vault is still written (ticket 19, slice
+    # 19m). True by default. Set false once the archive is the only home the
+    # session needs, which is the last of the duplication the archive-first
+    # redesign set out to remove.
+    #
+    # It carries a consequence keep_projections did not: with no vault behind
+    # it, an archive write failure at capture becomes FATAL rather than
+    # survivable, because a swallowed one would mean the hook reporting success
+    # while nothing holds the session.
+    keep_objects: bool = True
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -329,6 +339,24 @@ def _chrome(
     return value
 
 
+def _keep_objects(merged: Mapping[str, object], problems: list[str]) -> bool:
+    """Whether the content-addressed vault is still written (slice 19m).
+
+    Same shape as _keep_projections and the same refusal: no vault AND no
+    archive is a capture with nowhere to put anything, so the setting is ignored
+    and the contradiction recorded rather than obeyed (R5, F6).
+    """
+    if _bool(merged.get("keep_objects"), True):
+        return True
+    if not _str_or_none(merged.get("archive_root")):
+        problems.append(
+            "keep_objects = false needs archive_root, or a capture would have"
+            " nowhere to store the payload; keeping objects"
+        )
+        return True
+    return False
+
+
 def _keep_projections(merged: Mapping[str, object], problems: list[str]) -> bool:
     """Whether the old projections tree is still written (slice 19j).
 
@@ -484,6 +512,7 @@ def load_config(
             else None
         ),
         keep_projections=_keep_projections(merged, problems),
+        keep_objects=_keep_objects(merged, problems),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

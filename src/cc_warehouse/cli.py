@@ -1070,6 +1070,12 @@ def _run_verify() -> int:
     visible in the output; the verb exits non-zero when the store has any finding and 0
     when it is intact and cross-consistent. verify writes and removes nothing (R4)."""
     config = load_config()
+    if not config.keep_objects and config.archive_root is not None:
+        # Ruling (b), 2026-08-02: `ccw verify` BECOMES archive integrity. It
+        # follows the DATA, not a name. Re-hashing a retired vault and reporting
+        # "store intact" would be the most dangerous kind of green: a passing
+        # check on the one tree that no longer holds anything.
+        return _archive_verify(config.archive_root, config.archive_timezone)
     report = status.verify(config)
     findings = report.outcomes
     for outcome in findings:

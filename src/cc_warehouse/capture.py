@@ -158,8 +158,11 @@ def _capture_locked(
         catalog.record_event(conn, digest, action, elapsed, "", now_iso)
         return CaptureResult(digest, existing, action, None, elapsed, "")
 
-    # Fresh identity: the content-named store write precedes the catalog row.
-    store.put(config.root, data)
+    # Fresh identity: the durable write precedes the catalog row, so a row never
+    # names a payload nothing holds. Which write that IS moves with the config:
+    # the vault while it exists, the archive once it retires (slice 19m).
+    if config.keep_objects:
+        store.put(config.root, data)
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
     _archive_source(config, conn, project_id, data)
@@ -196,11 +199,17 @@ def _archive_source(
     retired it becomes the only one, and a child that never ran would otherwise
     have meant a session that existed nowhere but `~/.claude`.
 
-    Never fatal, for now. The store already holds the payload by the time this
+    THE PROMISE FLIPS WITH `keep_objects`, and this is the whole point of the
+    slice. While the vault exists the payload is already safe by the time this
     runs, so an archive problem must not fail a capture that has already
-    succeeded. THAT CHANGES when `objects/` retires and this becomes the last
-    line of defence; the oracle suite records the dependency rather than
-    assuming it away.
+    succeeded. Once the vault retires, a swallowed failure would mean the hook
+    reporting success while NOTHING holds the session, so it RAISES instead and
+    the caller reports it.
+
+    The session is not lost either way: `~/.claude/projects` still has it,
+    sources being read-only (F9), so a loud failure is one `ccw sweep` from
+    recovery. A silent one is equally recoverable and nobody ever goes looking,
+    which is the difference that matters.
     """
     if config.archive_root is None:
         return
@@ -213,6 +222,8 @@ def _archive_source(
 
         archive.write_source(config.archive_root, label, data, config.archive_timezone)
     except Exception:
+        if not config.keep_objects:
+            raise
         return
 
 
