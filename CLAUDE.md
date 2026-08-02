@@ -93,6 +93,17 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   and the catalog becomes a disposable index. Tickets 18 (real-data coverage) then 19
   (the layout itself), in that order - a migration is the worst moment to meet a new
   entry type. This is closer to a version cut than a slice.
+- **Ticket 18 (real-data coverage): DONE 2026-08-02.** Every entry and content-block type
+  a payload carries now renders something; anything the parser does not name renders a
+  marker AND increments the manifest's new top-level `unrecognised` key (principal ruling,
+  option 4: NOT a third `loss` amendment, because a rendered entry is not a lost one).
+  Verified read-only over all 13,836 objects: 0 unrecognised, 0 parse failures, anchor
+  untouched. **Ticket 19 is NEXT and is not started; it needs scoping with the principal.**
+- **OPEN RULING carried out of ticket 18:** 41,458 of 43,060 `thinking` blocks in the
+  corpus arrive with `thinking: ""` and their content in an opaque encrypted `signature`.
+  They render nothing and count nothing, the same F6 class one level below the dispatch
+  ticket 18 fixed. Surfacing them is another 41,458 markers, so it is a visible-output
+  change the principal has not been asked about (DESIGN 15, carried-not-decided).
 - **NEXT after those: v1.1 proper**: FTS5 + `ccw search` (session AND message hits) + HTML archive
   search + `ccw import`/inbox; **then v1.2**: `ccw mcp`. `ccw import` adopts slice 17's
   window definition when it lands.

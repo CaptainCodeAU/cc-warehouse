@@ -1,5 +1,64 @@
 # Ticket 18: real-data coverage (the shapes a written suite never invents)
 
+DONE 2026-08-02. Gates: ruff clean, pyright strict 0 errors, 665 tests.
+`tests/golden/matrix-anchor` UNTOUCHED, which is the proof the change is additive.
+Principal ruled option 4 on the open question below: classified markers plus a new
+TOP-LEVEL manifest key `unrecognised`, never a third `loss` amendment. FINDINGS, every
+one re-derived by execution against all 13,836 stored objects, not recalled:
+
+1. THE TICKET'S OWN RECOMMENDATION WAS WRONG, and only sampling showed it. The ticket
+   proposed one-line machinery markers for everything unhandled. Sampling every type
+   found that `result` carries a sub-agent's RETURNED WORK, mean 2,234 bytes and max
+   6,908 across 173 entries. A blanket marker would have closed a silent-loss bug by
+   opening a quieter one. Machinery gets a marker; content gets a block. Recorded because
+   the ticket's own standing lesson says a finding list is evidence, not a specification,
+   and this is the second consecutive ticket where that held.
+
+2. THE SAME DEFECT CLASS LIVED ONE LEVEL BELOW THE DISPATCH, and the first implementation
+   shipped it. `_agent_result_block` read only `result.summary`, which covers 12 of the
+   173; the other 161 return a schema of their own (verdict/evidence 71, candidates 41,
+   verdicts 45, plus files/decisions/notes/command). So 93% of the very content this
+   ticket exists to preserve was being flattened to a machinery marker BY THE FIX. Caught
+   only by running the new parser over the real corpus and reconciling the block counts:
+   12 where 173 was expected. Fixed by carrying the structured payload in `Block.result`
+   and fencing it as JSON. After the fix `agent_result` reads 173 and `machinery` falls by
+   exactly 161, which is the arithmetic that proves it.
+
+3. VERIFIED ON REAL DATA, read-only: 13,836 objects parsed, 0 failures, 0 unrecognised
+   entries. The named registry covers today's corpus completely, so `unrecognised` is a
+   tripwire rather than a live alarm.
+
+4. `custom-title` CHANGES 26 SESSIONS, NOT 910. The census counts 910 custom-title
+   ENTRIES, but a rename APPENDS an entry rather than replacing one, so they land in just
+   26 sessions. The 910 figure reached two source comments before the corpus run corrected
+   them. An entry count is not a session count, and saying "910 sessions" in a comment is
+   F6 in miniature.
+
+5. THE THREE DEGENERATE SHAPES ALREADY WORKED; nothing pinned them. A 100 MB payload, a
+   session with no timestamp anywhere and a single JSONL line over 1 MB all rendered
+   before this ticket. The value added is the pin, plus one measurement worth keeping: a
+   104,868,489-byte payload peaks at 943,779,996 bytes of traced heap, a ratio of 9.00x.
+   The test ceiling is 12x, a third above the observation.
+
+6. MY OWN CENSUS INSTRUMENT WAS THE FIRST THING TO BE WRONG. An early pass reported 126
+   unparseable lines and 10 timestamp-free payloads, contradicting the ticket. Both were
+   `.DS_Store` swept up by `rglob`. The ticket's zero-unparseable and nine-timestamp-free
+   figures hold exactly. A census is only as bounded as its enumeration.
+
+CARRIED, NOT DONE (needs its own ruling, recorded in DESIGN 15): 41,458 of 43,060
+`thinking` blocks arrive with `thinking: ""` and their content in an opaque `signature`
+blob, encrypted extended thinking. They render nothing and count nothing, which is this
+ticket's own F6 class inside a NAMED branch. Surfacing them is another 41,458 markers and
+therefore a visible-output change the principal has not been asked about.
+
+ALSO NOT DONE, and a deviation from the option comparison shown before the ruling: the
+"Files touched" count still reads 0 for a session whose only file evidence is a
+`file-history-delta`. The comparison sketched it as 1. `_file_targets` is the index of
+files THE CONVERSATION edited, derived from Edit/Write tool calls; file-history entries
+are Claude Code's own backup bookkeeping and fire for files merely tracked, so folding
+them in would overstate the index rather than correct it.
+
+
 Not a slice of a planned version cut. This ticket exists because the first
 `ccw build` at scale (2026-08-01, 13,608 sessions) failed on 9 of them, and the
 census that followed found more of the same class. Every item below is derived

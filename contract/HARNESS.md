@@ -707,6 +707,26 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   SCALE on real data, not only a contract-vs-code reconciliation. The v1 exit review found
   what reading could find; this found what only executing could.
 
+- **2026-08-02, ticket 18 (real-data coverage).** Closed the silent drop of 62,577 entries
+  across eight entry types and three content-block types. Gates green (ruff, pyright
+  strict, 665 tests); `tests/golden/matrix-anchor` untouched.
+  WHAT THE LOOP CAUGHT: nothing. Oracle tests first, all seven written from the ticket,
+  16 red for the right reason by exception type, then green. Every gate passed on an
+  implementation that was quietly flattening 93% of the content it was written to save.
+  WHAT CAUGHT IT: running the new parser over the real corpus and RECONCILING THE COUNTS.
+  173 `result` entries were expected to yield 173 `agent_result` blocks; they yielded 12.
+  Nothing in the suite could have found this, because the suite's fixtures carry the
+  shape I imagined and the other 161 entries carry five schemas I did not.
+  THE LESSON, sharper than the standing one: "run the product on real data before
+  believing it works" is not enough on its own. The run must produce a NUMBER that an
+  independent expectation can be checked against. A run that merely completes without
+  error proves only that nothing raised. This one completed cleanly at both the broken
+  and the fixed implementation; only the count told them apart.
+  SECOND ORDER: the same defect class recurred one level below the one being fixed. The
+  ticket was about types the DISPATCH dropped; the bug shipped was a drop inside a NAMED
+  branch. Knowing the class-not-instance lesson did not prevent applying it at only one
+  altitude, which is the third time this has been recorded.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
