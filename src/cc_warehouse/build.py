@@ -43,6 +43,10 @@ class _Head:
     label: str
     first_ts: str | None
     slug: str | None
+    # Carried since slice 19l so every consumer can locate this session's
+    # archive folder without a second query per head. The alternative was an
+    # N+1 lookup in three modules.
+    session_uuid: str | None = None
 
 
 def render_options(config: Config) -> render.RenderOptions:
@@ -272,7 +276,7 @@ def _heads(conn: sqlite3.Connection, include_hidden: bool) -> list[_Head]:
     (warmup / no-summary) are excluded unless include_hidden.
     """
     sql = (
-        "SELECT s.hash, s.short, p.label, s.first_ts, s.slug"
+        "SELECT s.hash, s.short, p.label, s.first_ts, s.slug, s.session_uuid"
         " FROM session s JOIN project p ON p.id = s.project_id"
         " WHERE s.hash NOT IN (SELECT supersedes FROM session WHERE supersedes IS NOT NULL)"
     )
@@ -285,8 +289,12 @@ def _heads(conn: sqlite3.Connection, include_hidden: bool) -> list[_Head]:
         label = cast(str, row[2])
         first_ts = cast("str | None", row[3])
         slug = cast("str | None", row[4])
+        session_uuid = cast("str | None", row[5])
         heads.append(
-            _Head(hash=hash_, short=short, label=label, first_ts=first_ts, slug=slug)
+            _Head(
+                hash=hash_, short=short, label=label, first_ts=first_ts,
+                slug=slug, session_uuid=session_uuid,
+            )
         )
     return heads
 
@@ -313,7 +321,7 @@ def head_for_short(conn: sqlite3.Connection, short: str) -> _Head | None:
     with no row at all also returns None; the CLI distinguishes the two.
     """
     sql = (
-        "SELECT s.hash, s.short, p.label, s.first_ts, s.slug"
+        "SELECT s.hash, s.short, p.label, s.first_ts, s.slug, s.session_uuid"
         " FROM session s JOIN project p ON p.id = s.project_id"
         " WHERE s.short = ? AND s.hidden = 0"
         " AND s.hash NOT IN (SELECT supersedes FROM session WHERE supersedes IS NOT NULL)"
@@ -330,6 +338,22 @@ def head_for_short(conn: sqlite3.Connection, short: str) -> _Head | None:
     )
 
 
+def _read(config: Config, head: _Head) -> bytes:
+    """This session's payload, through the ONE reader (R9, slice 19l).
+
+    Lazy import: archive.py imports build.py, so the archive layer sits above
+    this one and a module-level import would be a cycle.
+    """
+    from cc_warehouse import archive
+
+    return archive.read_payload(
+        config,
+        label=head.label,
+        first_ts=head.first_ts,
+        session_uuid=head.session_uuid,
+        short=head.short,
+        sha256=head.hash,
+    )
 def _mirror(
     config: Config, label: str, short: str, data: bytes, options: render.RenderOptions
 ) -> None:
@@ -442,7 +466,7 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
             )
             expected.add(directory)
             try:
-                data = store.get(root, head.hash)
+                data = _read(config, head)
                 if config.keep_projections:
                     write_projection(directory, data, options, force=rebuild)
                 # `ccw build` has to keep meaning something once the old tree is

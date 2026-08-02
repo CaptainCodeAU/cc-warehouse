@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import cast
 
 from cc_warehouse import build, catalog, render, store
+from cc_warehouse.config import Config
 from cc_warehouse.parser import parse_session
 
 _JSONL_SUFFIX = ".jsonl"
@@ -104,6 +105,54 @@ def is_session(data: bytes) -> bool:
     the 7 workflow journals and nothing else.
     """
     return parse_session(data).session_uuid is not None
+
+
+def read_payload(
+    config: Config,
+    *,
+    label: str,
+    first_ts: str | None,
+    session_uuid: str | None,
+    short: str,
+    sha256: str,
+) -> bytes:
+    """One session's JSONL, preferring the archive over the store (slice 19l).
+
+    THE reader. `store.get` was the read path in four places - render, build and
+    share twice - so retiring `objects/` would have broken every one of them
+    independently. A fence in tests/test_archive_reads.py keeps it at one.
+
+    THE READ IS VERIFIED, NOT TRUSTED. The catalog names a session by sha256 and
+    the archive holds a file; a file sitting in the right folder is not evidence
+    that it IS that session. Serving it unchecked would be identity-by-location,
+    the same class as F1's identity-by-size with a different cheap proxy. So the
+    bytes are hashed against the hash the caller named, and a mismatch falls back
+    to the store rather than being served.
+
+    When the store cannot answer either, this RAISES. That is the conservative
+    branch (R5/F7) and it matters most after `objects/` retires, when there is no
+    fallback left: refusing is recoverable, serving the wrong session silently is
+    the failure this project exists to prevent.
+    """
+    if config.archive_root is not None:
+        stem = session_uuid or f"session-{short}"
+        directory = build.archive_dir(
+            config.archive_root,
+            label,
+            first_ts,
+            session_uuid,
+            config.archive_timezone,
+            fallback_stem=f"session-{short}",
+        )
+        candidate = directory / f"{stem}{_JSONL_SUFFIX}"
+        if candidate.is_file():
+            data = candidate.read_bytes()
+            if store.sha256_hex(data) == sha256:
+                return data
+            # Mismatch: the archive holds SOMETHING, but not the session asked
+            # for. Fall through to the store, which is still authoritative while
+            # it exists; once it does not, the get below raises and says so.
+    return store.get(config.root, sha256)
 
 
 def write_source(

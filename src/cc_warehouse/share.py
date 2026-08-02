@@ -85,6 +85,7 @@ class _Resolved:
     label: str
     slug: str | None
     first_ts: str | None
+    session_uuid: str | None = None
 
 
 def _custom_patterns(config: Config) -> tuple[tuple[str, re.Pattern[str]], ...]:
@@ -133,6 +134,26 @@ def _builtin_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         if value:
             patterns.append((label, re.compile(r"\b" + re.escape(value) + r"\b")))
     return tuple(patterns)
+
+
+def _read_payload(config: Config, item: "_Resolved") -> bytes:
+    """This session's payload through the ONE reader (R9, slice 19l).
+
+    Share reads the same bytes every other consumer does, so a shared bundle can
+    never be built from a different copy of a session than the one the archive
+    holds. Lazy import: archive.py imports build.py which this module also uses,
+    and the archive layer sits above this one.
+    """
+    from cc_warehouse import archive
+
+    return archive.read_payload(
+        config,
+        label=item.label,
+        first_ts=item.first_ts,
+        session_uuid=item.session_uuid,
+        short=item.short,
+        sha256=item.hash,
+    )
 
 
 def _redaction_patterns(config: Config) -> tuple[tuple[str, re.Pattern[str]], ...]:
@@ -332,6 +353,7 @@ def _resolve(
                         label=head.label,
                         slug=head.slug,
                         first_ts=head.first_ts,
+                        session_uuid=head.session_uuid,
                     )
                 )
         finally:
@@ -351,6 +373,7 @@ def _resolve(
                     label=head.label,
                     slug=head.slug,
                     first_ts=head.first_ts,
+                    session_uuid=head.session_uuid,
                 )
             )
     finally:
@@ -383,7 +406,7 @@ def share(
     errored: list[str] = []
     for item in resolved:
         try:
-            data = store.get(root, item.hash)
+            data = _read_payload(config, item)
         except OSError:
             errored.append(f"s:{item.short}")  # store read failure is not a not-found
             continue
@@ -521,7 +544,7 @@ def prepare_comparison(
     exposed_index: list[tuple[str, str]] = []
     for item in resolved:
         try:
-            data = store.get(root, item.hash)
+            data = _read_payload(config, item)
         except OSError:
             errored.append(f"s:{item.short}")
             continue

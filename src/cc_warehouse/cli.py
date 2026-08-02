@@ -31,7 +31,6 @@ from cc_warehouse import (
     relocate,
     share,
     status,
-    store,
     sweep,
 )
 from cc_warehouse.config import (
@@ -657,8 +656,6 @@ def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | No
                 source = arg
             i += 1
     return session, out, source
-
-
 def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> None:
     """Keep the archive-first tree CURRENT from the capture path (slice 19i).
 
@@ -729,7 +726,14 @@ def _render_session(session_key: str, rest: Sequence[str]) -> int:
         config.root / "projections", head.label, head.first_ts, head.slug, head.short
     )
     try:
-        data = store.get(config.root, head.hash)
+        data = archive.read_payload(
+            config,
+            label=head.label,
+            first_ts=head.first_ts,
+            session_uuid=head.session_uuid,
+            short=head.short,
+            sha256=head.hash,
+        )
         if config.keep_projections:
             build.write_projection(directory, data, build.render_options(config), force=False)
         _mirror_to_archive(config, head.label, head.short, data)
