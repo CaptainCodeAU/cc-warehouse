@@ -15,8 +15,10 @@ import shutil
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cc_warehouse import catalog, render, store
 from cc_warehouse.config import Config
@@ -99,6 +101,86 @@ def projection_dir(
     slug_part = _component(slug) or "session"
     label_part = _component(label) or "_unlabeled"
     return projections / label_part / f"{date}_{slug_part}_s-{short}"
+
+
+# Names the flattened archive root cannot give to a project folder. `projections/`
+# is dropped by the archive-first layout, so project folders sit at the warehouse
+# root beside these two (DESIGN 15, 2026-08-02).
+RESERVED_LABELS = frozenset({"locks", "catalog.sqlite"})
+
+_UNDATED = "undated"
+
+
+def archive_folder_name(
+    first_ts: str | None,
+    session_uuid: str | None,
+    timezone: str,
+    *,
+    fallback_stem: str = "session",
+) -> str:
+    """`<YYYYMMDD-HHMMSS><offset>_<uuid>` for one session (DESIGN 15, 2026-08-02).
+
+    Local wall time in a zone PINNED IN CONFIG, never read from the machine
+    clock: converting a fixed UTC instant to a NAMED zone is deterministic, so
+    the same session yields the same folder name on any machine forever, which
+    reading `TZ` would not. That determinism is what makes the migration
+    idempotent, because the name is then a pure function of the payload's own
+    contents plus one config value.
+
+    The OFFSET is carried because zones move (Melbourne is +1100 AEDT and +1000
+    AEST), and without it a folder name is ambiguous once the tooling that
+    produced it is gone. Keyed on the session START (R12, payload-internal, never
+    a file mtime) because a start-keyed name is IMMUTABLE: an end-keyed one is
+    only final when the session is truly dead, so a session already backed up
+    could sprout a second folder later.
+
+    No slug: measured at 13,549 of 13,836 sessions (97.9%) having none, so it
+    cost length and delivered nothing.
+    """
+    stamp = _local_stamp(first_ts, timezone)
+    return f"{stamp}_{session_uuid or fallback_stem}"
+
+
+def _local_stamp(first_ts: str | None, timezone: str) -> str:
+    """`YYYYMMDD-HHMMSS±HHMM` in the pinned zone, or `undated`.
+
+    A missing or unparseable stamp degrades to a stable placeholder rather than
+    raising (R5): a migration that dies on one malformed timestamp abandons the
+    other 13,835 sessions, and 9 real payloads carry no timestamp at all.
+    """
+    if not first_ts:
+        return _UNDATED
+    try:
+        moment = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+        zone = ZoneInfo(timezone)
+    except (ValueError, ZoneInfoNotFoundError):
+        return _UNDATED
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    local = moment.astimezone(zone)
+    return local.strftime("%Y%m%d-%H%M%S%z")
+
+
+def archive_dir(
+    root: Path,
+    label: str,
+    first_ts: str | None,
+    session_uuid: str | None,
+    timezone: str,
+    *,
+    fallback_stem: str = "session",
+) -> Path:
+    """`<root>/<label>/<name>/`, the one directory-naming function (R9).
+
+    `ccw share` calls this too, so a shared bundle looks exactly like the archive
+    it came from. A reserved or unsafe label is neutralized rather than refused,
+    because refusing would drop a real session on the floor over a folder name.
+    """
+    part = _component(label) or "_unlabeled"
+    if part in RESERVED_LABELS:
+        part = f"_{part}"
+    name = archive_folder_name(first_ts, session_uuid, timezone, fallback_stem=fallback_stem)
+    return root / part / name
 
 
 def _projection_files(data: bytes, options: render.RenderOptions) -> dict[str, bytes]:
