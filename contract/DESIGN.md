@@ -177,7 +177,12 @@ SPEC's `make_msg_id` collision); `manifest.json` records config, counts, and los
 telemetry so "did we lose anything" is always answerable (exporter principle). The
 `loss` key set is skipped_lines + truncated_blocks + truncated_chars + unencodable_chars
 (amended twice on 2026-08-01: section 15's block 3 added the truncation pair, and the
-lone-surrogate ruling the same day added the last).
+lone-surrogate ruling the same day added the last). The manifest also carries a
+TOP-LEVEL `unrecognised` block, `{count, types}`, added by ticket 18 (section 15,
+2026-08-02) and deliberately NOT a third `loss` amendment: every entry it counts
+rendered a marker, so nothing was lost, and filing a rendered entry under loss would be
+the guarantee drift F6 exists to ban. It answers a different question, "has the format
+moved since the last census".
 
 **Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
 JSONL format found 13 entry types where the render consumed only `user`/`assistant`.
@@ -189,7 +194,18 @@ machinery kinds (one-line marker); a `system` `local_command` renders as user in
 other subtypes as machinery; a tool result's `toolUseResult` renders stdout/stderr
 with an interrupted marker (the Edit patch is left to the tool_use, not repeated);
 and bridge-session / queue-operation / last-prompt / agent-name are surfaced verbatim
-as informational extras. Turns carry entry timestamps so the emitters show per-turn
+as informational extras. **AMENDED 2026-08-02 (ticket 18, section 15).** "The model now
+surfaces the rest" was a PROMISE, not a fact: a census of all 13,836 stored objects
+found eight further entry types and three content-block types that rendered nothing and
+incremented nothing, 62,577 entries carrying `loss: 0` beside them. The parser now holds
+a NAMED registry of every entry type (`KNOWN_ENTRY_TYPES`, built from per-purpose sets so
+a test fence can read it off the source), machinery types render a one-line marker
+exactly as `attachment`'s machinery kinds do, `result` renders a sub-agent's returned
+work in full, `frame-link` renders as an extra, `image`/`document` blocks name their
+media type and size but NEVER their base64, and `custom-title` joins the title sources
+ABOVE `ai-title`. Anything the registry does not name renders a marker AND increments the
+manifest's `unrecognised` block, which is the durable half: the previous census ran once,
+on 2026-07-23, and two of the types it missed had first appeared earlier that month. Turns carry entry timestamps so the emitters show per-turn
 elapsed times; phases group by CATEGORY so a sub-agent run, an attachment run, and the
 main tool calls fold separately. `message.model` is a header field. The compact
 variant stays prose-only and drops all of these. When a
@@ -736,6 +752,44 @@ looks exactly like the archive it came from.
 MIGRATION ORDER, unchanged and not negotiable: read from `objects/`, NOT from
 `~/.claude/projects`. Four stored objects have no surviving source, and reversing the
 order loses them permanently.
+
+**REAL-DATA ENTRY-TYPE COVERAGE: DECIDED, 2026-08-02 (principal), ticket 18.** A census
+of all 13,836 stored objects found eight entry types and three content-block types that
+rendered NOTHING and incremented NO counter: 62,577 entries dropped with `loss: 0`
+recorded beside them, which is silent loss by F6's own definition and a gap against
+section 6's "the model now surfaces the rest". FOUR OPTIONS were put up and option 4
+taken: classified markers PLUS a new top-level manifest key.
+
+WHY NOT A NEW `loss` KEY (the ticket's own proposal, rejected). Once an entry renders a
+marker it is not lost, so counting it as loss is the guarantee drift F6 bans, pointed the
+other way. `unrecognised` is therefore a SEPARATE top-level key and the frozen `loss` set
+stays at four, avoiding a third amendment in two days.
+
+WHY NOT A BLANKET MARKER FOR EVERYTHING (the ticket's recommendation, also rejected). The
+ticket was written without sampling the types. Sampling changed the answer: `result`
+carries a sub-agent's returned work, mean 2,234 bytes and max 6,908 across 173 entries, so
+a one-line marker would have closed a silent-loss bug by opening a quieter one. Machinery
+gets a marker; content gets a block. `custom-title` joins the title sources ABOVE
+`ai-title` on the same argument, a name a person chose over a name a model generated.
+
+THE DURABLE HALF is the `unrecognised` counter plus an AST fence that reads the parser's
+named type sets off its own source. The ROOT CAUSE is not the eleven types; it is that the
+prior census ran once, on 2026-07-23, while `frame-link` first appeared 2026-07-03 and
+`file-history-delta` 2026-07-14. A one-time census of a living format goes stale by
+construction, so the product now reports the drift itself.
+
+MEASURED CONSEQUENCES, all read-only against the corpus: 0 unrecognised entries across
+13,836 objects, so the registry covers today's data completely; 26 sessions change title,
+not the 910 the raw `custom-title` entry count suggests, because a rename appends an
+entry; the compact variants do not move at all, because machinery is already excluded
+there by policy; and `tests/golden/matrix-anchor` holds byte for byte, which is the proof
+the change is additive.
+
+CARRIED, NOT DECIDED: 41,458 of 43,060 `thinking` blocks in the corpus arrive with
+`thinking: ""` and their content in an opaque `signature` blob (encrypted extended
+thinking). They render nothing and count nothing today, which is the same F6 class one
+level below the dispatch, inside a NAMED branch. Surfacing them is a further visible
+change of 41,458 markers and therefore its own ruling.
 
 **LONE SURROGATES: DECIDED, 2026-08-01 (principal), found on real data.** The first
 `ccw build` at scale (13,608 sessions) failed on 9 of them with `UnicodeEncodeError:
