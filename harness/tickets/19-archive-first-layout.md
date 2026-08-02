@@ -102,6 +102,41 @@ Extra oracle tests these imply:
   - verify fails a folder missing any of its five files;
   - verify fails a folder whose name disagrees with the UUID or start time inside it.
 
+## Slice cut (2026-08-02), and the disk measurement that forced it
+
+Ticket 19 is eight modules and a migration of 13,836 real sessions, so it runs as
+SLICES rather than as one change. Cut so that everything before 19d is pure and
+additive, and nothing touches the live archive until the strategy is locked.
+
+    19a  archive folder name + reserved labels        DONE 2026-08-02 (035d2f6)
+    19b  `archive_timezone` config key + CLI wiring   not started
+    19c  write one archive folder (JSONL + 5 files)   not started
+    19d  the migration itself, objects/ -> archive    not started, NEEDS 19x below
+    19e  `ccw verify` becomes archive integrity       not started
+    19f  project.json + catalog-as-disposable-index   not started
+    19g  `ccw share` onto the shared naming function  not started
+
+19a is done: a pure function, no filesystem contact, no dependency on how the
+migration runs, so it was safe to land before the strategy question closed.
+
+DISK, measured 2026-08-02 before any of this: the frozen instruction is "build
+the new tree BESIDE the old one and verify before swapping". The new tree needs
+5.08 GiB (objects 1.50 + projections 3.63). Free space was 5.47 GiB on a volume
+at 98%, a 7% margin on a long operation across 13,608 folders. Surfaced to the
+principal, who freed space; re-measured at 8.68 GiB free, a 3.60 GiB margin, so
+build-beside is now viable.
+
+19x, STILL OPEN and blocking 19d: whether the migration runs BIG-BANG (build the
+whole tree beside, verify, swap) or PER-PROJECT (one of the 57 labels at a time,
+verify it, reclaim that label's old projections, move on). Per-project peaks at
+about 1.2 GiB rather than 5.08 and is resumable after an interruption, and its
+advantages were never only about disk. The principal freed space, which unblocks
+big-bang without selecting it. Largest label is 0.84 GiB of 3.63 (23%).
+
+`objects/` is not touched by any slice above. It stays the source of truth for
+the whole migration, so the worst outcome of a failure at any point is a
+partly-built new tree beside a completely intact old one.
+
 ## Process
 
 Standard loop (HARNESS section 2); oracle tests first. Ticket 18 (real-data
