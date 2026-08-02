@@ -41,6 +41,12 @@ GUARANTEE_PROOFS: dict[tuple[str, str], str] = {
     # default options and compares all four files against bytes captured from the
     # pre-slice tree (DESIGN 15 entry 2026-08-01, shared rule b).
     ("render.py", "identical"): "test_default_options_render_the_pre_slice_bytes",
+    # archive.py (ticket 19). Both words are load-bearing claims about the tree
+    # that IS the product, so both cite a test that proves that exact word. The
+    # mapping grows when a guarantee is added; it is never the place to excuse
+    # one, which is why each entry names a test rather than a reason.
+    ("archive.py", "atomic"): "test_interrupted_write_leaves_no_partial_final_file",
+    ("archive.py", "never delete"): "test_the_archive_module_has_no_deletion_primitive_at_all",
 }
 
 

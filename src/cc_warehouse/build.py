@@ -183,9 +183,14 @@ def archive_dir(
     return root / part / name
 
 
-def _projection_files(data: bytes, options: render.RenderOptions) -> dict[str, bytes]:
+def projection_files(data: bytes, options: render.RenderOptions) -> dict[str, bytes]:
     """The five projection payloads for one session: the orchestrator writes
-    exactly what the render emitters return, nothing more (R9)."""
+    exactly what the render emitters return, nothing more (R9).
+
+    Public since ticket 19: archive.py writes the SAME five payloads into the
+    new layout, and a second copy of this assembly would be the F8 class the
+    whole project exists to avoid.
+    """
     full_md, compact_md = render.render_markdown(data, options)
     full_html, compact_html = render.render_html(data, options)
     manifest = render.build_manifest(data, options)
@@ -225,7 +230,7 @@ def write_projection(
     a file whose current bytes already match is left untouched (incremental).
     """
     directory.mkdir(parents=True, exist_ok=True)
-    for name, payload in _projection_files(data, options).items():
+    for name, payload in projection_files(data, options).items():
         _write_if_changed(directory / name, payload, force=force)
 
 

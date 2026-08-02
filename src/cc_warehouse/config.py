@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ENV_PREFIX = "CCW_"
 ENV_VARS = (
@@ -123,6 +124,13 @@ class WebhookSink:
 class Config:
     root: Path
     skip_hook: bool = False
+    # The zone the archive folder name is rendered in (ticket 19, DESIGN 15
+    # 2026-08-02). PINNED here rather than read from the machine so the same
+    # session yields the same folder name on any machine forever, which is what
+    # makes the migration idempotent. UTC is the default because it is the one
+    # zone that is correct everywhere and never surprises; an operator who wants
+    # their own wall clock sets it.
+    archive_timezone: str = "UTC"
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -302,6 +310,24 @@ def _chrome(
     return value
 
 
+def _archive_timezone(merged: Mapping[str, object], problems: list[str]) -> str:
+    """The pinned archive zone, validated against the IANA database.
+
+    A zone name that zoneinfo cannot resolve is RECORDED and the default kept,
+    never raised: load_config runs inside `ccw hook`, and a typo in a config
+    file must not be able to stop a session being stored (R5).
+    """
+    value = _str_or_none(merged.get("archive_timezone"))
+    if value is None:
+        return "UTC"
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        problems.append(f"archive_timezone is not a known zone: {value!r}")
+        return "UTC"
+    return value
+
+
 def _cap(
     render: Mapping[str, object],
     flags: Mapping[str, str],
@@ -408,6 +434,11 @@ def load_config(
 
     return Config(
         root=root,
+        # Top-level like `root`, because it is a property of the WAREHOUSE
+        # layout and not of rendering. An unknown zone is recorded and the
+        # default kept (R5): a bad zone in a config file must never be able to
+        # stop a capture from storing a session.
+        archive_timezone=_archive_timezone(merged, problems),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,
