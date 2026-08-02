@@ -109,12 +109,58 @@ SLICES rather than as one change. Cut so that everything before 19d is pure and
 additive, and nothing touches the live archive until the strategy is locked.
 
     19a  archive folder name + reserved labels        DONE 2026-08-02 (035d2f6)
-    19b  `archive_timezone` config key + CLI wiring   not started
-    19c  write one archive folder (JSONL + 5 files)   not started
-    19d  the migration itself, objects/ -> archive    not started, NEEDS 19x below
-    19e  `ccw verify` becomes archive integrity       not started
+    19b  `archive_timezone` config key                DONE 2026-08-02 (ab39ed9)
+    19c  write one archive folder (JSONL + 5 files)   DONE 2026-08-02 (ab39ed9)
+    19d  the migration itself, objects/ -> archive    DONE 2026-08-02, RUN AT SCALE
+    19e  archive integrity check (library level)      DONE 2026-08-02 (ab39ed9)
     19f  project.json + catalog-as-disposable-index   not started
     19g  `ccw share` onto the shared naming function  not started
+    19h  CLI verbs for archive + verify               not started, see below
+
+19x RESOLVED 2026-08-02: the principal chose BIG-BANG ("just do all of them
+together"), having freed disk first. Re-measured at 8.68 GiB free against 5.08
+needed. It ran in 6.0 minutes, which retires the resumability argument for
+per-project: a 6-minute operation does not need to be resumable.
+
+## THE MIGRATION HAS RUN AT SCALE (2026-08-02), and NOT been swapped
+
+    source  ~/cc-warehouse-data        READ ONLY, verified untouched afterwards
+    target  ~/cc-warehouse-archive     NEW root, 5.1 GiB, 13,829 folders
+    zone    Australia/Melbourne
+    time    6.0 minutes
+
+    13,829 folders written   221 archived without projections
+         7 not sessions      0 refused as smaller      0 FAILED
+
+RECONCILIATIONS, all exact, none approximate:
+
+  13,829 + 7 = 13,836, the whole vault, nothing unaccounted for.
+
+  The 7 skipped are EXACTLY the workflow journals DESIGN predicted from the
+  sessionId test. Prediction made 2026-08-02 from a census, confirmed the same
+  day against a real migration.
+
+  Withheld thinking: 41,408 counted in manifests + 50 inside the 221
+  conversation-free folders (which get no manifest by design) + 0 in the 7
+  journals = 41,458, exactly ticket 18's census. The 50-block gap was chased
+  rather than rounded off.
+
+  The 2 `undated_` folders and the 9 timestamp-free payloads from ticket 18's
+  census are the same finding seen twice: 7 of those 9 ARE the workflow
+  journals, so exactly 2 real sessions carry no timestamp anywhere.
+
+VERIFY over all 13,829 folders: 0 problems. Every JSONL matches its manifest
+source_hash, every folder has its five generated files, every folder name agrees
+with the payload's own uuid and start time.
+
+TELEMETRY AT SCALE, which is ticket 18 and 20 being proved on real data rather
+than on fixtures: 0 unrecognised entries across the entire archive, so the named
+type registry covers the corpus completely; 11 sessions carry any recorded loss
+at all, which are the lone-surrogate cases from 2026-08-01.
+
+NOT DONE, deliberately: nothing has been swapped. `~/cc-warehouse-data` is
+untouched and still the live warehouse. The hook, sweep and build verbs still
+write to it. Swapping is a separate decision.
 
 19a is done: a pure function, no filesystem contact, no dependency on how the
 migration runs, so it was safe to land before the strategy question closed.
