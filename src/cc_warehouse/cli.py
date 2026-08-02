@@ -730,7 +730,8 @@ def _render_session(session_key: str, rest: Sequence[str]) -> int:
     )
     try:
         data = store.get(config.root, head.hash)
-        build.write_projection(directory, data, build.render_options(config), force=False)
+        if config.keep_projections:
+            build.write_projection(directory, data, build.render_options(config), force=False)
         _mirror_to_archive(config, head.label, head.short, data)
     except Exception as exc:  # the detached child's only surviving signal (DESIGN 4)
         try:

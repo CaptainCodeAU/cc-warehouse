@@ -139,6 +139,17 @@ class Config:
     # trees stay current until the swap and the swap stays a decision rather
     # than a leap.
     archive_root: Path | None = None
+    # Whether the OLD `projections/` tree is still written (ticket 19, slice 19j).
+    # True by default, so nothing moves for a warehouse that says nothing. Set
+    # false once the archive is proven and `projections/` is retired: without it
+    # a retired tree regrows one folder per session while LOOKING retired,
+    # because the capture path and `ccw build` both write there.
+    #
+    # REFUSED when there is no archive_root, because that combination renders
+    # NOWHERE and would silently turn a working warehouse into one that captures
+    # sessions and produces nothing readable. The refusal is recorded, not
+    # obeyed (R5, F6).
+    keep_projections: bool = True
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -318,6 +329,26 @@ def _chrome(
     return value
 
 
+def _keep_projections(merged: Mapping[str, object], problems: list[str]) -> bool:
+    """Whether the old projections tree is still written (slice 19j).
+
+    Refuses the one combination that renders NOWHERE. `keep_projections = false`
+    without an `archive_root` would leave a warehouse that stores sessions and
+    produces nothing readable, and it would do so silently, one capture at a
+    time. R5 says the conservative branch is the default and F6 says the refusal
+    must not be silent, so the setting is ignored AND recorded.
+    """
+    if _bool(merged.get("keep_projections"), True):
+        return True
+    if not _str_or_none(merged.get("archive_root")):
+        problems.append(
+            "keep_projections = false needs archive_root, or nothing would be"
+            " rendered anywhere; keeping projections"
+        )
+        return True
+    return False
+
+
 def _archive_timezone(merged: Mapping[str, object], problems: list[str]) -> str:
     """The pinned archive zone, validated against the IANA database.
 
@@ -452,6 +483,7 @@ def load_config(
             if _str_or_none(merged.get("archive_root"))
             else None
         ),
+        keep_projections=_keep_projections(merged, problems),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

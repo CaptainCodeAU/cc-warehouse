@@ -330,6 +330,33 @@ def head_for_short(conn: sqlite3.Connection, short: str) -> _Head | None:
     )
 
 
+def _mirror(
+    config: Config, label: str, short: str, data: bytes, options: render.RenderOptions
+) -> None:
+    """Refresh this session's archive folder, when an archive is configured.
+
+    Imported lazily because archive.py imports build.py: the archive layer sits
+    ABOVE this one and a module-level import would be a cycle. Never fatal, for
+    the same reason the capture path's mirror is not - the item is already
+    stored and already reported.
+    """
+    if config.archive_root is None:
+        return
+    from cc_warehouse import archive
+
+    try:
+        archive.write_session_folder(
+            config.archive_root,
+            label,
+            data,
+            options,
+            config.archive_timezone,
+            fallback_stem=f"session-{short}",
+        )
+    except Exception:
+        return
+
+
 def _prune(projections: Path, expected: set[Path]) -> None:
     """Remove every projection dir not in the expected set, then any label dir it
     emptied (sanctioned in-projections deletion, R4).
@@ -416,7 +443,12 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
             expected.add(directory)
             try:
                 data = store.get(root, head.hash)
-                write_projection(directory, data, options, force=rebuild)
+                if config.keep_projections:
+                    write_projection(directory, data, options, force=rebuild)
+                # `ccw build` has to keep meaning something once the old tree is
+                # retired: it is the verb that rebuilds after a render change,
+                # so it rebuilds whichever tree still exists (slice 19j).
+                _mirror(config, head.label, head.short, data, options)
                 outcomes.append(ItemOutcome(head.short, "built", ""))
             except Exception as exc:  # report and continue past a bad item (R10)
                 outcomes.append(
@@ -425,7 +457,9 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
         # Prune retired dirs ONLY on a fully-successful build. If any head errored
         # the new tree is incomplete, so keeping the last-good projections is the
         # conservative branch (F7/F9); the next clean build reconciles.
-        if not any(outcome.action == "error" for outcome in outcomes):
+        if config.keep_projections and not any(
+            outcome.action == "error" for outcome in outcomes
+        ):
             _prune(projections, expected)
         return BatchReport(tuple(outcomes))
     finally:
