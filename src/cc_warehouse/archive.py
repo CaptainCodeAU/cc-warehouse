@@ -36,6 +36,10 @@ from cc_warehouse.parser import parse_session
 _JSONL_SUFFIX = ".jsonl"
 _MANIFEST = "manifest.json"
 
+# The O_EXCL lock this operation runs under (R14). Public so the CLI and the
+# oracle tests name the same lock rather than two spellings of it.
+ARCHIVE_LOCK = "archive"
+
 # Ruling (a), 2026-08-02: a file is a SESSION if any entry carries a sessionId.
 # Emptiness is a SEPARATE question, already answered by the hidden flag: a
 # session with no conversation is ARCHIVED (its JSONL is kept) but gets no
@@ -73,11 +77,17 @@ class MigrationReport:
 
     written: int = 0
     archived_without_projections: int = 0
+    # R14: a live holder makes the run refuse rather than interleave. Reported
+    # as its own field so the CLI can exit non-zero on a refusal WITHOUT
+    # counting a no-op that wrote nothing as a success.
+    lock_held: bool = False
     skipped_not_a_session: list[str] = field(default_factory=list[str])
     refused_smaller: list[str] = field(default_factory=list[str])
     failed: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
 
     def summary(self) -> str:
+        if self.lock_held:
+            return "refused: the archive lock is held by a live holder"
         return (
             f"{self.written} folders written"
             f" ({self.archived_without_projections} archived without projections),"
@@ -149,20 +159,28 @@ def write_session_folder(
         # deliberately by the 2026-08-02 ruling.
         return FolderResult(directory, jsonl, False, replaced, refused)
 
-    payloads = build.projection_files(data, options)
-    if refused:
-        manifest = json.loads(payloads[_MANIFEST].decode("utf-8"))
-        manifest["replace_refused"] = {
-            "reason": "a re-captured payload was smaller than the archived one",
-            "archived_bytes": jsonl.stat().st_size,
-            "offered_bytes": len(data),
-        }
-        payloads[_MANIFEST] = (
-            json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
-        )
-    for name, payload in payloads.items():
+    # STREAMED, one payload at a time. Holding all five at once cost 8.2 GB of
+    # traced heap on a 100 MB session, 78x the payload; the real 114 MB object
+    # survived the 2026-08-02 migration on a machine that happened to have the
+    # RAM. See build.iter_projection_files.
+    for name, payload in build.iter_projection_files(data, options):
+        if refused and name == _MANIFEST:
+            payload = _with_refusal(payload, jsonl.stat().st_size, len(data))
         store.atomic_write(directory / name, payload)
     return FolderResult(directory, jsonl, True, replaced, refused)
+
+
+def _with_refusal(manifest_bytes: bytes, archived: int, offered: int) -> bytes:
+    """Record a refused replacement IN the manifest. Never silent (F6): a
+    truncated re-capture must not be able to leave the archive unchanged without
+    saying why."""
+    manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
+    manifest["replace_refused"] = {
+        "reason": "a re-captured payload was smaller than the archived one",
+        "archived_bytes": archived,
+        "offered_bytes": offered,
+    }
+    return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
 def migrate(
@@ -181,6 +199,29 @@ def migrate(
     old one.
     """
     report = MigrationReport()
+    # R14. This was the ONLY write surface in the codebase taking no lock, while
+    # build, capture, migrate, relocate and sweep all take one. The
+    # replace-if-larger path stats a file and then writes it, so
+    # identity-idempotence does NOT make two concurrent runs harmless, and R14's
+    # own wording therefore requires a lock rather than permitting one.
+    if not store.acquire_lock(warehouse_root, ARCHIVE_LOCK):
+        report.lock_held = True
+        return report
+    try:
+        return _migrate_locked(warehouse_root, archive_root, options, timezone, report, progress)
+    finally:
+        store.release_lock(warehouse_root, ARCHIVE_LOCK)
+
+
+def _migrate_locked(
+    warehouse_root: Path,
+    archive_root: Path,
+    options: render.RenderOptions,
+    timezone: str,
+    report: MigrationReport,
+    progress: int,
+) -> MigrationReport:
+    """The migration body, with the lock already held."""
     conn = catalog.open_catalog(warehouse_root)
     try:
         rows = _session_rows(conn)

@@ -13,7 +13,7 @@ projection dir names carry the payload-internal date, never a file mtime (R12).
 import json
 import shutil
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -194,25 +194,44 @@ def archive_dir(
     return root / part / name
 
 
-def projection_files(data: bytes, options: render.RenderOptions) -> dict[str, bytes]:
-    """The five projection payloads for one session: the orchestrator writes
-    exactly what the render emitters return, nothing more (R9).
+def iter_projection_files(
+    data: bytes, options: render.RenderOptions
+) -> Iterator[tuple[str, bytes]]:
+    """The five projection payloads, ONE AT A TIME (R9: the single assembly).
 
-    Public since ticket 19: archive.py writes the SAME five payloads into the
-    new layout, and a second copy of this assembly would be the F8 class the
-    whole project exists to avoid.
+    Streams rather than returning a dict, and the reason is measured. The dict
+    version held four large strings AND their four encoded copies at once, so a
+    100 MB session peaked at 8.2 GB of traced heap - 78x the payload, against
+    9x for the render path alone. The real 114 MB object survived the 2026-08-02
+    migration on a machine with enough RAM, which is luck rather than design;
+    nothing had ever pinned the archive write path's cost, so nothing noticed.
+
+    Each payload is released before the next is built. The emitters return their
+    full and compact variants in pairs, so two documents is the floor without
+    changing them, and that is where this stops.
     """
     full_md, compact_md = render.render_markdown(data, options)
+    encoded = full_md.encode("utf-8")
+    del full_md
+    yield _TRANSCRIPT_FULL, encoded
+    del encoded
+    encoded = compact_md.encode("utf-8")
+    del compact_md
+    yield _TRANSCRIPT_COMPACT, encoded
+    del encoded
+
     full_html, compact_html = render.render_html(data, options)
+    encoded = full_html.encode("utf-8")
+    del full_html
+    yield _CONVERSATION_FULL, encoded
+    del encoded
+    encoded = compact_html.encode("utf-8")
+    del compact_html
+    yield _CONVERSATION_COMPACT, encoded
+    del encoded
+
     manifest = render.build_manifest(data, options)
-    manifest_bytes = json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
-    return {
-        _TRANSCRIPT_FULL: full_md.encode("utf-8"),
-        _TRANSCRIPT_COMPACT: compact_md.encode("utf-8"),
-        _CONVERSATION_FULL: full_html.encode("utf-8"),
-        _CONVERSATION_COMPACT: compact_html.encode("utf-8"),
-        _MANIFEST: manifest_bytes,
-    }
+    yield _MANIFEST, json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
 def _write_if_changed(path: Path, data: bytes, *, force: bool) -> None:
@@ -241,7 +260,7 @@ def write_projection(
     a file whose current bytes already match is left untouched (incremental).
     """
     directory.mkdir(parents=True, exist_ok=True)
-    for name, payload in projection_files(data, options).items():
+    for name, payload in iter_projection_files(data, options):
         _write_if_changed(directory / name, payload, force=force)
 
 

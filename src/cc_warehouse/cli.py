@@ -1085,6 +1085,11 @@ def _run_archive(args: Sequence[str]) -> int:
 
     target.mkdir(parents=True, exist_ok=True)
     report = archive.migrate(config.root, target, build.render_options(config), zone)
+    if report.lock_held:
+        # R14/R10: a refusal is named and exits non-zero, never counted as a
+        # run that wrote nothing successfully.
+        print(f"archive: {report.summary()}", file=sys.stderr)
+        return 1
     # After the folders, because a project.json for a project with no surviving
     # session folder would describe nothing.
     projects = archive.write_project_files(config.root, target)
