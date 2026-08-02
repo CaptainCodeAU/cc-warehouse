@@ -18,8 +18,10 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cc_warehouse import (
+    archive,
     build,
     capture,
     catalog,
@@ -57,6 +59,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("share", "build a sanitized static site for chosen sessions"),
     ("status", "recent captures, counts, store size, last errors"),
     ("verify", "re-hash objects and cross-check the catalog"),
+    ("archive", "build (or --verify) the archive-first tree at --to DIR"),
     ("version", "print the ccw version"),
 )
 
@@ -1031,6 +1034,91 @@ def _run_verify() -> int:
     return 1 if findings else 0
 
 
+def _flag_value(args: Sequence[str], name: str) -> str | None:
+    """The value following `--name`, or None. Exact equality, so `--to` never
+    shadows a longer flag that happens to start with it."""
+    for i, arg in enumerate(args):
+        if arg == f"--{name}" and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def _run_archive(args: Sequence[str]) -> int:
+    """`ccw archive --to DIR [--verify] [--zone NAME]` (ticket 19, slice 19h).
+
+    Builds the archive-first tree BESIDE the warehouse it reads, or checks an
+    existing one. Everything is validated UP FRONT and refused as a usage error
+    before any work begins, because the alternative is discovering the target
+    was wrong after writing several gigabytes into it.
+
+    `--verify` writes nothing at all. That claim is not left to inspection: an
+    oracle test snapshots the tree and compares it afterwards, since exit 0 plus
+    output is NOT evidence that nothing happened (learned 2026-08-01, when
+    `ccw sweep -h` imported 13,836 sessions while appearing to print help).
+    """
+    config = _load(args)
+    target_raw = _flag_value(args, "to")
+    if target_raw is None:
+        print("Error: archive requires --to DIR", file=sys.stderr)
+        return 2
+    target = Path(target_raw).expanduser()
+
+    zone = _flag_value(args, "zone") or config.archive_timezone
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        print(f"Error: --zone is not a known IANA zone: {zone!r}", file=sys.stderr)
+        return 2
+
+    if "--verify" in args:
+        return _archive_verify(target, zone)
+
+    # The one target that would make this destructive: writing the new tree on
+    # top of the vault it reads from. Refused before any work, never attempted
+    # and reported afterwards (R5: the conservative branch is the default).
+    if target.resolve() == config.root.resolve():
+        print(
+            f"Error: --to must not be the warehouse itself ({config.root})",
+            file=sys.stderr,
+        )
+        return 2
+
+    target.mkdir(parents=True, exist_ok=True)
+    report = archive.migrate(config.root, target, build.render_options(config), zone)
+    for hash_, why in report.failed:
+        print(f"archive: FAILED {hash_[:16]}: {why}", file=sys.stderr)
+    for hash_ in report.skipped_not_a_session:
+        print(f"archive: not a session (no sessionId) {hash_[:16]}", file=sys.stderr)
+    print(report.summary())
+    return 1 if report.failed else 0
+
+
+def _archive_verify(target: Path, zone: str) -> int:
+    """Archive integrity over a whole tree (ruling (b), 2026-08-02).
+
+    A missing tree is an ERROR, never an empty pass: verifying nothing and
+    reporting zero problems is the failure mode that reads as success.
+    """
+    if not target.is_dir():
+        print(f"Error: no archive at {target}", file=sys.stderr)
+        return 2
+    folders = 0
+    problems = 0
+    for folder in archive.walk_folders(target):
+        folders += 1
+        for problem in archive.verify_folder(folder, zone):
+            problems += 1
+            print(
+                f"archive: {folder.parent.name}/{folder.name}: {problem.problem}",
+                file=sys.stderr,
+            )
+    if not folders:
+        print(f"Error: no session folders under {target}", file=sys.stderr)
+        return 2
+    print(f"archive: {folders} folders checked, {problems} problems")
+    return 1 if problems else 0
+
+
 def _print_plan(plan: relocate.RelocatePlan, header: str) -> None:
     """One rendering of a relocate plan, shared by the dry-run and the apply path (R9)."""
     print(header)
@@ -1369,6 +1457,18 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
     ),
     "status": ((("(no options)", "recent captures, counts, store size, last errors"),), False),
     "verify": ((("(no options)", "re-hash objects and cross-check the catalog"),), False),
+    "archive": (
+        (
+            ("--to DIR", "build the archive tree at DIR (required; never the warehouse)"),
+            ("--verify", "check an existing tree instead of building; writes nothing"),
+            ("--zone NAME", "IANA zone for folder names (default: [archive_timezone])"),
+        ),
+        # content=True: the archive is built by the same emitters as everything
+        # else, so the same content flags govern it (R9). A tree whose rendering
+        # ignored your configuration would be the one place it silently does not
+        # apply.
+        True,
+    ),
     "version": ((("(no options)", "print the ccw version"),), False),
 }
 
@@ -1417,6 +1517,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_status()
     if verb == "verify":
         return _run_verify()
+    if verb == "archive":
+        return _run_archive(args)
     if verb == "share":
         return _run_share(args)
     if verb == "relocate":
