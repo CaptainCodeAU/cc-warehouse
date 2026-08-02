@@ -135,7 +135,7 @@ def _resolve(
 
 def _capture_locked(
     conn: sqlite3.Connection,
-    root: Path,
+    config: Config,
     data: bytes,
     digest: str,
     transcript_path: Path,
@@ -159,9 +159,10 @@ def _capture_locked(
         return CaptureResult(digest, existing, action, None, elapsed, "")
 
     # Fresh identity: the content-named store write precedes the catalog row.
-    store.put(root, data)
+    store.put(config.root, data)
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
+    _archive_source(config, conn, project_id, data)
     meta = catalog.SessionMeta(
         sha256=digest,
         source_kind=_SOURCE_KIND,
@@ -182,6 +183,37 @@ def _capture_locked(
     elapsed = _elapsed_ms(start)
     catalog.record_event(conn, digest, "stored", elapsed, "", now_iso)
     return CaptureResult(digest, short, "stored", project_id, elapsed, source)
+
+
+def _archive_source(
+    config: Config, conn: sqlite3.Connection, project_id: int, data: bytes
+) -> None:
+    """Put the session's JSONL in its archive folder SYNCHRONOUSLY (slice 19k).
+
+    Runs inside the hook rather than in the detached render child, because the
+    child is a renderer and must never be the thing that makes a session safe.
+    While `objects/` still exists this is a second home; when `objects/` is
+    retired it becomes the only one, and a child that never ran would otherwise
+    have meant a session that existed nowhere but `~/.claude`.
+
+    Never fatal, for now. The store already holds the payload by the time this
+    runs, so an archive problem must not fail a capture that has already
+    succeeded. THAT CHANGES when `objects/` retires and this becomes the last
+    line of defence; the oracle suite records the dependency rather than
+    assuming it away.
+    """
+    if config.archive_root is None:
+        return
+    try:
+        row = conn.execute(
+            "SELECT label FROM project WHERE id = ?", (project_id,)
+        ).fetchone()
+        label = str(row[0]) if row else "_unlabeled"
+        from cc_warehouse import archive
+
+        archive.write_source(config.archive_root, label, data, config.archive_timezone)
+    except Exception:
+        return
 
 
 def capture_transcript(
@@ -215,7 +247,7 @@ def capture_transcript(
         try:
             return _capture_locked(
                 conn,
-                config.root,
+                config,
                 data,
                 digest,
                 transcript_path,

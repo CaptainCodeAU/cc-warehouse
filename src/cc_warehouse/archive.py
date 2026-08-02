@@ -106,6 +106,46 @@ def is_session(data: bytes) -> bool:
     return parse_session(data).session_uuid is not None
 
 
+def write_source(
+    archive_root: Path,
+    label: str,
+    data: bytes,
+    timezone: str,
+    *,
+    fallback_stem: str = "session",
+) -> Path:
+    """Write ONLY the session's JSONL into its archive folder, and nothing else.
+
+    The durability half of write_session_folder, split out so the HOOK can run
+    it synchronously before it returns (slice 19k). Rendering is left to the
+    detached child, exactly as it is for a projection today: durable write
+    first, rendering second.
+
+    That split is what makes `objects/` retirable at all. While the archive got
+    its JSONL from the render child, a child that never ran - a crash, a kill, a
+    full disk, an OS that declined the spawn - would have meant a session that
+    existed only in `~/.claude`. The content-addressed store is what makes the
+    current design safe, so whatever replaces it has to take the same job on.
+    """
+    meta = parse_session(data)
+    directory = build.archive_dir(
+        archive_root, label, meta.first_ts, meta.session_uuid, timezone,
+        fallback_stem=fallback_stem,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    jsonl = directory / f"{meta.session_uuid or fallback_stem}{_JSONL_SUFFIX}"
+    if not jsonl.exists():
+        store.atomic_write(jsonl, data)
+        return jsonl
+    # Same rule as write_session_folder: the LARGER payload wins, a smaller one
+    # is refused, an equal one is left alone so re-capture does not churn the
+    # mtime. Size here answers "which of two payloads known to differ is
+    # larger", never "are these the same bytes" (R1 as amended 2026-08-02).
+    if len(data) > jsonl.stat().st_size:
+        store.atomic_write(jsonl, data)
+    return jsonl
+
+
 def write_session_folder(
     archive_root: Path,
     label: str,

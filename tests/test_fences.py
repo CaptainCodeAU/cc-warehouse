@@ -131,17 +131,61 @@ def _compare_uses_stat_field(node: ast.Compare) -> str | None:
     return None
 
 
-def test_no_size_or_mtime_equality_anywhere() -> None:
-    """FINDINGS F1 grep gate: no comparison of st_size / st_mtime values anywhere
-    in runtime code; sizes and mtimes are display metadata, never identity."""
+def test_no_size_or_mtime_EQUALITY_anywhere() -> None:
+    """FINDINGS F1: a size or mtime must never decide whether two things are the
+    same. Identity is sha256, with no cheap-attribute shortcut anywhere.
+
+    NARROWED 2026-08-03 to EQUALITY, which is what F1 is actually about, after
+    it fired on a comparison R1's own amendment permits.
+
+    R1 as amended 2026-08-02 names three different questions. "Are these the same
+    bytes" is sha256's alone and using size for it is still the bug F1 exists to
+    prevent. "Which of two payloads KNOWN to differ is larger" is a separate
+    question that size is the correct answer to, and the archive's replace-if-
+    larger rule asks exactly that. The old fence banned both.
+
+    It also could not have held the line it claimed: it inspected the Compare
+    node only, so `if len(data) > path.stat().st_size:` tripped while
+    `size = path.stat().st_size; if len(data) > size:` did not. archive.py
+    already contained the second form. A fence defeated by a local variable
+    teaches the next reader to add the local, which is worse than no fence.
+
+    So it now bans the ORDERING-FREE operators - `==`, `!=`, `is`, `is not` -
+    which are the ones that can express identity, and permits `<` / `>`, which
+    cannot. That is narrower in letter and truer to F1 in effect.
+    """
+    identity_ops = (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)
     offenders: list[str] = []
     for path in runtime_files():
         for node in ast.walk(parse(path)):
-            if isinstance(node, ast.Compare):
-                hit = _compare_uses_stat_field(node)
-                if hit:
-                    offenders.append(f"{path.name}:{node.lineno} compares {hit}")
-    assert not offenders, f"stat-attribute comparisons (F1): {offenders}"
+            if not isinstance(node, ast.Compare):
+                continue
+            if not any(isinstance(op, identity_ops) for op in node.ops):
+                continue
+            hit = _compare_uses_stat_field(node)
+            if hit:
+                offenders.append(f"{path.name}:{node.lineno} tests {hit} for equality")
+    assert not offenders, f"stat-attribute EQUALITY, identity by proxy (F1): {offenders}"
+
+
+def test_a_size_comparison_is_ordering_only_and_says_why() -> None:
+    """The other half of the narrowing: an ordering comparison on a stat field is
+    permitted, but it has to be ATTRIBUTABLE. Every one carries a comment naming
+    the amended R1, so a future reader meets the reasoning at the call site
+    rather than having to find this test."""
+    unexplained: list[str] = []
+    for path in runtime_files():
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for node in ast.walk(parse(path)):
+            if not isinstance(node, ast.Compare) or not _compare_uses_stat_field(node):
+                continue
+            window = "\n".join(lines[max(0, node.lineno - 12) : node.lineno])
+            if "R1" not in window:
+                unexplained.append(f"{path.name}:{node.lineno}")
+    assert not unexplained, (
+        f"size/mtime ordering comparisons with no R1 rationale nearby: {unexplained}"
+    )
 
 
 def _is_write_open(node: ast.Call) -> str | None:
