@@ -727,6 +727,30 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   branch. Knowing the class-not-instance lesson did not prevent applying it at only one
   altitude, which is the third time this has been recorded.
 
+- **2026-08-02, ticket 20 (thinking withheld).** Surfaced the 41,458 empty thinking blocks
+  carried out of ticket 18. Gates green (ruff, pyright strict, 688 tests); anchor untouched.
+  WHAT WORKED, and it is the first time this session: THE SUITE CAUGHT THINGS BEFORE THE
+  CORPUS DID. A locked fence stopped the slice outright, and a test I wrote to assert my
+  own claim to the principal ("zero new lines") failed and proved the claim wrong. Both
+  were caught before any commit. Ticket 18's lesson was that a green suite proves nothing
+  the fixtures did not contain; the counterweight recorded here is that a fence written
+  about a DECISION rather than a value does catch design collisions, and it is worth the
+  cost of writing them.
+  THE FENCE WAS ALSO WRONG, in a way worth naming. It banned a NAME, not a behaviour, so
+  it fired on a key that never touched the property it protects. The fix was to narrow it
+  to the decision and then assert the property DIRECTLY, which made it stronger. A fence
+  that tests spelling is a fence that produces false positives and can be defeated by
+  synonym; a fence that tests behaviour is neither.
+  THE TEMPTATION WORTH RECORDING: the fastest resolution was to rename the key past the
+  substring check. It would have been green in five minutes, invisible in review, and it
+  would have left every future key able to do the same. Surfacing it to the principal cost
+  one round trip.
+  PROCESS NOTE: the option table put to the principal contained a factual error of mine
+  ("about 3 withheld blocks per session"), corrected only afterwards by measuring: the
+  blocks concentrate in 11.4% of sessions at ~26 each. An average over a denominator that
+  includes the unaffected is a number that answers nothing, and it was load-bearing in a
+  decision. Measure the DISTRIBUTION before quoting a rate.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

@@ -99,11 +99,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   option 4: NOT a third `loss` amendment, because a rendered entry is not a lost one).
   Verified read-only over all 13,836 objects: 0 unrecognised, 0 parse failures, anchor
   untouched. **Ticket 19 is NEXT and is not started; it needs scoping with the principal.**
-- **OPEN RULING carried out of ticket 18:** 41,458 of 43,060 `thinking` blocks in the
-  corpus arrive with `thinking: ""` and their content in an opaque encrypted `signature`.
-  They render nothing and count nothing, the same F6 class one level below the dispatch
-  ticket 18 fixed. Surfacing them is another 41,458 markers, so it is a visible-output
-  change the principal has not been asked about (DESIGN 15, carried-not-decided).
+- **Ticket 20 (thinking withheld): DONE 2026-08-02.** Closed the open ruling ticket 18
+  carried. The 41,458 empty `thinking` blocks now fold their count into the phase caption
+  (8,709 added lines corpus-wide, not the 41,458 a per-block marker would cost), the
+  manifest gains a top-level `withheld` block, and `--thinking-withheld
+  {caption|marker|off}` lets the operator overrule the default. The text was never
+  delivered to this machine: Claude Code stopped writing it at v2.1.69 (2026-03-05), and
+  it is a MODEL property, zero of 25,470 opus-4-8 blocks ever carried text.
+- **CONTRACT NARROWED 2026-08-02 (principal ruling, DESIGN 15 block 1 non-scope).** The
+  frozen "no thinking key" decision protects the absence of a toggle for whether thinking
+  RENDERS, not the absence of the word in a key name. The oracle fence enforcing it was
+  narrowed to the decision and now asserts the protected property directly instead of
+  matching a substring. Renaming the key to dodge the check was offered and rejected.
 - **NEXT after those: v1.1 proper**: FTS5 + `ccw search` (session AND message hits) + HTML archive
   search + `ccw import`/inbox; **then v1.2**: `ccw mcp`. `ccw import` adopts slice 17's
   window definition when it lands.
