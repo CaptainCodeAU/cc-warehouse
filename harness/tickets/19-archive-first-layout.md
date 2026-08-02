@@ -113,9 +113,34 @@ additive, and nothing touches the live archive until the strategy is locked.
     19c  write one archive folder (JSONL + 5 files)   DONE 2026-08-02 (ab39ed9)
     19d  the migration itself, objects/ -> archive    DONE 2026-08-02, RUN AT SCALE
     19e  archive integrity check (library level)      DONE 2026-08-02 (ab39ed9)
-    19f  project.json + catalog-as-disposable-index   not started
+    19f  project.json + catalog-as-disposable-index   DONE 2026-08-02 (d636f1f)
     19g  `ccw share` onto the shared naming function  not started
-    19h  CLI verbs for archive + verify               not started, see below
+    19h  `ccw archive` verb (build + --verify)        DONE 2026-08-02 (7ceff72)
+
+19h EXISTS BECAUSE OF WHAT THE MIGRATION LEFT BEHIND: a 5.1 GiB tree the operator
+could not regenerate, re-verify or re-zone without asking. That was the worst
+property of the post-migration state and the cheapest to fix, so it went first.
+`--to` is required with no default, pointing it at the warehouse is refused, and
+`--verify` writing nothing is PROVED by snapshotting the tree rather than
+asserted (exit 0 plus output is not evidence, 2026-08-01). The inert-help fence
+covered the verb the moment it was listed, because that fence reads its verb list
+from the help text itself.
+
+19f CLOSED A CLAIM THE CODE DID NOT HONOUR. DESIGN 15 says the catalog is a
+disposable index; until this slice that was FALSE, because deleting it lost
+`project_alias` and split every renamed project in two on the next capture, with
+no error anywhere. Stating a guarantee the code does not keep is the F6 class
+this project exists to eliminate, so it was the second thing fixed rather than a
+later convenience. The central test is the round trip with the catalog DELETED,
+and it asserts the fixture stored aliases first, because a round trip over an
+empty set passes for the wrong reason.
+
+VERIFIED ON THE REAL ARCHIVE 2026-08-02, through the verb rather than a script:
+13,829 folders written, 0 failed, 57 project.json written, then `--verify`
+reported 13,829 folders checked and 0 problems. The second full run also proved
+IDEMPOTENCE AT SCALE: identical counts against a tree that already existed.
+`read_projects` recovered 57 projects and 114 aliases from the tree with no
+database involved.
 
 19x RESOLVED 2026-08-02: the principal chose BIG-BANG ("just do all of them
 together"), having freed disk first. Re-measured at 8.68 GiB free against 5.08

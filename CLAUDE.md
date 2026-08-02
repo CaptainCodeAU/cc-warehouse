@@ -111,6 +111,14 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   RENDERS, not the absence of the word in a key name. The oracle fence enforcing it was
   narrowed to the decision and now asserts the protected property directly instead of
   matching a substring. Renaming the key to dodge the check was offered and rejected.
+- **Ticket 19 (archive-first layout): 6 of 7 slices DONE 2026-08-02.** 19a naming, 19b zone
+  config, 19c folder writer, 19d migration, 19e integrity check, 19f project.json, 19h the
+  `ccw archive` verb. Only 19g (`ccw share` onto the shared naming function) is left.
+  **RUN AT SCALE:** `~/cc-warehouse-archive` holds 13,829 folders + 57 `project.json`,
+  built in 6 minutes with 0 failures and verified with 0 problems, twice (the second run
+  proved idempotence). **NOTHING HAS BEEN SWAPPED**: `~/cc-warehouse-data` is untouched
+  and still the live warehouse; hook, sweep and build still write there. The swap is an
+  open decision for the principal and should come last.
 - **NEXT after those: v1.1 proper**: FTS5 + `ccw search` (session AND message hits) + HTML archive
   search + `ccw import`/inbox; **then v1.2**: `ccw mcp`. `ccw import` adopts slice 17's
   window definition when it lands.
