@@ -114,9 +114,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   RENDERS, not the absence of the word in a key name. The oracle fence enforcing it was
   narrowed to the decision and now asserts the protected property directly instead of
   matching a substring. Renaming the key to dodge the check was offered and rejected.
-- **Ticket 19 (archive-first layout): 6 of 7 slices DONE 2026-08-02.** 19a naming, 19b zone
-  config, 19c folder writer, 19d migration, 19e integrity check, 19f project.json, 19h the
-  `ccw archive` verb. Only 19g (`ccw share` onto the shared naming function) is left.
+- **Ticket 19 (archive-first layout): the EXPORT works; the archive is NOT LIVE.**
+  Done 2026-08-02: 19a naming, 19b zone config, 19c folder writer, 19d migration, 19e
+  integrity check, 19f project.json, 19h the `ccw archive` verb.
+  **"6 of 7 slices" was a MISLEADING framing of mine, corrected 2026-08-02.** It was 6 of
+  7 slices in MY CUT, and the cut covered BUILDING an archive, not LIVING in one. Nothing
+  except `ccw archive` writes an archive folder: `capture.py` still calls `store.put`, so
+  every new session lands in the old store and the archive drifts until someone re-runs
+  the verb by hand. **DO NOT SWAP.** Still missing, and none of it is in the cut:
+  `ccw hook` writing archive folders, `build`/`sweep` into the archive, 19g `share`,
+  `status`/`relocate`/`project` on archive labels, retiring `objects/`, and reconciling
+  `ccw verify` with ruling (b) which says it BECOMES archive integrity (today it is
+  `ccw archive --verify` and plain `verify` still checks the vault).
   **RUN AT SCALE:** `~/cc-warehouse-archive` holds 13,829 folders + 57 `project.json`,
   built in 6 minutes with 0 failures and verified with 0 problems, twice (the second run
   proved idempotence). **NOTHING HAS BEEN SWAPPED**: `~/cc-warehouse-data` is untouched

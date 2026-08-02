@@ -814,7 +814,10 @@ entry; the compact variants do not move at all, because machinery is already exc
 there by policy; and `tests/golden/matrix-anchor` holds byte for byte, which is the proof
 the change is additive.
 
-CARRIED, NOT DECIDED: 41,458 of 43,060 `thinking` blocks in the corpus arrive with
+CARRIED, NOT DECIDED **[SUPERSEDED the same day by the ticket 20 entry below, which
+DECIDED it; kept because the supersession is itself the useful record, and a reader
+reaching this paragraph first would otherwise learn something false]**: 41,458 of 43,060
+`thinking` blocks in the corpus arrive with
 `thinking: ""` and their content in an opaque `signature` blob (encrypted extended
 thinking). They render nothing and count nothing today, which is the same F6 class one
 level below the dispatch, inside a NAMED branch. Surfacing them is a further visible
