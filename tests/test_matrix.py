@@ -265,12 +265,41 @@ def test_the_compact_html_meta_note_never_denies_what_it_carries() -> None:
     assert "compact variant, thinking omitted" in with_tools
 
 
-def test_no_thinking_key_exists_on_either_variant() -> None:
+def test_no_thinking_render_toggle_exists_on_either_variant() -> None:
     """NON-SCOPE, stated in the entry: BRAINSTORM locks thinking ON in full
     variants and compact keeps it welded OFF. A thinking toggle would be its own
-    future proposal, so its absence is contract, not an oversight."""
+    future proposal, so its absence is contract, not an oversight.
+
+    NARROWED 2026-08-02 by principal ruling (DESIGN 15, block 1 non-scope). This
+    test previously banned any field whose NAME contained "thinking", which is
+    the letter of the line rather than the decision behind it. Ticket 20's
+    `thinking_withheld` collided with it while doing something the frozen
+    decision never covered: real thinking renders identically at every one of
+    its positions, and it governs only how a block whose text NEVER ARRIVED is
+    reported. The ruling narrowed the contract; this test follows the contract.
+    It was NOT relaxed to make code pass, and the alternative of renaming the key
+    to dodge the substring was offered and rejected precisely because it would
+    have left this fence defeatable by spelling.
+
+    What is still banned, and is what the decision actually protects: a key that
+    turns thinking RENDERING on or off, on either variant. The two assertions
+    below are the boundary. `thinking_withheld` is allowed by name; a
+    `thinking`/`thinking_compact` pair, or any field whose value space is a
+    render on/off for thinking, is not.
+    """
     fields = set(render.RenderOptions().__dataclass_fields__)
-    assert not [name for name in fields if "thinking" in name]
+    banned = {"thinking", "thinking_compact", "thinking_full", "include_thinking"}
+    assert not (fields & banned), fields & banned
+
+    # The property the ban exists to protect, asserted directly rather than
+    # inferred from a name: thinking renders in full and never in compact, and
+    # no position of the one allowed thinking-named key can change that.
+    data = matrix_session()
+    for position in ("caption", "marker", "off"):
+        options = render.RenderOptions(thinking_withheld=position)
+        full_md, compact_md = render.render_markdown(data, options)
+        assert "deep thoughts about widgets" in full_md, position
+        assert "deep thoughts about widgets" not in compact_md, position
 
 
 # --- config keys (shared rule a: flat, one-level merge) --------------------

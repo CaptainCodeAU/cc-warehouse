@@ -182,7 +182,11 @@ TOP-LEVEL `unrecognised` block, `{count, types}`, added by ticket 18 (section 15
 2026-08-02) and deliberately NOT a third `loss` amendment: every entry it counts
 rendered a marker, so nothing was lost, and filing a rendered entry under loss would be
 the guarantee drift F6 exists to ban. It answers a different question, "has the format
-moved since the last census".
+moved since the last census". A third top-level block, `withheld`
+`{thinking_blocks}`, was added by ticket 20 the same day and answers a THIRD question:
+what never arrived. `loss` is what we dropped, `unrecognised` is what the format grew,
+`withheld` is what upstream stopped sending. It is counted at every display position,
+because what the emitters draw is a choice and the count is a fact.
 
 **Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
 JSONL format found 13 entry types where the render consumed only `user`/`assistant`.
@@ -611,6 +615,19 @@ time: full = all five ON (the 2026-07-23 ruling restated), compact = all five OF
 NON-SCOPE: thinking has no key on either variant; BRAINSTORM locks thinking ON in full
 variants and compact keeps it welded OFF; a thinking toggle would be its own future
 proposal.
+NARROWED 2026-08-02 (principal, ticket 20). What was frozen is that there is no toggle
+for WHETHER THINKING RENDERS: it stays ON in full variants and welded OFF in compact,
+unchanged and still not negotiable. The line as written also banned any key whose NAME
+contains "thinking", and the oracle fence enforcing it
+(`test_no_thinking_key_exists_on_either_variant`) read the letter rather than the
+decision. `thinking_withheld` is not a thinking toggle: real thinking renders exactly as
+before at every one of its positions, and it governs only how a block whose text NEVER
+ARRIVED is reported (ticket 20; the text stopped reaching the JSONL upstream at Claude
+Code v2.1.69). The alternative offered and REJECTED was renaming the key to dodge the
+substring, which would have bought a five-minute ship at the price of a fence anyone
+could defeat by choosing a synonym, and a key named less accurately than the thing it
+does. The fence is narrowed to the decision, not deleted: a key that would turn thinking
+rendering on or off is still a rejection.
 
 **2) HTML chrome defaults.** The four initial states the page already models become
 config defaults; every chrome element remains (exporter parity), only starting positions
@@ -815,6 +832,36 @@ CONSEQUENCE for the pending ruling: a marker saying "thinking omitted" would be 
 but a marker implying the text was ever available for an Opus session would not. For 96%
 of this corpus there is nothing that was lost at capture time; there is something that
 never arrived.
+
+**DECIDED 2026-08-02 (principal), ticket 20, option 4 of four.** The count folds into the
+phase caption the transcript ALREADY prints, so the default adds no lines where the phase
+also renders something, plus a top-level `withheld` manifest block so the question is
+answerable across 13,836 sessions without opening a transcript. REJECTED: a marker per
+block (41,458 near-identical lines, clustered, failing the "well structured" half of the
+principal's own requirement); a manifest counter alone (invisible where it happened); and
+leaving it (a named F6 hole left open deliberately).
+
+PLUS, ruled in the same breath: the operator gets a CLI argument to OVERRULE the default,
+so the rejected options become runtime positions rather than closed doors. Key
+`[render] thinking_withheld`, flag `--thinking-withheld`, three positions
+`caption|marker|off`, default `caption` (the 2026-08-01 bijection, shared rule c).
+
+HONEST COST, found by a test rather than by reasoning: "no new lines" holds when the
+phase also contains something that renders, which is the common case. A phase containing
+NOTHING but withheld thinking has no existing header to join, so it costs ONE breadcrumb
+line. Suppressing that instead would put the fact back in the dark, which is what this
+ticket exists to stop. The oracle suite pins both cases separately rather than gloss the
+exception.
+
+NON-SCOPE, withdrawn on reflection after being offered: splitting `narration` (1,397
+blocks) from `thinking`. Reading that label means PARSING THE SIGNATURE, a field
+Anthropic documents as opaque. Building visible product behaviour on an undocumented
+internal encoding would break silently the first time it changed, which is the overclaim
+class this project bans. The observation is recorded; the dependency is not built.
+
+CARRIED to ticket 19: the signature blobs total 218,406,832 characters, about 14% of the
+1.5 GB store, and under archive-first they ship inside every session folder as unreadable
+payload. That is a storage decision and belongs to its own round.
 
 **LONE SURROGATES: DECIDED, 2026-08-01 (principal), found on real data.** The first
 `ccw build` at scale (13,608 sessions) failed on 9 of them with `UnicodeEncodeError:
