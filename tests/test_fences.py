@@ -46,6 +46,10 @@ GUARANTEE_PROOFS: dict[tuple[str, str], str] = {
     # mapping grows when a guarantee is added; it is never the place to excuse
     # one, which is why each entry names a test rather than a reason.
     ("archive.py", "atomic"): "test_interrupted_write_leaves_no_partial_final_file",
+    # build.py's sub-agent naming claims a name is "identical on any machine".
+    # The proof is the parametrized zone test: same payload, four machine TZs,
+    # one name (ticket 21b).
+    ("build.py", "identical"): "test_the_zone_comes_from_config_not_the_machine",
     ("archive.py", "never delete"): "test_the_archive_module_has_no_deletion_primitive_at_all",
 }
 

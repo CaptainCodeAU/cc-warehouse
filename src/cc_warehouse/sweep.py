@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import capture, catalog, parser, store
+from cc_warehouse import capture, catalog, parser, registry, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -42,7 +42,9 @@ def _default_source() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
-def _walk_source(walk_root: Path) -> tuple[list[Path], list[ItemOutcome]]:
+def _walk_source(
+    walk_root: Path, *, skip_agents: bool = True
+) -> tuple[list[Path], list[ItemOutcome]]:
     """The jsonl transcripts under walk_root plus a NAMED error item per directory that
     could not be listed; both sorted for determinism, agent-* skipped.
 
@@ -68,7 +70,7 @@ def _walk_source(walk_root: Path) -> tuple[list[Path], list[ItemOutcome]]:
         for filename in filenames:
             if not filename.endswith(_JSONL_SUFFIX):
                 continue
-            if filename.startswith(_AGENT_PREFIX):
+            if skip_agents and filename.startswith(_AGENT_PREFIX):
                 continue
             path = base / filename
             if not path.is_file():
@@ -113,6 +115,71 @@ def _orphan_object_paths(root: Path, cataloged: frozenset[str]) -> list[Path]:
             continue
         orphans.append(path)
     return orphans
+
+
+def _is_subagent_file(path: Path) -> bool:
+    """Cheap pre-read check used only for ORDERING, never for identity.
+
+    Identity is decided from content by archive.is_subagent (F4). This just
+    decides which pass a file goes in, and being wrong here costs a pass, not a
+    misfiling: the second pass re-checks properly and falls back.
+    """
+    from cc_warehouse import archive
+
+    try:
+        return archive.is_subagent(path.read_bytes())
+    except OSError:
+        return False
+
+
+def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
+    """A sub-agent transcript goes to its session's folder, not to the store.
+
+    Sub-agents are NOT sessions (ticket 21a): they carry their PARENT'S
+    sessionId, so the ordinary capture path would file one under the parent's
+    name and let replace-if-larger overwrite the parent's transcript. They also
+    get no catalog row - the catalog indexes sessions, and a sub-agent is part
+    of one rather than one of its own.
+
+    Returns None when this is not a sub-agent, so the caller falls through to
+    the ordinary path.
+    """
+    from cc_warehouse import archive
+
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return ItemOutcome(path.name, "error", f"unreadable: {exc}")
+    if not archive.is_subagent(data):
+        return None
+    if config.archive_root is None:
+        return ItemOutcome(path.name, "skipped", "sub-agent, but no archive_root is set")
+    meta_path = path.with_suffix(".meta.json")
+    meta = meta_path.read_bytes() if meta_path.is_file() else None
+    # The project dir is two levels above `subagents/`; deriving from the
+    # sub-agent's own parent would produce a label made of the session uuid.
+    project_dir = path.parent.parent.parent
+    label = registry.derive_label(str(project_dir))
+    try:
+        conn = catalog.open_catalog(config.root)
+        try:
+            parent = archive.parent_uuid_of(data)
+            row = conn.execute(
+                "SELECT p.label FROM session s JOIN project p ON p.id = s.project_id"
+                " WHERE s.session_uuid = ? LIMIT 1",
+                (parent,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row:
+            label = str(row[0])
+        result = archive.write_subagent(
+            config.archive_root, label, data, config.archive_timezone, meta=meta
+        )
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
+    action = "archived-subagent-orphaned" if result.orphaned else "archived-subagent"
+    return ItemOutcome(path.name, action, str(result.directory))
 
 
 def _capture_item(config: Config, path: Path) -> ItemOutcome:
@@ -167,12 +234,23 @@ def sweep(
             (ItemOutcome(_LOCK_HELD_ITEM, LOCK_HELD_ACTION, "sweep lock held by a live holder"),)
         )
     try:
-        transcripts, outcomes = _walk_source(walk_root)
-        outcomes.extend(
-            _capture_item(config, path)
-            for path in transcripts
-            if _in_window(path, window)
+        transcripts, outcomes = _walk_source(
+            walk_root, skip_agents=not config.archive_subagents
         )
+        # TWO PASSES, and the order is load-bearing. A sub-agent nests inside
+        # its parent's folder, so the parent has to exist first; a single pass in
+        # filename order files most sub-agents as orphans purely because they
+        # sorted earlier. Sessions first, sub-agents second.
+        wanted = [p for p in transcripts if _in_window(p, window)]
+        deferred: list[Path] = []
+        for path in wanted:
+            if _is_subagent_file(path):
+                deferred.append(path)
+                continue
+            outcomes.append(_capture_item(config, path))
+        for path in deferred:
+            handled = _archive_subagent(config, path)
+            outcomes.append(handled if handled is not None else _capture_item(config, path))
         cataloged = _cataloged_hashes(config.root)
         outcomes.extend(
             _capture_item(config, path)

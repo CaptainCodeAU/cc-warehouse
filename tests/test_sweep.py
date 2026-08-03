@@ -44,6 +44,25 @@ def seed_two_sessions(env: dict[str, str]) -> tuple[Path, Path]:
 
 
 def test_sweep_captures_what_the_hook_missed(ccw_env: dict[str, str]) -> None:
+    """AMENDED 2026-08-03 (ticket 21d, SPEC 8 amended).
+
+    This used to plant a SESSION payload in a file named `agent-<uuid>.jsonl`
+    and require the sweep to skip it, pinning SPEC 8's rule that agent-* files
+    are skipped by name. Two things changed and the test had to follow the
+    contract rather than the other way round.
+
+    First, sub-agent transcripts are now ARCHIVED rather than discarded, because
+    `~/.claude` is being cleared and 92.7% of their content exists nowhere else.
+    Second, and more important here, identity is decided from CONTENT, never
+    from a filename (F4) - so a session payload is a session whatever the file
+    is called, and the old fixture was pinning exactly the path-as-identity
+    behaviour F4 exists to forbid.
+
+    What survives is the property the test was really about: the sweep imports
+    what the hook missed, and does not invent rows. The skip-by-name assertion
+    is now carried by test_subagent_capture.py, against a payload that really is
+    a sub-agent.
+    """
     seed_two_sessions(ccw_env)
     write_transcript(
         ccw_env,
@@ -53,7 +72,7 @@ def test_sweep_captures_what_the_hook_missed(ccw_env: dict[str, str]) -> None:
     )
     result = run_ccw(["sweep"], ccw_env)
     assert result.code == 0, result.err
-    assert session_count(ccw_env) == 2
+    assert session_count(ccw_env) == 3, "a session payload is a session whatever the filename"
     uuids = {
         cast(tuple[str], r)[0]
         for r in cast(
@@ -61,7 +80,7 @@ def test_sweep_captures_what_the_hook_missed(ccw_env: dict[str, str]) -> None:
             catalog_rows(ccw_env, "SELECT session_uuid FROM session"),
         )
     }
-    assert uuids == {UUID_A, UUID_B}
+    assert uuids == {UUID_A, UUID_B, UUID_C}
 
 
 def test_sweep_is_idempotent(ccw_env: dict[str, str]) -> None:

@@ -166,6 +166,7 @@ def _capture_locked(
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
     _archive_source(config, conn, project_id, data)
+    _archive_subagents_of(config, conn, project_id, transcript_path, data)
     meta = catalog.SessionMeta(
         sha256=digest,
         source_kind=_SOURCE_KIND,
@@ -225,6 +226,54 @@ def _archive_source(
         if not config.keep_objects:
             raise
         return
+
+
+def _archive_subagents_of(
+    config: Config,
+    conn: sqlite3.Connection,
+    project_id: int,
+    transcript_path: Path,
+    data: bytes,
+) -> None:
+    """Bring this session's sub-agent transcripts with it (ticket 21d).
+
+    Claude Code writes them to `<session-uuid>/subagents/agent-*.jsonl` beside
+    the transcript. A session captured without them leaves work behind in
+    `~/.claude`, and `~/.claude` is being cleared - so "the sweep will get it
+    later" is not a plan, it is a hope.
+
+    Ordering is free here, unlike in the sweep: the parent's own folder was
+    written moments ago by _archive_source, so every sub-agent nests rather than
+    orphaning.
+
+    Never fatal while a fallback exists, for the same reason the parent's own
+    archive write is not: the session is already stored and DESIGN 12 forbids the
+    capture path turning a stored session into a reported failure.
+    """
+    if config.archive_root is None or not config.archive_subagents:
+        return
+    subagents = transcript_path.parent / transcript_path.stem / "subagents"
+    if not subagents.is_dir():
+        return
+    from cc_warehouse import archive
+
+    row = conn.execute("SELECT label FROM project WHERE id = ?", (project_id,)).fetchone()
+    label = str(row[0]) if row else "_unlabeled"
+    for child in sorted(subagents.glob("*.jsonl")):
+        try:
+            payload = child.read_bytes()
+            if not archive.is_subagent(payload):
+                continue
+            meta_path = child.with_suffix(".meta.json")
+            archive.write_subagent(
+                config.archive_root,
+                label,
+                payload,
+                config.archive_timezone,
+                meta=meta_path.read_bytes() if meta_path.is_file() else None,
+            )
+        except Exception:  # noqa: BLE001, PERF203 - one bad sub-agent never costs the capture
+            continue
 
 
 def capture_transcript(

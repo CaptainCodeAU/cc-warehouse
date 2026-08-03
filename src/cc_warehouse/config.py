@@ -160,6 +160,16 @@ class Config:
     # survivable, because a swallowed one would mean the hook reporting success
     # while nothing holds the session.
     keep_objects: bool = True
+    # Whether sub-agent transcripts are archived AT ALL (ticket 21d). One switch
+    # for one thing: it governs the sweep's walk AND the capture path, because a
+    # key that turned them off in one and on in the other would be a setting
+    # nobody could reason about. SPEC section 8
+    # said agent-* are skipped by the default sweep, and sweep.py has carried a
+    # note since slice 5 that "a config opt-in to include them lands with slice
+    # 13" - never built. It exists now and DEFAULTS ON, because the premise
+    # changed: ~/.claude is being cleared, so anything a sweep declines to take
+    # is destroyed rather than deferred.
+    archive_subagents: bool = True
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -513,6 +523,7 @@ def load_config(
         ),
         keep_projections=_keep_projections(merged, problems),
         keep_objects=_keep_objects(merged, problems),
+        archive_subagents=_bool(merged.get("archive_subagents"), True),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

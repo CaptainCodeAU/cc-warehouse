@@ -163,6 +163,149 @@ def is_session(data: bytes) -> bool:
     return parse_session(data).session_uuid is not None and not is_subagent(data)
 
 
+# Where a sub-agent goes when its parent session is not in the archive. Measured
+# 2026-08-03: ZERO of the 1,420 real sub-agents are orphaned against the
+# warehouse, so this is a net for a case that does not exist yet - which is
+# exactly when it is cheap to build and expensive to retrofit.
+ORPHAN_LABEL = "_orphaned-subagents"
+SUBAGENTS_DIR = "subagents"
+_META = "meta.json"
+_ORPHAN_NOTE = "orphan.json"
+
+
+@dataclass(frozen=True)
+class SubagentResult:
+    directory: Path
+    jsonl: Path
+    orphaned: bool = False
+    replaced: bool = False
+    refused_smaller: bool = False
+
+
+def write_subagent(
+    archive_root: Path,
+    label: str,
+    data: bytes,
+    timezone: str,
+    *,
+    meta: bytes | None = None,
+) -> SubagentResult:
+    """Write one sub-agent transcript inside the session that spawned it.
+
+        <label>/<stamp>_<parent-uuid>/subagents/<stamp>_<agentId>/
+            <agentId>.jsonl
+            meta.json
+
+    A FOLDER per sub-agent rather than a loose file, and the reason is the
+    principal's stated future: markdown and HTML for sub-agents. Loose files make
+    that day a restructure of every session folder in a 13,829-folder archive;
+    folders make it purely additive. The container costs nothing now.
+
+    NO markdown or HTML is generated here. That is the default the principal set:
+    sub-agents are archived, not rendered, with a flag for it recorded as future
+    work.
+
+    `meta.json` is Claude Code's companion file and it travels with the payload,
+    because it is the only record of what the agent WAS (`agentType`,
+    `description`). Losing it leaves folders nobody can tell apart.
+
+    When the parent's folder does not exist the transcript is NOT dropped and NOT
+    silently attached to something else: it goes to `<label>/_orphaned-subagents/`
+    with a note naming the parent it is waiting for.
+    """
+    agent_id = agent_id_of(data)
+    if agent_id is None:
+        raise ValueError("payload is not a sub-agent transcript; use write_session_folder")
+
+    meta_parsed = parse_session(data)
+    parent = _parent_folder(archive_root, label, meta_parsed.session_uuid, timezone)
+    orphaned = parent is None
+    if parent is None:
+        directory = (
+            archive_root
+            / build.component(ORPHAN_LABEL)
+            / build.component(label)
+            / build.subagent_folder_name(meta_parsed.first_ts, agent_id, timezone)
+        )
+    else:
+        directory = parent / SUBAGENTS_DIR / build.subagent_folder_name(
+            meta_parsed.first_ts, agent_id, timezone
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+
+    jsonl = directory / f"{agent_id}{_JSONL_SUFFIX}"
+    replaced = refused = False
+    if not jsonl.exists():
+        store.atomic_write(jsonl, data)
+    else:
+        # R1 as amended: size answers "which of two payloads KNOWN to differ is
+        # larger", never "are these the same bytes".
+        existing = jsonl.stat().st_size
+        if len(data) > existing:
+            store.atomic_write(jsonl, data)
+            replaced = True
+        elif len(data) < existing:
+            refused = True
+
+    if meta is not None:
+        store.atomic_write(directory / _META, meta)
+    if orphaned:
+        note = {
+            "parent_session_uuid": meta_parsed.session_uuid,
+            "agent_id": agent_id,
+            "reason": "the parent session was not in the archive when this was written",
+        }
+        store.atomic_write(
+            directory / _ORPHAN_NOTE,
+            json.dumps(note, sort_keys=True, indent=2).encode("utf-8") + b"\n",
+        )
+    return SubagentResult(directory, jsonl, orphaned, replaced, refused)
+
+
+def _parent_folder(
+    archive_root: Path, label: str, parent_uuid: str | None, timezone: str
+) -> Path | None:
+    """The parent session's folder, or None when it is not in the archive.
+
+    Found by SCANNING for the uuid suffix rather than computing the name,
+    because the folder name encodes the parent's own start time and a sub-agent
+    does not know it. Scoped to the one project directory, so this is a listing
+    rather than a walk.
+    """
+    if not parent_uuid:
+        return None
+    project = archive_root / (build.component(label) or "_unlabeled")
+    if not project.is_dir():
+        return None
+    suffix = f"_{parent_uuid}"
+    for child in project.iterdir():
+        if child.is_dir() and child.name.endswith(suffix):
+            return child
+    return None
+
+
+def subagent_records(session_dir: Path) -> list[dict[str, object]]:
+    """This session's sub-agents, as the manifest records them (ticket 21e).
+
+    Without this a deleted sub-agent folder is UNDETECTABLE: verify would see
+    five valid files, a matching source hash and a correct folder name, and
+    report clean. That is the most dangerous kind of green.
+    """
+    subs = session_dir / SUBAGENTS_DIR
+    if not subs.is_dir():
+        return []
+    out: list[dict[str, object]] = []
+    for folder in sorted(p for p in subs.iterdir() if p.is_dir()):
+        for jsonl in sorted(folder.glob(f"*{_JSONL_SUFFIX}")):
+            payload = jsonl.read_bytes()
+            out.append({
+                "agent_id": jsonl.stem,
+                "sha256": store.sha256_hex(payload),
+                "bytes": len(payload),
+            })
+    return out
+
+
 def read_payload(
     config: Config,
     *,
@@ -320,10 +463,21 @@ def write_session_folder(
     # survived the 2026-08-02 migration on a machine that happened to have the
     # RAM. See build.iter_projection_files.
     for name, payload in build.iter_projection_files(data, options):
-        if refused and name == _MANIFEST:
-            payload = _with_refusal(payload, jsonl.stat().st_size, len(data))
+        if name == _MANIFEST:
+            # Written LAST-ish, and always with the sub-agent list, so a reader
+            # can tell "none" from "this manifest predates the feature" (F6).
+            payload = _with_subagents(payload, subagent_records(directory))
+            if refused:
+                payload = _with_refusal(payload, jsonl.stat().st_size, len(data))
         store.atomic_write(directory / name, payload)
     return FolderResult(directory, jsonl, True, replaced, refused)
+
+
+def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> bytes:
+    """Record this session's sub-agents in its manifest (ticket 21e)."""
+    manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
+    manifest["subagents"] = records
+    return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
 def _with_refusal(manifest_bytes: bytes, archived: int, offered: int) -> bytes:
@@ -567,8 +721,37 @@ def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
             problems.append(
                 FolderProblem(directory, "JSONL does not match manifest source_hash")
             )
+        problems.extend(_subagent_problems(directory, manifest_path))
     problems.extend(_name_problems(directory, meta, timezone))
     return problems
+
+
+def _subagent_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+    """Every sub-agent the manifest lists must still be present and unaltered.
+
+    Without this a deleted sub-agent folder is invisible to verify: five valid
+    files, a matching source hash and a correct folder name all still hold.
+    """
+    try:
+        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+    listed = manifest.get("subagents")
+    if not isinstance(listed, list):
+        return []
+    live = {str(r["agent_id"]): str(r["sha256"]) for r in subagent_records(directory)}
+    out: list[FolderProblem] = []
+    for raw in cast(list[object], listed):
+        if not isinstance(raw, dict):
+            continue
+        rec = cast(dict[str, object], raw)
+        agent_id = str(rec.get("agent_id", ""))
+        want = str(rec.get("sha256", ""))
+        if agent_id not in live:
+            out.append(FolderProblem(directory, f"sub-agent {agent_id} is missing"))
+        elif want and live[agent_id] != want:
+            out.append(FolderProblem(directory, f"sub-agent {agent_id} does not match its hash"))
+    return out
 
 
 def _name_problems(directory: Path, meta: object, timezone: str) -> list[FolderProblem]:

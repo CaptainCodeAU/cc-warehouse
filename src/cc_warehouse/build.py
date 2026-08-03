@@ -128,7 +128,7 @@ def projection_dir(
 # Names the flattened archive root cannot give to a project folder. `projections/`
 # is dropped by the archive-first layout, so project folders sit at the warehouse
 # root beside these two (DESIGN 15, 2026-08-02).
-RESERVED_LABELS = frozenset({"locks", "catalog.sqlite"})
+RESERVED_LABELS = frozenset({"locks", "catalog.sqlite", "_orphaned-subagents"})
 
 _UNDATED = "undated"
 
@@ -181,6 +181,22 @@ def _local_stamp(first_ts: str | None, timezone: str) -> str:
         moment = moment.replace(tzinfo=UTC)
     local = moment.astimezone(zone)
     return local.strftime("%Y%m%d-%H%M%S%z")
+
+
+def subagent_folder_name(first_ts: str | None, agent_id: str, timezone: str) -> str:
+    """`<YYYYMMDD-HHMMSS><offset>_<agentId>` for one sub-agent (ticket 21b).
+
+    The SAME shape and the same rules as a session folder, one level down:
+    start-keyed so the name never moves, rendered in the config-pinned zone so it
+    is identical on any machine, and suffixed with the agentId so `ls
+    subagents/` reads in the order the agents ran and each is greppable back to
+    the `started` / `result` lines in the parent transcript.
+
+    One naming implementation for both (R9): this shares _local_stamp with
+    archive_folder_name, so a change to how the archive spells time cannot make
+    sessions and their sub-agents disagree.
+    """
+    return f"{_local_stamp(first_ts, timezone)}_{agent_id}"
 
 
 def archive_dir(
