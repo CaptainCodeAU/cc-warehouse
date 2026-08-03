@@ -52,8 +52,9 @@ edits to the principal instead.
   switch becomes the system-wide capture path at every session end. Proved by execution:
   with `doctor.py` deliberately corrupted in the checkout, the installed `ccw doctor`
   still ran. VERIFY THE MODE, do not assume it, by reading PEP 610 directly:
-  `cat ~/.local/share/uv/tools/cc-warehouse/**/direct_url.json` -> `"dir_info":{}` is
-  frozen, `"dir_info":{"editable":true}` is not. (The `--frozen` flag was added to the
+  `find ~/.local/share/uv/tools/cc-warehouse -name direct_url.json -exec cat {} \;`
+  -> `"dir_info":{}` is frozen, `"dir_info":{"editable":true}` is not. (A glob is NOT
+  used here: the file sits four levels down under a version-stamped `.dist-info`.) (The `--frozen` flag was added to the
   principal's shell functions on 2026-08-04 by a separate session; before that only the
   raw `uv tool install --force --reinstall --python 3.14 .` could do this.)
 - `~/cc-warehouse-journals/` holds the 7 workflow journals (409,059 bytes), the only
