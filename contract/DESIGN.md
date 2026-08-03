@@ -234,14 +234,15 @@ emit plus the hardening rules from SPEC section 7.
 | Verb | Does |
 |---|---|
 | `ccw hook` | SessionEnd capture from stdin payload (section 4) |
-| `ccw sweep` | import anything the hook missed from `~/.claude/projects` (or `--source`); `--since`/`--until` import window (section 15, 2026-08-01) |
+| `ccw sweep` | import anything the hook missed from `~/.claude/projects` (or `--source`); `--since`/`--until` import window (section 15, 2026-08-01); `--dry-run` reports what a real run would import and writes NOTHING; `--quiet` drops per-item lines but never a failure (section 15, 2026-08-03, ticket 23) |
 | `ccw render` | (re)build the 4 files for `--session s:<hash>`; or render an ad-hoc `<path>` outside the store to `--out` (default: a temp dir, path printed), never under `projections/`, never touching the catalog; honors the content flags |
 | `ccw build` | rebuild projections from the catalog; incremental by default, `--rebuild` for full, `--include-hidden` for hidden sessions; honors the content flags |
 | `ccw migrate` | one-shot import of the legacy archive (section 10) |
 | `ccw relocate` | move/rename a project across the external world (section 11) |
 | `ccw project` | `list` / `show` / `rename` (label) / `move OLD NEW` (alias) / `merge A B` |
 | `ccw share` | build a sanitized static site for chosen sessions (section 9); sessions chosen by hashes OR a `--since`/`--until` window, never both |
-| `ccw status` | recent captures, counts, store size, last errors (reads catalog + log only) |
+| `ccw status` | recent captures, counts, store size, last errors; plus the UNCAPTURED GAP, how many sessions and sub-agents exist in the source tree with no archive folder. Reads catalog + log + the source tree, read-only (widened from "catalog + log only": section 15, 2026-08-03, ticket 23) |
+| `ccw doctor` | is capture actually working, and if not since when: `ccw` reachability, whether a capture hook is registered, whether it has EVER fired and when it last did, the uncaptured gap, the effective config, and the last integrity outcome. READ-ONLY by construction and proved so by snapshot, not asserted. Exits non-zero when capture is not working, so it composes into cron and a session-start check (section 15, 2026-08-03, ticket 23) |
 | `ccw verify` | re-hash objects against their names; catalog/object cross-check |
 | `ccw archive` | build the archive-first tree at `--to DIR`, or `--verify` an existing one; `--zone NAME` overrides `archive_timezone` (section 15, 2026-08-02, ticket 19). `--to` is required and refuses the warehouse itself; `--verify` writes nothing; honors the content flags |
 | `ccw version` | version (also `-v`) |
@@ -912,6 +913,48 @@ Build order: four slices, render-first - 14 matrix, 15 chrome + date-locale (one
 family, one JS file), 16 truncation (the manifest amendment rides alone in the smallest
 slice), 17 window. Contract amendments land first; each slice runs the standard loop,
 oracle tests first.
+
+**`ccw doctor`, AND WHY IT IS A VERB: DECIDED 2026-08-03 (principal), ticket 23.**
+Section 7 gains one verb and two amended rows. The amendment is recorded because
+section 7 is the locked list and the 2026-07-24 exit review ruled that every verb,
+internal ones included, must be listed there when added.
+
+THE FAILURE THAT ARGUES FOR IT. Capture stopped on 2026-07-24 and nobody found out
+for ten days. Every link an operator would check looked healthy: the plugin was
+enabled, its cached files were byte-identical to their repo copies, and the CLI it
+delegated to existed and still exposed the verb being called. The break was one layer
+below all of that, `uv tool run` resolving a DIFFERENT package of the same name from
+PyPI, and the wrapper discarded the non-zero exit with `check=False`.
+
+NOTHING IN THE PRODUCT COULD HAVE SAID SO, and that is the design point. `ccw status`
+reads the catalog, so a hook that never runs writes no row and raises no error;
+silence is indistinguishable from idleness. The question "is the machinery working"
+had no owner.
+
+THREE OPTIONS were put up and option 1 taken. REJECTED: folding it into `ccw status`
+as flags, because `status` answers "what is in the warehouse" and `doctor` answers "is
+the machinery working", and conflating them reproduces the exact confusion that let
+ten days pass; it would also have widened `status`'s contract row anyway, paying the
+same cost for a muddier result. REJECTED: an internal verb absent from `-h`, which
+hides the one command whose entire purpose is to be found when something is wrong.
+
+`status` IS widened regardless, deliberately and narrowly: its row said "reads catalog
++ log only", and the uncaptured-gap figure needs the source tree too. Read-only, and
+the number is one an operator asked for three times in a single day and had to get
+from a throwaway script each time.
+
+ORDERING, recorded because it is the unusual part: ticket 23 runs BEFORE the ticket
+that fixes capture. Fixing first and asserting success is what produced the ten days;
+building the instrument first makes ticket 24's exit condition a command rather than a
+belief. `doctor` must therefore be READ-ONLY BY CONSTRUCTION and proved so by
+snapshotting the tree, since exit 0 plus output is not evidence that nothing happened
+(2026-08-01, `ccw sweep -h`).
+
+`--dry-run` on sweep lands in the same ticket for the same reason: the first real
+sweep after this processes about 1,857 payloads into a tree that is about to become
+the only copy, and the same 2026-08-01 incident showed a sweep can run when nobody
+intended it to. `--quiet` is a precondition for scheduling it, since a chatty cron job
+is one whose output nobody reads.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
