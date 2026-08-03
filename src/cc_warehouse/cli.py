@@ -1442,7 +1442,8 @@ def _run_share(args: Sequence[str]) -> int:
     config = load_config()
     keep = functools.partial(in_window, window=window) if windowed else None
     report = share.share(
-        config, tuple(sessions), out_path, allow_findings=allow, window=keep
+        config, tuple(sessions), out_path, allow_findings=allow, window=keep,
+        timezone=_flag_value(rest, "zone"),
     )
     if report.findings and not allow:
         for finding in report.findings:
@@ -1510,6 +1511,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--since DATE", "select by window instead of hashes (local calendar day)"),
             ("--until DATE", "window end, inclusive (local calendar day)"),
             ("--allow-findings", "publish secret-shaped content verbatim"),
+            ("--zone NAME", "IANA zone for folder names (default: [archive_timezone])"),
             ("--EXPOSED", "open the unscrubbed-publish comparison gate"),
         ),
         False,

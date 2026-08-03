@@ -46,7 +46,14 @@ class _Head:
     # Carried since slice 19l so every consumer can locate this session's
     # archive folder without a second query per head. The alternative was an
     # N+1 lookup in three modules.
-    session_uuid: str | None = None
+    #
+    # NO DEFAULT, deliberately. It had one for exactly one slice, and in that
+    # slice `head_for_short` selected the column and forgot to pass it - so
+    # `ccw render --session` looked for the wrong archive filename, missed, and
+    # fell back to the vault. Silently, and correctly, right up until the vault
+    # would have been deleted. A required field turns that into a TypeError at
+    # the construction site.
+    session_uuid: str | None
 
 
 def render_options(config: Config) -> render.RenderOptions:
@@ -335,6 +342,7 @@ def head_for_short(conn: sqlite3.Connection, short: str) -> _Head | None:
         label=cast(str, row[2]),
         first_ts=cast("str | None", row[3]),
         slug=cast("str | None", row[4]),
+        session_uuid=cast("str | None", row[5]),
     )
 
 

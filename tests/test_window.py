@@ -146,7 +146,14 @@ def test_the_local_day_can_disagree_with_the_folder_name(
     _capture(ccw_env, _session_at("2026-07-24T22:00:00.000Z", "sydney-morning"), "sydney-morning")
     slugs = _shared_slugs(ccw_env, tmp_path, "--since", "2026-07-25")
     assert len(slugs) == 1, "the local calendar day did not win"
-    assert any("2026-07-24" in name for name in slugs), (
+    # RESPELLED 2026-08-03 (slice 19g), format only. The MEANING is untouched:
+    # this env sets no archive_timezone, so folders are still named in UTC and
+    # still carry the 24th while the typed local day is the 25th. Only the
+    # spelling moved, from the projection tree's `2026-07-24` to the archive
+    # folder's `20260724`. If a future change made folders follow the operator's
+    # zone by DEFAULT, this test would fail on meaning rather than format, which
+    # is exactly what it is here to do.
+    assert any("20260724" in name for name in slugs), (
         "the folder should still carry the UTC day, which is the whole point of the "
         "consequence being worth stating"
     )

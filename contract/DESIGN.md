@@ -685,7 +685,14 @@ calendar days, inclusive both ends (principal's call over UTC-day string-compare
 wall-clock intent wins); naive datetimes read as local, offset-carrying ones literal;
 one-sided windows are valid; since after until is a usage error; no relative forms in
 v1.1. CONSEQUENCE, stated once: folders slice UTC days (build.py `first_ts[:10]`), so a
-morning session can match a date its folder name does not show. NAMED CANDIDATE, not
+morning session can match a date its folder name does not show.
+AMENDED 2026-08-03 (slice 19g): this described the PROJECTION tree, which archive-first
+retires. Archive and share folders slice the `archive_timezone` day instead, so with the
+zone set to the operator's own the disagreement above largely DISAPPEARS - the folder day
+and the typed local day agree. It survives only where the configured zone differs from the
+typed date's zone, and the default is UTC, which is exactly the case the locked window test
+still pins. The wart this consequence recorded was fixed by the redesign rather than by
+being designed away. NAMED CANDIDATE, not
 designed here: re-filing the projection tree under local days (rebuild-module
 territory). REFUSED: the pair on `ccw build` - a windowed build either deletes
 out-of-window projections (R4) or emits an index that silently omits sessions; no

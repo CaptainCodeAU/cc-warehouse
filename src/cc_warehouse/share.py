@@ -388,6 +388,7 @@ def share(
     *,
     allow_findings: bool = False,
     window: "WindowFilter | None" = None,
+    timezone: str | None = None,
 ) -> ShareReport:
     """Build the sanitized share site for the given s:<short> keys, or for every
     head inside `window` when one is given; multi-session gets
@@ -433,13 +434,32 @@ def share(
     # published page makes no third-party request (DESIGN 15 item 8, principal
     # 2026-07-24). Redaction protects the content; this protects the reader.
     options = render.RenderOptions(hljs="inline")
+    # Ruling (c): the bundle is named by the SAME key the archive is, so the two
+    # cannot drift into different shapes. The built-in default is UTC, which is
+    # right for a stranger; an operator who wants their own wall clock sets
+    # archive_timezone once, and `--zone` overrides it for one invocation.
+    zone = timezone or config.archive_timezone
     index_entries: list[tuple[str, str]] = []
     for item, redacted_bytes in prepared:
         label = _redact_display(item.label, patterns)
         slug = _redact_display(item.slug or "session", patterns)
         first_ts = item.first_ts if item.first_ts and _DATE_RE.match(item.first_ts) else None
-        # Reuse build's projection naming (R9); build sanitizes each path segment.
-        subdir = build.projection_dir(out_dir, label, first_ts, slug, item.short)
+        # Ruling (c), 2026-08-02: a shared bundle looks EXACTLY like the archive
+        # it came from, through the one shared naming function (R9). Share was
+        # still spelling directories the pre-archive way, which is the F8 class
+        # arriving by omission rather than by copy-paste: one truth, two
+        # spellings, the second wrong only because nobody moved it.
+        #
+        # The label is still redacted first; the slug is no longer in the name at
+        # all, which removes a redaction surface rather than adding one.
+        subdir = build.archive_dir(
+            out_dir,
+            label,
+            first_ts,
+            item.session_uuid,
+            zone,
+            fallback_stem=f"session-{item.short}",
+        )
         try:
             build.write_projection(subdir, redacted_bytes, options, force=True)
         except OSError:
