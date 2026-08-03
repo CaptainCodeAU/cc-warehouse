@@ -209,6 +209,27 @@ def _in_window(path: Path, keep: "Callable[[str | None], bool] | None") -> bool:
         return False
 
 
+def source_transcripts(walk_root: Path | None = None) -> tuple[list[Path], list[Path]]:
+    """(session transcripts, sub-agent transcripts) under the source tree.
+
+    Filtering on the `agent-` prefix is legitimate HERE AND ONLY HERE. The F4
+    fence (test_no_module_identifies_a_subagent_by_filename) exempts this module
+    by name, on the stated ground that it walks a source tree: "sweep may FILTER
+    on the prefix, but nothing may DECIDE what a payload is from its name."
+
+    Callers that need the split ask for it here rather than re-deriving it, so
+    the prefix lives in one file (R9). This is a CHEAP name-based split for
+    counting and ordering; identity is still decided from content by
+    archive.is_subagent, which is what protects the parent transcript from being
+    overwritten (ticket 21a).
+    """
+    root = walk_root if walk_root is not None else _default_source()
+    found, _errors = _walk_source(root, skip_agents=False)
+    sessions = [p for p in found if not p.name.startswith(_AGENT_PREFIX)]
+    subagents = [p for p in found if p.name.startswith(_AGENT_PREFIX)]
+    return sessions, subagents
+
+
 def _cataloged_hashes_readonly(root: Path) -> frozenset[str]:
     """Session hashes already captured, WITHOUT creating anything (ticket 23).
 

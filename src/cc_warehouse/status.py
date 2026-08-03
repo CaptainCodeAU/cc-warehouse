@@ -8,10 +8,12 @@ objects in both directions; it re-implements no hashing (R9/F8) and mutates noth
 the store (R4).
 """
 
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
-from cc_warehouse import catalog, store
+from cc_warehouse import build, catalog, store, sweep
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -57,6 +59,101 @@ def recent_sessions(config: Config, limit: int = 10) -> list[SessionListing]:
     ]
 
 
+# Claude Code names a transcript `<uuid>.jsonl` and a sub-agent `agent-<id>.jsonl`.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_JSONL_SUFFIX = ".jsonl"
+
+
+@dataclass(frozen=True)
+class UncapturedGap:
+    """How far the archive is behind the source tree, and by what instrument.
+
+    `archived_root` is None when no `archive_root` is configured, which is a
+    DIFFERENT state from a gap of zero: with no archive there is nothing to be
+    behind, and reporting every session as uncaptured would be both alarming and
+    false. Callers must distinguish the two.
+    """
+
+    sessions: int
+    subagents: int
+    source: Path
+    archive_root: Path | None
+
+
+def uncaptured_gap(config: Config, source: Path | None = None) -> UncapturedGap:
+    """Sessions and sub-agents in the source tree with no archive folder.
+
+    THE FIGURE THIS EXISTS FOR: on 2026-08-03 the warehouse held 13,836 sessions
+    while the source tree held 1,857 the archive had never seen, and nothing in
+    `ccw` could say so. It was computed by throwaway script three times that day.
+
+    BY UUID, deliberately, and the cost is the reason. A source transcript is
+    `<uuid>.jsonl`; an archive folder is `<stamp>_<uuid>`. This is a set
+    difference over names: no file is opened and nothing is hashed, so `status`
+    stays cheap enough to run constantly. Sub-agents are counted separately
+    because they are not sessions (ruling (a) as amended by ticket 21) and
+    because there were 1,420 of them outstanding against 437 sessions, so one
+    combined number would have hidden the larger half.
+
+    THE BLIND SPOT, stated rather than discovered later: Claude Code sometimes
+    writes `<uuid>.orphaned-<n>-<hash>.jsonl`, whose stem is not a bare UUID, so
+    it reads as uncaptured even when its payload is archived. Over-reporting is
+    the safe direction; `ccw doctor` can afford the exact answer.
+
+    Reads only directory entries. Nothing is created, including the archive root
+    itself if it does not exist (F9).
+    """
+    walk_root = source if source is not None else Path.home() / ".claude" / "projects"
+    if config.archive_root is None:
+        return UncapturedGap(0, 0, walk_root, None)
+    archived: set[str] = set()
+    subagent_ids: set[str] = set()
+    if config.archive_root.is_dir():
+        for label_dir in config.archive_root.iterdir():
+            if not label_dir.is_dir() or label_dir.name in build.RESERVED_LABELS:
+                continue
+            for session_dir in label_dir.iterdir():
+                if not session_dir.is_dir():
+                    continue
+                _stamp, _sep, tail = session_dir.name.partition("_")
+                if _UUID_RE.match(tail):
+                    archived.add(tail)
+                nested = session_dir / "subagents"
+                if nested.is_dir():
+                    for agent_dir in nested.iterdir():
+                        if agent_dir.is_dir():
+                            _s, _p, agent_id = agent_dir.name.partition("_")
+                            subagent_ids.add(agent_id)
+    # The session / sub-agent split comes from sweep, which owns the source-tree
+    # walk and is the one module the F4 fence exempts from filtering on the
+    # `agent-` prefix. Re-deriving it here would both duplicate the walk (R9) and
+    # put a filename-shaped identity check in a module that has no business
+    # holding one.
+    session_paths, subagent_paths = sweep.source_transcripts(walk_root)
+    sessions = sum(
+        1
+        for path in session_paths
+        if _UUID_RE.match(path.name[: -len(_JSONL_SUFFIX)])
+        and path.name[: -len(_JSONL_SUFFIX)] not in archived
+    )
+    subagents = sum(
+        1
+        for path in subagent_paths
+        if path.name[: -len(_JSONL_SUFFIX)].split("-", 1)[1] not in subagent_ids
+    )
+    return UncapturedGap(sessions, subagents, walk_root, config.archive_root)
+
+
+def gap_line(gap: UncapturedGap) -> str:
+    """One line an operator can read at a glance, in `status` and in `doctor`."""
+    if gap.archive_root is None:
+        return "Uncaptured: (no archive configured; set archive_root to track this)"
+    return (
+        f"Uncaptured: {gap.sessions} session(s), {gap.subagents} sub-agent(s)"
+        f" in {gap.source} with no archive folder"
+    )
+
+
 def status_text(config: Config) -> str:
     """Human summary: recent captures, session count, stored size, recent errors.
 
@@ -85,6 +182,11 @@ def status_text(config: Config) -> str:
         conn.close()
     recent = recent_sessions(config, limit=_RECENT_LIMIT)
     lines = [f"cc-warehouse: {session_total} session(s), {stored_bytes} byte(s) stored"]
+    # DESIGN 7, status row amended 2026-08-03: the catalog cannot see a session
+    # that was never captured, so a hook that never ran leaves no trace here. The
+    # gap is the only figure that distinguishes "nothing to do" from "nothing is
+    # working", which is exactly the confusion that let ten days pass unnoticed.
+    lines.append(gap_line(uncaptured_gap(config)))
     lines.append("Recent captures:")
     if recent:
         for listing in recent:
