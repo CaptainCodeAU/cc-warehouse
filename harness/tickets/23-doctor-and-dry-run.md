@@ -3,11 +3,74 @@
 The instrument, built BEFORE the thing it measures. Four surfaces: a health
 verb, `--dry-run` and `--quiet` on sweep, and a gap figure on `status`.
 
+DONE 2026-08-03, all three slices, same day as defined. Gates: ruff clean,
+pyright strict 0 errors, 942 tests (was 870 at ticket 21 close).
+
     23a  sweep --dry-run + --quiet        DONE 2026-08-03 (eac2ae7)
          unknown-flag fix it forced       DONE 2026-08-03 (bfd293d)
          DESIGN 7 amendment               DONE 2026-08-03 (c7687a6)
-    23b  the uncaptured-gap function, wired into `status`   not started
-    23c  `ccw doctor`                                        not started
+    23b  uncaptured gap, wired into `status`   DONE 2026-08-03 (3f18798)
+    23c  `ccw doctor`                          DONE 2026-08-03 (5f40880)
+
+## WHAT IT SAYS ABOUT THIS MACHINE, first run
+
+    ok   reachable   ccw resolves to <path>
+    FAIL hook        NO capture hook is registered
+    ok   fired       last capture 2026-08-01T12:48:40Z
+    ok   uncaptured  565 session(s), 1420 sub-agent(s) with no archive folder
+    FAIL overdue     222 session(s) OVERDUE, oldest last active 2026-08-01T12:55Z
+    ok   config      root=... archive_root=... keep_objects=True
+    doctor: capture is NOT working                                     exit 1
+
+One command now reaches the conclusion a full session of hand investigation
+reached on 2026-08-03. That is the entire justification for building the
+instrument before the fix.
+
+## Design decisions worth not relearning
+
+**OVERDUE IS RELATIVE TO THE CORPUS, not the wall clock.** The fixtures forced
+the better rule: `basic_session` is pinned to 2026-01-05, so any "older than N
+hours" test calls every fixture overdue. More importantly a wall-clock rule
+flags the session doctor is being run FROM, which is the crying-wolf failure
+that gets a check ignored. Comparing against the newest activity anywhere in the
+source tree asks the question that matters: have other sessions ended since this
+one while it stayed uncaptured? Payload timestamps only (R12), and deterministic
+enough to test without freezing a clock.
+
+**Blocking vs reported.** The gap and the config are printed without being
+alarms; only the hook, the never-fired case and overdue sessions decide the exit
+code. A figure that always fails is a figure nobody reads.
+
+**Hook detection covers plugins.** settings.json, settings.local.json AND
+installed plugin `hooks.json` files, because ticket 24 delivers the hook as a
+PLUGIN and a doctor that only knew about settings.json would call a correctly
+installed hook missing.
+
+**The gap's instrument is by UUID and its blind spot is documented**: a source
+stem that is not a bare UUID reads as uncaptured even when archived.
+Over-reporting is the safe direction, and `doctor` pays for the exact answer
+where `status` cannot.
+
+## Three of my own tests were wrong, and the product was right each time
+
+- A malformed payload does NOT fail capture. Measured: `1 items, 1 stored, 0
+  failed`. The store is content addressed and malformed LINES go to the
+  manifest's loss block. A capture that refused unparseable input would lose
+  exactly the sessions most worth keeping.
+- A test scanning all output for "never" was fooled by pytest's `tmp_path`
+  containing the test's own name.
+- The R8 fence caught "identical" in doctor.py's docstring, used for a
+  historical anecdote rather than as a guarantee. The prose was corrected rather
+  than a proof mapping invented for a claim not being made.
+
+## An F4 fence caught a design smell, not a name
+
+23b first split sessions from sub-agents inside `status.py` using the `agent-`
+prefix. `test_no_module_identifies_a_subagent_by_filename` fired. Reading it
+showed the fence already exempts `sweep.py` on exactly the applicable ground,
+that it walks a source tree. So the answer was not an exemption but removing a
+duplicated walk: `sweep.source_transcripts` owns the split, `status` calls it,
+and the prefix stays in the one sanctioned file (R9). The fence needed no change.
 
 ## 23a, and the defect it uncovered on the way
 
