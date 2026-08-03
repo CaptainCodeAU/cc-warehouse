@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, catalog, render, store
+from cc_warehouse import build, catalog, parser, render, store
 from cc_warehouse.config import Config
 from cc_warehouse.parser import parse_session
 
@@ -98,13 +98,69 @@ class MigrationReport:
         )
 
 
-def is_session(data: bytes) -> bool:
-    """True when any entry carries a `sessionId` (ruling (a), 2026-08-02).
+_CONVERSATION_ROLES = ("user", "assistant")
 
-    Measured across all 14,066 non-agent source files, this test skips EXACTLY
-    the 7 workflow journals and nothing else.
+
+def agent_id_of(data: bytes) -> str | None:
+    """The `agentId` of a sub-agent transcript, or None if this is not one.
+
+    THE DISCRIMINATOR, and it is measured rather than assumed. "Any entry has an
+    agentId" is WRONG twice over: a main session's `started` / `result` entries
+    carry one (173 of each in the corpus), and a main session that embeds
+    sidechain entries carries one on those. Both would be misread as sub-agent
+    transcripts, and the second was caught by a fixture rather than by reasoning.
+
+    What separates them cleanly, sampled 2026-08-03 over 200 sub-agent files and
+    1,500 main sessions: in a sub-agent transcript EVERY conversational entry
+    carries the agentId (10,182 of 10,182, 100%); in a main session NONE do
+    (0 of 34,732). A session that merely embeds a sidechain has some but not
+    all, so requiring ALL of them keeps it a session.
+
+    Identity from CONTENT, never from the filename. `agent-` is a path
+    convention of `~/.claude`, and F4 exists because the specimen derived
+    identity from paths and it cost it correctness.
     """
-    return parse_session(data).session_uuid is not None
+    found: str | None = None
+    seen = 0
+    for entry in parser.entries_of(data):
+        if entry.get("type") not in _CONVERSATION_ROLES:
+            continue
+        seen += 1
+        value = entry.get("agentId")
+        if not isinstance(value, str) or not value:
+            return None  # one conversational entry without it is enough
+        found = found or value
+    return found if seen else None
+
+
+def parent_uuid_of(data: bytes) -> str | None:
+    """The session a sub-agent belongs to: its `sessionId`, which is the
+    PARENT'S uuid rather than its own (measured across all 1,420 real files)."""
+    return parse_session(data).session_uuid
+
+
+def is_subagent(data: bytes) -> bool:
+    """True when this payload is a sub-agent transcript rather than a session."""
+    return agent_id_of(data) is not None
+
+
+def is_session(data: bytes) -> bool:
+    """True when any entry carries a `sessionId` AND no `agentId`.
+
+    Ruling (a), 2026-08-02, said a file is a session if any entry carries a
+    sessionId. NARROWED 2026-08-03 (ticket 21) after measuring what sub-agent
+    transcripts actually contain: all 1,420 carry a sessionId, and the value is
+    THE PARENT'S. So the rule as written says yes to every sub-agent file, and
+    acting on it would compute the parent's folder, name the payload
+    `<parent-uuid>.jsonl`, and let the replace-if-larger rule OVERWRITE the
+    parent's transcript - the common case, not the edge one, since a sub-agent
+    has a median 192 KB against a session's 3.7 KB.
+
+    The rule was right about what it was written for and blind to a case absent
+    from the corpus it was measured on. It is narrowed, not replaced: the
+    7 workflow journals it was written to exclude are still excluded.
+    """
+    return parse_session(data).session_uuid is not None and not is_subagent(data)
 
 
 def read_payload(
@@ -215,6 +271,17 @@ def write_session_folder(
     A refusal (the new payload is smaller) is RECORDED in manifest.json rather
     than being silent (F6).
     """
+    if is_subagent(data):
+        # REFUSED, loudly. This payload's sessionId is its PARENT'S, so writing
+        # it here would name it `<parent-uuid>.jsonl` in the parent's own folder
+        # and overwrite the parent whenever the sub-agent is larger - which is
+        # the common case at a median 192 KB against 3.7 KB. Sub-agents have
+        # their own writer; landing this "somewhere sensible" instead would still
+        # put a sub-agent transcript where a session belongs (ticket 21a).
+        raise ValueError(
+            f"payload is a sub-agent transcript (agentId={agent_id_of(data)}),"
+            " not a session; use write_subagent"
+        )
     meta = parse_session(data)
     directory = build.archive_dir(
         archive_root,

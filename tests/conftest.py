@@ -456,6 +456,71 @@ def matrix_session(cwd: str = DEFAULT_CWD, session_id: str = DEFAULT_UUID) -> by
     )
 
 
+def subagent_session(
+    agent_id: str = "a94d30c1d877f964d",
+    parent_uuid: str = DEFAULT_UUID,
+    cwd: str = DEFAULT_CWD,
+    prompt: str = "You are a REUSE-focused reviewer. Review ONLY the diff below.",
+) -> bytes:
+    """A sub-agent transcript, in the shape real ones have (measured 2026-08-03).
+
+    THE FIELD THAT MATTERS: `sessionId` is the PARENT'S uuid, not the agent's.
+    All 1,420 real sub-agent files carry one, so the ruling-(a) test "a file is a
+    session if any entry carries a sessionId" says YES to every one of them. That
+    is why identity has to key on `agentId`, and why feeding one of these to the
+    session writer would land it in the parent's folder under the parent's name.
+
+    `parentUuid`, `agentId`, `timestamp`, `cwd`, `gitBranch` and `version` are
+    all present on every entry in the real files.
+    """
+
+    def line(role: str, content: object, ts: str) -> dict[str, object]:
+        return {
+            "type": role,
+            "timestamp": ts,
+            "sessionId": parent_uuid,  # the PARENT's, deliberately
+            "parentUuid": parent_uuid,
+            "agentId": agent_id,
+            "cwd": cwd,
+            "gitBranch": "main",
+            "version": "2.1.220",
+            "message": {"role": role, "content": content},
+        }
+
+    return jsonl(
+        line("user", prompt, "2026-05-07T04:00:00.000Z"),
+        line(
+            "assistant",
+            [
+                {"type": "text", "text": "I'll analyze this diff for reuse opportunities."},
+                {"type": "tool_use", "id": "t1", "name": "Grep", "input": {"pattern": "escape"}},
+            ],
+            "2026-05-07T04:00:05.000Z",
+        ),
+        line(
+            "user",
+            [{"type": "tool_result", "tool_use_id": "t1", "content": "AGENTTOOLRESULT"}],
+            "2026-05-07T04:00:06.000Z",
+        ),
+        line(
+            "assistant",
+            [{"type": "text", "text": "AGENTFINDING three helpers already exist."}],
+            "2026-05-07T04:00:10.000Z",
+        ),
+    )
+
+
+def subagent_meta(
+    agent_type: str = "Explore", description: str = "Inspect verify hook + reparse path"
+) -> bytes:
+    """The `.meta.json` Claude Code writes beside each sub-agent transcript. It is
+    the ONLY record of what the agent was, so it travels with the payload."""
+    return json.dumps(
+        {"agentType": agent_type, "description": description, "toolUseId": "toolu_01Ngfw"},
+        indent=2,
+    ).encode("utf-8") + b"\n"
+
+
 def write_transcript(
     env: Mapping[str, str],
     data: bytes,

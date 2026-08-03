@@ -236,6 +236,18 @@ def _scrubbed_entries(
     return out, total
 
 
+def entries_of(data: bytes) -> list[dict[str, object]]:
+    """The payload's entries, routed exactly as parse_session routes them.
+
+    Public since ticket 21: archive.py needs to look at raw entries to tell a
+    sub-agent transcript from a session, and reaching for `_extract_entries`
+    across a module boundary would be private-API coupling. One routing
+    implementation, one caller-visible name (R9).
+    """
+    entries, _line_count, _skipped, _unencodable = _extract_entries(data)
+    return entries
+
+
 def parse_session(data: bytes) -> ParsedSession:
     """Parse a raw session payload: JSONL, or JSON with a `loglines` key.
 
