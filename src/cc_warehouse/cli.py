@@ -25,6 +25,7 @@ from cc_warehouse import (
     build,
     capture,
     catalog,
+    doctor,
     migrate,
     notify,
     registry,
@@ -57,6 +58,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("project", "list / show / rename / move / merge projects"),
     ("share", "build a sanitized static site for chosen sessions"),
     ("status", "recent captures, counts, store size, last errors"),
+    ("doctor", "is capture working, and if not since when"),
     ("verify", "re-hash objects and cross-check the catalog"),
     ("archive", "build (or --verify) the archive-first tree at --to DIR"),
     ("version", "print the ccw version"),
@@ -1096,6 +1098,23 @@ def _run_status() -> int:
     return 0
 
 
+def _run_doctor() -> int:
+    """`ccw doctor`: is capture working, and if not since when (DESIGN section 7).
+
+    The one verb that JUDGES rather than reports, which is why it is separate
+    from `status`: status answers what is in the warehouse, doctor answers
+    whether the machinery works, and conflating them is what let capture sit
+    broken for ten days while status looked entirely normal.
+
+    Exits non-zero when capture is not working, so it composes into a cron job
+    and a session-start check. Read-only by construction: it opens the catalog
+    read-only and never creates the warehouse, because it runs precisely when
+    things are already wrong."""
+    report = doctor.diagnose(load_config())
+    print(doctor.report_text(report))
+    return 0 if report.ok else 1
+
+
 def _run_verify() -> int:
     """`ccw verify`: re-hash objects against their names and cross-check the catalog.
 
@@ -1563,6 +1582,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
         False,
     ),
     "status": ((("(no options)", "recent captures, counts, store size, last errors"),), False),
+    "doctor": ((("(no options)", "is capture working, and if not since when"),), False),
     "verify": ((("(no options)", "re-hash objects and cross-check the catalog"),), False),
     "archive": (
         (
@@ -1713,6 +1733,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_migrate(args)
     if verb == "status":
         return _run_status()
+    if verb == "doctor":
+        return _run_doctor()
     if verb == "verify":
         return _run_verify()
     if verb == "archive":
