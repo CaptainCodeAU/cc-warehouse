@@ -138,6 +138,77 @@ def test_a_registered_hook_is_reported_as_found(
     assert "SessionEnd" in hook_line or "found" in hook_line.lower(), hook_line
 
 
+def test_a_plugin_hook_that_calls_a_WRAPPER_is_still_found(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """THE FALSE ALARM THIS PREVENTS. A Claude Code plugin registers its hook as
+    a command that runs a SCRIPT, so the string Claude Code stores is
+    `python3 .../hooks/ccw-hook.py` and the word `ccw` may appear nowhere in it.
+
+    Matching the command string alone made doctor report NO HOOK REGISTERED while
+    capture was working perfectly. An instrument that cries wolf gets ignored,
+    which is the same outcome as having no instrument, which is what this whole
+    ticket exists to fix. So doctor follows the command to the script and reads
+    it.
+    """
+    configure(ccw_env, tmp_path / "archive")
+    plugin = (
+        Path(ccw_env["HOME"]) / ".claude" / "plugins" / "cache" / "mp" / "p" / "v1"
+    )
+    (plugin / "hooks").mkdir(parents=True)
+    wrapper = plugin / "hooks" / "some-wrapper.py"
+    wrapper.write_text("import subprocess\nsubprocess.run(['ccw','hook'])\n", encoding="utf-8")
+    (plugin / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {"hooks": [{"type": "command", "command": f"python3 {wrapper}"}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "NO capture hook" not in hook_line, (
+        f"a working plugin wrapper was reported as missing: {hook_line!r}"
+    )
+
+
+def test_an_unrelated_plugin_hook_is_not_claimed_as_ours(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The other half of the same property. Following the script must not turn
+    every plugin on the machine into evidence that capture is configured."""
+    configure(ccw_env, tmp_path / "archive")
+    plugin = (
+        Path(ccw_env["HOME"]) / ".claude" / "plugins" / "cache" / "other" / "p" / "v1"
+    )
+    (plugin / "hooks").mkdir(parents=True)
+    wrapper = plugin / "hooks" / "lint.py"
+    wrapper.write_text("print('tidying imports')\n", encoding="utf-8")
+    (plugin / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {"hooks": [{"type": "command", "command": f"python3 {wrapper}"}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_ccw(["doctor"], ccw_env)
+
+    assert result.code != 0, "an unrelated plugin was counted as a capture hook"
+
+
 def test_never_fired_is_distinct_from_fired_but_not_recently(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:

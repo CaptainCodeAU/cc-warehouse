@@ -38,6 +38,10 @@ _OVERDUE_SECONDS = 24 * 60 * 60
 # settings.json entry both end up as a command string containing one of these.
 _OUR_COMMANDS = ("ccw", "cc-warehouse")
 
+# A hook wrapper is a small script. Anything larger is not one, and reading it
+# would turn a diagnosis into an unbounded file read.
+_WRAPPER_READ_LIMIT = 64 * 1024
+
 
 @dataclass(frozen=True)
 class Check:
@@ -80,14 +84,53 @@ def install_mode(module_file: Path) -> str:
     return "frozen" if {"site-packages", "dist-packages"} & parts else "editable"
 
 
-def _hook_commands(home: Path) -> list[str]:
-    """Every hook command string Claude Code would run, from both the places one
-    can legitimately live: settings files, and an installed plugin's hooks.json.
+def _mentions_ccw(command: str, plugin_root: Path | None) -> bool:
+    """Whether this hook command runs OUR capture, following one level of wrapper.
 
-    Checking only settings.json would report "no hook" for a correctly installed
-    PLUGIN, which is exactly how ticket 24 delivers it.
+    A plugin registers its hook as `python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py`,
+    so the word `ccw` can be absent from the command entirely while the script it
+    names calls nothing else. Matching only the command string reported NO HOOK
+    REGISTERED while capture worked, and an instrument that cries wolf is ignored,
+    which is the same as not having one.
+
+    ONE level, and only files that already exist: this is a diagnosis, not an
+    interpreter, and it must stay read-only and bounded (F9).
     """
-    found: list[str] = []
+    if any(name in command for name in _OUR_COMMANDS):
+        return True
+    for token in command.split():
+        if plugin_root is not None:
+            token = token.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
+        candidate = Path(token)
+        if candidate.suffix not in {".py", ".sh", ".ts", ".js"} or not candidate.is_file():
+            continue
+        try:
+            # R1 (as amended): size here is a RESOURCE BOUND, never identity and
+            # never a version ordering. Nothing about this file is decided by how
+            # big it is; the comparison only refuses to slurp something that is
+            # not a hook wrapper, so a diagnosis cannot be turned into an
+            # unbounded read by a path that happens to end in .py. Identity in
+            # this function is decided by the CONTENT that follows (F1/F4).
+            if candidate.stat().st_size > _WRAPPER_READ_LIMIT:
+                continue
+            body = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if any(name in body for name in _OUR_COMMANDS):
+            return True
+    return False
+
+
+def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
+    """Every hook command Claude Code would run, paired with its plugin root.
+
+    Both places a capture hook can legitimately live: settings files, and an
+    installed plugin's hooks.json. Checking only settings.json would report "no
+    hook" for a correctly installed PLUGIN, which is exactly how ticket 24
+    delivers it. The plugin root travels alongside so `${CLAUDE_PLUGIN_ROOT}` can
+    be resolved.
+    """
+    found: list[tuple[str, Path | None]] = []
     candidates = [home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"]
     cache = home / ".claude" / "plugins" / "cache"
     if cache.is_dir():
@@ -117,7 +160,9 @@ def _hook_commands(home: Path) -> list[str]:
                     if isinstance(hook, dict):
                         command = cast(dict[str, object], hook).get("command")
                         if isinstance(command, str):
-                            found.append(command)
+                            is_plugin = path.parent.name == "hooks"
+                            root = path.parent.parent if is_plugin else None
+                            found.append((command, root))
     return found
 
 
@@ -222,7 +267,7 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     )
 
-    commands = [c for c in _hook_commands(where) if any(n in c for n in _OUR_COMMANDS)]
+    commands = [c for c, root in _hook_commands(where) if _mentions_ccw(c, root)]
     checks.append(
         Check(
             "hook",
