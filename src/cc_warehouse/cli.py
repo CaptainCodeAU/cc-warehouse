@@ -62,6 +62,17 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("version", "print the ccw version"),
 )
 
+# Flags a verb RECOGNISES in order to REFUSE them with its own reasoning. They
+# are absent from the help (they do not work) but must not be swallowed by the
+# generic unknown-flag check, because the handler's message is the useful one:
+# `ccw build --since` explains that a windowed build would either delete
+# out-of-window projections (R4) or emit an index that silently omits sessions,
+# citing DESIGN 15 block 5. A generic "unrecognised option" would bury a
+# deliberate design decision behind a typo message.
+_REFUSED_FLAGS: dict[str, frozenset[str]] = {
+    "build": frozenset({"--since", "--until"}),
+}
+
 _HELP_FLAGS = frozenset({"-h", "--help"})
 _VERSION_FLAGS = frozenset({"-v", "--version"})
 
@@ -540,7 +551,27 @@ def _run_sweep(args: Sequence[str]) -> int:
         print(f"Error: {problem}", file=sys.stderr)
         return 1
     keep = functools.partial(in_window, window=window) if window != (None, None) else None
+    quiet = "--quiet" in args
     config = load_config()
+    if "--dry-run" in args:
+        # A rehearsal, not a run. sweep.plan takes no lock and opens the catalog
+        # read-only, so a dry-run on a warehouse that does not exist yet leaves
+        # it that way (ticket 23; test_dry_run_on_a_fresh_root_creates_no_warehouse).
+        planned = sweep.plan(config, source, keep)
+        failures = planned.failures
+        for outcome in failures:
+            detail = outcome.detail or outcome.action
+            print(f"sweep failed: {outcome.item}: {detail}", file=sys.stderr)
+        if not quiet:
+            for outcome in planned.outcomes:
+                if outcome.action.startswith("would-"):
+                    print(f"  {outcome.action}: {outcome.item}")
+            would_store = sum(1 for o in planned.outcomes if o.action == "would-store")
+            print(
+                f"sweep --dry-run: {len(planned.outcomes)} items, "
+                f"{would_store} would be stored, 0 written"
+            )
+        return 1 if failures else 0
     report = sweep.sweep(config, source, keep)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         print("sweep refused: lock held by a live holder", file=sys.stderr)
@@ -549,7 +580,11 @@ def _run_sweep(args: Sequence[str]) -> int:
     for outcome in failures:
         print(f"sweep failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
     stored = sum(1 for outcome in report.outcomes if outcome.action == "stored")
-    print(f"sweep: {len(report.outcomes)} items, {stored} stored, {len(failures)} failed")
+    if not quiet:
+        # --quiet drops STDOUT only. Failures are already on stderr above, and the
+        # exit code is untouched, so a scheduled sweep stays silent when it works
+        # and still speaks when it does not (ticket 23, 24.5).
+        print(f"sweep: {len(report.outcomes)} items, {stored} stored, {len(failures)} failed")
     return 1 if failures else 0
 
 
@@ -1477,6 +1512,8 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--source DIR", "walk DIR instead of ~/.claude/projects"),
             ("--since DATE", "import only sessions from DATE onward (local day)"),
             ("--until DATE", "import only sessions up to DATE, inclusive"),
+            ("--dry-run", "name what a real run would import; writes NOTHING"),
+            ("--quiet", "no stdout; failures and the exit code are unaffected"),
         ),
         False,
     ),
@@ -1495,10 +1532,19 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
         ),
         True,
     ),
-    "migrate": ((("<archive>", "one-shot import of a legacy archive directory"),), False),
+    "migrate": (
+        (
+            ("<archive>", "one-shot import of a legacy archive directory"),
+            ("--retire", "rename the source aside as _RETIRED_<date>_<name> when done"),
+            ("--yes", "skip the typed confirmation --retire is gated behind"),
+        ),
+        False,
+    ),
     "relocate": (
         (
             ("<repo> --to <new-path>", "move / rename a project across the external world"),
+            ("--apply", "execute the plan (DRY-RUN IS THE DEFAULT; DESIGN 11)"),
+            ("--yes", "skip the typed confirmation --apply is gated behind"),
             ("--claim-ambiguous", "adopt references this scan could not attribute"),
         ),
         False,
@@ -1534,6 +1580,84 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
 }
 
 
+def _flag_spellings(spec: str) -> tuple[tuple[str, bool], ...]:
+    """The flags one help SPEC accepts, as (name, takes_a_value).
+
+    Specs are the human-readable strings the help already prints (`--source DIR`,
+    `--EXPOSED`, `<repo> --to <new-path>`), so this reads them rather than keeping
+    a second list that would drift. A `--flag` followed by a non-flag token takes
+    a value; one followed by nothing, by another flag, or by `...` does not.
+    """
+    tokens = spec.split()
+    found: list[tuple[str, bool]] = []
+    for index, token in enumerate(tokens):
+        if not token.startswith("--"):
+            continue
+        following = tokens[index + 1] if index + 1 < len(tokens) else None
+        takes_value = (
+            following is not None and not following.startswith("-") and following != "..."
+        )
+        found.append((token, takes_value))
+    return tuple(found)
+
+
+def _known_flags(verb: str) -> tuple[frozenset[str], frozenset[str]]:
+    """(flags taking a value, flags taking none) for `verb`.
+
+    Derived from the SAME tables `_verb_help` prints from, which is the whole
+    point (R9): a flag added later is accepted the day it is added rather than
+    the day someone remembers this function. It is the unknown-flag twin of
+    test_help_is_inert reading its verb list off the help text.
+    """
+    specific, content = _VERB_OPTIONS[verb]
+    takes_value: set[str] = {"--config"}
+    bare: set[str] = {"--no-config", *_HELP_FLAGS}
+    for spec, _blurb in specific:
+        for flag, wants_value in _flag_spellings(spec):
+            (takes_value if wants_value else bare).add(flag)
+    if content:
+        for stem, _key, _variant, _blurb in _CONTENT_BOOL_FLAGS:
+            bare.update((f"--{stem}", f"--no-{stem}"))
+        for stem, _key, _variant, _values, _blurb in _CONTENT_VALUE_FLAGS:
+            takes_value.add(f"--{stem}")
+    return frozenset(takes_value), frozenset(bare)
+
+
+def _unknown_flag(verb: str, args: Sequence[str]) -> str | None:
+    """The first argument that looks like a flag and is not one, else None.
+
+    THE DEFECT THIS CLOSES, measured 2026-08-03: `ccw sweep --totally-bogus-flag`
+    exited 0, created the warehouse and imported a session, because every verb's
+    hand-rolled parser looked only for the options it wanted and ignored the
+    rest. Four of the five verbs sampled did real work on a typo. That is the
+    same class as the 2026-08-01 `-h` incident, and it gets the same structural
+    answer: one check at the dispatcher, before any handler runs, driven by a
+    table nobody has to remember to update.
+
+    Only arguments beginning with `-` are judged; everything else is a positional
+    the verb owns. A known value-taking flag consumes the token after it, so a
+    value that happens to start with `-` is not read as a flag and the verb's own
+    parser still gets to refuse it with its own message (R5).
+    """
+    if verb not in _VERB_OPTIONS:
+        # Internal verbs (section 7, ruled 2026-07-24) are deliberately absent
+        # from the help tables and are machine-invoked, never typed.
+        return None
+    takes_value, bare = _known_flags(verb)
+    bare = bare | _REFUSED_FLAGS.get(verb, frozenset())
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument.startswith("-"):
+            name, separator, _value = argument.partition("=")
+            if name not in takes_value and name not in bare:
+                return argument
+            if name in takes_value and not separator:
+                index += 1
+        index += 1
+    return None
+
+
 def _verb_help_if_asked(verb: str, args: Sequence[str]) -> str | None:
     """The verb's help text when these args ask for it, else None."""
     if verb not in _VERB_OPTIONS or not _wants_help(args):
@@ -1548,7 +1672,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     verb = args[0] if args else None
     if verb is None:
         return _bare()
-    if verb in _VERSION_FLAGS or verb == "version":
+    if verb in _VERSION_FLAGS:
         return _print_version()
     if verb in _HELP_FLAGS:
         print(_usage())
@@ -1560,6 +1684,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if helped is not None:
         print(helped)
         return 0
+    # Unknown flags BEFORE dispatch, for exactly the same reason and one level
+    # further: a handler that never sees an unrecognised option cannot act on a
+    # typo. `ccw sweep --dry-runn` would otherwise perform the live sweep the
+    # flag exists to rehearse (ticket 23, 2026-08-03).
+    offender = _unknown_flag(verb, args[1:])
+    if offender is not None:
+        print(f"Error: unrecognised option {offender!r} for {verb!r}", file=sys.stderr)
+        print(f"run 'ccw {verb} -h' for a verb's options", file=sys.stderr)
+        return 2
+    # `version` is dispatched here rather than beside `-v` above so that it, too,
+    # passes the unknown-flag check; the leading-flag forms cannot carry options.
+    if verb == "version":
+        return _print_version()
     if verb == "hook":
         return _run_hook()
     if verb == "notify":

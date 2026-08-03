@@ -377,12 +377,41 @@ def test_the_compact_x_spelling_does_not_parse(
     ccw_env: dict[str, str], tmp_path: Path, stem: str, marker: str
 ) -> None:
     """Shared rule (c) is a BIJECTION: `--compact-subagents` is not a spelling of
-    `--subagents-compact`. It is not a flag, so it changes nothing."""
+    `--subagents-compact`, and must NEVER turn the compact class on.
+
+    NARROWED 2026-08-03 by principal ruling, ticket 23, and the narrowing comes
+    out stronger than the letter it replaces.
+
+    This test used to assert the MECHANISM by which the bijection held: the
+    render ran, silently discarded the unknown flag, and produced output
+    byte-identical to passing no flag at all. That held only because
+    unrecognised flags were thrown away everywhere, which was itself a live
+    defect. Measured 2026-08-03: `ccw sweep --totally-bogus-flag` exited 0,
+    created the warehouse and imported a session, so a typo did real work on
+    four of the five verbs sampled. An unrecognised flag is now a usage error.
+
+    The DECISION never changed, and this asserts it DIRECTLY rather than through
+    one incidental implementation of it: whichever way the misspelling is
+    handled, the class stays off. Refusal is the better of the two outcomes,
+    because a silently-ignored flag leaves the operator believing it worked.
+    """
     wrong = "--compact-" + stem.replace("_", "-")
-    plain = _render_to(ccw_env, tmp_path, f"plain-{stem}")
-    misspelled = _render_to(ccw_env, tmp_path, f"wrong-{stem}", wrong)
-    assert misspelled == plain
-    assert marker not in misspelled["transcript.compact.md"]
+    source = tmp_path / f"wrong-{stem}.jsonl"
+    source.write_bytes(matrix_session())
+    out = tmp_path / f"wrong-{stem}"
+
+    result = run_ccw(["render", str(source), "--out", str(out), wrong], ccw_env)
+
+    if result.code != 0:
+        # Refused: nothing was rendered, so the class cannot have been enabled.
+        assert not out.exists(), f"a refused render still wrote to {out}"
+        assert wrong in result.err, result.err
+        return
+    # Accepted and ignored: the class must still be off, and the output must
+    # match a plain render exactly.
+    rendered = {f: (out / f).read_text(encoding="utf-8") for f in PROJECTION_FILES}
+    assert rendered == _render_to(ccw_env, tmp_path, f"plain-{stem}")
+    assert marker not in rendered["transcript.compact.md"]
 
 
 @pytest.mark.parametrize(("stem", "marker"), CONTENT_CLASSES)
