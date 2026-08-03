@@ -3,6 +3,54 @@
 The instrument, built BEFORE the thing it measures. Four surfaces: a health
 verb, `--dry-run` and `--quiet` on sweep, and a gap figure on `status`.
 
+    23a  sweep --dry-run + --quiet        DONE 2026-08-03 (eac2ae7)
+         unknown-flag fix it forced       DONE 2026-08-03 (bfd293d)
+         DESIGN 7 amendment               DONE 2026-08-03 (c7687a6)
+    23b  the uncaptured-gap function, wired into `status`   not started
+    23c  `ccw doctor`                                        not started
+
+## 23a, and the defect it uncovered on the way
+
+Adding `--dry-run` meant asking first whether unknown flags were rejected. They
+were not, anywhere:
+
+    ccw sweep   --totally-bogus-flag   exit 0, root CREATED, "1 items, 1 stored"
+    ccw build   --totally-bogus-flag   exit 0, root CREATED
+    ccw verify  --totally-bogus-flag   exit 0, root CREATED
+    ccw status  --totally-bogus-flag   exit 0, root CREATED
+
+A typo ran a real import, and `ccw sweep --dry-runn` would have performed the
+very sweep the flag exists to rehearse. Fixed structurally at the dispatcher,
+beside the help check, deriving each verb's valid flags from the same tables the
+help is built from.
+
+THE FENCE THEN FOUND FOUR FLAGS THE HANDLERS READ THAT THEIR OWN HELP DID NOT
+LIST: `relocate --apply` (the EXECUTE flag: dry-run is the default, so without
+it nothing happens and the help never said the word), `relocate --yes`,
+`migrate --retire`, `migrate --yes`. The v1 exit review's `ccw project` finding
+recurring, and a reminder that a surface can ship without its documentation and
+no test will notice.
+
+TWO CORRECTIONS I OWE, both mine:
+
+- The unknown-flag check initially BURIED `ccw build --since`'s bespoke refusal,
+  which explains why a windowed build is refused and cites DESIGN 15 block 5.
+  `_REFUSED_FLAGS` now defers to the handler. Recognised-in-order-to-refuse is
+  not the same as unknown.
+- One oracle test I wrote was WRONG and the product was right. It fed a
+  malformed payload expecting a capture failure; measured, that is
+  `1 items, 1 stored, 0 failed`, because the store is content addressed and
+  malformed LINES go to the manifest's loss block rather than being rejected. A
+  capture that refused unparseable input would lose exactly the sessions most
+  worth keeping.
+
+`test_the_compact_x_spelling_does_not_parse` was NARROWED by principal ruling
+(the fifth instance of that pattern): it asserted the mechanism by which the
+bijection held, which only worked because unknown flags were discarded
+everywhere. It now asserts the decision directly.
+
+GATES AT 23a CLOSE: ruff clean, pyright strict 0 errors, 919 tests.
+
 ## Why this ticket exists
 
 The capture hook stopped working on 2026-07-24 and nobody found out for ten
