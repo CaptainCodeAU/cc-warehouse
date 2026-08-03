@@ -186,7 +186,12 @@ moved since the last census". A third top-level block, `withheld`
 `{thinking_blocks}`, was added by ticket 20 the same day and answers a THIRD question:
 what never arrived. `loss` is what we dropped, `unrecognised` is what the format grew,
 `withheld` is what upstream stopped sending. It is counted at every display position,
-because what the emitters draw is a choice and the count is a fact.
+because what the emitters draw is a choice and the count is a fact. A fourth top-level
+key, `subagents` (ticket 21, 2026-08-03), lists this session's sub-agent transcripts as
+`{agent_id, sha256, bytes}`. It exists so a DELETED sub-agent folder is detectable:
+without it verify sees five valid files, a matching source hash and a correct folder
+name, and reports clean. A session with none carries an empty list, never a missing key,
+so a reader can tell "none" from "this manifest predates the feature".
 
 **Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
 JSONL format found 13 entry types where the render consumed only `user`/`assistant`.

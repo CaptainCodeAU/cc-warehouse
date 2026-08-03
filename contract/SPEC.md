@@ -233,6 +233,21 @@ different mechanics (difference stated inline) | `DROP` not carried (reason inli
   catalogs agent sessions like any payload (the store never discriminates), but
   `sweep` skips `agent-*` by default (config opt-in) and cataloged agent sessions
   default to `hidden` in listings.
+  **AMENDED 2026-08-03 (ticket 21, principal).** The opt-in exists as
+  `archive_subagents` and DEFAULTS ON, because the premise changed: `~/.claude` is
+  being cleared once the archive is backed up, so anything a sweep declines to
+  take is DESTROYED rather than deferred. Measured before the change: 1,420
+  sub-agent transcripts, 328.5 MiB, and only 7.3% of their content appears in the
+  parent session, so 92.7% would have existed nowhere else.
+  Two corrections ride with it. A sub-agent is identified by CONTENT
+  (every conversational entry carries an `agentId`), never by the `agent-`
+  filename - F4 forbids path-as-identity, and the old rule was exactly that.
+  And a sub-agent is NOT a session: it carries its PARENT'S `sessionId`, so
+  ruling (a)'s test said yes to every one of them, and acting on that would have
+  filed a sub-agent under the parent's name and let replace-if-larger overwrite
+  the parent's transcript. Sub-agents are archived into
+  `<session>/subagents/<stamp>_<agentId>/` and get no catalog row, no markdown
+  and no HTML; rendering them is recorded as future work behind its own flag.
 
 ## 9. Batch failure posture
 
