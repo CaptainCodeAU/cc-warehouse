@@ -9,6 +9,7 @@ racing the hook harmless. Item failures are reported and the batch continues pas
 """
 
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -206,6 +207,76 @@ def _in_window(path: Path, keep: "Callable[[str | None], bool] | None") -> bool:
         return keep(parser.parse_session(path.read_bytes()).first_ts)
     except OSError:
         return False
+
+
+def _cataloged_hashes_readonly(root: Path) -> frozenset[str]:
+    """Session hashes already captured, WITHOUT creating anything (ticket 23).
+
+    `_cataloged_hashes` goes through `catalog.open_catalog`, whose docstring says
+    "creating if needed" - which is right for a real sweep and fatal for a
+    rehearsal, because it would leave a database behind on a warehouse that does
+    not exist yet. An absent catalog means nothing has been captured, so every
+    candidate is new.
+    """
+    path = root / "catalog.sqlite"
+    if not path.is_file():
+        return frozenset()
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return frozenset()
+    try:
+        rows = cast(
+            list[tuple[object, ...]], conn.execute("SELECT hash FROM session").fetchall()
+        )
+    except sqlite3.Error:
+        return frozenset()
+    finally:
+        conn.close()
+    return frozenset(cast(str, row[0]) for row in rows)
+
+
+def plan(
+    config: Config,
+    source: Path | None = None,
+    window: "Callable[[str | None], bool] | None" = None,
+) -> BatchReport:
+    """What a real sweep WOULD do, writing nothing at all (`--dry-run`).
+
+    THE PROPERTY, and it is the whole reason this is a separate function rather
+    than a flag threaded through `sweep`: a rehearsal must not touch the
+    warehouse. Two paths in the real sweep would, and neither is obvious from
+    reading it:
+
+        store.acquire_lock       does lock.parent.mkdir(parents=True), so taking
+                                 the sweep lock CREATES <root>/locks/
+        catalog.open_catalog     creates catalog.sqlite when absent
+
+    So this takes no lock and opens the catalog read-only. Not locking is safe
+    because nothing is mutated; the cost is that a concurrent real sweep could
+    make the report stale, which is the honest trade for a report that cannot
+    itself change the thing it describes.
+
+    Each candidate is named, because a count alone cannot be checked against the
+    run that follows it. Outcomes carry `would-store` or `would-skip` rather than
+    `stored`, so a plan is never mistaken for a result in the same report shape.
+    """
+    walk_root = source if source is not None else _default_source()
+    transcripts, outcomes = _walk_source(walk_root, skip_agents=not config.archive_subagents)
+    already = _cataloged_hashes_readonly(config.root)
+    for path in (p for p in transcripts if _in_window(p, window)):
+        try:
+            digest = store.sha256_hex(path.read_bytes())
+        except OSError as exc:
+            outcomes.append(ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}"))
+            continue
+        action = "would-skip" if digest in already else "would-store"
+        outcomes.append(ItemOutcome(path.name, action, str(path)))
+    outcomes.extend(
+        ItemOutcome(path.name, "would-store", str(path))
+        for path in _orphan_object_paths(config.root, already)
+    )
+    return BatchReport(tuple(outcomes))
 
 
 def sweep(
