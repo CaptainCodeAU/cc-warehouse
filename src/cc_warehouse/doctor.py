@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+import cc_warehouse
 from cc_warehouse import parser, status, sweep
 from cc_warehouse.config import Config
 
@@ -56,6 +57,27 @@ class Report:
     @property
     def ok(self) -> bool:
         return all(check.ok for check in self.checks if check.blocking)
+
+
+def install_mode(module_file: Path) -> str:
+    """`frozen` or `editable`, from where the code was ACTUALLY loaded.
+
+    `pyproject.toml` can pin the mode, but a pin is a REQUEST: advisory, honoured
+    only by the operator's own shell functions, inert on another machine, and
+    overridable by an explicit flag. It says what should be installed, never what
+    is. This says what is running.
+
+    THE IMPORT PATH RATHER THAN PEP 610, deliberately. `direct_url.json` is the
+    standard record of how a distribution was installed, and it is the right
+    answer to a different question; it also sits four levels down under a
+    version-stamped `.dist-info`, so a lookup can MISS. A miss returns nothing,
+    nothing reads as "no editable flag", and that reads as FROZEN, which is the
+    dangerous wrong answer delivered silently. I shipped exactly that bug in a
+    documented command on 2026-08-03 and it printed empty for an hour without
+    anyone noticing. `__file__` cannot miss.
+    """
+    parts = set(module_file.parts)
+    return "frozen" if {"site-packages", "dist-packages"} & parts else "editable"
 
 
 def _hook_commands(home: Path) -> list[str]:
@@ -231,6 +253,22 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             "nothing overdue"
             if count == 0
             else f"{count} session(s) OVERDUE, oldest last active {oldest}",
+        )
+    )
+
+    module = Path(cc_warehouse.__file__).parent
+    mode = install_mode(module)
+    checks.append(
+        Check(
+            "install",
+            True,
+            f"{mode}: running from {module}"
+            + (
+                "  <- edits to this checkout ARE the capture path"
+                if mode == "editable"
+                else ""
+            ),
+            blocking=False,
         )
     )
 

@@ -41,22 +41,27 @@ edits to the principal instead.
   redundant; the two names differ by one word, so check which one you are looking at.
 - **`ccw` IS INSTALLED AS A FROZEN SNAPSHOT, so editing this repo does NOT change what
   the capture hook runs.** After any change you want the hook to pick up, from the repo
-  root with the venv active:
-  **`uv_tool_reinstall_current_project --frozen --no-extras`**.
-  ⚠️ **THE `--frozen` IS NOT OPTIONAL AND THE MODE IS NOT STICKY.** That function
-  defaults to `--editable` (`mode_flag=(--editable)`), so reinstalling WITHOUT the flag
-  silently returns `ccw` to a live pointer at `src/` and undoes this protection. It warns
-  first, which helps a human reading the terminal and does not help an agent that is not.
-  WHY IT IS FROZEN (principal ruling 2026-08-03): an editable install makes
-  `~/.local/bin/ccw` a live view of the working tree, so a half-finished edit or a branch
-  switch becomes the system-wide capture path at every session end. Proved by execution:
-  with `doctor.py` deliberately corrupted in the checkout, the installed `ccw doctor`
-  still ran. VERIFY THE MODE, do not assume it, by reading PEP 610 directly:
-  `find ~/.local/share/uv/tools/cc-warehouse -name direct_url.json -exec cat {} \;`
-  -> `"dir_info":{}` is frozen, `"dir_info":{"editable":true}` is not. (A glob is NOT
-  used here: the file sits four levels down under a version-stamped `.dist-info`.) (The `--frozen` flag was added to the
-  principal's shell functions on 2026-08-04 by a separate session; before that only the
-  raw `uv tool install --force --reinstall --python 3.14 .` could do this.)
+  root with the venv active: **`uv_tool_reinstall_current_project --no-extras`**.
+  No mode flag is needed, and naming one yourself is worse: `pyproject.toml` carries
+  `[tool.uv-tool] install-mode = "frozen"`, the function reads it and prints
+  `pyproject.toml pins this project to frozen installs`, so the command cannot drift from
+  what the project requires.
+  WHY FROZEN (principal ruling 2026-08-03): an editable install makes `~/.local/bin/ccw` a
+  live view of `src/`, so a half-finished edit or a branch switch becomes the system-wide
+  capture path at every session end. Proved by execution: with `doctor.py` deliberately
+  corrupted in the checkout, the installed `ccw doctor` still ran.
+  THE PIN IS ADVISORY, so VERIFY rather than trust it. uv itself ignores `[tool.uv-tool]`;
+  only the principal's shell functions honour it (`--frozen` and the pin were added there
+  2026-08-04 by a separate session); it is inert on any other machine; and an explicit
+  `--editable` overrides it. Two instruments that cannot both miss:
+  - `ccw doctor` prints an `install` line with the mode AND the directory it is running
+    from. This reads `cc_warehouse.__file__`, which is where the code actually loaded.
+  - PEP 610 records what uv did:
+    `find ~/.local/share/uv/tools/cc-warehouse -name direct_url.json -exec cat {} \;`
+    -> `"dir_info":{}` frozen, `"dir_info":{"editable":true}` not. Use `find`, NOT a glob:
+    the file sits four levels down under a version-stamped `.dist-info`, and a glob that
+    misses prints NOTHING, which reads as "no editable flag" and therefore as frozen. That
+    is the dangerous wrong answer, silently. I shipped exactly that bug here on 2026-08-03.
 - `~/cc-warehouse-journals/` holds the 7 workflow journals (409,059 bytes), the only
   vault objects with no byte-identical archive copy (they carry no `sessionId`, so
   ruling (a) excludes them). Copied there 2026-08-03 with every sha256 re-verified on

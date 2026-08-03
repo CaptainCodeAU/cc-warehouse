@@ -16,6 +16,18 @@ cc-warehouse = "cc_warehouse.cli:main"
 [dependency-groups]
 dev = ["pytest>=8", "pyright>=1.1", "ruff>=0.5"]
 
+# ADVISORY, not enforced by uv. Read only by the operator's shell functions
+# (uv_tool_install_current_project / uv_tool_reinstall_current_project), which
+# default to `--editable` without it. On any other machine this key is inert.
+#
+# `ccw hook` runs system-wide at every session end. An editable install makes
+# ~/.local/bin/ccw a live view of src/, so a half-finished edit becomes the
+# capture path for every session that ends. The requirement belongs to the
+# project, not to whoever last typed a command. `ccw doctor` reports the mode it
+# is ACTUALLY running under, because a pin is a request and not a proof.
+[tool.uv-tool]
+install-mode = "frozen"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
