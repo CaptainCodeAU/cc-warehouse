@@ -20,9 +20,11 @@ docstring says "creating if needed".
 """
 
 import json
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -200,6 +202,34 @@ def _last_activity(path: Path) -> str | None:
         return None
 
 
+def _moment(stamp: str | None) -> datetime | None:
+    """An ISO payload timestamp as an aware datetime, or None if unusable."""
+    if not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _folder_moment(name: str) -> datetime | None:
+    """The session start encoded in an archive folder name, `YYYYMMDD-HHMMSS+ZZZZ_<uuid>`.
+
+    Payload-derived (archive.py builds it from the payload's first timestamp in
+    the pinned zone), so it is a legitimate R12 source and costs only the
+    directory listing this function already does.
+    """
+    stamp = name.partition("_")[0]
+    match = re.match(r"^(\d{8})-(\d{6})([+-]\d{4})$", stamp)
+    if not match:
+        return None
+    try:
+        return datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S%z")
+    except ValueError:
+        return None
+
+
 def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     """Uncaptured sessions that the rest of the corpus has moved on without.
 
@@ -214,6 +244,7 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     if config.archive_root is None:
         return 0, None
     archived: set[str] = set()
+    newest_archived: datetime | None = None
     if config.archive_root.is_dir():
         for label_dir in config.archive_root.iterdir():
             if label_dir.is_dir():
@@ -221,34 +252,36 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
                     if session_dir.is_dir():
                         _stamp, _sep, tail = session_dir.name.partition("_")
                         archived.add(tail)
+                        moment = _folder_moment(session_dir.name)
+                        if moment is not None and (
+                            newest_archived is None or moment > newest_archived
+                        ):
+                            newest_archived = moment
+    # ONLY THE UNCAPTURED ARE READ. The first version parsed every transcript in
+    # the source tree to find the newest activity: 35 SECONDS on a 14,000-session
+    # corpus. A health check nobody wants to wait for does not get run, which is
+    # the crying-wolf failure wearing different clothes.
+    #
+    # THE ANCHOR STAYS IN PAYLOAD TIME. An earlier attempt used the catalog's
+    # last capture, which is WALL-CLOCK, and comparing it to session timestamps
+    # made January fixtures look overdue on an August machine. Archive folder
+    # names carry the session's own start time in the pinned zone, so the newest
+    # of them is a payload-derived anchor that costs a directory listing (R12).
     sessions, _subagents = sweep.source_transcripts(walk_root)
-    stamps: dict[Path, str] = {}
+    stamps: dict[Path, datetime] = {}
     for path in sessions:
-        last = _last_activity(path)
-        if last is not None:
-            stamps[path] = last
+        if path.name.removesuffix(".jsonl") in archived:
+            continue
+        moment = _moment(_last_activity(path))
+        if moment is not None:
+            stamps[path] = moment
     if not stamps:
         return 0, None
-    newest = max(stamps.values())
-    cutoff = _shift(newest, -_OVERDUE_SECONDS)
-    overdue = [
-        path
-        for path, last in stamps.items()
-        if last < cutoff and path.name.removesuffix(".jsonl") not in archived
-    ]
+    anchor = max([*stamps.values(), *filter(None, (newest_archived,))])
+    cutoff = anchor - timedelta(seconds=_OVERDUE_SECONDS)
+    overdue = [path for path, last in stamps.items() if last < cutoff]
     oldest = min((stamps[p] for p in overdue), default=None)
-    return len(overdue), oldest
-
-
-def _shift(stamp: str, seconds: int) -> str:
-    """`stamp` moved by `seconds`, as an ISO string comparable to other stamps."""
-    from datetime import datetime, timedelta
-
-    try:
-        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except ValueError:
-        return stamp
-    return (moment + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+    return len(overdue), (oldest.isoformat() if oldest else None)
 
 
 def diagnose(config: Config, home: Path | None = None, source: Path | None = None) -> Report:
