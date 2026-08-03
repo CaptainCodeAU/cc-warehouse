@@ -28,6 +28,22 @@ edits to the principal instead.
 - Every file write is tmp-file + `os.replace` (DESIGN R2). No deletes outside the
   projections/shares rebuild module (R4). Sources and stored objects are read-only.
 - Session/transcript data is NEVER deleted or mutated by anything, ever.
+- **DO NOT DELETE `~/CODE/my-claude-code-transcripts` (6.5 GB).** It looks like the
+  retired exporter's leftovers and was called "dead weight" in-session on 2026-08-03.
+  It is not. Measured that day: of its 7,698 session folders, **4,756 are in NEITHER
+  `~/.claude/projects` NOR the archive**, 4,754 of them with a recoverable `.jsonl`
+  (392.2 MiB), spanning 2026-02-14 to 2026-07-03, and **4,141 predate the warehouse's
+  first capture (2026-05-01)**. Instrument: distinct UUID folder names minus both other
+  sets, deduplicated (a `duplicates/` subtree inflates a naive walk from 4,756 to 9,541).
+  Ticket 25.4/25.5 imports them; nothing may remove the tree before that lands and is
+  verified. `~/CODE/claude-code-transcripts` (224 MB, the 16 legacy per-project hooks)
+  was measured the same day and holds ZERO sessions absent from both, so it is genuinely
+  redundant; the two names differ by one word, so check which one you are looking at.
+- `~/cc-warehouse-journals/` holds the 7 workflow journals (409,059 bytes), the only
+  vault objects with no byte-identical archive copy (they carry no `sessionId`, so
+  ruling (a) excludes them). Copied there 2026-08-03 with every sha256 re-verified on
+  arrival, originals untouched; see its `PROVENANCE.json`. Ticket 25.7 gives them a
+  reserved home inside the archive, after which this folder is the principal's to remove.
 - Public repo: commit as the GitHub noreply
   (`git -c user.name='CaptainCodeAU' -c user.email='69835039+CaptainCodeAU@users.noreply.github.com'`);
   never commit personal data (real username, machine names, personal paths); tests
@@ -82,6 +98,13 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 
 ## OPEN / next (no silent omissions)
 
+- **THE ACTIVE TRACK is tickets 22-27, defined 2026-08-03, in that order.** Capture has
+  never run automatically and stopped even manually working on 2026-07-24; five sets of
+  data exist in exactly one place. 22 protect the unprotected (DONE 2026-08-03) ->
+  23 `ccw doctor` + sweep `--dry-run`/`--quiet` -> 24 make capture work -> 25 rescue the
+  only copies -> 26 prove then back up -> 27 collapse to one folder. 28 is the backlog
+  register (nothing dropped silently), including the go-public audit. Read the ticket
+  files; they carry the measurements and the blast-radius checks behind each step.
 - **v1.1 flag groups: COMPLETE 2026-08-01.** All four slices landed the day they were
   defined: 14 per-variant matrix, 15 chrome + date-locale, 16 truncation, 17 the
   `--since`/`--until` window. Tags slice-14..slice-17. The regression anchor at
@@ -118,14 +141,26 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   Done 2026-08-02: 19a naming, 19b zone config, 19c folder writer, 19d migration, 19e
   integrity check, 19f project.json, 19h the `ccw archive` verb.
   **"6 of 7 slices" was a MISLEADING framing of mine, corrected 2026-08-02.** It was 6 of
-  7 slices in MY CUT, and the cut covered BUILDING an archive, not LIVING in one. Nothing
-  except `ccw archive` writes an archive folder: `capture.py` still calls `store.put`, so
-  every new session lands in the old store and the archive drifts until someone re-runs
-  the verb by hand. **DO NOT SWAP.** Still missing, and none of it is in the cut:
-  `ccw hook` writing archive folders, `build`/`sweep` into the archive, 19g `share`,
-  `status`/`relocate`/`project` on archive labels, retiring `objects/`, and reconciling
-  `ccw verify` with ruling (b) which says it BECOMES archive integrity (today it is
-  `ccw archive --verify` and plain `verify` still checks the vault).
+  7 slices in MY CUT, and the cut covered BUILDING an archive, not LIVING in one.
+  **CORRECTED AGAIN 2026-08-03 (ticket 22.4): the paragraph that stood here was STALE and
+  would have had a future session re-implement shipped features.** It claimed "`capture.py`
+  still calls `store.put`, so every new session lands in the old store and the archive
+  drifts until someone re-runs the verb by hand". That was true before slice 19k. It is
+  now FALSE: `capture.py:168-169` calls `_archive_source` and `_archive_subagents_of`
+  UNCONDITIONALLY on the fresh-identity path, and `_archive_source` writes the archive
+  folder synchronously inside the hook (its docstring explains why the detached render
+  child must not be the thing that makes a session safe). `sweep.py` routes through
+  `capture.capture_transcript` "exactly as the hook does", so a sweep populates both trees
+  and files sub-agents under their parents. THREE things this list called missing are
+  already built: dual-write, sub-agent capture (ticket 21), and the read half of an index
+  rebuild (`archive.py:647` `read_projects`, which no verb calls; ticket 27.1 adds
+  `ccw reindex`). Still genuinely open: 19g `share`, `status`/`relocate`/`project` on
+  archive labels, retiring `objects/`, and reconciling `ccw verify` with ruling (b) which
+  says it BECOMES archive integrity (today it is `ccw archive --verify` and plain `verify`
+  still checks the vault).
+  **THE REAL REASON NOTHING IS CAPTURED IS THAT NOTHING INVOKES CAPTURE.** `ccw hook` is
+  absent from `~/.claude/settings.json` (0 references) and has never run; all 13,836
+  stored sessions arrived via manual `ccw sweep`. Tickets 22-27 close this.
   **RUN AT SCALE:** `~/cc-warehouse-archive` holds 13,829 folders + 57 `project.json`,
   built in 6 minutes with 0 failures and verified with 0 problems, twice (the second run
   proved idempotence). **NOTHING HAS BEEN SWAPPED**: `~/cc-warehouse-data` is untouched
