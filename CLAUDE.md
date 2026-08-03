@@ -40,15 +40,22 @@ edits to the principal instead.
   was measured the same day and holds ZERO sessions absent from both, so it is genuinely
   redundant; the two names differ by one word, so check which one you are looking at.
 - **`ccw` IS INSTALLED AS A FROZEN SNAPSHOT, so editing this repo does NOT change what
-  the capture hook runs.** Reinstall after any change you want the hook to pick up:
-  `uv tool install --force --reinstall --python 3.14 .` from the repo root. It was
-  installed EDITABLE on 2026-08-03 and reinstalled non-editable the same day by principal
-  ruling: an editable install makes `~/.local/bin/ccw` a live pointer at
-  `src/`, so a half-finished edit or a branch switch becomes the system-wide capture path
-  at every session end. Proved by execution: with `doctor.py` deliberately corrupted in
-  the checkout, the installed `ccw doctor` still ran. NOTE the principal's own
-  `uv_tool_install_current_project` / `uv_tool_reinstall_current_project` both hardcode
-  `--editable`, so neither covers this case; use the raw command above.
+  the capture hook runs.** After any change you want the hook to pick up, from the repo
+  root with the venv active:
+  **`uv_tool_reinstall_current_project --frozen --no-extras`**.
+  ⚠️ **THE `--frozen` IS NOT OPTIONAL AND THE MODE IS NOT STICKY.** That function
+  defaults to `--editable` (`mode_flag=(--editable)`), so reinstalling WITHOUT the flag
+  silently returns `ccw` to a live pointer at `src/` and undoes this protection. It warns
+  first, which helps a human reading the terminal and does not help an agent that is not.
+  WHY IT IS FROZEN (principal ruling 2026-08-03): an editable install makes
+  `~/.local/bin/ccw` a live view of the working tree, so a half-finished edit or a branch
+  switch becomes the system-wide capture path at every session end. Proved by execution:
+  with `doctor.py` deliberately corrupted in the checkout, the installed `ccw doctor`
+  still ran. VERIFY THE MODE, do not assume it, by reading PEP 610 directly:
+  `cat ~/.local/share/uv/tools/cc-warehouse/**/direct_url.json` -> `"dir_info":{}` is
+  frozen, `"dir_info":{"editable":true}` is not. (The `--frozen` flag was added to the
+  principal's shell functions on 2026-08-04 by a separate session; before that only the
+  raw `uv tool install --force --reinstall --python 3.14 .` could do this.)
 - `~/cc-warehouse-journals/` holds the 7 workflow journals (409,059 bytes), the only
   vault objects with no byte-identical archive copy (they carry no `sessionId`, so
   ruling (a) excludes them). Copied there 2026-08-03 with every sha256 re-verified on
