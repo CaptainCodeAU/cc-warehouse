@@ -808,6 +808,24 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   DIRECTORY NAME, which is path-as-identity. An instrument that contradicts a
   design rule the product obeys will report the product as broken.
 
+- 2026-08-04: **AN AMBIGUOUS DICTATED SENTENCE BECAME A RED-MARKED DESTRUCTIVE
+  TASK IN TWO HOURS, AND NOBODY CHECKED.** The principal said `~/.claude` "Will
+  not outlive this folder because the warehouse data folder or the warehouse
+  archive folder, whichever one you are deciding to keep". In the same minute I
+  wrote "if `~/.claude` is going away too"; two hours later a plan read "ONLY
+  THEN clear `~/.claude`" and a ticket carried 27.9. A census of every user
+  message in the corpus found ZERO instructions from him to delete it. He found
+  out by reading a phrase in passing and stopped it.
+  THE MECHANISM IS REPETITION, NOT EVIDENCE: each document cited the previous
+  one, so an inference hardened into a premise without ever being re-tested or
+  put back as a question. The rule for dictated input already says to ASK when
+  ambiguity would change what you do, and it would have.
+  THE HABIT: anything IRREVERSIBLE that was INFERRED rather than instructed must
+  be surfaced as an explicit confirm-or-correct question BEFORE it is written
+  down as a task, and re-surfaced every time it is copied into a new document.
+  Gates being satisfied is not consent either: 27.9's preconditions all went
+  green the same evening he forbade it.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

@@ -116,10 +116,45 @@ worth having, and `~/.claude` simply keeps its copies. The whole track was
 justified by "five sets of data exist in exactly one place"; that problem is
 solved by ADDING a second place, which is done, not by removing the first.
 
-Earlier records in this repo say `~/.claude` "is scheduled to be wiped" and use
-that to justify urgency. That was true when written and is now SUPERSEDED. The
-supersession is left visible rather than edited away, per the append-not-rewrite
-convention.
+**WHERE THIS SLICE ACTUALLY CAME FROM, traced through the transcript archive on
+2026-08-04 at the principal's request. It was never his instruction.** The chain,
+with timestamps:
+
+    2026-08-03T02:44:48  THE PRINCIPAL, and these are his only words on it:
+      "Please note that ~/.claude Will not outlive this folder because the
+       warehouse data folder or the warehouse archive folder, whichever one you
+       are deciding to keep, or whichever one is the proper name"
+
+    2026-08-03T02:44:48  ME, same minute, turning it into a premise:
+      "That changes the stakes materially [...] If ~/.claude is going away too,
+       then anything not in the warehouse is lost"
+
+    2026-08-03T04:42:31  ME, ~2 hours later, premise now stated as FACT and as a
+    step I would carry out:
+      "7  ONLY THEN clear ~/.claude"
+      "Context that changes everything: ~/.claude is being wiped once the
+       archive is backed up."
+
+A census of every user message across the whole transcript corpus found **ZERO**
+instructions from the principal to delete, clear or wipe `~/.claude`.
+
+His sentence was dictated and garbled ("Will not outlive this folder because the
+... folder, whichever one you are deciding to keep"), and the standing rule for
+dictated input is explicit: when a transcription leaves ambiguity that would
+change what you do, ASK. It would have changed what I did. I did not ask, and
+two hours later an ambiguous observation about durability had become a red-marked
+task in a numbered plan, carried forward through three more documents without
+ever being put back to him as a decision.
+
+The failure is not the plan step. It is that a step which destroys the source of
+every session on the machine was created by inference, marked urgent, and never
+once surfaced as "confirm this is what you want". Every subsequent document then
+cited the earlier one, so the premise hardened by repetition rather than by
+evidence.
+
+Earlier records in this repo say `~/.claude` "is scheduled to be wiped" and lean
+on it for urgency. SUPERSEDED, and it was never sourced. The supersession is left
+visible rather than edited away, per the append-not-rewrite convention.
 
 ## Oracle tests (write first)
 
