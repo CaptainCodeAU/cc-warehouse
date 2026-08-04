@@ -76,6 +76,16 @@ here into their own ticket when they are taken up.
   gate was green, `ccw archive --verify` reported 0 problems over the whole tree,
   and the verify does not ask this question.
 
+  **UPGRADED 2026-08-05 FROM BACKLOG ITEM TO PREREQUISITE OF 27.4, and the
+  number is far worse than "33 of 90 projects".** Ticket 27.2's rebuild of the
+  real archive recovered **114 of 4,913 aliases, 2.3%**. The project COUNT
+  understated it badly: the 33 sidecar-less folders are not 33/90 of the aliases,
+  because almost every alias learned since the 2026-08-02 bulk run lives only in
+  the database. Sessions and labels round trip perfectly (19,233 of 19,233
+  hashes, 90 of 90 labels); aliases do not. 27.4 deletes `objects/` on the
+  argument that the archive is a complete substitute, and on aliases it is not.
+  The measurement is in ticket 27 beside the rest of the 27.2 proof.
+
 - **28.20  `ccw build` is O(everything) even when nothing changed.** Measured
   2026-08-04 on the real corpus: 14,246 sessions, 0 failed, **5:55 the first
   time and 6:04 the second**, back to back with nothing changed in between. Its

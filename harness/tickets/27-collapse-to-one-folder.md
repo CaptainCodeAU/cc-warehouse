@@ -48,6 +48,75 @@ Delete the catalog, run `reindex`, and compare the result against the original
 row by row. The test asserts the fixture had aliases stored FIRST, because a
 round trip over an empty set passes for the wrong reason (ticket 19f's lesson).
 
+---
+
+## 27.1 DONE 2026-08-05. 27.2 DONE, AND ITS ANSWER IS "NOT YET".
+
+`ccw reindex [--from DIR] [--to DIR] [--dry-run]` ships. Oracle tests were
+written first and seen RED (17 failing on "unknown verb 'reindex'") before any
+implementation existed. Gates: ruff clean, pyright strict 0 errors.
+
+**27.2 RUN AGAINST THE REAL ARCHIVE, and the comparison is the point of the
+slice.** `--to` writes the rebuilt catalog into a scratch directory, so the
+live catalog a firing hook is writing to was never replaced.
+
+                              LIVE      REBUILT
+        session rows         19,247      19,233
+        distinct uuids       19,233      19,233
+        projects                 97          90
+        aliases               4,913         114
+        capture_event        36,332           0
+
+        hashes in both ............... 19,233
+        in LIVE only .................     14
+        in REBUILT only ..............      0     <- invents nothing
+        uuids in LIVE only ...........      0     <- loses no session
+        project labels matched .......  90 of 90
+
+**EVERY ONE OF THE 14 IS ACCOUNTED FOR, none is a lost session:**
+
+        workflow journals (no sessionId, filed under _not-sessions/) ....  7
+        superseded versions linked by a supersedes chain ................  4
+        older copies of a uuid whose larger copy the archive holds .....   3
+        GENUINELY ABSENT ...............................................   0
+
+The 3 were chased rather than rounded off: in each case the live catalog holds
+two copies of one uuid and the archive holds the larger, so the rebuild has the
+better copy and not the worse one.
+
+**THE VERDICT, and it decides the order of the rest of this ticket. The catalog
+is disposable for SESSIONS and LABELS. It is NOT yet disposable for ALIASES:
+114 of 4,913 recovered, 2.3%.** That is ticket 28.21 measured at full scale.
+`archive.write_project_files` has one caller, the `ccw archive` verb, so every
+alias learned since the 2026-08-02 bulk run exists only in the database. A
+rebuild would keep every session and every label and lose the mapping from
+Claude Code's encoded dirs and cwds to the names the operator chose, which is
+what stops a renamed project splitting in two on the next capture.
+
+**SO 28.21 IS NOW A PREREQUISITE OF 27.4, not a backlog item.** 27.4 renames
+`objects/` aside and then deletes it; the argument for that being safe is that
+the archive is a complete substitute. On sessions it is. On aliases it is not,
+and the proof above is how we know rather than how we hope.
+
+## Two fences fired during 27.1, and both were right
+
+Recorded because the standing rule is that a locked test blocking correct work
+is a SIGNAL, and because what they changed was the design, not the paperwork.
+
+1. `test_no_deletion_primitives_outside_rebuild_modules` (R4) caught
+   `shutil.rmtree` on the staging DIRECTORY the first version built into. The
+   dodges available were adding `reindex.py` to the closed list, or reaching for
+   `tempfile.TemporaryDirectory` whose cleanup the fence cannot see. Both
+   declined. R2's own words are "tmp FILE plus os.replace", so the fence was
+   pointing at the sanctioned shape rather than blocking the work, and the
+   rewrite deletes nothing at all.
+2. `test_write_handles_only_in_sanctioned_modules` (R2) then caught the
+   `.write_bytes` that truncates an inherited staging file. Routed through
+   `store.atomic_write`, which is what R2 exists to make unavoidable.
+
+A fence that can be defeated by a synonym teaches the next session to skip it.
+Neither was widened.
+
 ### 27.3  `keep_objects = false`
 
 A NEW line in `~/.config/cc-warehouse/config.toml`; the key has never been in
