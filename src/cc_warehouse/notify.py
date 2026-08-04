@@ -22,6 +22,21 @@ from cc_warehouse.config import Config, WebhookSink
 # off the hook's critical path, so the budget only bounds that helper.
 _WEBHOOK_TIMEOUT_S = 2.0
 
+# The voice sink gets the same short budget, for the same reason and one more:
+# the voice server is a LOCAL process that is frequently not running, so "refused
+# immediately" and "hung" are both ordinary outcomes and neither may delay
+# anything. Like the webhooks, this runs in the detached helper (DESIGN 12 puts
+# voice off the critical path), so the budget bounds that child alone.
+_VOICE_TIMEOUT_S = 2.0
+
+# Which capture outcomes speak. Ported verbatim from the frozen specimen's
+# report() (claude-code-transcripts notify.py:116), which is what actually spoke
+# on this machine until 2026-07-24: stored and failed talk, a duplicate does not.
+# Kept as a named constant rather than an `in (...)` at the call site because it
+# is a product decision, and the next question the principal asked about this
+# feature was exactly "what should speak, and when".
+SPEAKING_STATUSES = frozenset({"ok", "error"})
+
 
 @dataclass(frozen=True)
 class NotifyEvent:
@@ -95,8 +110,13 @@ def _spawn_notify_helper(config: Config, record: Mapping[str, object]) -> None:
     (start_new_session, all stdio to DEVNULL, never waited on) re-loads config from the
     inherited CCW_ROOT and fires the sinks. Skipped when no webhook is configured (the
     only network sink this slice; desktop/voice land in slice 13). Best-effort: a spawn
-    failure is swallowed so notification infrastructure can never fail capture."""
-    if not config.webhooks:
+    failure is swallowed so notification infrastructure can never fail capture.
+
+    SPAWNS FOR VOICE TOO, and the omission would have been invisible: this
+    returned early on "no webhooks", so a voice-only setup - which is the only
+    sink most people configure - would have been wired end to end and never
+    reached, with nothing to show for it but silence."""
+    if not config.webhooks and not config.voice_url:
         return
     try:
         subprocess.Popen(
@@ -127,6 +147,45 @@ def report(config: Config, event: NotifyEvent) -> None:
     }
     append_log(config, record)
     _spawn_notify_helper(config, record)
+
+
+def speak(config: Config, message: str) -> None:
+    """Say one sentence through the configured voice server, best-effort.
+
+    OPT-IN: with no `[notify] voice_url` this does nothing at all and attempts no
+    connection, exactly as the specimen's env-var opt-in did.
+
+    Ported from the frozen specimen (claude-code-transcripts notify.py:52), which
+    is the code that actually spoke on this machine until capture broke on
+    2026-07-24. `voice_url` and `voice_id` have parsed in this project's config
+    since slice 13 and were consumed by NOTHING until now: the module docstring
+    promised "desktop/voice sinks join in slice 13", slice 13 landed, and they did
+    not. A config key that parses, is tested, and does nothing is the F6 shape
+    this project exists to eliminate.
+
+    The transport is urllib rather than the specimen's `curl` subprocess: this
+    module already POSTs webhooks that way, and a second HTTP idiom would be a
+    second place for the timeout, the headers and the error handling to drift
+    (R9). The payload shape is the server's, unchanged: `message`,
+    `voice_enabled`, and `voice_id` only when one is configured - a null id is
+    not the same as the server's default and must not be sent as one.
+    """
+    if not config.voice_url:
+        return
+    payload: dict[str, object] = {"message": message, "voice_enabled": True}
+    if config.voice_id:
+        payload["voice_id"] = config.voice_id
+    try:
+        request = urllib.request.Request(
+            config.voice_url,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=_VOICE_TIMEOUT_S) as response:
+            response.read()
+    except Exception:
+        return
 
 
 def open_folder(config: Config, path: str) -> None:

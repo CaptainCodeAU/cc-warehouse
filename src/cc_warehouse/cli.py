@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -671,6 +671,56 @@ def _parse_notify_record(args: Sequence[str]) -> dict[str, object] | None:
     return cast(dict[str, object], decoded)
 
 
+def _spoken_label(config: Config, short: object) -> str:
+    """The project label to SAY for a capture, looked up from the catalog.
+
+    The record's own `project` field carries the RESOLUTION SOURCE
+    (`payload_cwd` / `jsonl_cwd` / `transcript_dir`), not a label, so it cannot
+    be spoken. It is looked up here rather than corrected at the source on
+    purpose: that field is on the durable audit line AND on every webhook
+    payload, so changing what it means is its own decision with its own blast
+    radius, not something to smuggle in alongside a voice sink.
+
+    Runs in the DETACHED helper, never on the hook's critical path, so one extra
+    read-only catalog open costs the operator nothing. Degrades to a neutral
+    phrase rather than raising: a sink may not fail (DESIGN 12).
+    """
+    if not short:
+        return "an unnamed project"
+    try:
+        conn = catalog.open_catalog(config.root)
+        try:
+            row = conn.execute(
+                "SELECT p.label FROM session s JOIN project p ON p.id = s.project_id"
+                " WHERE s.short = ? LIMIT 1",
+                (str(short),),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row[0]:
+            return str(row[0])
+    except Exception:  # noqa: BLE001 - a sink may never fail a capture
+        pass
+    return "an unnamed project"
+
+
+def _voice_line(config: Config, record: Mapping[str, object]) -> str | None:
+    """The sentence to speak for one capture record, or None to stay silent.
+
+    Ported from the frozen specimen's `report()`: stored and failed speak, an
+    unchanged re-fire does not. Keeping the decision in ONE function, driven by
+    `notify.SPEAKING_STATUSES`, is what makes "what should speak, and when" a
+    thing that can be changed by editing a set rather than by hunting call sites.
+    """
+    status = str(record.get("status") or "")
+    if status not in notify.SPEAKING_STATUSES:
+        return None
+    if status == "error":
+        reason = str(record.get("message") or "").strip() or "unknown error"
+        return f"Transcript capture failed. {reason}"
+    return f"Transcript captured to {_spoken_label(config, record.get('session'))}"
+
+
 def _run_notify(args: Sequence[str]) -> int:
     """Hidden `ccw notify` verb: the detached notify-only helper (DESIGN section 12).
 
@@ -685,6 +735,9 @@ def _run_notify(args: Sequence[str]) -> int:
     except Exception:
         return 0
     notify.post_webhooks(config, record)
+    line = _voice_line(config, record)
+    if line is not None:
+        notify.speak(config, line)
     return 0
 
 
