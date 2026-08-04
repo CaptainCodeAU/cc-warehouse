@@ -142,3 +142,36 @@ anything.
 
 **TICKET 27 REMAINS BLOCKED.** Nothing in it starts until 26.4 is complete AND
 dated, and 27.9 (clear `~/.claude`) is gated on that specifically.
+
+## 26.4 DONE 2026-08-04, VERIFIED. Ticket 27 is unblocked.
+
+The copy was made by the principal (this session cannot read the volume; see the
+blocker above, which remains true and is why the verification was split).
+
+    source   ~/cc-warehouse-archive                         116,433 files
+    target   /Volumes/<external>/cc-warehouse-archive-2026-08-04
+    method   exact byte copy, per principal decision (b)
+
+**VERIFIED INDEPENDENTLY OF THE COPY TOOL, which is the whole of decision (b).**
+Every file on both sides was hashed with sha256 and the two sorted manifests
+compared in full. Nothing sampled, and no copy tool's exit code was trusted:
+
+    source manifest sha256   ee1996858860ff2efa807ec399f8f3560b4ddc59
+    target manifest sha256   ee1996858860ff2efa807ec399f8f3560b4ddc59
+    diff                     IDENTICAL, 116,433 of 116,433 files
+
+The manifest-of-manifests equality is the compact form of the proof: identical
+digests mean identical paths, identical content hashes AND identical ordering.
+
+Finder's 84 `.DS_Store` files were excluded from BOTH sides deliberately; they
+are Finder artifacts inside the archive, not archive content. The archive's real
+content is 116,433 files.
+
+**THE ARCHIVE NOW EXISTS IN TWO PLACES FOR THE FIRST TIME.** That is the property
+every destructive step in ticket 27 was waiting on, and 27.9 (clear `~/.claude`)
+is gated on this being complete AND dated. It is both, as of 2026-08-04.
+
+REMAINING, and it is the principal's to do by hand since this session cannot
+write to the volume: drop a `BACKUP-PROVENANCE.json` beside the copy so the drive
+is self-describing when the repo is not to hand. The date is otherwise carried by
+the directory name and by this record.
