@@ -153,7 +153,21 @@ def _latest_version(conn: sqlite3.Connection, session_uuid: str | None) -> str |
 
     Recency is the payload-internal last_ts, not warehouse capture order (R12):
     a NULL last_ts falls back to captured_at, ties break on captured_at then
-    rowid. A late-imported old export therefore never displaces the newer copy.
+    rowid.
+
+    WHAT THIS DOES NOT GUARANTEE, and the previous docstring claimed it did.
+    It said "a late-imported old export therefore never displaces the newer
+    copy". That is FALSE, and the correction is recorded rather than quietly
+    swapped because the sentence had stood beside working code and would have
+    told the next reader that ticket 29 was closed.
+
+    This function picks the right SUPERSEDES TARGET. It does not decide the
+    head. `build._heads` defines a head as a row no other row supersedes, so
+    the newest INSERT is always the head whatever its payload says: import an
+    OLDER copy after a newer one and the older copy becomes current. Proved by
+    execution 2026-08-05, not by reading. That is ticket 29 mechanism 1, which
+    is OPEN and unscoped; do not change this function or `build._heads` to fix
+    it without scoping the change with the principal first.
     """
     if session_uuid is None:
         return None
