@@ -104,13 +104,46 @@ the round trip that could not pass before now does: capture only, `ccw archive`
 never run, catalog deleted, `ccw reindex`, and both labels and aliases return.
 Details and the measured cost are on 28.21.
 
-**BUT THE 33 EXISTING SIDECAR-LESS FOLDERS ARE STILL SIDECAR-LESS, and nothing
-in this session changed the live archive.** The fix is forward-looking: those
-folders get a sidecar the next time a session lands in them, or immediately if
-`ccw archive --to ~/cc-warehouse-archive` is re-run (idempotent, proven twice
-2026-08-02, but it re-renders 19k folders). RE-MEASURE THE RECOVERY RATE BEFORE
-27.4, because today's 2.3% is a fact about the tree as it stands, not about the
-code as it now behaves. That measurement is 27.4's actual gate.
+**THE 33 EXISTING FOLDERS WERE FILLED IN THE SAME DAY, on the principal's word,
+and the gate was RE-MEASURED rather than inferred from the fix.**
+
+`archive.write_project_files` was called directly rather than through
+`ccw archive --to`. That verb was what had been offered, but it re-renders 19k
+folders; the function is the part of it that writes sidecars, and reading its
+code shows its only write target is `directory / project.json` through
+`store.atomic_write`. Narrower instrument, same result.
+
+    BEFORE   90 label dirs, 57 project.json, 116,585 files
+    AFTER    90 label dirs, 90 project.json, 116,618 files
+    TOUCHED  45 project.json, and NOTHING ELSE (0 non-sidecar files modified)
+
+45 rather than 90 because the content skip works on real data: 33 new, 12 whose
+alias sets had grown, 45 already correct and left alone with their mtimes intact.
+
+    ccw archive --verify     19,235 folders checked, 0 problems
+
+**THE RE-MEASURED GATE, which is the number 27.4 actually rests on:**
+
+                           LIVE    REBUILT
+        projects             97         90
+        aliases           4,913      4,906
+        sessions         19,249     19,235
+        distinct uuids   19,235     19,235
+
+        ALIAS RECOVERY   4,906 of 4,913  =  99.9%   (was 2.3%)
+        invented         0 aliases, 0 labels, 0 sessions
+
+**THE 7 THAT DID NOT COME BACK ARE THE 7 WORKFLOW JOURNALS, and they are not a
+gap.** The 7 unrecovered aliases and the 7 unrecovered projects are the same 7
+`wf_*` labels: payloads with no `sessionId`, filed under `_not-sessions/journals/`
+by ruling (a). `walk_folders` skips `_not-sessions` because it is a reserved
+label, so those projects have no folder for a sidecar to sit beside. A project
+with no session folder has nothing in the tree to describe, which is what
+`write_project_file` returning False for a missing directory already says.
+
+So on ALIASES the archive is now a complete substitute for everything the tree
+can describe. That was 27.4's open objection and it is closed. 27.4 is still
+DESTRUCTIVE and still needs the principal's word at the moment of running.
 
 ## Two fences fired during 27.1, and both were right
 

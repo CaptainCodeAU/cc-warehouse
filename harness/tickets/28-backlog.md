@@ -70,6 +70,15 @@ here into their own ticket when they are taken up.
   entry naming the test rather than the docstring being reworded to dodge the
   check. The registry's own comment says it "grows when a guarantee is added".
 
+  **THE LIVE ARCHIVE WAS BROUGHT UP TO DATE THE SAME DAY** (principal's word),
+  by calling `write_project_files` directly rather than re-running the bulk verb.
+  57 sidecars became 90; exactly 45 files were written and 0 non-sidecar files
+  were touched; `ccw archive --verify` reads 19,235 folders, 0 problems. The
+  rebuild now recovers **4,906 of 4,913 aliases, 99.9%, up from 2.3%**, and the
+  7 that do not come back are the 7 workflow journals, which have no project
+  folder because they are not sessions. Full figures on ticket 27 beside the
+  27.2 proof they update.
+
   The original finding, kept for the record:
 
 - **28.21 (as first written)  `project.json` is written by ONE verb, so the
