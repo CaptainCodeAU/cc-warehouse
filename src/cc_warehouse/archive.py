@@ -449,6 +449,16 @@ def write_session_folder(
 
     A refusal (the new payload is smaller) is RECORDED in manifest.json rather
     than being silent (F6).
+
+    THE PAYLOAD THAT RENDERS IS THE ONE THAT SURVIVED (ticket 29, 2026-08-04).
+    Refusing to shrink the JSONL and then rendering the refused bytes over the
+    folder's markdown, HTML and manifest left the two halves of a folder
+    describing different payloads, which `ccw archive --verify` reports as "JSONL
+    does not match manifest source_hash". It was found on real data: one session
+    had two copies in the legacy exporter tree, one a strict byte prefix of the
+    other, and which one the folder READ AS came down to insertion order. Both
+    `build._mirror` and `ccw archive --to` route through here, so this was never
+    specific to one verb.
     """
     if is_subagent(data):
         # REFUSED, loudly. This payload's sessionId is its PARENT'S, so writing
@@ -489,7 +499,19 @@ def write_session_folder(
     else:
         store.atomic_write(jsonl, data)
 
-    if meta.hidden:
+    # On a refusal the folder renders from the payload ON DISK, not from the one
+    # just declined, so the generated files keep describing the JSONL beside
+    # them. `hidden` is re-derived from that payload for the same reason: a
+    # truncated re-capture must not be able to decide whether the full session
+    # gets markdown. Skipping the render entirely was the obvious alternative and
+    # is wrong: the manifest is one of the five files, and the locked oracle test
+    # test_a_smaller_payload_is_refused_and_the_refusal_is_recorded protects
+    # "must not shrink WITHOUT SAYING SO IN THE MANIFEST". Its letter and its
+    # decision agree, so it was not narrowed.
+    rendered = jsonl.read_bytes() if refused else data
+    hidden = parse_session(rendered).hidden if refused else meta.hidden
+
+    if hidden:
         # Archived, but no markdown or HTML: today's hidden behaviour, preserved
         # deliberately by the 2026-08-02 ruling.
         return FolderResult(directory, jsonl, False, replaced, refused)
@@ -498,7 +520,7 @@ def write_session_folder(
     # traced heap on a 100 MB session, 78x the payload; the real 114 MB object
     # survived the 2026-08-02 migration on a machine that happened to have the
     # RAM. See build.iter_projection_files.
-    for name, payload in build.iter_projection_files(data, options):
+    for name, payload in build.iter_projection_files(rendered, options):
         if name == _MANIFEST:
             # Written LAST-ish, and always with the sub-agent list, so a reader
             # can tell "none" from "this manifest predates the feature" (F6).
