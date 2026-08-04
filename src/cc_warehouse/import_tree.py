@@ -73,12 +73,12 @@ _WOULD_KEEP = "would-keep-not-a-session"
 _WOULD_REFUSE = "would-refuse-subagent"
 
 
-def _read(path: Path) -> tuple[bytes | None, ItemOutcome | None]:
+def _read(path: Path) -> bytes | ItemOutcome:
     """The payload, or a named error item. Never raises (R5/R10/F7)."""
     try:
-        return path.read_bytes(), None
+        return path.read_bytes()
     except OSError as exc:
-        return None, ItemOutcome(path.name, "error", f"unreadable: {exc.strerror or exc}")
+        return ItemOutcome(path.name, "error", f"unreadable: {exc.strerror or exc}")
 
 
 def _kind(data: bytes) -> str:
@@ -103,11 +103,14 @@ def _kind(data: bytes) -> str:
 
 def _import_one(config: Config, path: Path) -> tuple[ItemOutcome, str]:
     """Import one file; returns its outcome and its content hash (for the manifest)."""
-    data, failure = _read(path)
-    if data is None or failure is not None:
-        return failure or ItemOutcome(path.name, "error", "unreadable"), ""
-    digest = store.sha256_hex(data)
+    data = _read(path)
+    if isinstance(data, ItemOutcome):
+        return data, ""
     kind = _kind(data)
+    # The digest is computed only on the branches that need it. On the SESSION
+    # branch capture returns its own, and hashing here as well would hash the
+    # whole corpus twice: 392 MiB on the real tree, for a value immediately
+    # overwritten.
     if kind == "subagent":
         return (
             ItemOutcome(
@@ -115,9 +118,10 @@ def _import_one(config: Config, path: Path) -> tuple[ItemOutcome, str]:
                 SUBAGENT_ACTION,
                 "sub-agent transcript; import handles sessions only",
             ),
-            digest,
+            store.sha256_hex(data),
         )
     if kind == "not-a-session":
+        digest = store.sha256_hex(data)
         if config.archive_root is None:
             return (
                 ItemOutcome(path.name, "skipped", "not a session, and no archive_root is set"),
@@ -158,9 +162,9 @@ def plan(
         for directory in pruned
     )
     for path in paths:
-        data, failure = _read(path)
-        if data is None or failure is not None:
-            outcomes.append(failure or ItemOutcome(path.name, "error", "unreadable"))
+        data = _read(path)
+        if isinstance(data, ItemOutcome):
+            outcomes.append(data)
             continue
         kind = _kind(data)
         if kind == "subagent":
