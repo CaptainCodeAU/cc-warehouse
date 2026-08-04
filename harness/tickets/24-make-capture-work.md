@@ -1,5 +1,14 @@
 # Ticket 24: make capture work, and make it impossible to fail silently
 
+DONE 2026-08-04 except 24.7, annotated 2026-08-05. **This ticket carried NO status
+line at all for a day while its work was live and running**, which is how an audit
+came to find it: a `grep DONE` over the ticket set skipped 24 entirely, and only
+reading the file end to end showed there was nothing to skip. The three-way
+agreement this project relies on (dated annotation + zero stubs + green tests) is
+only as good as the annotation, and a missing one reads as "not started".
+
+Verification is recorded at the end of this file.
+
 ## Why this ticket exists
 
 Capture has never run automatically. Not once. All 13,836 stored sessions
@@ -160,3 +169,84 @@ bijection is asserted.
 
 Standard loop. EXIT TEST: `ccw doctor` green, then end a real session and it is
 still green.
+
+---
+
+## DONE 2026-08-04, except 24.7. Verified by execution 2026-08-05.
+
+The exit test above is the right one and it PASSES: `ccw doctor` is green, and
+real sessions have ended and been captured since.
+
+    24.1  repoint the wrapper at `ccw hook`        DONE
+    24.2  never resolve a bare package name        DONE
+    24.3  a failed capture must be loud            DONE
+    24.4  fix the plugin README and SPEC           DONE
+    24.5  schedule a daily `ccw sweep`             DONE
+    24.6  decide the 16 legacy per-project hooks   DECIDED: deferred, now 28.2
+    24.7  session-start freshness signal           STILL OPEN
+
+**24.1 / 24.2.** The wrapper is `hooks/ccw-hook.py` in the plugin, and it resolves a
+REAL EXECUTABLE: `CCW_BIN` if set, then `shutil.which("ccw")`, then the uv-tool
+shim at `~/.local/bin/ccw`. `uv tool run` appears nowhere in it. The rule is
+written into the file as a comment naming this incident, exactly as 24.2 asked,
+so a later tidy-up cannot undo it without reading why.
+
+**24.3.** `check=False` is still passed, but the return code is now READ: a
+non-zero child writes a JSONL record to `~/.claude/logs/ccw-hook.log` and speaks
+through the voice sink. The hook still exits 0 on every path (SPEC 2.6).
+
+**24.4.** The plugin README describes ccw: 19 mentions of `ccw`/`cc-warehouse`
+against 2 residual references to the tool it replaced.
+
+**24.5.** `~/Library/LaunchAgents/com.captaincodeau.ccw-sweep.plist` exists, which
+covers what a SessionEnd hook structurally cannot see (a killed process).
+
+**THE EVIDENCE THAT CAPTURE ACTUALLY RUNS, which is the only claim that matters
+here.** Three independent instruments, taken 2026-08-05, that cannot all be
+wrong in the same direction:
+
+    ~/.claude/logs/ccw-hook.log     6 entries, 6 ok, 0 error   (02:10 local)
+    ccw doctor                      7 checks ok, "capture is working"
+    ccw archive --verify            19,230 folders, 0 problems (02:30 local)
+
+and they RECONCILE EXACTLY: ticket 26.1 verified 19,224 folders on 2026-08-04,
+the hook had succeeded 6 times since, and 19,224 + 6 = 19,230. A count that
+agrees with an independent count is worth more than either alone.
+
+**STATE THE CLOCK WITH THE NUMBER, because both of these now MOVE.** The same log
+read 9 entries (9 ok, 0 error) twenty minutes later, without anyone running
+anything. That is the point of the ticket rather than a caveat on it: the archive
+stopped being a thing built by hand and became a thing that grows. Any future
+count here is a reading at an instant, not a constant, and a reconciliation that
+does not name its clock will look broken the next time someone checks it.
+
+## 24.7 IS THE ONE THING STILL OPEN, and it is the part that protects the rest
+
+The freshness signal is not built. Measured 2026-08-05:
+
+    ccw references in ~/.claude/settings.json ................. 0
+    SessionStart commands registered there .................... 7, none ccw
+
+The 0 is not the defect (the hook is registered by the PLUGIN, so settings.json
+is the wrong place to look for it) but the absent SessionStart check is. Until
+it exists, capture stopping again looks exactly like capture working: the failure
+is silent at the one moment the operator is present and reading. That is the
+failure mode this whole ticket was written about, one level up, and it is why
+24.7 should not be quietly absorbed into "24 is done".
+
+Build it like the CI watch: in the existing attention path, ESCALATING rather
+than a static banner, and clearing only by fixing.
+
+## NOT DONE, and deliberately so
+
+The oracle tests this ticket names were not written. The work landed in the
+PLUGIN repository, which has no suite; the fences it asks for (assert the argv,
+reject the string `uv tool run` in any hook wrapper, assert the `CCW_*` env
+bijection) belong in this repo and do not exist. Recorded here rather than
+dropped: a rule enforced only by a comment is a rule until the next tidy-up.
+
+## Why there is a `ticket-24` tag on a docs commit
+
+Because that is where every other ticket tag on this track sits: `ticket-23`,
+`ticket-25` and `ticket-26` all point at that ticket's closing `docs(harness):`
+commit rather than at code. Most of 24's code is not in this repository at all.

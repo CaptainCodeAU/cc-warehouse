@@ -37,6 +37,45 @@ here into their own ticket when they are taken up.
 
 ## Known defects and debts
 
+- **28.21  `project.json` is written by ONE verb, so the disposable-index
+  guarantee has silently lapsed for 33 of 90 projects.** Measured 2026-08-05
+  against the real archive, through the product's own reader rather than a
+  filesystem guess:
+
+        label dirs on disk ............ 90
+        read_projects recovers ........  57      <- unchanged since 2026-08-02
+        aliases recovered ............. 114      <- unchanged since 2026-08-02
+        INVISIBLE to a rebuild ........  33
+
+  MECHANISM, found in code rather than inferred: `archive.write_project_files`
+  has exactly ONE caller, `cli.py` in the `ccw archive` verb. The capture path
+  (`_archive_source`) and `ccw import` both create label folders and neither
+  writes a sidecar, and `archive.read_projects` SKIPS a folder that has none
+  (`archive.py`, "A folder with no sidecar ... is SKIPPED rather than fatal").
+  So every project folder born since the last bulk `ccw archive` run is invisible
+  to a catalog rebuild. The 57 and the 114 are exactly the figures ticket 19f
+  recorded at migration, which is the tell: nothing has been added since.
+
+  WHY IT MATTERS AND WHY IT IS NOT URGENT. `write_project_files`' own docstring
+  says the sidecar is "what makes the catalog a DISPOSABLE INDEX rather than a
+  load-bearing database", and that until it exists the rebuild claim is "a claim
+  the product cannot honour, and an unhonoured guarantee is the F6 class this
+  project exists to ban". That is exactly the state 33 projects are in. But NO
+  DATA IS AT RISK: the sessions, their JSONL and their projections are all on
+  disk, and the LABEL survives because the label is the folder name. What would
+  be lost on a rebuild is `project_alias`, so a renamed project would split in
+  two on the next capture.
+
+  THE CHEAP FIX IS NOT THE RIGHT FIX. Re-running `ccw archive --to` regenerates
+  all 90 sidecars and is proven idempotent, but it also re-renders 19k folders
+  and leaves the hole open for the next import. The fix is to write the sidecar
+  on the path that creates the folder. Ties 28.10, which already lists
+  "rename-then-rebuild for `project.json`" as a test gap.
+
+  FOUND BY AUDIT, NOT BY A FAILURE, which is the argument for auditing: every
+  gate was green, `ccw archive --verify` reported 0 problems over the whole tree,
+  and the verify does not ask this question.
+
 - **28.20  `ccw build` is O(everything) even when nothing changed.** Measured
   2026-08-04 on the real corpus: 14,246 sessions, 0 failed, **5:55 the first
   time and 6:04 the second**, back to back with nothing changed in between. Its
