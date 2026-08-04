@@ -37,8 +37,44 @@ here into their own ticket when they are taken up.
 
 ## Known defects and debts
 
-- **28.21  `project.json` is written by ONE verb, so the disposable-index
-  guarantee has silently lapsed for 33 of 90 projects.** Measured 2026-08-05
+- **28.21  DONE 2026-08-05. The sidecar is now written by whatever CREATES the
+  folder, so 27.4's prerequisite is met.** `capture._archive_project_file`
+  refreshes the one project's `project.json` after its session lands, which
+  covers the hook, `ccw sweep` and `ccw import` in one place because all three
+  route through `capture.capture_transcript` (verified by running each, not
+  assumed). `archive.write_project_files` keeps its behaviour and now LOOPS over
+  the same single-project writer, so there is one sidecar renderer rather than
+  two (R9/F8).
+
+  THE SKIP IS LOAD BEARING, NOT TIDINESS. An unchanged sidecar is not rewritten,
+  compared on CONTENT and never on existence, or a 4,756-payload import would
+  rewrite one project's sidecar thousands of times. Cost measured on the real
+  catalog rather than asserted, against the worst case (1,449 aliases, a 137 KB
+  sidecar): `project_record` 0.89 ms, `write_project_file` no-op 0.70 ms, so
+  about **1.6 ms added to a capture** whose hook timeout is 40 s.
+
+  A SIDECAR FAILURE NEVER COSTS A CAPTURE, and that is the opposite of the
+  payload write beside it. `_archive_source` raises when `keep_objects` is false
+  because then nothing else holds the session; a sidecar is an index aid, so it
+  gets its own try and is never re-raised (DESIGN 12). There is a test that
+  makes the write fail and asserts the session still lands.
+
+  THE PROOF IS THE ROUND TRIP THAT COULD NOT PASS BEFORE: capture only, `ccw
+  archive` never run, delete the catalog, `ccw reindex`, and both labels and
+  aliases come back. The fixture asserts it stored aliases FIRST, because a
+  round trip over an empty set passes for the wrong reason (19f's lesson).
+
+  A THIRD FENCE FIRED. R8's `test_guarantee_words_cite_their_proving_test`
+  caught "byte-identical" in the new docstring. The word is load bearing (it is
+  what the skip rests on) and it IS proven, so the proof registry gained an
+  entry naming the test rather than the docstring being reworded to dodge the
+  check. The registry's own comment says it "grows when a guarantee is added".
+
+  The original finding, kept for the record:
+
+- **28.21 (as first written)  `project.json` is written by ONE verb, so the
+  disposable-index guarantee has silently lapsed for 33 of 90 projects.**
+  Measured 2026-08-05
   against the real archive, through the product's own reader rather than a
   filesystem guess:
 

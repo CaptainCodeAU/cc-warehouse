@@ -98,6 +98,20 @@ what stops a renamed project splitting in two on the next capture.
 the archive is a complete substitute. On sessions it is. On aliases it is not,
 and the proof above is how we know rather than how we hope.
 
+**28.21 CLOSED 2026-08-05, SO THAT PREREQUISITE IS MET FOR EVERYTHING WRITTEN
+FROM NOW ON.** The sidecar is written by the path that creates the folder, and
+the round trip that could not pass before now does: capture only, `ccw archive`
+never run, catalog deleted, `ccw reindex`, and both labels and aliases return.
+Details and the measured cost are on 28.21.
+
+**BUT THE 33 EXISTING SIDECAR-LESS FOLDERS ARE STILL SIDECAR-LESS, and nothing
+in this session changed the live archive.** The fix is forward-looking: those
+folders get a sidecar the next time a session lands in them, or immediately if
+`ccw archive --to ~/cc-warehouse-archive` is re-run (idempotent, proven twice
+2026-08-02, but it re-renders 19k folders). RE-MEASURE THE RECOVERY RATE BEFORE
+27.4, because today's 2.3% is a fact about the tree as it stands, not about the
+code as it now behaves. That measurement is 27.4's actual gate.
+
 ## Two fences fired during 27.1, and both were right
 
 Recorded because the standing rule is that a locked test blocking correct work
