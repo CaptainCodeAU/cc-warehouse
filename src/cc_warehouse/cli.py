@@ -444,6 +444,53 @@ def _spawn_render(short: str) -> None:
         return
 
 
+def _reveal_target(config: Config, short: str | None) -> str:
+    """The folder the open-folder opt-in should show for this capture.
+
+    THE DEFECT THIS CLOSES, measured on the real warehouse 2026-08-04. This
+    branch revealed `<root>/projections` unconditionally. That directory stopped
+    existing the day `keep_projections = false` was set, and `notify.open_folder`
+    is a fire-and-forget Popen whose failures are swallowed by design, so the
+    reveal silently did nothing. Silence is exactly what the feature being OFF
+    looks like, so there was no way to tell the two apart (F6).
+
+    It also made the two branches disagree: a fresh capture reveals the session's
+    own archive folder, via the render child, while an unchanged re-fire revealed
+    a top-level directory. Same opt-in, two answers, one of them pointing at
+    nothing. R9 says they should give one answer, and the session folder is the
+    right one because the archive folder IS the deliverable.
+
+    The no-archive case is deliberately UNCHANGED: without `archive_root` the
+    vault-era layout is still in use and `projections/` is still the right place.
+    This narrows the behaviour rather than replacing it.
+
+    Never raises: it runs on the hook path, and DESIGN 12 makes every sink
+    best-effort. A lookup that fails degrades to the old answer rather than
+    costing a capture.
+    """
+    if config.archive_root is not None and short:
+        try:
+            conn = catalog.open_catalog(config.root)
+            try:
+                head = build.head_for_short(conn, short)
+            finally:
+                conn.close()
+            if head is not None:
+                return str(
+                    build.archive_dir(
+                        config.archive_root,
+                        head.label,
+                        head.first_ts,
+                        head.session_uuid,
+                        config.archive_timezone,
+                        fallback_stem=f"session-{head.short}",
+                    )
+                )
+        except Exception:  # noqa: BLE001 - a reveal may never fail a capture
+            pass
+    return str(config.root / "projections")
+
+
 def _report_capture(config: Config, result: capture.CaptureResult) -> None:
     """Emit notifications for a completed capture per its action (DESIGN sections 4, 12).
 
@@ -469,7 +516,7 @@ def _report_capture(config: Config, result: capture.CaptureResult) -> None:
             ),
         )
         if config.open_folder:
-            notify.open_folder(config, str(config.root / "projections"))
+            notify.open_folder(config, _reveal_target(config, short))
         return
     # stored: a successful new capture. The render child is spawned INDEPENDENTLY of any
     # sink (a log or webhook failure must never suppress rendering); both the spawn and
