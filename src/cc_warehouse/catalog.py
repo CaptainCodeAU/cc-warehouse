@@ -117,7 +117,20 @@ class SessionMeta:
 def open_catalog(root: Path) -> sqlite3.Connection:
     """Open (creating if needed) catalog.sqlite under root with the frozen schema."""
     root.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(root / "catalog.sqlite")
+    return open_catalog_at(root / "catalog.sqlite")
+
+
+def open_catalog_at(path: Path) -> sqlite3.Connection:
+    """The same catalog at an EXPLICIT path, for the R2 tmp-file rebuild.
+
+    `reindex` builds a replacement index beside the live one and moves it into
+    place with `os.replace`, which is the sanctioned write primitive and needs a
+    temporary FILE rather than a temporary directory. Splitting the path choice
+    out of `open_catalog` keeps one copy of the schema and the pragmas (R9); the
+    alternative was a second `sqlite3.connect` plus `executescript` in another
+    module, which is the F8 class.
+    """
+    conn = sqlite3.connect(path)
     # One transaction discipline for every mutating path: no implicit BEGIN, so
     # writing() owns BEGIN IMMEDIATE / COMMIT explicitly (R14). busy_timeout makes
     # a contender wait for the reserved lock instead of erroring at once.

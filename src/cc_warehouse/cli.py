@@ -30,6 +30,7 @@ from cc_warehouse import (
     migrate,
     notify,
     registry,
+    reindex,
     relocate,
     share,
     status,
@@ -63,6 +64,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("doctor", "is capture working, and if not since when"),
     ("verify", "re-hash objects and cross-check the catalog"),
     ("archive", "build (or --verify) the archive-first tree at --to DIR"),
+    ("reindex", "rebuild catalog.sqlite from the archive tree alone"),
     ("version", "print the ccw version"),
 )
 
@@ -1446,6 +1448,62 @@ def _archive_verify(target: Path, zone: str) -> int:
     return 1 if problems else 0
 
 
+def _run_reindex(args: Sequence[str]) -> int:
+    """`ccw reindex [--from DIR] [--to DIR] [--dry-run]` (ticket 27, slice 27.1).
+
+    Rebuilds `catalog.sqlite` from the archive tree alone, which is what turns
+    DESIGN 15's "the catalog is a disposable index" from a claim into a property
+    anyone can demonstrate.
+
+    `--to` exists so the rebuild can be PROVED against a real archive without
+    replacing the catalog a live capture hook is writing to (27.2).
+    """
+    config = _load(args)
+    source_raw = _flag_value(args, "from")
+    source = Path(source_raw).expanduser() if source_raw else config.archive_root
+    if source is None:
+        print("Error: reindex requires --from DIR (no [archive_root] is set)", file=sys.stderr)
+        return 2
+    if not source.is_dir():
+        print(f"Error: no archive at {source}", file=sys.stderr)
+        return 2
+
+    target_raw = _flag_value(args, "to")
+    target = Path(target_raw).expanduser() if target_raw else config.root
+
+    dry_run = "--dry-run" in args
+    report = reindex.rebuild(source, target, dry_run=dry_run)
+
+    for name, why in report.failed:
+        print(f"reindex: FAILED {name}: {why}", file=sys.stderr)
+    if not report.sessions:
+        # Rebuilding nothing and exiting 0 is the failure mode that reads as
+        # success, exactly as `archive --verify` refuses an empty tree.
+        print(f"Error: no session folders under {source}", file=sys.stderr)
+        return 2
+
+    for name in report.sidecar_unreadable:
+        print(f"reindex: unreadable project.json in {name}, label from the folder name")
+    if report.sidecar_missing:
+        print(
+            f"reindex: {len(report.sidecar_missing)} project folder(s) had no project.json;"
+            " label taken from the folder name and NO aliases recovered"
+            f" ({', '.join(sorted(report.sidecar_missing)[:5])}"
+            f"{', ...' if len(report.sidecar_missing) > 5 else ''})"
+        )
+    # F6: an incomplete restore that presents itself as complete is the defect
+    # class this project exists to ban, so the losses are printed every time.
+    print(
+        "reindex: capture_event history is NOT recoverable from the tree, and an"
+        " archive folder holds one copy per session uuid, so superseded versions"
+        " are not restored either"
+    )
+    print(f"{report.summary()}{' (dry run, nothing written)' if dry_run else ''}")
+    if dry_run:
+        print(f"reindex: would write {target / 'catalog.sqlite'}")
+    return 1 if report.failed else 0
+
+
 def _print_plan(plan: relocate.RelocatePlan, header: str) -> None:
     """One rendering of a relocate plan, shared by the dry-run and the apply path (R9)."""
     print(header)
@@ -1818,6 +1876,14 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
         # apply.
         True,
     ),
+    "reindex": (
+        (
+            ("--from DIR", "the archive tree to read (default: [archive_root])"),
+            ("--to DIR", "where to write catalog.sqlite (default: the warehouse root)"),
+            ("--dry-run", "report what a rebuild would find; writes NOTHING"),
+        ),
+        False,
+    ),
     "version": ((("(no options)", "print the ccw version"),), False),
 }
 
@@ -1963,6 +2029,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_verify()
     if verb == "archive":
         return _run_archive(args)
+    if verb == "reindex":
+        return _run_reindex(args)
     if verb == "share":
         return _run_share(args)
     if verb == "relocate":

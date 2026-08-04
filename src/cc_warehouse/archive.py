@@ -826,6 +826,21 @@ def _name_problems(directory: Path, meta: object, timezone: str) -> list[FolderP
     return []
 
 
+def sole_jsonl(directory: Path) -> Path | None:
+    """Public alias of the session-JSONL locator.
+
+    `reindex` needs the SAME answer to "which file in this folder is the
+    session" that `verify_folder` uses, and a second copy of the rule would be
+    the F8 class: two implementations of one truth, drifting apart the first
+    time either is touched. They had already drifted before this alias existed
+    (2026-08-05: the reindex copy returned None for a folder holding two JSONLs
+    while this one returned the first), which is the argument for the alias
+    rather than an argument against needing one. Same shape as
+    `build.component`.
+    """
+    return _sole_jsonl(directory)
+
+
 def _sole_jsonl(directory: Path) -> Path | None:
     files = sorted(p for p in directory.glob(f"*{_JSONL_SUFFIX}") if p.is_file())
     return files[0] if files else None
