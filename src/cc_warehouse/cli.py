@@ -582,6 +582,23 @@ def _run_sweep(args: Sequence[str]) -> int:
     for outcome in failures:
         print(f"sweep failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
     stored = sum(1 for outcome in report.outcomes if outcome.action == "stored")
+    # PROJECT WHAT WE JUST STORED. Found on real data 2026-08-04: the scheduled
+    # sweep rescued 642 sessions with zero failures, and `ccw archive --verify`
+    # then reported 3,194 problems because 721 folders held a conversation and
+    # none of the five generated files. The hook renders by spawning a detached
+    # child and only `_run_hook` ever calls it, so a swept session was stored and
+    # unreadable, which inverts the archive-first premise.
+    #
+    # `build.build` rather than a second renderer here (R9): it is incremental,
+    # it already mirrors into the archive, and it prunes nothing outside
+    # projections/. One detached child per item is not an option at this scale;
+    # this sweep would have spawned 2,064 processes.
+    if stored:
+        build_report = build.build(config)
+        build_failures = build_report.failures
+        for outcome in build_failures:
+            print(f"sweep: projection failed: {outcome.item}: {outcome.detail}", file=sys.stderr)
+        failures = failures + build_failures
     if not quiet:
         # --quiet drops STDOUT only. Failures are already on stderr above, and the
         # exit code is untouched, so a scheduled sweep stays silent when it works
