@@ -998,6 +998,36 @@ reimplemented (R9). The real tree is NOT the uniform `<project>/<uuid>/` the tic
 assumed (sessions sit at depths 1 through 4 across 71 branches), and the existing walk
 was already depth-agnostic, so no new walker was needed.
 
+**2026-08-04, ticket 29 mechanism 2: THE PAYLOAD THAT RENDERS IS THE ONE THAT
+SURVIVED.** `archive.write_session_folder` refused to shrink a folder's JSONL when
+handed a smaller payload and then wrote all five generated files FROM THE PAYLOAD
+IT HAD JUST REFUSED, leaving the folder's two halves describing different
+sessions. `ccw archive --verify` reports that as "JSONL does not match manifest
+source_hash". Both `build._mirror` and `ccw archive --to` route through this
+function, so it was never specific to one verb, and which payload a folder READ
+AS came down to insertion order.
+
+It was found by RUNNING the thing, not by reading it: the ticket 25.5 rehearsal
+imported the real legacy tree into a throwaway root and reported 7,671 stored, 0
+failed, exit 0. Every signal said success. Verifying the RESULT found the folder.
+
+The fix renders from the payload on disk and re-derives `hidden` from it, so a
+truncated re-capture cannot decide whether the full session gets markdown.
+
+REJECTED, and recorded because it is the obvious move: SKIPPING THE RENDER on
+refusal. The locked oracle test
+`test_a_smaller_payload_is_refused_and_the_refusal_is_recorded` protects "a
+truncated re-capture must not be able to shrink the archive WITHOUT SAYING SO IN
+THE MANIFEST", and the manifest is one of the five files a skip would stop
+writing. That fence's letter and its decision AGREE, so it was not a candidate
+for narrowing; it passes unchanged.
+
+STILL OPEN (ticket 29 mechanism 1): `catalog.add_session` points each new row's
+`supersedes` at the previous latest, so the newest INSERT is never superseded and
+`build._heads` picks it. A late-imported older copy therefore becomes the catalog
+head even when its own last timestamp is earlier. Harmless for the archive folder
+now, and still wrong for every catalog-driven surface.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

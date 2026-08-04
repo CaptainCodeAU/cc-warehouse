@@ -220,7 +220,43 @@ the folder present.
 `<archive>/_not-sessions/journals/` through `store.atomic_write` (R2), never a
 shell `cp`. Every sha256 re-verified on arrival; originals byte-identical after.
 
-## 25.5 IS BLOCKED ON A PRINCIPAL RULING. The throwaway run earned its keep.
+## 25.5 DONE 2026-08-04, after the writer was fixed first (principal, option 5)
+
+    ccw import --from ~/CODE/my-claude-code-transcripts
+    7,700 items · 4,756 stored · 1 branch pruned · 2 kept as not a session
+    0 sub-agents refused · 0 FAILED · 10m22s
+
+    archive folders   14,472 -> 19,226   (19,224 sessions + 2 reserved subdirs)
+    ccw archive --verify   19,224 folders checked, 0 problems
+    legacy tree            0 files modified (F9)
+
+**THE ACCEPTANCE TEST IS MET, and the instrument was wrong before the product
+was.** The census re-run named 8 remaining "orphans". All 8 are in the archive:
+6 under their PAYLOAD's `sessionId` rather than their legacy folder name (the
+exporter's directory name disagrees with the payload for those 6), and 2 under
+`_not-sessions/` because they carry no `sessionId` at all. **Genuinely absent: 0.**
+The census keyed on the DIRECTORY NAME, which is path-as-identity, the exact
+thing F4 forbids and the product correctly refuses to do. Fix the census, not
+the import, if this is ever re-run.
+
+**The three at-risk folders came through intact, checked against a pre-import
+hash snapshot:** the JSONL and all four rendered files are byte-identical.
+`manifest.json` changed on all three, and that is the fix working: each now
+carries `replace_refused` with both byte counts (51,704/751,607 ·
+806,446/810,512 · 8,659,426/8,682,224), which is F6 being honoured rather than
+damage.
+
+## The ticket 26.2 gate after the import
+
+    vault objects                          19,238
+    archive .jsonl files                   20,644
+    vault objects with no archive copy          7   all strict PREFIXES
+    PAYLOADS WHOSE CONTENT IS NOT IN THE ARCHIVE: 0
+
+The 7 are the 4 pre-existing earlier snapshots plus the 3 truncated legacy twins
+this import stored, exactly as predicted before it ran. No content is missing.
+
+## What was blocked, and what unblocked it (kept for the record)
 
 A full import into a THROWAWAY root (7,700 items, 7,671 stored, 0 failed, 9m34s)
 was then verified, and `ccw archive --verify` reported **1 problem**:

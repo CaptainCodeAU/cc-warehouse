@@ -784,6 +784,30 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   Before treating a gate as blocking, check that failing it would actually mean
   what the gate says it means.
 
+- 2026-08-04: **I recommended an option on the strength of a repair I had never
+  run.** The decision table rated "import, then repair the 3" as Effort: Low,
+  citing `ccw render --session`. Testing it after the principal had already
+  chosen: exit 0, nothing written, because `_render_session` is a documented
+  no-op on a SUPERSEDED short and the repair target was superseded by then. The
+  basis of his decision was gone and had to be handed back. This is the standing
+  "verify what you ADVOCATE, not only the alarming finding" rule failing in its
+  exact predicted shape: the alarming finding (the defect) was measured four
+  ways; the quiet claim underneath the recommendation was not measured at all.
+  THE HABIT: before a decision table ships, run the command in every "Can we do
+  it now?" cell.
+- 2026-08-04: **testing the untested claim was also what found the real bug.**
+  Chasing why the repair failed led to `write_session_folder` refusing a smaller
+  payload's JSONL and then rendering the refused bytes over the folder's other
+  five files. The originally-proposed fix (head selection in `catalog`/`build`,
+  the most load-bearing pair in the project) would have left that untouched. The
+  cheap correction was better than the expensive one, and only measuring found it.
+- 2026-08-04: **my census committed the exact error F4 exists to forbid.** The
+  acceptance test ("orphans must reach 0") read 8 after a successful import. All
+  8 were in the archive: 6 filed under their payload's `sessionId` rather than
+  their legacy directory name, 2 under `_not-sessions/`. The census keyed on the
+  DIRECTORY NAME, which is path-as-identity. An instrument that contradicts a
+  design rule the product obeys will report the product as broken.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

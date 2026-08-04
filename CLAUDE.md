@@ -129,20 +129,28 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   back up -> 27 collapse to one folder. 28 is the backlog register (nothing dropped
   silently), including the go-public audit. Read the ticket
   files; they carry the measurements and the blast-radius checks behind each step.
-- **Ticket 25: 25.1-25.4, 25.6 and 25.7 are DONE (2026-08-04). 25.5 (the live import)
-  IS BLOCKED ON A PRINCIPAL RULING and is the ONLY thing standing between the archive
-  and 4,753 sessions that exist nowhere else.** `ccw import --from DIR` exists, is
-  tested (25 oracle tests, 986 suite green) and was proved over the whole real tree in a
-  throwaway root: 7,700 items, 7,671 stored, 0 failed, 9m34s. Verifying that result
-  found 1 folder whose RENDERED files came from a truncated earlier copy while its JSONL
-  held the full one. The mechanism is PRE-EXISTING and not import's: `catalog.add_session`
-  makes every new row the head, so a late-imported OLDER copy becomes what `ccw build`
-  renders. On the live archive this would touch exactly 3 folders out of 19,224, the
-  JSONL stays correct in all 3, and `ccw archive --verify` names them. The fork (repair
-  after, skip provably-contained payloads, or fix head selection) is the principal's.
-  The 7 journals are already in at `<archive>/_not-sessions/journals/`, hash-verified.
-  **Ticket 26.2's gate was also found to be counting the wrong thing** and is corrected
-  in the ticket: a hash miss is not a content miss, and by content the gate reads 0.
+- **TICKET 25 IS COMPLETE (2026-08-04). The only-copies are rescued.** `ccw import
+  --from DIR` shipped, and the live run imported **4,756 payloads with 0 failures** in
+  10m22s: the archive went 14,472 -> 19,226 folders and `ccw archive --verify` reports
+  **19,224 folders, 0 problems**. The 7 workflow journals are in at
+  `<archive>/_not-sessions/journals/`, hash-verified, originals untouched. The legacy
+  tree has 0 files modified (F9). Ticket 26.2's gate reads **0 payloads whose content is
+  not in the archive**; the 7 remaining hash misses are all strict PREFIXES of copies the
+  archive holds in full, which is why that gate had to be reformulated (a hash miss is
+  not a content miss, and as written it could never have reached 0).
+  **The acceptance census reads 8, and all 8 are IN the archive** (6 under their
+  payload's `sessionId` rather than their legacy folder name, 2 under `_not-sessions/`).
+  Genuinely absent: 0. The census keyed on the directory name, which is path-as-identity;
+  F4 is why the product does not. Fix the census, never the import.
+- **Ticket 29 opened and half closed the same day.** Mechanism 2 is DONE (`86394d3`):
+  `archive.write_session_folder` used to refuse a smaller payload's JSONL and then render
+  that same refused payload over the folder's markdown, HTML and manifest. Found by
+  VERIFYING a throwaway import that had reported 7,671 stored / 0 failed / exit 0.
+  **Mechanism 1 is OPEN and unscoped:** `catalog.add_session` still makes the newest
+  INSERT the head, so a late-imported older copy is still what catalog-driven surfaces
+  call current. Harmless for the archive folder now; still wrong for `ccw status`,
+  `ccw render --session` and any future search. Do not touch `catalog.add_session` or
+  `build._heads` without scoping it with the principal first.
 - **v1.1 flag groups: COMPLETE 2026-08-01.** All four slices landed the day they were
   defined: 14 per-variant matrix, 15 chrome + date-locale, 16 truncation, 17 the
   `--since`/`--until` window. Tags slice-14..slice-17. The regression anchor at

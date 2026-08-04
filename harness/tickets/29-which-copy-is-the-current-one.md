@@ -1,9 +1,39 @@
 # Ticket 29: which copy of a session is the current one
 
 Opened 2026-08-04 by principal ruling ("1 now, then 3 as its own ticket"), out of
-ticket 25.5. NOT started. Needs scoping with the principal before any code.
+ticket 25.5.
 
 This ticket is the CLASS. Ticket 25.5 hit one instance of it and stopped.
+
+## STATUS: mechanism (2) is DONE. Mechanism (1) is OPEN and unscoped.
+
+**Mechanism (2) fixed 2026-08-04** (principal ruling the same day, option 5:
+"fix the writer first, then import"), commit `86394d3`. `write_session_folder`
+now renders from the payload ON DISK when it refuses a smaller one, and re-derives
+`hidden` from that payload for the same reason. Nine oracle tests in
+`tests/test_refused_render.py`, four red first for the right reason, one
+reproducing the production error string through `ccw archive --verify`.
+
+The locked test `test_a_smaller_payload_is_refused_and_the_refusal_is_recorded`
+passes UNCHANGED and was not narrowed. See the "Do NOT" section: its letter and
+its decision agree, and the obvious fix (skip the render on refusal) would have
+broken the half of the decision that says "saying so IN THE MANIFEST".
+
+Proved on the real broken folder before the fix was committed, and this is the
+evidence a future session should re-run rather than trust:
+
+    BEFORE  jsonl sha=22b4cad77d46  manifest source_hash=bc2f997969b6  agree=False
+    AFTER   jsonl sha=22b4cad77d46  manifest source_hash=22b4cad77d46  agree=True
+            refusal still recorded: offered=8,659,426  archived=8,682,224
+    throwaway tree: 7,694 folders, 1 problem -> 0 problems
+
+**Mechanism (1) is still live.** A late-imported OLDER copy still becomes the
+catalog head, so `ccw build` still RENDERS from it. That is now harmless for the
+archive folder, because the writer refuses it and keeps the surviving payload's
+rendering, but the catalog still reports the wrong row as current, which
+`ccw status`, `ccw render --session` and any future search surface will believe.
+Scope this with the principal before touching `catalog.add_session` or
+`build._heads`; it is the most load-bearing pair of functions in the project.
 
 ## The defect, in one sentence
 
