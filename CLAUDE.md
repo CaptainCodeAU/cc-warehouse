@@ -131,14 +131,37 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 
 ## OPEN / next (no silent omissions)
 
-- **THE ACTIVE TRACK is tickets 22-27, defined 2026-08-03, in that order.** Capture has
-  never run automatically and stopped even manually working on 2026-07-24; five sets of
-  data exist in exactly one place. 22 protect the unprotected (DONE 2026-08-03) ->
-  23 `ccw doctor` + sweep `--dry-run`/`--quiet` (DONE) -> 24 make capture work (DONE
-  except the operator's `/plugin` update) -> 25 rescue the only copies -> 26 prove then
-  back up -> 27 collapse to one folder. 28 is the backlog register (nothing dropped
-  silently), including the go-public audit. Read the ticket
-  files; they carry the measurements and the blast-radius checks behind each step.
+- **THE ACTIVE TRACK is tickets 22-27, defined 2026-08-03, in that order. 22 through 26
+  are CLOSED; 27 is the only one left and it is UNBLOCKED.** 22 protect the unprotected
+  (DONE 2026-08-03) -> 23 `ccw doctor` + sweep `--dry-run`/`--quiet` (DONE 2026-08-03) ->
+  24 make capture work (DONE 2026-08-04, 24.7 excepted, see below) -> 25 rescue the only
+  copies (DONE 2026-08-04) -> 26 prove then back up (DONE 2026-08-04, including 26.4) ->
+  27 collapse to one folder (NOT STARTED, 27.1-27.8; 27.9 WITHDRAWN AND STAYS WITHDRAWN).
+  28 is the backlog register (nothing dropped silently), including the go-public audit.
+  Read the ticket files; they carry the measurements and the blast-radius checks behind
+  each step.
+- **TICKET 26 IS COMPLETE (2026-08-04) AND THAT IS WHAT UNBLOCKS 27, so read this before
+  touching 27.** 26.1-26.3 closed the integrity and containment gates; **26.4 put the
+  archive on the external drive and VERIFIED it independently of the copy tool**, hashing
+  both sides in full: 116,433 of 116,433 files, both manifests digesting to
+  `ee1996858860...`. The archive exists in two places for the first time, which is the
+  property every destructive step in 27 was waiting on. **A SATISFIED GATE IS NOT CONSENT**
+  (the whole reason 27.9 exists as a withdrawn ticket): 27's two DESTRUCTIVE slices need
+  the principal's word at the moment of running, and 27.9 is not to be done at all.
+  Still owed on 26 and it is the principal's to do by hand: a `BACKUP-PROVENANCE.json`
+  beside the copy, since this machine's sessions cannot write to that volume (macOS TCC
+  refuses even `ls`, re-tested 2026-08-05).
+- **CAPTURE IS LIVE. This list said "capture has never run automatically" and that is now
+  FALSE (corrected 2026-08-05).** The plugin wrapper is repointed at `ccw hook` through an
+  explicit resolved path (never `uv tool run`, which is what broke it), the operator's
+  `/plugin` update has landed, and the evidence is first-hand: `~/.claude/logs/ccw-hook.log`
+  holds successful captures, `ccw doctor` reports "capture is working", and
+  `ccw archive --verify` grew from 19,224 to 19,230 folders with 0 problems, matching the
+  hook's own success count exactly. `com.captaincodeau.ccw-sweep.plist` covers the sessions
+  a hook cannot see (24.5). **STILL OPEN inside 24: 24.7**, the session-start capture
+  freshness signal. There are 0 `ccw` references in `~/.claude/settings.json` and none of
+  the 7 SessionStart commands is a ccw check, so a capture that silently stops would still
+  not announce itself at session start; the CI watch is the shape to copy.
 - **TICKET 25 IS COMPLETE (2026-08-04). The only-copies are rescued.** `ccw import
   --from DIR` shipped, and the live run imported **4,756 payloads with 0 failures** in
   10m22s: the archive went 14,472 -> 19,226 folders and `ccw archive --verify` reports
@@ -156,11 +179,16 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   `archive.write_session_folder` used to refuse a smaller payload's JSONL and then render
   that same refused payload over the folder's markdown, HTML and manifest. Found by
   VERIFYING a throwaway import that had reported 7,671 stored / 0 failed / exit 0.
-  **Mechanism 1 is OPEN and unscoped:** `catalog.add_session` still makes the newest
-  INSERT the head, so a late-imported older copy is still what catalog-driven surfaces
-  call current. Harmless for the archive folder now; still wrong for `ccw status`,
-  `ccw render --session` and any future search. Do not touch `catalog.add_session` or
-  `build._heads` without scoping it with the principal first.
+  **Mechanism 1 is OPEN and unscoped, and now PROVED rather than suspected (2026-08-05).**
+  A probe inserted a NEWER copy then an OLDER copy of one `session_uuid`: `build._heads`
+  returned the OLDER as the single head. `catalog._latest_version` picks the right
+  supersedes TARGET, but a head is "a row no other row supersedes", so the newest INSERT
+  is the head whatever the payload says. Harmless for the archive folder now; still wrong
+  for `ccw status`, `ccw render --session` and any future search. Do not touch
+  `catalog.add_session` or `build._heads` without scoping it with the principal first.
+  **The docstring beside it USED TO CLAIM THE OPPOSITE** ("a late-imported old export
+  therefore never displaces the newer copy"), which would have told the next reader this
+  was closed; corrected in `8435aeb`, docstring bytes only.
 - **v1.1 flag groups: COMPLETE 2026-08-01.** All four slices landed the day they were
   defined: 14 per-variant matrix, 15 chrome + date-locale, 16 truncation, 17 the
   `--since`/`--until` window. Tags slice-14..slice-17. The regression anchor at
@@ -214,9 +242,11 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   archive labels, retiring `objects/`, and reconciling `ccw verify` with ruling (b) which
   says it BECOMES archive integrity (today it is `ccw archive --verify` and plain `verify`
   still checks the vault).
-  **THE REAL REASON NOTHING IS CAPTURED IS THAT NOTHING INVOKES CAPTURE.** `ccw hook` is
-  absent from `~/.claude/settings.json` (0 references) and has never run; all 13,836
-  stored sessions arrived via manual `ccw sweep`. Tickets 22-27 close this.
+  **THE REASON NOTHING WAS CAPTURED WAS THAT NOTHING INVOKED CAPTURE, and ticket 24 FIXED
+  IT (corrected 2026-08-05; this paragraph used to be in the present tense).** `ccw hook`
+  is still absent from `~/.claude/settings.json`, and that is CORRECT rather than a gap:
+  it is registered by the `claude-transcript-exporter` plugin's `hooks.json`, so grepping
+  settings.json alone reports a false 0. The plugin wrapper is the instrument to read.
   **RUN AT SCALE:** `~/cc-warehouse-archive` holds 13,829 folders + 57 `project.json`,
   built in 6 minutes with 0 failures and verified with 0 problems, twice (the second run
   proved idempotence). **NOTHING HAS BEEN SWAPPED**: `~/cc-warehouse-data` is untouched
