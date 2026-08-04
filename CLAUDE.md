@@ -28,6 +28,16 @@ edits to the principal instead.
 - Every file write is tmp-file + `os.replace` (DESIGN R2). No deletes outside the
   projections/shares rebuild module (R4). Sources and stored objects are read-only.
 - Session/transcript data is NEVER deleted or mutated by anything, ever.
+- **NOTHING IS EVER DELETED FROM `~/.claude` (principal, verbatim, 2026-08-04:
+  "I do NOT want you to delete anything from `~/.claude`. You do not have my
+  permission to delete anything from `~/.claude`.").** Not deleted, moved,
+  emptied, pruned, rotated or "cleaned up", by this project or by anything an
+  agent runs on its behalf. Ticket 27.9 used to say "clear `~/.claude`" and is
+  WITHDRAWN; every gate it was waiting on went green on 2026-08-04, so a future
+  session will find the preconditions satisfied and MUST NOT read that as
+  permission. Older notes in this repo say `~/.claude` "is scheduled to be
+  wiped" and use it to justify urgency; that is SUPERSEDED. The archive being a
+  proven second copy is the win, and a second copy is added, never traded.
 - **DO NOT DELETE `~/CODE/my-claude-code-transcripts` (6.5 GB).** It looks like the
   retired exporter's leftovers and was called "dead weight" in-session on 2026-08-03.
   It is not. Measured that day: of its 7,698 session folders, **4,756 are in NEITHER

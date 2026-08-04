@@ -4,6 +4,11 @@ The destructive ticket. Every slice in it is gated on ticket 26 closing green,
 and the two marked DESTRUCTIVE need the principal's explicit word at the moment
 of running, not in advance.
 
+> ⛔ **27.9 IS WITHDRAWN (principal, 2026-08-04). `~/.claude` IS NOT TO BE
+> DELETED FROM, BY ANYTHING, EVER.** Ticket 26 closed green that evening, so
+> every gate 27.9 was waiting on is now satisfied. That is NOT permission. Read
+> 27.9 before acting on any part of this ticket.
+
 ## Why this ticket exists
 
 The end state has ONE folder. Today there are two warehouse trees plus two
@@ -88,11 +93,33 @@ Once the vault is gone, plain `verify` has nothing to check.
 Dead once the vault goes. Ticket 19's instruction stands: do not delete the
 module until the migration has run and been verified.
 
-### 27.9  DESTRUCTIVE: clear `~/.claude`
+### 27.9  WITHDRAWN 2026-08-04 BY THE PRINCIPAL. DO NOT DO THIS.
 
-LAST. Gated on 26.4 being complete and dated. Note that this also destroys the
-originals of everything ticket 25 rescued, so 26.2 must show 0 vault objects
-without an archive copy before this is even discussed.
+**"I do NOT want you to delete anything from `~/.claude`. You do not have my
+permission to delete anything from `~/.claude`."** (principal, verbatim,
+2026-08-04, immediately after 26.4 was verified.)
+
+This slice is CANCELLED, not deferred and not pending a gate. It read "clear
+`~/.claude`" and it is now forbidden. The preconditions it was waiting on all
+went green that same evening (26.4 complete and dated, 26.2 showing 0 payloads
+whose content is absent from the archive), so a future session WILL find every
+gate satisfied and must not read that as permission. The gates are satisfied and
+the instruction is still NO.
+
+Nothing in `~/.claude` is to be deleted, moved, emptied, pruned, rotated or
+"cleaned up" by this project or by anything an agent runs on its behalf. That
+includes `~/.claude/projects`, which is the source tree every capture path reads
+and which F9 already makes read-only.
+
+This does not weaken anything else: the archive being a proven superset is still
+worth having, and `~/.claude` simply keeps its copies. The whole track was
+justified by "five sets of data exist in exactly one place"; that problem is
+solved by ADDING a second place, which is done, not by removing the first.
+
+Earlier records in this repo say `~/.claude` "is scheduled to be wiped" and use
+that to justify urgency. That was true when written and is now SUPERSEDED. The
+supersession is left visible rather than edited away, per the append-not-rewrite
+convention.
 
 ## Oracle tests (write first)
 
