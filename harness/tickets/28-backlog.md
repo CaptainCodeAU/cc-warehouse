@@ -37,6 +37,22 @@ here into their own ticket when they are taken up.
 
 ## Known defects and debts
 
+- **28.20  `ccw build` is O(everything) even when nothing changed.** Measured
+  2026-08-04 on the real corpus: 14,246 sessions, 0 failed, **5:55 the first
+  time and 6:04 the second**, back to back with nothing changed in between. Its
+  docstring promises incremental ("a session whose files already hold the
+  current bytes is left mtime-stable"), and that holds for the WRITE, but every
+  head is still read from the store and fully re-rendered in order to compare.
+  Since ticket 25 wired `build` into the end of `ccw sweep`, this is now the
+  cost of every sweep that captures anything: about six minutes of CPU on the
+  daily job. Tolerable at Background/LowPriorityIO, wasteful, and it will only
+  grow with the corpus. A cheap skip (source hash plus render-options hash
+  recorded in the manifest) would turn it into a stat walk.
+
+  I ESTIMATED THIS WRONG TWICE, which is why it is written down with numbers:
+  first "considerably slower", then "roughly a doubling, about 50 seconds". The
+  real figure is a full re-render per build, unchanged on repeat.
+
 - **28.9  `render_html` costs 74x the payload** and emits about 6.3x its size
   (a 100 MB session projects to a 633 MB page, 7.26 GiB peak). Latent: the
   largest real page is 17.7 MiB. Measured per stage; the earlier attribution to
