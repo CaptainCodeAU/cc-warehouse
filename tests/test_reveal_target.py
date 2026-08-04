@@ -23,12 +23,14 @@ unchanged.
 
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from conftest import (
     basic_session,
     catalog_path,
+    catalog_rows,
     hook_payload,
     run_ccw,
     run_cli,
@@ -54,13 +56,21 @@ UUID_A = "f1111111-2222-3333-4444-555555555551"
 
 
 def configure(env: dict[str, str], tmp_path: Path, *, archive: bool) -> Path | None:
-    """XDG config with the archive on or off, and projections retired either way."""
+    """XDG config mirroring the real warehouse: archive on, projections RETIRED.
+
+    `keep_projections = false` is what makes this fixture reproduce the live
+    defect rather than a milder version of it. With projections still enabled the
+    reveal points at a directory that happens to exist, so the bug looks like a
+    cosmetic disagreement about which folder to show. With them retired - the
+    real configuration since 2026-08-03 - the same code reveals nothing at all.
+    """
     cfg = Path(env["HOME"]) / ".config" / "cc-warehouse"
     cfg.mkdir(parents=True, exist_ok=True)
     lines = [f'root = "{warehouse_root(env)}"', f'archive_timezone = "{ZONE}"']
     archive_root = tmp_path / "archive" if archive else None
     if archive_root is not None:
         lines.append(f'archive_root = "{archive_root}"')
+        lines.append("keep_projections = false")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
     return archive_root
@@ -137,6 +147,44 @@ def test_without_an_archive_the_old_target_is_kept(
     opened = capture_then_refire(ccw_env, monkeypatch)
     assert opened
     assert opened[-1].endswith("projections")
+
+
+def test_the_render_child_reveals_the_archive_folder_too(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE SAME DEFECT ON THE BRANCH THAT ACTUALLY FIRES.
+
+    A normal session end reveals through the detached render child, not through
+    the skip branch, so fixing the skip branch alone fixes the path nobody takes.
+    The child computed its reveal from `build.projection_dir`, and with
+    `keep_projections = false` that directory is never written at all.
+
+    This is the standing "census the class, not the instance" lesson: there are
+    exactly two `notify.open_folder` call sites and both had the same bug.
+    """
+    from cc_warehouse import notify
+
+    archive_root = configure(ccw_env, tmp_path, archive=True)
+    assert archive_root is not None
+    transcript = write_transcript(ccw_env, basic_session(session_id=UUID_A))
+    assert run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript)).code == 0
+    rows = catalog_rows(ccw_env, "SELECT short FROM session LIMIT 1")
+    short = str(cast("tuple[str]", rows[0])[0])
+
+    opened: list[str] = []
+
+    def record_open(_config: object, path: object) -> None:
+        opened.append(str(path))
+
+    monkeypatch.setattr(notify, "open_folder", record_open)
+    monkeypatch.setenv("CCW_OPEN_FOLDER", "1")
+    assert run_cli(["render", "--session", f"s:{short}"]).code == 0
+
+    assert opened, "the render child revealed nothing"
+    revealed = Path(opened[-1])
+    assert revealed.is_dir(), f"revealed a path that does not exist: {revealed}"
+    assert archive_root in revealed.parents
+    assert (revealed / f"{UUID_A}.jsonl").is_file()
 
 
 def test_a_reveal_never_fails_the_capture(

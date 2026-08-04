@@ -848,7 +848,11 @@ def _render_session(session_key: str, rest: Sequence[str]) -> int:
         return 1
     if config.open_folder:
         try:
-            notify.open_folder(config, str(directory))
+            # NOT `directory`, which is the PROJECTIONS dir: with
+            # keep_projections = false it is never written, so the reveal opened
+            # nothing. Same defect as the skip branch and found the same day -
+            # there are exactly two open_folder call sites and both had it.
+            notify.open_folder(config, _reveal_target(config, head.short))
         except Exception:
             pass
     return 0
