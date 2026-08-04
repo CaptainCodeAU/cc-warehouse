@@ -26,6 +26,7 @@ from cc_warehouse import (
     capture,
     catalog,
     doctor,
+    import_tree,
     migrate,
     notify,
     registry,
@@ -54,6 +55,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("render", "(re)build the 4 files for --session s:<key>, or an ad-hoc <path>"),
     ("build", "rebuild projections from the catalog (--rebuild, content flags)"),
     ("migrate", "one-shot import of a legacy archive"),
+    ("import", "adopt a foreign transcript tree (--from DIR)"),
     ("relocate", "move / rename a project across the external world"),
     ("project", "list / show / rename / move / merge projects"),
     ("share", "build a sanitized static site for chosen sessions"),
@@ -1104,6 +1106,97 @@ def _run_migrate(args: Sequence[str]) -> int:
     return 1 if failures else 0
 
 
+def _run_import(args: Sequence[str]) -> int:
+    """`ccw import --from DIR`: adopt a foreign transcript tree (ticket 25.4).
+
+    Everything is validated UP FRONT and refused as a usage error before any work
+    begins: a missing or non-directory `--from` exits 2 having done nothing (R5).
+
+    The end report distinguishes four non-failure outcomes that a single count
+    would hide, because each answers a different question the operator will ask:
+    what was STORED, what was already here, what branch was PRUNED, and what was
+    kept but is not a session. Only `error` items make the exit code non-zero
+    (R10); a pruned quarantine is a correct outcome, not a fault.
+
+    `--dry-run` routes to `import_tree.plan`, which takes no lock and opens the
+    catalog read-only, so a rehearsal on a warehouse that does not exist yet
+    leaves it that way. That property is proved by snapshot in the oracle tests,
+    not asserted here: exit 0 plus output is not evidence that nothing happened.
+    """
+    rest = args[1:]
+    source_raw = _flag_value(rest, "from")
+    if source_raw is None:
+        print("Error: import requires --from DIR", file=sys.stderr)
+        return 2
+    source = Path(source_raw).expanduser()
+    if not source.is_dir():
+        print(f"Error: import source is not a directory: {source}", file=sys.stderr)
+        return 2
+    quiet = "--quiet" in rest
+    config = _load(args)
+
+    if "--dry-run" in rest:
+        planned = import_tree.plan(config, source)
+        failures = planned.failures
+        for outcome in failures:
+            print(f"import failed: {outcome.item}: {outcome.detail or outcome.action}",
+                  file=sys.stderr)
+        if not quiet:
+            for outcome in planned.outcomes:
+                if outcome.action.startswith("would-"):
+                    print(f"  {outcome.action}: {outcome.item}")
+            for outcome in planned.outcomes:
+                if outcome.action == import_tree.SKIPPED_BRANCH_ACTION:
+                    print(f"  pruned: {outcome.item}")
+            would_store = sum(1 for o in planned.outcomes if o.action == "would-store")
+            print(
+                f"import --dry-run: {len(planned.outcomes)} items, "
+                f"{would_store} would be stored, 0 written"
+            )
+        return 1 if failures else 0
+
+    report = import_tree.import_tree(config, source)
+    if any(outcome.action == import_tree.LOCK_HELD_ACTION for outcome in report.outcomes):
+        print("import refused: lock held by a live holder", file=sys.stderr)
+        return 2
+    failures = report.failures
+    for outcome in failures:
+        print(f"import failed: {outcome.item}: {outcome.detail or outcome.action}",
+              file=sys.stderr)
+
+    def _count(action: str) -> int:
+        return sum(1 for outcome in report.outcomes if outcome.action == action)
+
+    stored = _count("stored")
+    pruned = [o for o in report.outcomes if o.action == import_tree.SKIPPED_BRANCH_ACTION]
+    kept = _count(import_tree.NOT_A_SESSION_ACTION)
+    subagents = _count(import_tree.SUBAGENT_ACTION)
+    if not quiet:
+        for outcome in pruned:
+            print(f"  pruned branch: {outcome.item}")
+        for outcome in report.outcomes:
+            if outcome.action == import_tree.NOT_A_SESSION_ACTION:
+                print(f"  not a session, kept: {outcome.item} -> {outcome.detail}")
+            elif outcome.action == import_tree.SUBAGENT_ACTION:
+                print(f"  sub-agent, refused: {outcome.item}")
+        print(
+            f"import: {len(report.outcomes)} items, {stored} stored, "
+            f"{len(pruned)} skipped branch, {kept} kept as not a session, "
+            f"{subagents} sub-agents refused, {len(failures)} failed"
+        )
+    # PROJECT WHAT WE JUST STORED, for the reason sweep does (2026-08-04): a
+    # stored-but-unrendered session inverts the archive-first premise, and
+    # `ccw archive --verify` reported 3,194 problems the one time it happened.
+    if stored:
+        build_report = build.build(config)
+        for outcome in build_report.failures:
+            print(f"import: projection failed: {outcome.item}: {outcome.detail}",
+                  file=sys.stderr)
+        if build_report.failures:
+            return 1
+    return 1 if failures else 0
+
+
 def _run_status() -> int:
     """`ccw status`: recent captures, counts, store size, last errors (DESIGN section 7).
 
@@ -1576,6 +1669,14 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
         ),
         False,
     ),
+    "import": (
+        (
+            ("--from DIR", "walk DIR and adopt every session transcript under it"),
+            ("--dry-run", "name what a real run would import; writes NOTHING"),
+            ("--quiet", "no stdout; failures and the exit code are unaffected"),
+        ),
+        False,
+    ),
     "relocate": (
         (
             ("<repo> --to <new-path>", "move / rename a project across the external world"),
@@ -1748,6 +1849,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_project(args)
     if verb == "migrate":
         return _run_migrate(args)
+    if verb == "import":
+        return _run_import(args)
     if verb == "status":
         return _run_status()
     if verb == "doctor":

@@ -230,8 +230,12 @@ def source_transcripts(walk_root: Path | None = None) -> tuple[list[Path], list[
     return sessions, subagents
 
 
-def _cataloged_hashes_readonly(root: Path) -> frozenset[str]:
+def cataloged_hashes_readonly(root: Path) -> frozenset[str]:
     """Session hashes already captured, WITHOUT creating anything (ticket 23).
+
+    PUBLIC since ticket 25.4: `ccw import --dry-run` needs the same read-only
+    answer, and a second implementation would be a second chance to reintroduce
+    the create-on-read defect this function exists to avoid (R9).
 
     `_cataloged_hashes` goes through `catalog.open_catalog`, whose docstring says
     "creating if needed" - which is right for a real sweep and fatal for a
@@ -284,7 +288,7 @@ def plan(
     """
     walk_root = source if source is not None else _default_source()
     transcripts, outcomes = _walk_source(walk_root, skip_agents=not config.archive_subagents)
-    already = _cataloged_hashes_readonly(config.root)
+    already = cataloged_hashes_readonly(config.root)
     for path in (p for p in transcripts if _in_window(p, window)):
         try:
             digest = store.sha256_hex(path.read_bytes())

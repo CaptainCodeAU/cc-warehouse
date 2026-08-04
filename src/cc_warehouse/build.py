@@ -128,7 +128,13 @@ def projection_dir(
 # Names the flattened archive root cannot give to a project folder. `projections/`
 # is dropped by the archive-first layout, so project folders sit at the warehouse
 # root beside these two (DESIGN 15, 2026-08-02).
-RESERVED_LABELS = frozenset({"locks", "catalog.sqlite", "_orphaned-subagents"})
+#
+# The literals are repeated here rather than imported from `archive`, which
+# imports THIS module; `archive.ORPHAN_LABEL` and `archive.NOT_SESSIONS_LABEL`
+# are the names, and a test asserts each is a member so the two cannot drift.
+RESERVED_LABELS = frozenset(
+    {"locks", "catalog.sqlite", "_orphaned-subagents", "_not-sessions"}
+)
 
 _UNDATED = "undated"
 

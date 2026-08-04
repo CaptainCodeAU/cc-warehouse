@@ -170,6 +170,16 @@ def is_session(data: bytes) -> bool:
 ORPHAN_LABEL = "_orphaned-subagents"
 SUBAGENTS_DIR = "subagents"
 _META = "meta.json"
+
+# Where a payload that is NOT a session lives (ticket 25.6). Reserved in
+# build.RESERVED_LABELS, so walk_folders never yields its children as session
+# folders; an unreserved name here would make `ccw archive --verify` report
+# every file under it as a malformed session.
+NOT_SESSIONS_LABEL = "_not-sessions"
+
+# Non-sessions that arrived through `ccw import`, kept apart from the workflow
+# journals so the tree says where each came from.
+IMPORTED_DIR = "imported"
 _ORPHAN_NOTE = "orphan.json"
 
 
@@ -392,6 +402,32 @@ def write_source(
     if len(data) > jsonl.stat().st_size:
         store.atomic_write(jsonl, data)
     return jsonl
+
+
+def write_not_a_session(archive_root: Path, data: bytes, *, stem: str) -> Path:
+    """Rescue a payload that is NOT a session into the archive's reserved home.
+
+    Ruling (a) as narrowed by ticket 21: a file is a session when it carries a
+    `sessionId` and no `agentId`. The 7 workflow journals carry neither, and
+    neither do the 2 Cursor transcripts measured in the legacy exporter tree on
+    2026-08-04. They exist in exactly one place, so they are KEPT; they are not
+    sessions, so they cannot be given a session folder, whose name is a pure
+    function of a sessionId and a first timestamp that neither of them has. Two
+    such payloads would otherwise both compute `undated_session/session.jsonl`
+    and the larger would silently displace the smaller.
+
+    The filename is CONTENT-ADDRESSED, which buys two properties at once: a
+    re-import writes the same path rather than a second copy, and two unrelated
+    payloads cannot collide. That is identity from BYTES, not from a path (F4);
+    the trailing stem is decoration for whoever reads `ls`, and nothing reads it
+    back.
+    """
+    directory = archive_root / NOT_SESSIONS_LABEL / IMPORTED_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{store.sha256_hex(data)[:12]}_{stem}{_JSONL_SUFFIX}"
+    if not target.exists():
+        store.atomic_write(target, data)
+    return target
 
 
 def write_session_folder(

@@ -39,10 +39,20 @@ _LOCK_HELD_ITEM = "locks/migrate"
 LOCK_HELD_ACTION = "lock-held"
 
 
-def _walk(source_root: Path) -> tuple[list[Path], list[ItemOutcome]]:
+def walk_jsonl(
+    source_root: Path, *, skip_dirs: frozenset[str] = frozenset()
+) -> tuple[list[Path], list[ItemOutcome], list[Path]]:
     """The regular jsonl transcripts under source_root plus a NAMED error item per
     directory that could not be listed and per .jsonl dirent that is not a regular file;
-    both sorted for determinism.
+    both sorted for determinism. Third element: the directories PRUNED by `skip_dirs`.
+
+    PUBLIC since ticket 25.4, when `ccw import` needed exactly this walk. It is already
+    depth-agnostic (measured on the real legacy exporter tree: sessions sit at depths 1
+    through 4, not the uniform two levels the ticket assumed), so import reuses it rather
+    than adding a third copy of the same os.walk (R9). `skip_dirs` prunes `dirnames`
+    IN PLACE rather than filtering afterwards, so a skipped branch is never descended:
+    the real `_DELETE/` quarantine holds 6,719 session directories, and walking them to
+    throw the results away would be the slow way to do nothing.
 
     Walks with os.walk(onerror=...) rather than Path.rglob because rglob SILENTLY swallows
     a PermissionError on a subdirectory, dropping an unreadable source tree with no report
@@ -56,8 +66,9 @@ def _walk(source_root: Path) -> tuple[list[Path], list[ItemOutcome]]:
     because is_file follows links. Unlike the sweep this keeps agent-* transcripts: the
     manifest must account for every archive file (DESIGN section 10)."""
     if not source_root.is_dir():
-        return [], []
+        return [], [], []
     errors: list[ItemOutcome] = []
+    skipped: list[Path] = []
 
     def _on_error(exc: OSError) -> None:
         name = exc.filename if isinstance(exc.filename, str) else str(source_root)
@@ -66,8 +77,12 @@ def _walk(source_root: Path) -> tuple[list[Path], list[ItemOutcome]]:
         )
 
     found: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(source_root, onerror=_on_error):
+    for dirpath, dirnames, filenames in os.walk(source_root, onerror=_on_error):
         base = Path(dirpath)
+        if skip_dirs:
+            pruned = [name for name in dirnames if name in skip_dirs]
+            skipped.extend(base / name for name in pruned)
+            dirnames[:] = [name for name in dirnames if name not in skip_dirs]
         for filename in filenames:
             if not filename.endswith(_JSONL_SUFFIX):
                 continue
@@ -79,7 +94,7 @@ def _walk(source_root: Path) -> tuple[list[Path], list[ItemOutcome]]:
                 errors.append(ItemOutcome(str(path), "error", "not a regular file"))
                 continue
             found.append(path)
-    return sorted(found), sorted(errors, key=lambda outcome: outcome.item)
+    return sorted(found), sorted(errors, key=lambda outcome: outcome.item), sorted(skipped)
 
 
 def migrate(config: Config, source_root: Path) -> BatchReport:
@@ -101,7 +116,7 @@ def migrate(config: Config, source_root: Path) -> BatchReport:
             (ItemOutcome(_LOCK_HELD_ITEM, LOCK_HELD_ACTION, "migrate lock held by a live holder"),)
         )
     try:
-        paths, walk_errors = _walk(source_root)
+        paths, walk_errors, _skipped = walk_jsonl(source_root)
         outcomes: list[ItemOutcome] = list(walk_errors)
         entries: list[dict[str, object]] = [
             {"source": outcome.item, "hash": "", "outcome": outcome.action}
