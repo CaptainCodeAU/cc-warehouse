@@ -226,6 +226,39 @@ def _archive_source(
         if not config.keep_objects:
             raise
         return
+    _archive_project_file(config, conn, project_id)
+
+
+def _archive_project_file(
+    config: Config, conn: sqlite3.Connection, project_id: int
+) -> None:
+    """Refresh this project's `project.json` beside its folder (ticket 28.21).
+
+    WHY IT LIVES HERE. `archive.write_project_files` had exactly one caller, the
+    `ccw archive` verb, so every project folder created by capture or import
+    afterwards had no sidecar. Measured on the real archive 2026-08-05: a rebuild
+    recovered 114 of 4,913 aliases, 2.3%. The label survives regardless because
+    it is the folder name; `project_alias` does not, and it is what stops a
+    renamed project splitting in two on the next capture. Writing it on the path
+    that CREATES the folder is the fix; re-running the bulk verb is a mop.
+
+    BEST EFFORT, DELIBERATELY, AND UNLIKE THE PAYLOAD WRITE ABOVE. That one
+    raises when `keep_objects` is false, because then nothing else holds the
+    session. A sidecar is an INDEX AID: the session is safe without it and the
+    next bulk run or the next capture rewrites it, so failing a capture that has
+    already stored its payload would be the wrong trade (DESIGN 12). Separate
+    try, never re-raised.
+    """
+    if config.archive_root is None:
+        return
+    try:
+        from cc_warehouse import archive
+
+        record = archive.project_record(conn, project_id)
+        if record is not None:
+            archive.write_project_file(config.archive_root, record.label, record.aliases)
+    except Exception:  # noqa: BLE001 - see the docstring: never costs a capture
+        return
 
 
 def _archive_subagents_of(

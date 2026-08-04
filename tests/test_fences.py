@@ -51,6 +51,13 @@ GUARANTEE_PROOFS: dict[tuple[str, str], str] = {
     # one name (ticket 21b).
     ("build.py", "identical"): "test_the_zone_comes_from_config_not_the_machine",
     ("archive.py", "never delete"): "test_the_archive_module_has_no_deletion_primitive_at_all",
+    # `sidecar_bytes` claims an unchanged project produces BYTE-IDENTICAL output.
+    # That is not a nicety: it is what `write_project_file`'s skip rests on, and
+    # the skip is what stops a 4,756-payload import rewriting one sidecar
+    # thousands of times (ticket 28.21). The proof is behavioural rather than a
+    # string comparison: capture twice into one project and assert the sidecar's
+    # mtime did not move, which can only hold if the second render was identical.
+    ("archive.py", "identical"): "test_an_unchanged_sidecar_is_not_rewritten",
 }
 
 

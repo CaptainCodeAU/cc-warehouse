@@ -25,7 +25,7 @@ permanently.
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -684,22 +684,71 @@ def write_project_files(warehouse_root: Path, archive_root: Path) -> int:
     for row in rows:
         grouped.setdefault(str(row[0]), []).append(Alias(str(row[1]), str(row[2])))
 
-    written = 0
-    for label, aliases in grouped.items():
-        directory = archive_root / (build.component(label) or "_unlabeled")
-        if not directory.is_dir():
-            # A project with no surviving session has no folder to describe.
-            continue
-        payload = {
-            "label": label,
-            "aliases": [{"path": a.path, "kind": a.kind} for a in aliases],
-        }
-        store.atomic_write(
-            directory / PROJECT_JSON,
-            json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n",
-        )
-        written += 1
-    return written
+    return sum(
+        1
+        for label, aliases in grouped.items()
+        if write_project_file(archive_root, label, tuple(aliases))
+    )
+
+
+def sidecar_bytes(label: str, aliases: Sequence[Alias]) -> bytes:
+    """The one renderer of a `project.json` body (R9/F8).
+
+    Two writers now call it, the bulk verb and the capture path, and a second
+    copy of this dict would drift the first time either was touched. Sorted and
+    indented so the file is diffable and so an unchanged project produces
+    byte-identical output, which is what makes the skip in `write_project_file`
+    possible at all.
+    """
+    ordered = sorted(aliases, key=lambda a: (a.kind, a.path))
+    payload = {
+        "label": label,
+        "aliases": [{"path": a.path, "kind": a.kind} for a in ordered],
+    }
+    return json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+
+def write_project_file(archive_root: Path, label: str, aliases: Sequence[Alias]) -> bool:
+    """One project's sidecar. Returns whether it actually wrote.
+
+    UNCHANGED CONTENT IS NOT REWRITTEN, and that is load bearing rather than
+    tidy: the capture path calls this on EVERY capture (ticket 28.21), so a
+    4,756-payload import would otherwise rewrite one project's sidecar thousands
+    of times and churn its mtime on every one. The skip is on CONTENT, never on
+    existence, because a project that has just learned a new alias must have it
+    recorded.
+    """
+    directory = archive_root / (build.component(label) or "_unlabeled")
+    if not directory.is_dir():
+        # A project with no surviving session has no folder to describe.
+        return False
+    target = directory / PROJECT_JSON
+    body = sidecar_bytes(label, aliases)
+    try:
+        if target.is_file() and target.read_bytes() == body:
+            return False
+    except OSError:
+        pass  # unreadable: fall through and rewrite it
+    store.atomic_write(target, body)
+    return True
+
+
+def project_record(conn: sqlite3.Connection, project_id: int) -> ProjectRecord | None:
+    """One project's label and aliases, for the capture path's single-project
+    write. The bulk verb reads every project in two queries; doing that on every
+    capture would be O(all projects) per session."""
+    row = conn.execute("SELECT label FROM project WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        return None
+    label = str(cast("tuple[object, ...]", row)[0])
+    aliases = tuple(
+        Alias(str(r[0]), str(r[1]))
+        for r in conn.execute(
+            "SELECT path, kind FROM project_alias WHERE project_id = ? ORDER BY kind, path",
+            (project_id,),
+        ).fetchall()
+    )
+    return ProjectRecord(label, aliases)
 
 
 def read_projects(archive_root: Path) -> list[ProjectRecord]:
