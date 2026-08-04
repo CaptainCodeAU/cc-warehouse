@@ -38,6 +38,74 @@ ORDERING IS LOAD BEARING (ticket 21 finding 4): sessions first, then sub-agents,
 because a sub-agent nests inside its parent's folder and a single pass in
 filename order files most of them as orphans.
 
+## 25.1 - 25.3 DONE 2026-08-04, by the scheduled sweep, unattended
+
+The launchd agent installed for 24.5 ran on load and did the rescue: archive
+13,829 -> 14,471 session folders, sub-agent folders 0 -> 1,411, vault 13,836 ->
+14,482 objects, uncaptured 636 -> 2, overdue 321 -> 0. Exit 0, empty log.
+
+Sub-agents reconcile EXACTLY: 1,411 source agent IDs, 1,411 archived, 0 missing.
+An earlier "1,420" was a FILE count, not distinct IDs.
+
+**IT ALSO EXPOSED A DEFECT, caught by verify rather than by reasoning.**
+`ccw archive --verify` then reported 3,194 problems: 721 folders held a real
+conversation and NONE of the five generated files. `sweep.py` never rendered,
+because the hook renders by spawning a detached child and only `_run_hook` ever
+called it. Fixed in b6aa3f4 (sweep now runs `build.build` when it stores
+anything); archive repaired and re-verified at 14,471 folders, 0 problems. Cost
+recorded as 28.20: build is O(everything), about 6 minutes regardless of what
+changed.
+
+## MEASURED 2026-08-04, before designing 25.4 (none of this was known when this
+## ticket was written)
+
+**THE TREE IS NOT THE UNIFORM `<project>/<uuid>/` THIS TICKET ASSUMED.**
+
+    session dirs by depth:  depth 1: 2 · depth 2: 7,697 · depth 3: 6,420 · depth 4: 299
+    top-level branches:     71, including `_DELETE/` and `_UNKNOWN`
+    `_DELETE/` holds:       6,719 session dirs (drift-dedupe, drift-empty-projects,
+                            duplicates, empty) - the PRINCIPAL'S OWN QUARANTINE
+
+**ZERO of the 4,754 exist only inside `_DELETE/`.** Checked explicitly, because
+importing someone's quarantine back into the archive would be the opposite of
+help. The quarantine holds duplicates of things that also live outside it, so
+skipping that branch loses nothing.
+
+**TWO WORRIES MEASURED AWAY, both of which would have shaped the design wrongly:**
+
+- THE WALK. `migrate._walk` (migrate.py:42) is already `os.walk`-based and fully
+  depth-agnostic, selecting on `*.jsonl` alone, so it traverses this tree today
+  and ignores the exporter's `index.html` / `page-NNN.html` by suffix. No new
+  walker is needed.
+- PROJECT LABELS. `capture._resolve` (capture.py:101) resolves payload cwd ->
+  first jsonl cwd -> transcript PARENT DIRECTORY NAME -> `_unresolved`. On this
+  layout the third rung would key the project on the UUID directory, which would
+  be wrong. Measured: 250 of 250 sampled payloads carry a `cwd` (seed 11; 20
+  distinct trailing names, led by `tax-data-sprint` x75). Rung one fires, the bad
+  rung is never reached, and labels come out identical to a normal capture.
+
+**IMPORT RISK IS LOW, not high as this ticket claimed.** 250 payloads sampled at
+random (seed 7) from the 4,754: 250 parsed cleanly, 250 carry a `sessionId`.
+Months in the sample: 2026-02 x7, 03 x15, 04 x199, 05 x29. Ticket 18's parser
+hardening covers this era. The ticket called this "the largest unknown on this
+track"; it is not.
+
+## PRINCIPAL DECISIONS, 2026-08-04
+
+(a) **A NEW `ccw import` verb**, not an extension of `migrate`. DESIGN 7 already
+    lists `ccw import` under v1.1 and config.py:483,510 reserves an
+    `[import] inbox` key, so the verb is anticipated. Extending `migrate` was
+    rejected: it would become two tools wearing one name.
+
+(b) **The external-drive backup is an EXACT BYTE COPY**, not a second `ccw archive --to`
+    run. A rebuild proves reproducibility but writes different bytes for the
+    generated files, which makes "is the backup the same?" hard to answer.
+    Verify the copy independently of the copy tool's exit code, and date it.
+
+(c) **`~/CODE/my-claude-code-transcripts` is KEPT until the backup is done and
+    verified.** Removing it is then the principal's call, made with a proven
+    backup in hand. Do not weaken this because an import "looked fine".
+
 ### 25.4  Build `ccw import --from <tree>`
 
 NEW TOOLING. There is no route in for the legacy exporter layout:
