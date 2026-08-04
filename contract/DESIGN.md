@@ -238,6 +238,7 @@ emit plus the hardening rules from SPEC section 7.
 | `ccw render` | (re)build the 4 files for `--session s:<hash>`; or render an ad-hoc `<path>` outside the store to `--out` (default: a temp dir, path printed), never under `projections/`, never touching the catalog; honors the content flags |
 | `ccw build` | rebuild projections from the catalog; incremental by default, `--rebuild` for full, `--include-hidden` for hidden sessions; honors the content flags |
 | `ccw migrate` | one-shot import of the legacy archive (section 10) |
+| `ccw import` | adopt a FOREIGN transcript tree at `--from DIR`: depth-agnostic walk, `_DELETE` and any other named branch pruned and REPORTED, every session routed through the one capture routine (R9), a sub-agent payload refused by name rather than filed under its parent, a payload with no `sessionId` kept under the reserved `_not-sessions/` home; `--dry-run` rehearses and writes NOTHING, `--quiet` drops per-item lines but never a failure (section 15, 2026-08-04, ticket 25.4) |
 | `ccw relocate` | move/rename a project across the external world (section 11) |
 | `ccw project` | `list` / `show` / `rename` (label) / `move OLD NEW` (alias) / `merge A B` |
 | `ccw share` | build a sanitized static site for chosen sessions (section 9); sessions chosen by hashes OR a `--since`/`--until` window, never both |
@@ -246,7 +247,7 @@ emit plus the hardening rules from SPEC section 7.
 | `ccw verify` | re-hash objects against their names; catalog/object cross-check |
 | `ccw archive` | build the archive-first tree at `--to DIR`, or `--verify` an existing one; `--zone NAME` overrides `archive_timezone` (section 15, 2026-08-02, ticket 19). `--to` is required and refuses the warehouse itself; `--verify` writes nothing; honors the content flags |
 | `ccw version` | version (also `-v`) |
-| v1.1: `ccw search`, `ccw import`; v1.2: `ccw mcp` | per BRAINSTORM cut |
+| v1.1: `ccw search`; v1.2: `ccw mcp` | per BRAINSTORM cut (`ccw import` landed early, 2026-08-04, ticket 25.4: the data it rescues exists in one place and `~/.claude` is scheduled to go) |
 
 Errors print `Error: <msg>` to stderr, exit 1 (SPEC's CLI contract). No default-verb
 dispatch; bare `ccw` prints short status + usage; an unknown verb is a usage error;
@@ -454,6 +455,14 @@ is logged, never raised (capture must survive notification infrastructure).
   it GENERATED (the markdown, HTML and manifest); the session JSONL is never deletable
   by it, and neither is a folder that still contains one. This is the load-bearing rule
   of the whole redesign: without it, maintenance code can destroy the only copy.
+  RESERVED LABELS (amended 2026-08-04, ticket 25.6): a top-level name in
+  `build.RESERVED_LABELS` is NOT a project label, and `archive.walk_folders` never
+  yields its children as session folders. The set is `locks`, `catalog.sqlite`,
+  `_orphaned-subagents` and `_not-sessions`. `_not-sessions/` is the home for payloads
+  that ruling (a) says are not sessions and that therefore cannot be given a session
+  folder: the 7 workflow journals, and anything `ccw import` rescues without a
+  `sessionId`. An unreserved folder here is not cosmetic: the walk would yield its
+  children as sessions and `ccw archive --verify` would report every one as malformed.
   External-world writers, closed list: `relocate` apply (after backup, section 11),
   `migrate --retire` (one rename, section 10), lock release (section 13).
 - R5 Errors default to the conservative branch: report and leave alone (F7).
@@ -955,6 +964,39 @@ sweep after this processes about 1,857 payloads into a tree that is about to bec
 the only copy, and the same 2026-08-01 incident showed a sweep can run when nobody
 intended it to. `--quiet` is a precondition for scheduling it, since a chatty cron job
 is one whose output nobody reads.
+
+**2026-08-04, ticket 25.4: `ccw import` is a NEW VERB, not an extension of `migrate`
+(principal).** Section 7 already listed `ccw import` under the v1.1 cut and
+`config.py` already reserved an `[import] inbox` key, so the verb was anticipated
+rather than invented. Extending `migrate` was the alternative and was rejected: it is
+"one-shot import of THE legacy archive" and would have become two tools wearing one
+name. The verb is pulled FORWARD out of v1.1 because what it rescues (4,754 sessions,
+392.2 MiB, dated 2026-02-14 to 2026-07-03) exists in neither `~/.claude` nor the
+archive, and `~/.claude` is scheduled to be wiped.
+
+WHAT THE DESIGN OWES TO MEASUREMENT rather than to reasoning, censused over ALL 4,754
+payloads on 2026-08-04 (not a sample, which is the point):
+
+- 0 are sub-agent transcripts. The hazard was real and is the reason import REFUSES a
+  sub-agent by name instead of routing it: `capture` archives unconditionally with no
+  `is_subagent` guard, so the session path would file one under its PARENT'S uuid and
+  let replace-if-larger overwrite the parent's transcript. `migrate` has no such guard.
+  With zero to rescue, a refusal that reports beats a rescue route nothing exercises.
+- 0 fail to parse. The ticket called this "the largest unknown on the track"; it is not.
+- 0 uuids exist ONLY inside the `_DELETE/` quarantine, so pruning that branch loses
+  nothing. The prune is REPORTED, because a silent skip and a silent failure look the
+  same from outside.
+- exactly 2 carry no `sessionId`, and both are CURSOR transcripts (`{"role":..}` with
+  no `type` key, no timestamp). Ruling (a) already decides them: not sessions, so the
+  reserved home, not a session folder. Given a session folder they would BOTH compute
+  `undated_session/session.jsonl` and the larger would silently displace the smaller.
+
+The walk is `migrate.walk_jsonl`, promoted from private and given a `skip_dirs`
+argument that prunes `dirnames` in place; the read-only catalog probe is
+`sweep.cataloged_hashes_readonly`, promoted for the same reason. Neither is
+reimplemented (R9). The real tree is NOT the uniform `<project>/<uuid>/` the ticket
+assumed (sessions sit at depths 1 through 4 across 71 branches), and the existing walk
+was already depth-agnostic, so no new walker was needed.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
