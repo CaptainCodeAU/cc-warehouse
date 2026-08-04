@@ -124,10 +124,25 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 - **THE ACTIVE TRACK is tickets 22-27, defined 2026-08-03, in that order.** Capture has
   never run automatically and stopped even manually working on 2026-07-24; five sets of
   data exist in exactly one place. 22 protect the unprotected (DONE 2026-08-03) ->
-  23 `ccw doctor` + sweep `--dry-run`/`--quiet` -> 24 make capture work -> 25 rescue the
-  only copies -> 26 prove then back up -> 27 collapse to one folder. 28 is the backlog
-  register (nothing dropped silently), including the go-public audit. Read the ticket
+  23 `ccw doctor` + sweep `--dry-run`/`--quiet` (DONE) -> 24 make capture work (DONE
+  except the operator's `/plugin` update) -> 25 rescue the only copies -> 26 prove then
+  back up -> 27 collapse to one folder. 28 is the backlog register (nothing dropped
+  silently), including the go-public audit. Read the ticket
   files; they carry the measurements and the blast-radius checks behind each step.
+- **Ticket 25: 25.1-25.4, 25.6 and 25.7 are DONE (2026-08-04). 25.5 (the live import)
+  IS BLOCKED ON A PRINCIPAL RULING and is the ONLY thing standing between the archive
+  and 4,753 sessions that exist nowhere else.** `ccw import --from DIR` exists, is
+  tested (25 oracle tests, 986 suite green) and was proved over the whole real tree in a
+  throwaway root: 7,700 items, 7,671 stored, 0 failed, 9m34s. Verifying that result
+  found 1 folder whose RENDERED files came from a truncated earlier copy while its JSONL
+  held the full one. The mechanism is PRE-EXISTING and not import's: `catalog.add_session`
+  makes every new row the head, so a late-imported OLDER copy becomes what `ccw build`
+  renders. On the live archive this would touch exactly 3 folders out of 19,224, the
+  JSONL stays correct in all 3, and `ccw archive --verify` names them. The fork (repair
+  after, skip provably-contained payloads, or fix head selection) is the principal's.
+  The 7 journals are already in at `<archive>/_not-sessions/journals/`, hash-verified.
+  **Ticket 26.2's gate was also found to be counting the wrong thing** and is corrected
+  in the ticket: a hash miss is not a content miss, and by content the gate reads 0.
 - **v1.1 flag groups: COMPLETE 2026-08-01.** All four slices landed the day they were
   defined: 14 per-variant matrix, 15 chrome + date-locale, 16 truncation, 17 the
   `--since`/`--until` window. Tags slice-14..slice-17. The regression anchor at

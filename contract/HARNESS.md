@@ -751,6 +751,39 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   includes the unaffected is a number that answers nothing, and it was load-bearing in a
   decision. Measure the DISTRIBUTION before quoting a rate.
 
+- 2026-08-04 (ticket 25.4/25.6/25.7, `ccw import`): **five oracle tests passed
+  before a line of implementation existed, and every one of them passed for the
+  WRONG reason.** Two compared two empty snapshots. One asserted `"import" in
+  help` and matched the word inside migrate's own blurb. Two asserted "exit 2 and
+  nothing written", which is also what an UNKNOWN VERB does. This is 19f's lesson
+  ("a round trip over an empty set passes for the wrong reason") arriving in four
+  new disguises at once. THE HABIT THAT CATCHES IT: after writing oracle tests,
+  run them and read the PASS list, not just the fail count. A pre-implementation
+  green is a defect in the test until proved otherwise. Tightened: assert on the
+  verb COLUMN, assert the error names the FLAG, and assert work happened before
+  asserting nothing else changed.
+- 2026-08-04: **a probe of mine was wrong before the product was.** Investigating
+  a 3-item discrepancy, I compared archive payloads against legacy copies found
+  with a walk that INCLUDED `_DELETE/`, which the import prunes. It reported
+  "byte identical" for a pair the import had correctly called different, and the
+  product looked wrong for about a minute. The instrument has to apply the same
+  exclusions as the thing it is measuring, or it is measuring a different
+  question. Ties the standing "explain only what you measured" rule: measuring
+  the wrong thing is its own failure mode, distinct from not measuring.
+- 2026-08-04: **the throwaway run paid for itself, and only because it was
+  verified rather than merely completed.** A full import into a throwaway root
+  returned 7,671 stored, 0 failed, exit 0. Every signal said success.
+  `ccw archive --verify` over the result then found 1 folder whose rendered files
+  came from a truncated earlier copy of the session while its JSONL held the full
+  one. Exit 0 on the operation is not evidence about the artifact; run the
+  independent checker over the OUTPUT, every time.
+- 2026-08-04: **a gate can be unreachable because it counts the wrong thing.**
+  Ticket 26.2's "vault objects with no archive copy must reach 0" reads 11 today
+  and cannot reach 0: 4 are earlier snapshots whose bytes are a strict PREFIX of
+  the archived copy, so nothing is missing. A hash miss is not a content miss.
+  Before treating a gate as blocking, check that failing it would actually mean
+  what the gate says it means.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)

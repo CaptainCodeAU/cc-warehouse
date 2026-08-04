@@ -186,3 +186,86 @@ amended, R9, R10, R12, F4 (path is not identity), F6, F9.
 
 Standard loop. Run on real data before believing it works, in a throwaway
 target root first, never into the live archive.
+
+---
+
+## 25.4 DONE 2026-08-04. 25.6 DONE. 25.7 DONE. 25.5 IS BLOCKED, see below.
+
+**25.4 `ccw import --from DIR`** landed as `src/cc_warehouse/import_tree.py`
+(`import` is a keyword) with 25 oracle tests. Gates: ruff clean, pyright strict
+0 errors, 986 tests. The walk is `migrate.walk_jsonl`, promoted from private and
+given a `skip_dirs` argument that prunes `dirnames` in place; the read-only
+catalog probe is `sweep.cataloged_hashes_readonly`, promoted for the same reason.
+No third walker was written.
+
+**A FULL CENSUS REPLACED THE 250-PAYLOAD SAMPLE, and it changed two answers.**
+Over all 4,754 orphans: 0 sub-agents, 0 parse failures, 0 uuids unique to the
+quarantine, 2 with no `sessionId`. The 2 are CURSOR transcripts (`{"role":..}`,
+no `type` key, no timestamp). Ruling (a) decides them: not sessions, so the
+reserved home. Given a session folder they would BOTH compute
+`undated_session/session.jsonl` and the larger would displace the smaller.
+
+**The sub-agent guard exists because of what capture does NOT do.** `capture`
+archives unconditionally with no `is_subagent` check, and `migrate` hands it
+every file, so a sub-agent in a legacy tree would be filed under its PARENT'S
+uuid and replace-if-larger could overwrite the parent. Zero exist here, so import
+REFUSES and reports rather than growing an unexercised rescue route.
+
+**25.6** `_not-sessions` is in `build.RESERVED_LABELS`; `archive.walk_folders`
+skips it, `build.archive_session_dir` neutralises it as a project label, and
+`ccw archive --verify` over the real tree reports 14,471 folders, 0 problems with
+the folder present.
+
+**25.7** 8 of 8 files (7 journals + `PROVENANCE.json`) copied to
+`<archive>/_not-sessions/journals/` through `store.atomic_write` (R2), never a
+shell `cp`. Every sha256 re-verified on arrival; originals byte-identical after.
+
+## 25.5 IS BLOCKED ON A PRINCIPAL RULING. The throwaway run earned its keep.
+
+A full import into a THROWAWAY root (7,700 items, 7,671 stored, 0 failed, 9m34s)
+was then verified, and `ccw archive --verify` reported **1 problem**:
+
+    CaptainCodeAU-cc-print-shop/20260616-165951+1000_c85f1e1b-...:
+    JSONL does not match manifest source_hash
+
+Measured, not inferred. That session has TWO copies in the legacy tree, one a
+strict byte PREFIX of the other. The folder's JSONL is the FULL 8,682,224 B copy
+(replace-if-larger did its job); the manifest and all four rendered files were
+generated from the TRUNCATED 8,659,426 B copy.
+
+**THE MECHANISM IS PRE-EXISTING AND HAS NOTHING TO DO WITH IMPORT.**
+`catalog.add_session` points every new row's `supersedes` at the previous latest,
+so the NEW row is never superseded and `build._heads` ("a row no other row
+supersedes") therefore makes it the head. A late-imported OLDER copy becomes the
+head and is what `build` renders. `catalog._latest_version`'s docstring promises
+"a late-imported old export therefore never displaces the newer copy"; that holds
+for the supersedes POINTER and not for head selection, which is what renders.
+
+**BLAST RADIUS ON THE LIVE ARCHIVE: exactly 3 folders.** Three uuids already in
+the archive have a truncated twin outside the quarantine
+(`17e372b3`, `80721130`, `c85f1e1b`). Each twin would be stored, become the head,
+and re-render its folder from the truncated payload. The JSONL - the
+irreplaceable half - stays correct in all three, and `ccw archive --verify` names
+every affected folder, so it is detectable and repairable. Nothing is lost either
+way; what degrades is the READABLE half of 3 sessions out of 19,224.
+
+The remaining 4,753 orphans are unaffected: each has exactly one would-store
+payload and no archived twin.
+
+**Options put to the principal (see the session record). Do not pick one here.**
+
+## Ticket 26.2's gate was measuring the wrong thing (corrected 2026-08-04)
+
+The gate as written is "vault objects with no archive copy must reach 0". The
+naive test reads **11**, not the 7 this ticket recorded, and can never reach 0:
+4 of the 11 are earlier snapshots whose bytes are a strict PREFIX of the archived
+copy, so no content is missing. Reformulated to CONTENT containment: 7 before
+25.7 (exactly the journals), **0 after**. The gate is met.
+
+## Also found, not fixed (ticket 28 material)
+
+`--config PATH` and `--no-config` are accepted by every verb but IGNORED by the
+four whose handlers take no arguments: `hook`, `status`, `doctor`, `verify`.
+`ccw doctor --config <other>` prints the LIVE roots while appearing to honour the
+flag, which is how a rehearsal gets mistaken for isolated. Isolation for the
+throwaway run was proved directly instead.
