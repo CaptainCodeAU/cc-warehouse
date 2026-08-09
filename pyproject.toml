@@ -8,6 +8,32 @@ license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 authors = [{ name = "CaptainCodeAU" }]
 dependencies = []
+keywords = ["claude", "claude-code", "transcripts", "archive", "markdown", "sessions"]
+# NO "License ::" classifier here, deliberately. PEP 639 says a distribution
+# carrying `License-Expression` must not also carry one, and PyPI rejects the
+# combination. The SPDX id in `license` above is the whole license statement.
+# PolyForm-Noncommercial-1.0.0 is a valid SPDX identifier but is NOT OSI
+# approved, so "License :: OSI Approved :: ..." would be false as well as
+# duplicated. The version list mirrors requires-python; the suite is currently
+# exercised on 3.14 only.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/CaptainCodeAU/cc-warehouse"
+Repository = "https://github.com/CaptainCodeAU/cc-warehouse"
+Changelog = "https://github.com/CaptainCodeAU/cc-warehouse/blob/master/CHANGELOG.md"
 
 [project.scripts]
 ccw = "cc_warehouse.cli:main"
