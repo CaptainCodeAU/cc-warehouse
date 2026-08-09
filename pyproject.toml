@@ -35,6 +35,17 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cc_warehouse"]
 
+# The sdist ships everything git does not ignore, and "git" there means THIS
+# file's .gitignore - hatchling never reads a global one. MEMORY/ was ignored
+# only by the operator's ~/.gitignore_global, so four PRD files rode into
+# `uv build` output, two of them naming the account the repo is scrubbed of.
+# Measured 2026-08-09: the repo had 0 occurrences of the username and the sdist
+# had 2. A build artifact is a separate publication surface from the repo, and
+# a machine-local ignore file cannot protect it. Belt and braces: MEMORY/ is now
+# in .gitignore too, but this list is what the BUILD honours.
+[tool.hatch.build.targets.sdist]
+exclude = ["MEMORY", "Plans", "temp", ".claude", ".github"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
