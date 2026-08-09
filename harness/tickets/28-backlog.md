@@ -183,9 +183,13 @@ tree is clean (0 hits for the username, no personal paths, no emails, no
 secret-shaped strings, no data files tracked, 127 files).
 
 - **28.16  The root commit carries a personal email.** `063a499` "Initial
-  Commit", `<redacted>`, an ancestor of master; the other 156
-  commits use the noreply identity. A 2026-07-20 principal ruling left it,
-  reasoning that "the address is already public in the remote's records so a
+  Commit", a personal address rather than the GitHub noreply, in BOTH the author
+  and committer fields, an ancestor of master; every other commit uses the
+  noreply identity. THE ADDRESS IS NOT REPEATED HERE ON PURPOSE (redacted
+  2026-08-09): this file is tracked, so writing it out published to the tree the
+  exact string the ticket exists to keep out of it. Read it off the commit with
+  `git log --format='%ae' 063a499` when the fix is run. A 2026-07-20 principal
+  ruling left it, reasoning that "the address is already public in the remote's records so a
   rewrite cannot un-publish it". THAT PREMISE IS NOW FALSE: the repo returns
   HTTP 404 unauthenticated, so it is not public and going public would expose
   the address for the first time. The ruling deserves re-taking on the corrected

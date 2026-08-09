@@ -47,7 +47,7 @@ than absorbed.
 
 ### 26.4  Back up the archive to the external drive
 
-    <external>   460Gi total, 331Gi free, mounted   (checked 2026-08-03)
+    <external volume>   460Gi total, 331Gi free, mounted   (checked 2026-08-03)
 
 REQUIREMENTS: the copy is verified after it lands, not assumed; the verification
 is independent of the copy tool's own exit code; and the result is recorded with
