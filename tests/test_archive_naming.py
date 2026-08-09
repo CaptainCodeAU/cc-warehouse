@@ -20,7 +20,13 @@ import pytest
 
 from cc_warehouse.build import RESERVED_LABELS, archive_dir, archive_folder_name
 
-# A real session UUID shape. Generic on purpose: no personal data in fixtures.
+# A real session UUID SHAPE. Generic on purpose: no personal data in fixtures.
+# The value here used to be a genuine session id from the author's own corpus,
+# which is exactly what the line above promised it was not (found and swapped
+# 2026-08-09, pre-publication audit). This one was generated at random and
+# checked against both `~/.claude/projects` and the archive before use: 0 hits.
+# The constant is threaded through every assertion below via f-strings, so the
+# value is arbitrary and only its shape is load-bearing.
 UUID = "006b0875-8f20-4ae1-9d62-ac38ab4af8bf"
 
 # Melbourne moves. These two instants are the reason the offset is carried in the
