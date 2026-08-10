@@ -54,6 +54,35 @@ dev = ["pytest>=8", "pyright>=1.1", "ruff>=0.5"]
 [tool.uv-tool]
 install-mode = "frozen"
 
+# Pinned resolution cutoff. uv stamps this into uv.lock as `[options] exclude-newer`,
+# so an unpinned project inherits whatever cutoff the ambient environment happens to
+# carry and the committed lock churns whenever that value moves.
+#
+# THIS LIVES HERE RATHER THAN IN .envrc BECAUSE uv READS IT ITSELF. A .envrc pin needs
+# direnv, and direnv binds to the shell prompt, so it never fires for cron, CI, git
+# hooks or an agent's tool shell: exactly the contexts where nobody is watching. A
+# pyproject pin has no such hole and needs no machine setup to work on a fresh clone.
+#
+# Precedence measured on uv 0.12.1, 2026-08-10, each step corroborated by the `idna`
+# version actually resolved rather than by the string uv records:
+#
+#   --exclude-newer CLI      2023-06-01 -> idna 3.4     wins over everything
+#   UV_EXCLUDE_NEWER env     2026-08-07 -> idna 3.18    beats both config files
+#   [tool.uv] here           2023-06-01 -> idna 3.4     beats user-level uv.toml
+#   ~/.config/uv/uv.toml     2021-01-01 -> idna 2.10    lowest, applies if nothing else
+#
+# So the one thing that still outranks this file is an exported UV_EXCLUDE_NEWER. That
+# is a known and accepted limit: a machine whose shell exports a rolling cutoff will
+# override this pin and re-stamp the lock. Nothing readable from inside the project can
+# prevent that, which is why it is written down here instead of being guarded against.
+#
+# BUMPING: change the date in the same commit as any dependency change and run
+# `uv lock` so the recorded cutoff matches. A pin never advances on its own, which is
+# stricter than a rolling window and is the point; left stale for a long time it also
+# means `uv add` resolves against a stale index.
+[tool.uv]
+exclude-newer = "2026-08-07T00:00:00Z"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
