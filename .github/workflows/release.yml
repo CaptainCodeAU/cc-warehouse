@@ -1,0 +1,63 @@
+# Publish a tagged version to PyPI using Trusted Publishing (OIDC).
+#
+# NO TOKEN IS STORED. PyPI verifies the workflow's short-lived OIDC identity, so
+# there is no long-lived credential in ~/.pypirc, in repository secrets, or on any
+# developer machine. The first two releases were published from a token on disk;
+# this exists to retire it.
+#
+# THE GATES RUN BEFORE THE UPLOAD, IN A SEPARATE JOB, ON PURPOSE. Publishing is
+# irreversible: a version number cannot be reused once taken. A workflow that
+# builds and uploads in one step can upload something the suite would have
+# rejected. `publish` needs `gates`, so a red suite cannot become a release.
+#
+# ACTION PINNING. Actions are pinned to major version tags rather than commit
+# SHAs. SHA pinning is stricter, since a tag can be moved by its owner, and it is
+# the right upgrade for a project that has just audited its supply chain. It is
+# not done here because the SHAs would have to be looked up and verified rather
+# than guessed, and a wrong SHA fails closed but noisily. Left as a deliberate,
+# recorded gap rather than an oversight.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: ruff
+        run: uv run ruff check
+      - name: pyright (strict)
+        run: uv run pyright
+      - name: oracle suite
+        # Includes tests/test_packaging.py, which builds a real sdist and fails if
+        # the artifact carries anything the repository would not.
+        run: uv run pytest
+
+  publish:
+    needs: gates
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Required for Trusted Publishing. This is the whole mechanism: it mints a
+      # short-lived OIDC token for PyPI instead of reading a stored secret.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: build
+        run: uv build
+      - name: check metadata before uploading
+        run: uvx twine check dist/*
+      - name: publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

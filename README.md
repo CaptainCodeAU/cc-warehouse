@@ -198,13 +198,46 @@ git clone https://github.com/CaptainCodeAU/cc-warehouse
 cd cc-warehouse
 uv sync
 
-uv run pytest          # 1045 tests
+uv run pytest          # oracle suite
 uv run pyright         # strict mode
 uv run ruff check
 ```
 
 `pyright` in strict mode and `ruff` are merge gates. Tests may import `pytest`;
 nothing else third-party is permitted anywhere in the project.
+
+New to uv? `curl -LsSf https://astral.sh/uv/install.sh | sh` and nothing else is
+needed. **Installing cc-warehouse from PyPI requires no special setup at all** and
+is unaffected by everything in the next paragraph, which applies only if you
+clone this repository.
+
+### The pinned resolution cutoff
+
+`pyproject.toml` sets `[tool.uv] exclude-newer` to a fixed date. uv refuses to
+resolve any package published after it, and records the cutoff in `uv.lock`, so a
+clone resolves the same dependency versions today as it did months ago rather than
+whatever is newest.
+
+Two consequences worth knowing before it surprises you:
+
+- **`uv add <package>` resolves against the index as of that date**, so a recent
+  release will look missing. That is the pin working. Move the date in the same
+  commit, and run `uv lock` so the recorded cutoff matches.
+- **An exported `UV_EXCLUDE_NEWER` overrides the pin**, because the environment
+  outranks project configuration in uv. If your shell sets one (some
+  supply-chain-hygiene setups export a rolling value), your `uv.lock` will show a
+  different cutoff than the pin and appear permanently modified. Unset it for this
+  repository, or leave the lock alone.
+
+The full precedence, measured on uv 0.12.1 rather than assumed, is recorded in the
+comment above the setting in `pyproject.toml`.
+
+### Releasing
+
+`RELEASING.md` carries the checklist, the versioning rules, and the one-time
+Trusted Publishing setup. The rule most easily missed: **a change to the default
+rendered output is a breaking change**, because a user's archive is something they
+read and link to. `tests/golden/matrix-anchor` enforces it mechanically.
 
 ## Status
 
