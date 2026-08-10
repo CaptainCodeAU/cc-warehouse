@@ -2,12 +2,9 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
-[options]
-exclude-newer = "2026-07-29T10:05:23Z"
-
 [[package]]
 name = "cc-warehouse"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 
 [package.dev-dependencies]
