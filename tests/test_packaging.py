@@ -61,8 +61,20 @@ SECRET_SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("session url", re.compile(r"claude\.ai/code/session_[A-Za-z0-9]{6,}")),
 )
 
-# Working material. `MEMORY` is named first because it is the one that escaped.
-FORBIDDEN_DIRS: tuple[str, ...] = ("MEMORY", "Plans", "temp", ".claude", ".github")
+# Directories that must never reach the artifact. `MEMORY` is named first because
+# it is the one that actually escaped. `plugins` and `.claude-plugin` are tracked
+# and legitimate, but they are Claude Code assets: nothing installing this package
+# from PyPI can use them, so the exclusion is asserted here rather than left to
+# whoever last edited the hatch config.
+FORBIDDEN_DIRS: tuple[str, ...] = (
+    "MEMORY",
+    "Plans",
+    "temp",
+    ".claude",
+    ".github",
+    "plugins",
+    ".claude-plugin",
+)
 
 # The one file the sdist legitimately holds that git does not track: the metadata
 # the build backend generates. Anything else arrived by accident.

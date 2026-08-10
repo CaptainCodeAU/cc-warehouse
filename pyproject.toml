@@ -99,7 +99,11 @@ packages = ["src/cc_warehouse"]
 # a machine-local ignore file cannot protect it. Belt and braces: MEMORY/ is now
 # in .gitignore too, but this list is what the BUILD honours.
 [tool.hatch.build.targets.sdist]
-exclude = ["MEMORY", "Plans", "temp", ".claude", ".github"]
+# `plugins` and `.claude-plugin` are the Claude Code capture plugin, which lives
+# here so it cannot drift from the CLI it calls. They are excluded from the sdist
+# on purpose: `pip install cc-warehouse` does not install a Claude Code plugin, so
+# shipping them would put files in the tarball that nothing there can use.
+exclude = ["MEMORY", "Plans", "temp", ".claude", ".github", "plugins", ".claude-plugin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -112,6 +116,16 @@ typeCheckingMode = "strict"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The capture plugin is NOT linted against this project's target, because it does
+# not run on this project's interpreter. `hooks.json` invokes it as
+# `python3 <path>`, i.e. whatever the SYSTEM provides, which on Ubuntu 22.04 is
+# 3.10. Measured: ruff at py312 asks for `datetime.UTC`, which does not exist
+# before 3.11 (`hasattr(datetime, "UTC")` is False on 3.10, while
+# `timezone.utc` is True on both). Taking that autofix would have put an
+# AttributeError in a SessionEnd hook, on the machines least likely to notice,
+# in the one file whose entire purpose is to fail loudly rather than silently.
+# The plugin targets "any python3" and is kept portable by hand.
+exclude = ["plugins"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

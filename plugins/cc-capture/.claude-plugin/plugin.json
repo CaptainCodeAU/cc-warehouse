@@ -1,0 +1,10 @@
+{
+  "name": "cc-capture",
+  "description": "Captures each Claude Code session into cc-warehouse on SessionEnd",
+  "author": {
+    "name": "CaptainCodeAU",
+    "url": "https://github.com/CaptainCodeAU"
+  },
+  "homepage": "https://github.com/CaptainCodeAU/cc-warehouse",
+  "license": "PolyForm-Noncommercial-1.0.0"
+}

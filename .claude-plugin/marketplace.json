@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cc-warehouse",
+  "description": "The capture plugin for cc-warehouse. It lives in the same repository as the tool it calls, so the hook and the CLI cannot drift apart.",
+  "owner": {
+    "name": "CaptainCodeAU",
+    "url": "https://github.com/CaptainCodeAU"
+  },
+  "plugins": [
+    {
+      "name": "cc-capture",
+      "description": "Captures each Claude Code session into cc-warehouse when the session ends. Requires cc-warehouse's `ccw` on PATH (or CCW_BIN): install it with `uv tool install cc-warehouse`. Logs every run to ~/.claude/logs/ccw-hook.log.",
+      "source": "./plugins/cc-capture",
+      "category": "productivity"
+    }
+  ]
+}
