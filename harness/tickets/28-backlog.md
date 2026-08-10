@@ -196,7 +196,37 @@ its measurement, so nobody re-discovers it as a surprise.
 - **28.18 CLOSED.** `cc-warehouse` 0.1.0 published 2026-08-09, 0.1.1 on 08-10.
   The squat named below is closed: the name now serves this code.
 
-- **28.20  ACCEPTED RESIDUAL: pre-rewrite commits survive on GitHub.**
+- **28.20  RESOLVED 2026-08-10 by deleting and re-creating the repository.** The
+  entry below is kept as written, because the reasoning that led to accepting the
+  residual is worth reading even though the decision was reversed. WHAT CHANGED:
+  the accept was taken on figures this entry gave as "one session UUID and one
+  URL". Measured properly afterwards, an anonymous fetch of a single old SHA
+  pulled the whole ancestry, **1804 objects**, recovering 19 distinct session
+  UUIDs, 19 session URLs, the personal email 8 times, the drive name 13 times and
+  the real session UUID 14 times. Both prior history rewrites had bought nothing
+  against anyone holding a SHA. The "not enumerable" claim was false too: of 76
+  candidate SHAs quoted in the public tree, one resolved, and it was the one this
+  very entry had published.
+
+  The repository was deleted and re-created, which destroys the server-side
+  object store. Verified afterwards with the same three-way control: the current
+  HEAD and its parent fetch, a bogus SHA does not, and the root commit,
+  pre-rewrite-1 HEAD, pre-strip HEAD and session-start HEAD are all **gone**.
+  The re-created repository reports **1474 objects, reachable == total**, so it
+  holds no unreachable objects at all. One old SHA still fetches, `ad71fd4`, and
+  that is correct: it is an ancestor of HEAD, whose SHA survived the trailer
+  rewrite because it carried no trailer and its parents were unchanged.
+
+  **THE DURABLE LESSON, which outlives this ticket.** A force-push does not
+  delete objects; only destroying the object store does. Every verification that
+  used a CLONE was true and irrelevant, because a clone fetches reachable objects
+  and the problem was in the unreachable ones. The instrument could not see the
+  place the problem was. Check reachability with `git fetch origin <sha>` and a
+  bogus-SHA control, never with a clone.
+
+  --- the original entry, superseded, kept for its reasoning ---
+
+  **ACCEPTED RESIDUAL: pre-rewrite commits survive on GitHub.**
   A force-push does NOT delete the old objects. Measured 2026-08-10 with a
   three-way probe (`git fetch origin <sha>` into a scratch bare repo): the
   current HEAD fetched, a bogus SHA was refused, and the pre-strip commit
