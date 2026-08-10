@@ -50,6 +50,65 @@ third-party packages are pulled in, at install time or at run time.
 Both `ccw` and `cc-warehouse` are installed as entry points; `ccw` is used
 throughout this document.
 
+### Linux and WSL2
+
+Nothing extra is required. If uv is not installed yet:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+uv tool install cc-warehouse
+```
+
+You do not need to install Python first. uv fetches its own interpreter, so a
+distribution shipping an older Python (Ubuntu 22.04 ships 3.10) works as well as
+a current one.
+
+Two things specific to **WSL2**:
+
+- **Keep the warehouse on the Linux filesystem**, under `$HOME`, not under
+  `/mnt/c`. Locking uses `os.link` and every write is a temp file plus `fsync`,
+  `chmod` and `os.replace`. Those are ext4-native; their behaviour across the
+  Windows filesystem bridge has not been measured here, and a warehouse is the
+  wrong place to find out.
+- **Claude Code running on Windows writes somewhere else.** Its sessions live at
+  `C:\Users\<you>\.claude\projects`, which WSL sees as `/mnt/c/...`. `ccw sweep`
+  looks at `~/.claude/projects` by default, so pull the Windows side in
+  explicitly, read-only:
+
+  ```bash
+  ccw sweep --dry-run --source /mnt/c/Users/<you>/.claude/projects
+  ```
+
+There is no launchd on Linux, so the periodic sweep that catches sessions a
+SessionEnd hook cannot see (a killed process) belongs in cron or a systemd user
+timer:
+
+```bash
+crontab -e
+# 0 * * * * $HOME/.local/bin/ccw sweep --quiet
+```
+
+Use the absolute path. A cron job does not load your shell profile, so a bare
+`ccw` will not be found.
+
+### If uv refuses to install this release
+
+Some setups configure uv with a release-age cutoff (`exclude-newer` in
+`~/.config/uv/uv.toml`, `[tool.uv]`, or the `UV_EXCLUDE_NEWER` variable) so that
+freshly published packages are not installed immediately. If yours is older than
+this release, uv will report that `cc-warehouse` was *filtered by exclude-newer*.
+
+That is your configuration working, not a broken package. Move your cutoff
+forward, or override it for the one command:
+
+```bash
+UV_EXCLUDE_NEWER=2999-01-01T00:00:00Z uv tool install cc-warehouse
+```
+
+The environment variable outranks both config files, so this works whichever of
+them holds your cutoff.
+
 ## Quick start
 
 Import everything Claude Code has written so far, then build the archive:
