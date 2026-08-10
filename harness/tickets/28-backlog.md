@@ -178,8 +178,58 @@ here into their own ticket when they are taken up.
 
 ## If the repository goes public
 
-Separate track, not on the ticket 22-27 path. Audit run 2026-08-03: the working
-tree is clean (0 hits for the username, no personal paths, no emails, no
+**RESOLVED 2026-08-10. The repository IS public.** 28.16, 28.17 and 28.18 are
+closed; what follows records how, and one residual the principal accepted with
+its measurement, so nobody re-discovers it as a surprise.
+
+- **28.16 CLOSED.** `git filter-repo --mailmap` rewrote the root commit's author
+  and committer to the noreply identity. All 209 commits, all messages and all
+  32 annotated tags survived; the HEAD tree hash was byte-identical before and
+  after, which is the proof no file content moved.
+- **28.17 CLOSED, then reopened by design, then closed properly.** The trailers
+  were stripped, and then REGREW, because the harness stamps them on every commit
+  made from a session. Proved twice by execution within minutes. The durable fix
+  is not a repeated rewrite: it is `git config trailers.disable true` in this
+  clone, a knob the dotfiles owner added on request, which also strips the
+  appended `Claude-Session:` line. Machine-local config, so a fresh clone
+  re-enables stamping and must set it again.
+- **28.18 CLOSED.** `cc-warehouse` 0.1.0 published 2026-08-09, 0.1.1 on 08-10.
+  The squat named below is closed: the name now serves this code.
+
+- **28.20  ACCEPTED RESIDUAL: pre-rewrite commits survive on GitHub.**
+  A force-push does NOT delete the old objects. Measured 2026-08-10 with a
+  three-way probe (`git fetch origin <sha>` into a scratch bare repo): the
+  current HEAD fetched, a bogus SHA was refused, and the pre-strip commit
+  `7d7efb4c6d33be84a4b5af4c920b77375452f5e0` FETCHED. The two controls disagreed,
+  so the probe distinguishes present from absent; without them it proves nothing,
+  and two earlier attempts at this measurement were broken instruments that
+  looked conclusive.
+
+  A fresh clone cannot see these, because a clone fetches only REACHABLE objects.
+  That is why the "209 commits, 0 trailers" verification is true and beside the
+  point, and it is the same shape of blind spot as a `git log --pretty=%(trailers:only)`
+  check that reads ordinary prose as a trailer.
+
+  **WHAT IS EXPOSED:** one session UUID and one `claude.ai/code/session_…` URL,
+  in `C-Sess-Id` / `C-Web-Id` trailers across 7 pre-strip commits and one
+  superseded tag object. Not credentials. Nothing to rotate. The URL requires the
+  owner's login to follow. Reachable only by someone who already knows the
+  40-character SHA, so not enumerable.
+
+  **THE FIX THAT WAS AVAILABLE AND DECLINED:** delete and re-create the GitHub
+  repository, which gives a new server-side object store and keeps the same URL.
+  All four preconditions held at the time (private, not a fork, 0 forks, no pull
+  requests, 1 collaborator) and a verified bundle of the clean history existed.
+  Principal ruling 2026-08-10: accept the exposure and flip. Recorded rather than
+  left unwritten, because a residual nobody wrote down becomes a surprise.
+
+  **IF THIS IS EVER REVISITED**, deleting and re-creating still works and is
+  still about two minutes, but only while the four preconditions hold. A fork or
+  a pull request referencing an old SHA makes it much harder, and neither is
+  under this project's control once the repository is public.
+
+Prior audit, superseded and kept for its baseline: run 2026-08-03, the working
+tree was clean (0 hits for the username, no personal paths, no emails, no
 secret-shaped strings, no data files tracked, 127 files).
 
 - **28.16  The root commit carries a personal email.** `063a499` "Initial
