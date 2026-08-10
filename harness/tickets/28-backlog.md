@@ -200,10 +200,24 @@ its measurement, so nobody re-discovers it as a surprise.
   A force-push does NOT delete the old objects. Measured 2026-08-10 with a
   three-way probe (`git fetch origin <sha>` into a scratch bare repo): the
   current HEAD fetched, a bogus SHA was refused, and the pre-strip commit
-  `7d7efb4c6d33be84a4b5af4c920b77375452f5e0` FETCHED. The two controls disagreed,
-  so the probe distinguishes present from absent; without them it proves nothing,
-  and two earlier attempts at this measurement were broken instruments that
-  looked conclusive.
+  FETCHED. The two controls disagreed, so the probe distinguishes present from
+  absent; without them it proves nothing, and two earlier attempts at this
+  measurement were broken instruments that looked conclusive.
+
+  **THE PRE-STRIP SHA IS NOT WRITTEN HERE, and the first version of this entry
+  got that wrong.** It quoted the full 40 characters two lines above the sentence
+  arguing the risk is bounded BECAUSE an attacker would have to know them, which
+  published the key beside the lock. Caught by scanning the public clone for the
+  SHA and finding one hit: this file. Anyone who needs the value has the backup
+  bundles, where `git bundle list-heads` prints it; it does not need to be in a
+  public document to be recoverable by the person entitled to it.
+
+  Removing it here does not remove it from this repository's history, because the
+  commit that introduced it is already public. That is accepted rather than
+  chased: a rewrite to erase it would leave its own unreachable-but-fetchable
+  object, which is the very condition this entry documents, so the fix would
+  recreate the problem one level down. What the removal does buy is that the
+  current tree no longer hands the pointer to a casual reader.
 
   A fresh clone cannot see these, because a clone fetches only REACHABLE objects.
   That is why the "209 commits, 0 trailers" verification is true and beside the
