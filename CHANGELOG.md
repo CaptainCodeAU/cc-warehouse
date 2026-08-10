@@ -2,15 +2,53 @@
 
 All notable changes to cc-warehouse.
 
-**There have been no releases, and none are planned for now** (principal, 2026-07-24).
-The distribution name is `cc-warehouse`, the version in `pyproject.toml` is `0.1.0`, and
-nothing is on PyPI. The entries below are BUILD MILESTONES, recorded as annotated git tags
-(`slice-01` .. `slice-13`, including `slice-12a` and `slice-12b`), not versions anyone
-could install. A release section will appear here if and when that changes.
+**THE "no releases" NOTE THAT STOOD HERE IS SUPERSEDED (2026-08-09).** It read "There
+have been no releases, and none are planned for now" and "nothing is on PyPI", on a
+2026-07-24 ruling. `cc-warehouse` 0.1.0 was published to PyPI on 2026-08-09 by a later
+principal ruling, so both statements are now false and are replaced rather than left to
+mislead the next reader.
+
+This file therefore carries two kinds of entry, and they are not the same thing:
+
+- **Releases**, below, are versions anyone can install with `uv tool install cc-warehouse`.
+- **Build milestones** are annotated git tags (`slice-01` .. `slice-17`, `ticket-18` ..
+  `ticket-26`) recording how the software was built. They are not installable versions.
 
 Each tag's own annotation carries the full record; `git show <tag>` is the primary source.
 The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions in
 `contract/DESIGN.md` section 15.
+
+---
+
+## Releases
+
+### 0.1.1 - 2026-08-09
+
+**Metadata only. No behaviour changed, and no file under `src/` differs from 0.1.0.**
+The sole reason this version exists is that PyPI freezes a project's description into
+each release, so a rewritten README cannot reach the project page without a new version.
+
+- The README is now written for a reader rather than for the build. It had accumulated
+  into a build journal: slice numbers, milestone tags, an exit-review paragraph and a
+  self-documented overclaim, with the reader's first question answered last. The build
+  record was not deleted, it was left where it belongs, in this file and in `contract/`.
+- README links are absolute GitHub URLs. The README doubles as the PyPI
+  `long_description`, and PyPI does not resolve relative links, so `](LICENSE)` rendered
+  as a dead link on the project page.
+- Packaging metadata gained `urls`, `keywords` and classifiers. No `License ::`
+  classifier is present on purpose: PEP 639 forbids pairing one with `License-Expression`,
+  and `OSI Approved` would additionally be untrue of PolyForm Noncommercial.
+
+### 0.1.0 - 2026-08-09
+
+First publication. The distribution name was unclaimed until this release, which is
+itself part of the point: `ccw hook` runs at session end with a transcript on stdin, so
+an unclaimed name on a public index is a squatting target. Claiming it closes that.
+
+The sdist ships the contract documents and the harness tickets alongside the code, which
+is deliberate. Nothing in it is a credential, and a pre-publication audit of all 1417 git
+objects plus the built artifact found no keys, no account name, no machine name and no
+personal paths.
 
 ---
 
