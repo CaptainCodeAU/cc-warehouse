@@ -20,6 +20,17 @@ here into their own ticket when they are taken up.
 
 - **28.3  `--limit` on sweep.** Useful for exercising a slice of a large import.
 
+- **28.22  Fence `ccw doctor`'s text output.** Recorded 2026-08-18 (ticket 30's
+  Appendix, deployment facts from outside this repo). `~/.local/bin/ccw-watch`
+  (a different repo, `fifty-shades-of-dotfiles`) runs `ccw doctor` at every
+  Claude Code SessionStart on this machine and parses it with a regex: the
+  `hook` line's wording, and the `Uncaptured: N session(s)` figure. Nothing in
+  this repo's own suite protects that shape today, so a reformat would break
+  an external consumer with no test here going red to say so. An oracle test
+  pinning the exact substrings a known-external parser depends on (not the
+  whole output, which would over-constrain wording changes that do not touch
+  the parsed parts) turns that into a fence instead of a surprise.
+
 ## Recorded, low value, not planned
 
 - **28.4  `--repo` override.** `parser.detect_github_repo` auto-detects and has
@@ -146,6 +157,21 @@ here into their own ticket when they are taken up.
   I ESTIMATED THIS WRONG TWICE, which is why it is written down with numbers:
   first "considerably slower", then "roughly a doubling, about 50 seconds". The
   real figure is a full re-render per build, unchanged on repeat.
+
+  **STILL OPEN, but the pattern it proposed now exists elsewhere: see ticket 30
+  (2026-08-18).** `archive.folder_is_current` is exactly the "source hash plus
+  render-options hash recorded in the manifest" skip suggested here, built for
+  the ANALOGOUS but distinct cost on `ccw archive`'s tree (measured there:
+  20779 folders, ~40 minutes, every run). It also had to check a renderer
+  fingerprint and the sub-agent list, not just source hash and config - see
+  that ticket if this one is picked up, both for the predicate shape and for a
+  regression it found live: a naive "manifest still matches" check alone let a
+  DELETED sibling file (e.g. `transcript.md`) go unrestored, which is directly
+  relevant here since `build()`'s OWN per-head loop (`_read` then
+  `write_projection`) is what THIS item is about and is UNCHANGED by ticket 30 -
+  it still reads and fully re-renders every head, every run. `_mirror`'s call
+  into `archive.write_session_folder` is now cheap when `archive_root` is
+  configured; the `projections/` half this item describes is not.
 
 - **28.9  `render_html` costs 74x the payload** and emits about 6.3x its size
   (a 100 MB session projects to a 633 MB page, 7.26 GiB peak). Latent: the

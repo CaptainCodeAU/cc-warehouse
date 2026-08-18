@@ -162,6 +162,24 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   freshness signal. There are 0 `ccw` references in `~/.claude/settings.json` and none of
   the 7 SessionStart commands is a ccw check, so a capture that silently stops would still
   not announce itself at session start; the CI watch is the shape to copy.
+  **THE "0 `ccw` references" CLAIM ABOVE IS STALE, corrected 2026-08-18 from outside this
+  repo.** `~/.local/bin/ccw-watch` (a different repo, `fifty-shades-of-dotfiles`) now runs
+  at SessionStart on this machine and its own settings.json command string contains the
+  substring `ccw`, so 24.7's stated freshness gap is at least partly closed by something
+  this repo does not own or control. **`ccw doctor`'s TEXT OUTPUT IS THEREFORE A PUBLIC
+  COMPATIBILITY SURFACE, not an internal detail**: `ccw-watch` parses the `hook` line's
+  wording and the `Uncaptured: N session(s)` figure with a regex. Changing that wording or
+  dropping that figure breaks an external consumer silently. This dependency is also the
+  direct cause of the `_hook_commands` SessionEnd-scoping bug fixed the same day
+  (`CHANGELOG.md` 0.1.2): `ccw-watch`'s own command string is what tripped it, by
+  containing the substring `ccw`. Separately, a weekly `launchd` job,
+  `com.captaincodeau.ccw-archive`, now runs `ccw archive --to ~/cc-warehouse-archive`
+  (Sunday 03:00) beside the pre-existing daily `com.captaincodeau.ccw-sweep`; see ticket 30
+  for the incremental-rebuild work that job's cost motivated. And the competing exporter
+  this repo used to run alongside (`export_transcript.sh` -> a separate, unrelated
+  `claude-code-transcripts` tool, writing a second copy of every session) is retired as of
+  the same day, confirmed by enumerating all hooks in `~/.claude/settings.json`: `cc-warehouse`
+  is now the only thing capturing Claude Code sessions on this machine.
 - **TICKET 25 IS COMPLETE (2026-08-04). The only-copies are rescued.** `ccw import
   --from DIR` shipped, and the live run imported **4,756 payloads with 0 failures** in
   10m22s: the archive went 14,472 -> 19,226 folders and `ccw archive --verify` reports
