@@ -191,7 +191,13 @@ key, `subagents` (ticket 21, 2026-08-03), lists this session's sub-agent transcr
 `{agent_id, sha256, bytes}`. It exists so a DELETED sub-agent folder is detectable:
 without it verify sees five valid files, a matching source hash and a correct folder
 name, and reports clean. A session with none carries an empty list, never a missing key,
-so a reader can tell "none" from "this manifest predates the feature".
+so a reader can tell "none" from "this manifest predates the feature". A fifth top-level
+key, `renderer_version` (ticket 30, 2026-08-18), is `cc_warehouse.__version__`. It exists
+so an incremental rebuild (`archive.folder_is_current`) can tell "this folder's pages
+were built by an OLDER renderer" apart from "the payload and config haven't changed" - a
+distinction `source_hash` and `config` alone cannot make. Chosen over a hand-maintained
+format counter because a version nobody has to remember to bump cannot be forgotten; it
+costs one full rebuild after each release, which is the run an operator would want anyway.
 
 **Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
 JSONL format found 13 entry types where the render consumed only `user`/`assistant`.
@@ -1028,6 +1034,50 @@ STILL OPEN (ticket 29 mechanism 1): `catalog.add_session` points each new row's
 `build._heads` picks it. A late-imported older copy therefore becomes the catalog
 head even when its own last timestamp is earlier. Harmless for the archive folder
 now, and still wrong for every catalog-driven surface.
+
+**2026-08-18, ticket 30: INCREMENTAL ARCHIVE REBUILD.** A weekly `ccw archive`
+run redid every session's five files unconditionally - measured on this
+machine's real archive: 20779 folders, ~40 minutes, ~90% CPU, every run,
+regardless of how few sessions had actually changed. `_migrate_locked` walked
+every catalog row with no cursor and no "only what changed since last time".
+
+Fixed with one predicate, `archive.folder_is_current`, checked at two call
+sites (`_migrate_locked`, before `store.get()` is even called, and
+`write_session_folder` itself, covering the mirror/capture paths for free) so
+there is one implementation of "would rebuilding this folder change anything",
+not two. `ccw archive --rebuild` is the escape hatch, mirroring `ccw build
+--rebuild`.
+
+Skipping the RENDER, not just the write (which is what `ccw build`'s existing
+`_write_if_changed` does, after a full byte-compare), is a strictly stronger
+claim and opened two failure modes a byte-compare would have caught for free:
+
+- A renderer upgrade must still reach every folder eventually. Closed by adding
+  `renderer_version` to the manifest (section 6 above) rather than requiring an
+  operator to remember `--rebuild` after every release.
+- A sub-agent captured after its parent's last render must still force a
+  rebuild, or the parent's `subagents` list goes stale and a later deletion
+  becomes undetectable by `ccw archive --verify`. Closed by including
+  `subagent_records(directory)` in the check. Measured before the fix: the
+  weekly full rebuild was the ONLY thing keeping the real archive's 300
+  sub-agent-bearing folders at 0 stale.
+
+A THIRD failure mode was found by running the oracle suite, not by reasoning
+about the design: the skip-check as first written trusted `manifest.json`
+alone, and `tests/test_keep_projections.py::
+test_build_still_refreshes_the_archive_when_projections_are_off` (which
+deletes `transcript.md` and expects `ccw build --rebuild` to restore it)
+regressed, because the manifest - the one file the test had NOT deleted -
+still looked current. Fixed by requiring all five `GENERATED_NAMES` files to
+be present before the manifest is even opened.
+
+The proposal's one open question - could an interrupted run leave a manifest
+that reads "current" beside stale pages - was answered by reading the code
+rather than by adding a new mechanism: `build.iter_projection_files` already
+yields `manifest.json` LAST, so a kill mid-write can only leave fresh pages
+beside an OLD manifest, which fails the hash check and forces a rebuild. That
+ordering is now a pinned invariant (`test_manifest_is_yielded_last`,
+`tests/test_archive_incremental.py`), not incidental.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
