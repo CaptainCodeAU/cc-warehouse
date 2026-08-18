@@ -22,6 +22,24 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Releases
 
+### 0.1.2 - 2026-08-18
+
+**Bug fix.** `ccw doctor`'s `hook` check could report the wrong hook as "the
+SessionEnd capture hook" and say ok for it.
+
+- `_hook_commands` walked every event key in `hooks{}`, not just `SessionEnd`,
+  and `diagnose()` labelled whichever command it found FIRST. An unrelated
+  SessionStart command that merely contains the substring "ccw" (a monitoring
+  script named `ccw-watch`, say) outranked the real plugin-registered
+  SessionEnd hook, because settings.json is scanned before plugin
+  `hooks.json` files and its own key order can put SessionStart first. The
+  `hook` check would then say ok for the wrong command -- a false green that
+  survives the real capture hook being removed entirely. Found 2026-08-18,
+  while adding an unrelated SessionStart watcher to a machine already running
+  cc-warehouse. `_hook_commands` is now scoped to the `SessionEnd` key only,
+  in both settings files and plugin `hooks.json` files. Regression test:
+  `test_a_ccw_looking_command_in_another_event_is_not_claimed_as_the_hook`.
+
 ### 0.1.1 - 2026-08-09
 
 **Metadata only. No behaviour changed, and no file under `src/` differs from 0.1.0.**
@@ -98,6 +116,7 @@ Every slice in the `contract/DESIGN.md` section 16 build order landed and carrie
 milestone tag. Gates: ruff clean, pyright strict 0 errors, 403 tests, zero stubs.
 
 **Capture and storage**
+
 - Content-addressed immutable object store; identity is sha256 of the payload, never a
   size, a path or a timestamp. Every write is tmp-file plus `os.replace`.
 - SQLite catalog and a registry where projects are stable IDs and paths are time-stamped
@@ -106,6 +125,7 @@ milestone tag. Gates: ruff clean, pyright strict 0 errors, 403 tests, zero stubs
   (one-shot legacy import, plus a separate consent-gated `--retire`).
 
 **Rendering**
+
 - Four files per session: `transcript.md`, `transcript.compact.md`, `conversation.html`,
   `conversation.compact.html`, plus a `manifest.json` recording the settings and counts
   that produced them.
@@ -116,6 +136,7 @@ milestone tag. Gates: ruff clean, pyright strict 0 errors, 403 tests, zero stubs
   exports cannot drift apart.
 
 **Publishing**
+
 - `ccw share` builds a sanitized static site from copies. Redaction runs on the decoded
   payload; secret-shaped strings abort the share rather than being silently mangled.
   See `docs/sharing-and-redaction.md`.
@@ -125,34 +146,36 @@ milestone tag. Gates: ruff clean, pyright strict 0 errors, 403 tests, zero stubs
   comparison, a typed confirmation, and a non-TTY abort.
 
 **Repair and inspection**
+
 - `ccw relocate` repairs the external world after a repo move: plan, backup, apply, verify,
   report, with dry-run as the default.
 - `ccw project` (list / show / rename / move / merge), `ccw status`, `ccw verify`,
   `ccw build`, `ccw render`.
 
 **Configuration**
+
 - Two-file layering (XDG then data-root), per-project sections keyed by registry ID,
   `CCW_*` environment variables, and CLI flags, in that precedence order.
   `--no-config` and `--config PATH` bypass the files.
 
 ### Build milestones
 
-| Tag | Date | What landed |
-|---|---|---|
-| `slice-01` | 2026-07-18 | store module (the harness trial run) |
-| `slice-02` | 2026-07-18 | catalog + registry: transactional catalog, claims-based registry |
-| `slice-03` | 2026-07-18 | parser + conversation model |
-| `slice-04` | 2026-07-18 | capture hook + notify |
-| `slice-05` | 2026-07-18 | sweep: capture what the hook missed, orphan adoption |
-| `slice-06` | 2026-07-18 | transcript.md emitters, full and compact |
-| `slice-07` | 2026-07-19 | HTML emitters, full and compact, plus the manifest |
-| `slice-08` | 2026-07-19 | build/render orchestration; un-stubs the render child |
-| `slice-09` | 2026-07-19 | status and `ccw verify` |
-| `slice-10` | 2026-07-19 | migrate and retire |
-| `slice-11` | 2026-07-19 | share and redaction |
-| `slice-12a` | 2026-07-23 | relocate containers and registry claims |
-| `slice-13` | 2026-07-23 | config layering, CLI/help surface, content flags, `--EXPOSED` |
-| `slice-12b` | 2026-07-24 | relocate content rewriting |
+| Tag         | Date       | What landed                                                      |
+| ----------- | ---------- | ---------------------------------------------------------------- |
+| `slice-01`  | 2026-07-18 | store module (the harness trial run)                             |
+| `slice-02`  | 2026-07-18 | catalog + registry: transactional catalog, claims-based registry |
+| `slice-03`  | 2026-07-18 | parser + conversation model                                      |
+| `slice-04`  | 2026-07-18 | capture hook + notify                                            |
+| `slice-05`  | 2026-07-18 | sweep: capture what the hook missed, orphan adoption             |
+| `slice-06`  | 2026-07-18 | transcript.md emitters, full and compact                         |
+| `slice-07`  | 2026-07-19 | HTML emitters, full and compact, plus the manifest               |
+| `slice-08`  | 2026-07-19 | build/render orchestration; un-stubs the render child            |
+| `slice-09`  | 2026-07-19 | status and `ccw verify`                                          |
+| `slice-10`  | 2026-07-19 | migrate and retire                                               |
+| `slice-11`  | 2026-07-19 | share and redaction                                              |
+| `slice-12a` | 2026-07-23 | relocate containers and registry claims                          |
+| `slice-13`  | 2026-07-23 | config layering, CLI/help surface, content flags, `--EXPOSED`    |
+| `slice-12b` | 2026-07-24 | relocate content rewriting                                       |
 
 `slice-12` has no tag by design: it escalated on 2026-07-19 as the build's only
 non-converging loop and was split into 12a and 12b. Its ticket is kept as SUPERSEDED for

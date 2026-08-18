@@ -1,6 +1,6 @@
 [project]
 name = "cc-warehouse"
-version = "0.1.1"
+version = "0.1.2"
 description = "Content-addressed, immutable warehouse for AI conversation sessions, projected into uniform markdown/HTML files."
 readme = "README.md"
 requires-python = ">=3.12"

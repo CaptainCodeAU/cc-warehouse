@@ -124,13 +124,22 @@ def _mentions_ccw(command: str, plugin_root: Path | None) -> bool:
 
 
 def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
-    """Every hook command Claude Code would run, paired with its plugin root.
+    """Every SessionEnd hook command Claude Code would run, paired with its
+    plugin root.
 
     Both places a capture hook can legitimately live: settings files, and an
     installed plugin's hooks.json. Checking only settings.json would report "no
     hook" for a correctly installed PLUGIN, which is exactly how ticket 24
     delivers it. The plugin root travels alongside so `${CLAUDE_PLUGIN_ROOT}` can
     be resolved.
+
+    SCOPED TO SessionEnd, deliberately. This used to walk every event key in
+    `hooks{}` and let `diagnose()` label whatever it found FIRST as "the
+    SessionEnd capture hook" -- so an unrelated SessionStart command that merely
+    CONTAINS "ccw" (a monitoring script named `ccw-watch`, say) outranked the
+    real plugin-registered SessionEnd hook, because settings.json is scanned
+    before plugin hooks.json. Doctor would then say "ok" for the wrong hook,
+    which survives the real one being removed entirely (found 2026-08-18).
     """
     found: list[tuple[str, Path | None]] = []
     candidates = [home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"]
@@ -149,22 +158,22 @@ def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
         hooks = cast(dict[str, object], loaded).get("hooks")
         if not isinstance(hooks, dict):
             continue
-        for groups in cast(dict[str, object], hooks).values():
-            if not isinstance(groups, list):
+        groups = cast(dict[str, object], hooks).get("SessionEnd")
+        if not isinstance(groups, list):
+            continue
+        for group in cast(list[object], groups):
+            if not isinstance(group, dict):
                 continue
-            for group in cast(list[object], groups):
-                if not isinstance(group, dict):
-                    continue
-                inner = cast(dict[str, object], group).get("hooks")
-                if not isinstance(inner, list):
-                    continue
-                for hook in cast(list[object], inner):
-                    if isinstance(hook, dict):
-                        command = cast(dict[str, object], hook).get("command")
-                        if isinstance(command, str):
-                            is_plugin = path.parent.name == "hooks"
-                            root = path.parent.parent if is_plugin else None
-                            found.append((command, root))
+            inner = cast(dict[str, object], group).get("hooks")
+            if not isinstance(inner, list):
+                continue
+            for hook in cast(list[object], inner):
+                if isinstance(hook, dict):
+                    command = cast(dict[str, object], hook).get("command")
+                    if isinstance(command, str):
+                        is_plugin = path.parent.name == "hooks"
+                        root = path.parent.parent if is_plugin else None
+                        found.append((command, root))
     return found
 
 

@@ -179,6 +179,47 @@ def test_a_plugin_hook_that_calls_a_WRAPPER_is_still_found(
     )
 
 
+def test_a_ccw_looking_command_in_another_event_is_not_claimed_as_the_hook(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """THE REGRESSION THIS PINS (found 2026-08-18). `_hook_commands` used to
+    walk every event key in settings.json, not just SessionEnd, and
+    `diagnose()` labelled whatever it found FIRST as "the SessionEnd capture
+    hook". A machine can have a legitimate, unrelated SessionStart command
+    whose text merely CONTAINS "ccw" -- a monitoring script named
+    `ccw-watch`, say -- and it outranked the real SessionEnd hook because
+    settings.json's own key order put SessionStart first. Doctor then said ok
+    for the wrong hook: a false green that would survive the real one being
+    removed entirely.
+    """
+    configure(ccw_env, tmp_path / "archive")
+    settings = Path(ccw_env["HOME"]) / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "ccw-watch"}]}
+                    ],
+                    "SessionEnd": [
+                        {"hooks": [{"type": "command", "command": "ccw hook"}]}
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "ccw-watch" not in hook_line, (
+        f"a SessionStart command was reported as the SessionEnd hook: {hook_line!r}"
+    )
+    assert "ccw hook" in hook_line, hook_line
+
+
 def test_an_unrelated_plugin_hook_is_not_claimed_as_ours(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
