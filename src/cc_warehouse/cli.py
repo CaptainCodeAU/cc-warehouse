@@ -1365,12 +1365,18 @@ def _flag_value(args: Sequence[str], name: str) -> str | None:
 
 
 def _run_archive(args: Sequence[str]) -> int:
-    """`ccw archive --to DIR [--verify] [--zone NAME]` (ticket 19, slice 19h).
+    """`ccw archive --to DIR [--verify] [--zone NAME] [--rebuild]` (ticket 19,
+    slice 19h; incremental behaviour and `--rebuild` added ticket 30).
 
     Builds the archive-first tree BESIDE the warehouse it reads, or checks an
     existing one. Everything is validated UP FRONT and refused as a usage error
     before any work begins, because the alternative is discovering the target
     was wrong after writing several gigabytes into it.
+
+    Incremental by default: a session whose folder already matches its current
+    payload, render config and renderer version is skipped without being read.
+    `--rebuild` regenerates every file regardless, mirroring `ccw build
+    --rebuild`.
 
     `--verify` writes nothing at all. That claim is not left to inspection: an
     oracle test snapshots the tree and compares it afterwards, since exit 0 plus
@@ -1405,7 +1411,10 @@ def _run_archive(args: Sequence[str]) -> int:
         return 2
 
     target.mkdir(parents=True, exist_ok=True)
-    report = archive.migrate(config.root, target, build.render_options(config), zone)
+    rebuild = "--rebuild" in args
+    report = archive.migrate(
+        config.root, target, build.render_options(config), zone, rebuild=rebuild
+    )
     if report.lock_held:
         # R14/R10: a refusal is named and exits non-zero, never counted as a
         # run that wrote nothing successfully.
@@ -1869,6 +1878,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--to DIR", "build the archive tree at DIR (required; never the warehouse)"),
             ("--verify", "check an existing tree instead of building; writes nothing"),
             ("--zone NAME", "IANA zone for folder names (default: [archive_timezone])"),
+            ("--rebuild", "regenerate every folder, not just changed ones"),
         ),
         # content=True: the archive is built by the same emitters as everything
         # else, so the same content flags govern it (R9). A tree whose rendering

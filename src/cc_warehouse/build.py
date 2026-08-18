@@ -242,6 +242,16 @@ def iter_projection_files(
     Each payload is released before the next is built. The emitters return their
     full and compact variants in pairs, so two documents is the floor without
     changing them, and that is where this stops.
+
+    `manifest.json` is yielded LAST, and this is now a load-bearing invariant
+    (ticket 30), not incidental ordering: `archive.folder_is_current` trusts an
+    on-disk manifest to mean "every file beside it reflects this exact payload".
+    An interrupted write (kill, crash, sleep) under this order can only ever
+    leave fresh pages beside a STALE manifest, which fails the trust check and
+    forces a rebuild - never the reverse. Reordering these yields would silently
+    break that safety with no test failing at the reorder site; the ordering
+    itself is pinned by `test_manifest_is_yielded_last` in
+    `tests/test_archive_incremental.py`.
     """
     full_md, compact_md = render.render_markdown(data, options)
     encoded = full_md.encode("utf-8")

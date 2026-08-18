@@ -26,11 +26,11 @@ permanently.
 import json
 import sqlite3
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, catalog, parser, render, store
+from cc_warehouse import __version__, build, catalog, parser, render, store
 from cc_warehouse.config import Config
 from cc_warehouse.parser import parse_session
 
@@ -58,13 +58,16 @@ GENERATED_NAMES = (
 @dataclass(frozen=True)
 class FolderResult:
     """What one session's folder write did. `wrote_projections` is False for a
-    conversation-free session, which is archived without markdown or HTML."""
+    conversation-free session, which is archived without markdown or HTML.
+    `skipped_current` (ticket 30) is True when `wrote_projections` is True but
+    this call left the five files untouched because they already matched."""
 
     directory: Path
     jsonl: Path
     wrote_projections: bool
     replaced: bool = False
     refused_smaller: bool = False
+    skipped_current: bool = False
 
 
 @dataclass
@@ -78,6 +81,12 @@ class MigrationReport:
 
     written: int = 0
     archived_without_projections: int = 0
+    # Ticket 30: a folder whose five files already matched this run's payload,
+    # config and renderer, so nothing was read, rendered or written for it.
+    # Counted separately from `written` (never inside it): `written` says how
+    # much WORK this run did, and folding a no-op into it would make a fast,
+    # correct run misreport as having redone everything (F6).
+    skipped_current: int = 0
     # R14: a live holder makes the run refuse rather than interleave. Reported
     # as its own field so the CLI can exit non-zero on a refusal WITHOUT
     # counting a no-op that wrote nothing as a success.
@@ -92,6 +101,7 @@ class MigrationReport:
         return (
             f"{self.written} folders written"
             f" ({self.archived_without_projections} archived without projections),"
+            f" {self.skipped_current} unchanged,"
             f" {len(self.skipped_not_a_session)} not sessions,"
             f" {len(self.refused_smaller)} refused as smaller,"
             f" {len(self.failed)} failed"
@@ -430,6 +440,59 @@ def write_not_a_session(archive_root: Path, data: bytes, *, stem: str) -> Path:
     return target
 
 
+def folder_is_current(
+    directory: Path, source_hash: str, options: render.RenderOptions
+) -> bool:
+    """True when `directory`'s five files already reflect this exact payload,
+    these render options and this renderer version - so rebuilding them would
+    produce byte-identical output and the work can be skipped entirely (ticket
+    30). Reads only file presence plus `manifest.json`'s bytes; never touches
+    the JSONL.
+
+    ANY DOUBT RETURNS FALSE. A missing file, no manifest, an unreadable one, or
+    a manifest missing a key all mean "rebuild" - the same conservative
+    direction R5 takes everywhere else in this module. That is also what makes
+    this safe under an interrupted run: `iter_projection_files` yields
+    `manifest.json` LAST, so a kill mid-write leaves fresh pages beside the OLD
+    manifest, whose `source_hash` will not match and is read here as "rebuild",
+    never as "done".
+
+    Five independent things must all hold, because any one being false means
+    the folder is not what it claims to be:
+      - All five `GENERATED_NAMES` files are actually present. A manifest that
+        still looks current says nothing about its FOUR SIBLINGS: deleting
+        `transcript.md` alone and re-running `ccw build --rebuild` must still
+        restore it, which trusting the manifest in isolation would have
+        silently stopped doing (found by a real regression in this ticket's
+        own test run, 2026-08-18 - not reasoned out in advance).
+      - `source_hash`: the payload itself has not changed.
+      - `config`: the RenderOptions used have not changed.
+      - `renderer_version`: the code that produced these pages has not changed
+        (added by this same ticket - without it, a `ccw` upgrade would leave
+        every existing folder frozen at the old format forever).
+      - `subagents`: no sub-agent has been added or removed since this folder's
+        manifest last listed them. Without this check a sub-agent captured
+        after its parent's last render would never be recorded, and a later
+        deletion of that sub-agent's folder would be undetectable by
+        `ccw archive --verify` - the exact "most dangerous kind of green"
+        `subagent_records`' own docstring warns about.
+    """
+    if not all((directory / name).exists() for name in GENERATED_NAMES):
+        return False
+    manifest_path = directory / _MANIFEST
+    try:
+        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return False
+    if manifest.get("source_hash") != source_hash:
+        return False
+    if manifest.get("config") != asdict(options):
+        return False
+    if manifest.get("renderer_version") != __version__:
+        return False
+    return manifest.get("subagents") == subagent_records(directory)
+
+
 def write_session_folder(
     archive_root: Path,
     label: str,
@@ -438,6 +501,7 @@ def write_session_folder(
     timezone: str,
     *,
     fallback_stem: str = "session",
+    rebuild: bool = False,
 ) -> FolderResult:
     """Write one self-contained session folder. Never deletes anything.
 
@@ -459,6 +523,14 @@ def write_session_folder(
     other, and which one the folder READ AS came down to insertion order. Both
     `build._mirror` and `ccw archive --to` route through here, so this was never
     specific to one verb.
+
+    INCREMENTAL BY DEFAULT (ticket 30): before rendering, this checks whether
+    the folder already matches via `folder_is_current` and returns early if so.
+    `rebuild=True` bypasses that check unconditionally, mirroring `ccw build
+    --rebuild`. The check is skipped on a REFUSAL on purpose: the refusal must
+    always be recorded fresh in the manifest (F6), and the surviving payload's
+    hash can otherwise still match an older manifest that never named this
+    refusal at all.
     """
     if is_subagent(data):
         # REFUSED, loudly. This payload's sessionId is its PARENT'S, so writing
@@ -516,14 +588,21 @@ def write_session_folder(
         # deliberately by the 2026-08-02 ruling.
         return FolderResult(directory, jsonl, False, replaced, refused)
 
+    if not refused and not rebuild:
+        source_hash = store.sha256_hex(rendered)
+        if folder_is_current(directory, source_hash, options):
+            return FolderResult(directory, jsonl, True, replaced, refused, skipped_current=True)
+
     # STREAMED, one payload at a time. Holding all five at once cost 8.2 GB of
     # traced heap on a 100 MB session, 78x the payload; the real 114 MB object
     # survived the 2026-08-02 migration on a machine that happened to have the
     # RAM. See build.iter_projection_files.
     for name, payload in build.iter_projection_files(rendered, options):
         if name == _MANIFEST:
-            # Written LAST-ish, and always with the sub-agent list, so a reader
-            # can tell "none" from "this manifest predates the feature" (F6).
+            # Written LAST (a pinned invariant since ticket 30, not incidental
+            # ordering - see iter_projection_files), and always with the
+            # sub-agent list, so a reader can tell "none" from "this manifest
+            # predates the feature" (F6).
             payload = _with_subagents(payload, subagent_records(directory))
             if refused:
                 payload = _with_refusal(payload, jsonl.stat().st_size, len(data))
@@ -558,6 +637,7 @@ def migrate(
     timezone: str,
     *,
     progress: int = 0,
+    rebuild: bool = False,
 ) -> MigrationReport:
     """Build the archive tree from `objects/`, beside the existing warehouse.
 
@@ -565,6 +645,12 @@ def migrate(
     under `warehouse_root` is modified or removed, so the worst outcome of a
     failure at any point is a partly-built new tree beside a completely intact
     old one.
+
+    INCREMENTAL BY DEFAULT (ticket 30): a session whose folder already matches
+    its current payload, render config and renderer version is skipped before
+    its stored payload is even read. `rebuild=True` is the escape hatch,
+    mirroring `ccw build --rebuild` - it forces every session through the full
+    read-parse-render path regardless of what is already on disk.
     """
     report = MigrationReport()
     # R14. This was the ONLY write surface in the codebase taking no lock, while
@@ -576,7 +662,9 @@ def migrate(
         report.lock_held = True
         return report
     try:
-        return _migrate_locked(warehouse_root, archive_root, options, timezone, report, progress)
+        return _migrate_locked(
+            warehouse_root, archive_root, options, timezone, report, progress, rebuild=rebuild
+        )
     finally:
         store.release_lock(warehouse_root, ARCHIVE_LOCK)
 
@@ -588,6 +676,8 @@ def _migrate_locked(
     timezone: str,
     report: MigrationReport,
     progress: int,
+    *,
+    rebuild: bool = False,
 ) -> MigrationReport:
     """The migration body, with the lock already held."""
     conn = catalog.open_catalog(warehouse_root)
@@ -596,7 +686,31 @@ def _migrate_locked(
     finally:
         conn.close()
 
-    for index, (hash_, label, stem) in enumerate(rows, start=1):
+    for index, (hash_, label, stem, first_ts, session_uuid) in enumerate(rows, start=1):
+        if not rebuild:
+            # THE BIG WIN (ticket 30): name the folder from the catalog row
+            # alone, with the SAME naming call write_session_folder makes
+            # (R9), and check it before store.get() is ever called - so an
+            # unchanged session costs one small file read instead of a store
+            # read, a parse and a five-file render. Measured on a 20,740-folder
+            # real archive: 97.75% of sessions take this branch on an
+            # unchanged run.
+            #
+            # If the catalog's first_ts/session_uuid ever disagreed with the
+            # payload's own parse - narrow: 7 of 20,793 rows on this warehouse
+            # have no session_uuid, 12 no first_ts - the directory computed
+            # here would simply not be the real one. No manifest is found
+            # there, folder_is_current returns False, and this falls through
+            # to the exact path below. Safe by construction: this can only
+            # ever cause an unnecessary rebuild, never a wrongful skip.
+            directory = build.archive_dir(
+                archive_root, label, first_ts, session_uuid, timezone, fallback_stem=stem
+            )
+            if folder_is_current(directory, hash_, options):
+                report.skipped_current += 1
+                if progress and index % progress == 0:
+                    print(f"  {index}/{len(rows)} {report.summary()}", flush=True)
+                continue
         try:
             # store.object_path appends `objects/` itself; passing it again was
             # the first defect here, and R10 is why it surfaced as two named
@@ -610,12 +724,15 @@ def _migrate_locked(
             continue
         try:
             result = write_session_folder(
-                archive_root, label, data, options, timezone, fallback_stem=stem
+                archive_root, label, data, options, timezone, fallback_stem=stem, rebuild=rebuild
             )
         except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
             report.failed.append((hash_, f"{type(exc).__name__}: {exc}"))
             continue
-        report.written += 1
+        if result.skipped_current:
+            report.skipped_current += 1
+        else:
+            report.written += 1
         if not result.wrote_projections:
             report.archived_without_projections += 1
         if result.refused_smaller:
@@ -625,20 +742,32 @@ def _migrate_locked(
     return report
 
 
-def _session_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
-    """(hash, project label, fallback stem) for every session the catalog holds.
+def _session_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str, str | None, str | None]]:
+    """(hash, project label, fallback stem, first_ts, session_uuid) for every
+    session the catalog holds.
 
     EVERY row, not only heads: the archive keeps what it was given, and the
     supersede chain is a catalog concept that the folder name resolves anyway
     (same uuid, same start time, same folder).
+
+    `first_ts`/`session_uuid` were added by ticket 30 so the incremental skip
+    can name a session's folder straight from this row, without reading its
+    stored payload first (`build._heads` already selects the same two columns
+    for exactly this reason).
     """
     sql = (
-        "SELECT s.hash, p.label, s.short"
+        "SELECT s.hash, p.label, s.short, s.first_ts, s.session_uuid"
         " FROM session s JOIN project p ON p.id = s.project_id"
     )
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str | None, str | None]] = []
     for row in conn.execute(sql).fetchall():
-        out.append((str(row[0]), str(row[1]), f"session-{row[2]}"))
+        out.append((
+            str(row[0]),
+            str(row[1]),
+            f"session-{row[2]}",
+            cast(str | None, row[3]),
+            cast(str | None, row[4]),
+        ))
     return out
 
 

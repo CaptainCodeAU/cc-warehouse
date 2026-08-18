@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from cc_warehouse import __version__
 from cc_warehouse.parser import (
     Block,
     Conversation,
@@ -2257,6 +2258,16 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
     the last census", which is the failure this project has actually suffered:
     the previous entry-type census ran once, on 2026-07-23, and two of the types
     it missed first appeared earlier that same month.
+
+    `renderer_version` is a TOP-LEVEL key, added by ticket 30 (2026-08-18) so an
+    incremental rebuild can tell "this folder's pages were built by an OLDER
+    renderer" apart from "the payload and config haven't changed" - a distinction
+    `source_hash` and `config` alone cannot make. It is `cc_warehouse.__version__`,
+    which moves on every release, chosen over a hand-maintained format counter
+    because a stamp nobody has to remember to bump cannot be forgotten. It reads
+    `"0+unknown"` when running from an unpackaged source tree (`__init__.py`),
+    which is fine: that value still changes nothing between two dev runs of the
+    SAME checkout, and a real release is what the weekly job actually installs.
     """
     conv = build_conversation(data)
     truncated_blocks, truncated_chars = _truncation_loss(conv, options)
@@ -2280,5 +2291,6 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
         # because what the emitters draw is a choice and the count is a fact.
         "withheld": {"thinking_blocks": conv.withheld_thinking},
         "config": asdict(options),
+        "renderer_version": __version__,
     }
     return manifest
