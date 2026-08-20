@@ -214,34 +214,65 @@ by reading `cli.py:_run_verify` before running it, not assumed.
 **`ccw build` did NOT pass clean: 4 of 21,460 sessions failed with
 `FileNotFoundError` reading `objects/<hash>.jsonl`**, even though all 4
 already have a COMPLETE archive folder (JSONL plus all five generated
-files, confirmed by listing each folder directly). One of the 4 is the
-session named in ticket 31's own opening paragraph (`b087d6a2-...`,
-`CaptainCodeAU-win_go_app_test`) - the real desync ticket 29/31 already
-knew about; the other 3 (`80721130-...`, `17e372b3-...`, `c85f1e1b-...`, all
-`captured_at` within the same minute range, 2026-08-04T10:22-10:23) are new
-information, not previously flagged by anything. Whatever makes `build.
-_head_is_current` decide these 4 need a full rebuild, the rebuild path
-(`build._read`) then reads `objects/` UNCONDITIONALLY rather than falling
-back to the archive folder's own JSONL that is sitting right there - a real
-gap between the archive-first design (`objects/` is supposed to be retired,
-not required) and what `build.py` actually does today. **`objects/` was
-renamed back immediately** (not left broken overnight); a second `ccw build`
-against the restored vault came back `4 built, 0 failed`, confirming the
-diagnosis and that nothing was lost or corrupted at any point - the exercise
-step did exactly its job.
+files, confirmed by listing each folder directly).
 
-**Next session must, before re-attempting this slice:** read `build._read`
-and `build._head_is_current` to understand why these 4 specific heads (and
-only these 4, out of 21,460) are flagged not-current, then decide whether
-`_read` should fall back to the archive JSONL when `objects/` doesn't have
-the payload (or is absent) rather than raising - this is core to whether
-27.4's delete step can EVER be safe with the current code, not just a
-one-off fix for 4 sessions. Do not re-run the rename-and-delete exercise
-until that fix ships and is itself verified the same way (rename aside,
-build clean, THEN consider the delete) - do not skip straight to the delete
-because 4 named sessions now work; the same class of gap could be hiding
-elsewhere in the 21,460 that happened to already be `_head_is_current`
-today and would only surface the next time something invalidates them.
+**CORRECTED the same session, before this entry was even committed: the
+first write-up above named the wrong mechanism.** It said `build._read`
+reads `objects/` unconditionally with no archive fallback. That is FALSE -
+read `archive.read_payload` (`archive.py:329-374`) and it already prefers
+the archive folder over the store, VERIFIED (not trusted): it reads the
+folder's JSONL and only falls through to `objects/` when that JSONL's
+sha256 does NOT match the hash the catalog named for this head. Confirmed
+directly, not assumed: computed `shasum -a 256` on all 4 archive JSONLs and
+compared against each head's `catalog.session.hash` - all 4 mismatch.
+
+**The real mechanism is ticket 29's ALREADY-OPEN "Mechanism 1", not a new
+build.py gap.** `harness/tickets/29-which-copy-is-the-current-one.md`
+documented, 2026-08-04/05: `build._heads` picks a session's head as "the row
+no other row supersedes" - the newest INSERT - regardless of whether that
+row's payload is the one whose bytes actually survived in the shared
+archive folder (`write_source`'s deliberate "larger payload wins" rule can
+leave an OLDER, LARGER capture's bytes on disk when a newer-but-SMALLER
+recapture arrives). Checked directly: 3 of the 4 failing sessions
+(`80721130-...`, `17e372b3-...`, `c85f1e1b-...`) are EXACTLY the three uuids
+ticket 29's own "Blast radius today" section already named on 2026-08-04/05
+- this session did not discover them, it re-found them through a different
+door (a hard `FileNotFoundError` once `objects/` briefly wasn't there,
+instead of `ccw archive --verify`'s "no problem" plus a silently-served
+wrong-but-correct-content answer from the store). **The 4th, `b087d6a2-...`
+(`CaptainCodeAU-win_go_app_test`), is NEW**: a fresh, TODAY (2026-08-20)
+occurrence of the same class, a three-version supersedes chain where the
+head (smallest, latest-inserted) does not match what the archive folder
+actually holds (second-largest of the three). This proves Mechanism 1 is
+still live and adding new affected sessions, not a closed historical case.
+
+**So 27.4's delete step is blocked on ticket 29 Mechanism 1, not on a
+build.py fix.** While `objects/` exists, this class of mismatch is silent
+and harmless (ticket 29's own words) - `read_payload` quietly falls back to
+the store and serves the CORRECT (larger) content anyway. Once `objects/`
+is gone, that fallback has nothing to fall back to, and `read_payload`'s own
+documented conservative branch RAISES rather than serving the wrong
+session - which is exactly the `FileNotFoundError` this exercise hit. Ticket
+29 already scopes Mechanism 1's fix (head selection should not promote a
+row whose payload the archive folder demonstrably does not hold) and
+already lists the locked oracle test it must not break
+(`test_a_smaller_payload_is_refused_and_the_refusal_is_recorded`) - read
+that ticket in full before scoping a fix here rather than re-deriving it.
+
+**`objects/` was renamed back immediately** (not left broken overnight); a
+second `ccw build` against the restored vault came back `4 built, 0
+failed`, confirming both the original symptom and this corrected diagnosis
+without losing or risking anything - the rename-not-delete shape did exactly
+its job twice over.
+
+**Next session must, before re-attempting this slice:** pick up ticket 29
+Mechanism 1 (not a new build.py investigation - that trail is closed by this
+entry), ship its fix with oracle tests first, then re-run the SAME exercise
+(rename `objects/` aside, `status`/`verify`/`build`/`sweep`/a real session
+end) before considering the delete. A clean re-run does not by itself prove
+no other session is waiting to hit this same class through a different
+supersedes chain - name what was checked, same as this entry does, rather
+than asserting "safe now" from one clean run.
 
 ### 27.5  Decide whether `root` moves into the archive
 

@@ -1319,29 +1319,46 @@ suite proves the logic; this proves the actually-deployed binary behaves the
 same way against this machine's real hook, real config, and real backlog.
 
 **2026-08-20, ticket 27.4: THE EXERCISE STEP CAUGHT A REAL GAP - `objects/`
-IS NOT YET SAFE TO RETIRE.** With the operator's go-ahead for the
-non-destructive half only, `objects/` (2.6 GB, 22,030 files) was renamed
-aside on the real machine and `ccw status`, `ccw verify`, `ccw build` run
-against what remained. `status` and `verify` passed clean - `verify` already
-becomes archive integrity under `keep_objects = false` (ruling (b),
-2026-08-02) and never touches `objects/` at all. **`ccw build` failed 4 of
-21,460 sessions with `FileNotFoundError` reading `objects/<hash>.jsonl`**,
-despite each of those 4 already having a complete archive folder (JSONL and
-all five generated files) sitting right there. One is the session ticket 31
-opens with (`b087d6a2-...`, the known desync); the other 3 (`80721130-...`,
-`17e372b3-...`, `c85f1e1b-...`) are new information. The mechanism: whatever
-makes `build._head_is_current` decide these 4 need a full rebuild, `build.
-_read` then reads `objects/` UNCONDITIONALLY - it has no fallback to the
-archive JSONL that is already present, which is exactly backwards for a
-deployment that stopped writing to `objects/` in the same session (27.3).
+IS NOT YET SAFE TO RETIRE - AND THE FIRST DIAGNOSIS OF IT, WRITTEN THE SAME
+SESSION, WAS WRONG.** With the operator's go-ahead for the non-destructive
+half only, `objects/` (2.6 GB, 22,030 files) was renamed aside on the real
+machine and `ccw status`, `ccw verify`, `ccw build` run against what
+remained. `status` and `verify` passed clean - `verify` already becomes
+archive integrity under `keep_objects = false` (ruling (b), 2026-08-02) and
+never touches `objects/` at all. **`ccw build` failed 4 of 21,460 sessions
+with `FileNotFoundError` reading `objects/<hash>.jsonl`**, despite each of
+those 4 already having a complete archive folder sitting right there.
+
+**FIRST DIAGNOSIS, ENTERED HERE AND THEN CORRECTED THE SAME SESSION:** the
+original entry claimed `build._read` reads `objects/` unconditionally with
+no archive fallback. Rereading `archive.read_payload` (`archive.py:329-374`)
+shows that is false - it already prefers the archive folder, VERIFIED by
+re-hashing the folder's JSONL against the catalog's recorded hash before
+trusting it, and only falls through to `objects/` on a MISMATCH. Confirmed
+by computing `shasum -a 256` on all 4 archive JSONLs directly: all 4
+mismatch their catalog row's hash. **The real mechanism is ticket 29's
+already-open "Mechanism 1"** (`harness/tickets/29-which-copy-is-the-current-
+one.md`, documented 2026-08-04/05): `build._heads` picks a session's head as
+"the row no other row supersedes" (the newest INSERT), regardless of
+whether that row's payload is the one that actually survived in the shared
+archive folder - `write_source`'s deliberate "larger payload wins" rule can
+leave an older, larger capture's bytes on disk when a newer-but-smaller
+recapture arrives. **3 of the 4 failing sessions are the EXACT three uuids
+ticket 29's own "blast radius" section already named** on 2026-08-04/05
+(`80721130-...`, `17e372b3-...`, `c85f1e1b-...`) - not a new discovery,
+re-found through a harder failure mode (`FileNotFoundError` instead of a
+silently-correct fallback) because `objects/` was briefly gone. **The 4th
+(`b087d6a2-...`) is NEW**: a fresh, same-day three-version supersedes chain
+hitting the identical class, proving Mechanism 1 is still live, not a closed
+historical case. Ticket 29 already scopes Mechanism 1's fix and names the
+locked oracle test it must not break.
+
 `objects/` was renamed back immediately; a second `ccw build` came back `4
-built, 0 failed`, confirming the diagnosis without losing or risking
-anything - the rename-not-delete shape did exactly what it was designed to
-do. **27.4's delete step stays blocked until `build._read` gets an
-archive-JSONL fallback (or the reason these 4 specific heads are flagged
-not-current is understood and is provably not hiding elsewhere in the other
-21,456 that happen to be current today).** Full account: `harness/tickets/
-27-collapse-to-one-folder.md`, 27.4.
+built, 0 failed`, confirming both the symptom and the corrected diagnosis
+without losing or risking anything. **27.4's delete step is blocked on
+ticket 29 Mechanism 1, not on a build.py fix** - read that ticket in full
+before scoping work here. Full account: `harness/tickets/27-collapse-to-
+one-folder.md`, 27.4.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
