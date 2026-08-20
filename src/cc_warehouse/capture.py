@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import catalog, parser, registry, store
+from cc_warehouse import catalog, notify, parser, registry, store
 from cc_warehouse.config import Config
 
 # DESIGN section 4: a re-fire whose latest capture_event landed within this window is a
@@ -45,6 +45,31 @@ class CaptureResult:
 
 def _elapsed_ms(start: float) -> int:
     return max(0, int((time.monotonic() - start) * 1000))
+
+
+def _log_stage_failure(config: Config, digest: str, stage: str, exc: Exception) -> None:
+    """Best-effort diagnostic line naming WHICH post-archive-write step failed (ticket 31.4).
+
+    The archive JSONL write (`_archive_source`) already succeeded by the time either
+    caller below can raise, so a bare `repr(exc)` at the top-level never-raise boundary
+    (`_run_hook`) does not say whether the session ended up cataloged at all. This logs to
+    the existing O_APPEND audit log (DESIGN R2's sanctioned exception; no new write path)
+    and always re-raises right after, so behavior is unchanged until the next real
+    occurrence names its actual exception instead of leaving it unproven."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "error",
+                "session": digest,
+                "project": None,
+                "message": f"post-archive-write failure at {stage}: {type(exc).__name__}: {exc}",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
 
 
 def _acquire_capture_lock(root: Path, name: str, deadline: float) -> bool:
@@ -183,9 +208,17 @@ def _capture_locked(
         hidden=parsed.hidden,
         resolution_source=source,
     )
-    short = catalog.add_session(conn, meta, project_id, now_iso)
+    try:
+        short = catalog.add_session(conn, meta, project_id, now_iso)
+    except Exception as exc:
+        _log_stage_failure(config, digest, "add_session", exc)
+        raise
     elapsed = _elapsed_ms(start)
-    catalog.record_event(conn, digest, "stored", elapsed, "", now_iso)
+    try:
+        catalog.record_event(conn, digest, "stored", elapsed, "", now_iso)
+    except Exception as exc:
+        _log_stage_failure(config, digest, "record_event", exc)
+        raise
     return CaptureResult(digest, short, "stored", project_id, elapsed, source)
 
 
