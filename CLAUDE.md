@@ -143,11 +143,17 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   is live in `~/.config/cc-warehouse/config.toml` (operator's explicit go-ahead
   at the time, per this ticket's own requirement), verified with a real Claude
   Code session that the vault stopped growing while the archive kept working -
-  see `contract/DESIGN.md` section 15, "2026-08-20, ticket 27.3". 27.4-27.8 are
-  the actual next open work; **27.4 is DESTRUCTIVE and needs the principal's
-  explicit word at the moment of running, same as 27.9 did before it was
-  withdrawn** - a green gate is not consent. 27.9 WITHDRAWN AND STAYS
-  WITHDRAWN).
+  see `contract/DESIGN.md` section 15, "2026-08-20, ticket 27.3". **27.4's
+  non-destructive half (rename `objects/` aside, exercise) was RUN 2026-08-20
+  and FOUND A REAL BLOCKER: `ccw build` fails 4 of 21,460 sessions with
+  `objects/` renamed away, because `build._read` has no fallback to an
+  already-complete archive folder's own JSONL. `objects/` was restored
+  immediately; nothing was lost. 27.4's DELETE STEP IS BLOCKED until that gap
+  is fixed - see `contract/DESIGN.md` section 15, "2026-08-20, ticket 27.4"
+  and the ticket file for the full account.** 27.5-27.8 remain open behind it.
+  **27.4 is DESTRUCTIVE and needs the principal's explicit word at the moment
+  of running, same as 27.9 did before it was withdrawn** - a green gate is not
+  consent. 27.9 WITHDRAWN AND STAYS WITHDRAWN).
   28 is the backlog register (nothing dropped silently), including the go-public audit.
   Read the ticket files; they carry the measurements and the blast-radius checks behind
   each step.

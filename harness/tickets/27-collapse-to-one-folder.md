@@ -200,6 +200,49 @@ Rename, not delete. Then run capture, sweep, build, verify, status and a real
 session end. Only when all of those pass does the renamed directory go, and the
 principal runs that command.
 
+**ATTEMPTED 2026-08-20, BLOCKED - do not attempt the delete until this is
+fixed.** The rename-and-exercise half ran on the real machine, with the
+operator's explicit go-ahead: `objects/` (2.6 GB, 22,030 files) was renamed
+to `objects.27.4-renamed-aside`, then `ccw status`, `ccw verify`, and `ccw
+build` were run against the real warehouse.
+
+`ccw status` and `ccw verify` both passed clean - `verify` already redirects
+to archive integrity when `keep_objects = false` and `archive_root` is set
+(ruling (b), 2026-08-02), so it never touched `objects/` at all, confirmed
+by reading `cli.py:_run_verify` before running it, not assumed.
+
+**`ccw build` did NOT pass clean: 4 of 21,460 sessions failed with
+`FileNotFoundError` reading `objects/<hash>.jsonl`**, even though all 4
+already have a COMPLETE archive folder (JSONL plus all five generated
+files, confirmed by listing each folder directly). One of the 4 is the
+session named in ticket 31's own opening paragraph (`b087d6a2-...`,
+`CaptainCodeAU-win_go_app_test`) - the real desync ticket 29/31 already
+knew about; the other 3 (`80721130-...`, `17e372b3-...`, `c85f1e1b-...`, all
+`captured_at` within the same minute range, 2026-08-04T10:22-10:23) are new
+information, not previously flagged by anything. Whatever makes `build.
+_head_is_current` decide these 4 need a full rebuild, the rebuild path
+(`build._read`) then reads `objects/` UNCONDITIONALLY rather than falling
+back to the archive folder's own JSONL that is sitting right there - a real
+gap between the archive-first design (`objects/` is supposed to be retired,
+not required) and what `build.py` actually does today. **`objects/` was
+renamed back immediately** (not left broken overnight); a second `ccw build`
+against the restored vault came back `4 built, 0 failed`, confirming the
+diagnosis and that nothing was lost or corrupted at any point - the exercise
+step did exactly its job.
+
+**Next session must, before re-attempting this slice:** read `build._read`
+and `build._head_is_current` to understand why these 4 specific heads (and
+only these 4, out of 21,460) are flagged not-current, then decide whether
+`_read` should fall back to the archive JSONL when `objects/` doesn't have
+the payload (or is absent) rather than raising - this is core to whether
+27.4's delete step can EVER be safe with the current code, not just a
+one-off fix for 4 sessions. Do not re-run the rename-and-delete exercise
+until that fix ships and is itself verified the same way (rename aside,
+build clean, THEN consider the delete) - do not skip straight to the delete
+because 4 named sessions now work; the same class of gap could be hiding
+elsewhere in the 21,460 that happened to already be `_head_is_current`
+today and would only surface the next time something invalidates them.
+
 ### 27.5  Decide whether `root` moves into the archive
 
 Setting `root == archive_root` would put `catalog.sqlite` and `locks/` inside

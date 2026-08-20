@@ -1318,6 +1318,31 @@ folders throughout. Worth reusing for future capture-path changes: the unit
 suite proves the logic; this proves the actually-deployed binary behaves the
 same way against this machine's real hook, real config, and real backlog.
 
+**2026-08-20, ticket 27.4: THE EXERCISE STEP CAUGHT A REAL GAP - `objects/`
+IS NOT YET SAFE TO RETIRE.** With the operator's go-ahead for the
+non-destructive half only, `objects/` (2.6 GB, 22,030 files) was renamed
+aside on the real machine and `ccw status`, `ccw verify`, `ccw build` run
+against what remained. `status` and `verify` passed clean - `verify` already
+becomes archive integrity under `keep_objects = false` (ruling (b),
+2026-08-02) and never touches `objects/` at all. **`ccw build` failed 4 of
+21,460 sessions with `FileNotFoundError` reading `objects/<hash>.jsonl`**,
+despite each of those 4 already having a complete archive folder (JSONL and
+all five generated files) sitting right there. One is the session ticket 31
+opens with (`b087d6a2-...`, the known desync); the other 3 (`80721130-...`,
+`17e372b3-...`, `c85f1e1b-...`) are new information. The mechanism: whatever
+makes `build._head_is_current` decide these 4 need a full rebuild, `build.
+_read` then reads `objects/` UNCONDITIONALLY - it has no fallback to the
+archive JSONL that is already present, which is exactly backwards for a
+deployment that stopped writing to `objects/` in the same session (27.3).
+`objects/` was renamed back immediately; a second `ccw build` came back `4
+built, 0 failed`, confirming the diagnosis without losing or risking
+anything - the rename-not-delete shape did exactly what it was designed to
+do. **27.4's delete step stays blocked until `build._read` gets an
+archive-JSONL fallback (or the reason these 4 specific heads are flagged
+not-current is understood and is provably not hiding elsewhere in the other
+21,456 that happen to be current today).** Full account: `harness/tickets/
+27-collapse-to-one-folder.md`, 27.4.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
