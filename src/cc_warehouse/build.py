@@ -307,20 +307,46 @@ def write_projection(
         _write_if_changed(directory / name, payload, force=force)
 
 
+#  A head is the row whose PAYLOAD is the most recent for its session_uuid - the same
+#  question `catalog._latest_version` already answers when it picks a new row's
+#  `supersedes` target (R12: content time, never insertion order). It is NOT "the row
+#  no other row supersedes": `add_session` always points a new row's `supersedes` at
+#  whatever was previously latest, so that predicate picks the newest INSERT regardless
+#  of its own last_ts - a late-imported or out-of-order truncated capture could become
+#  head over a fuller, chronologically-later one (ticket 29 mechanism 1, fixed here).
+#  ROW_NUMBER ranks each session_uuid's rows by the same COALESCE(last_ts, captured_at)
+#  DESC, captured_at DESC, rowid DESC order _latest_version uses, so the two functions
+#  agree on "latest" (R9). PARTITION BY COALESCE(session_uuid, 'row-' || rowid) keeps a
+#  NULL-uuid row in a singleton partition of its own, matching the old predicate's
+#  behaviour: a row with no session_uuid never supersedes anything, so it was always
+#  its own head.
+_HEAD_RANK_CTE = """
+WITH ranked AS (
+    SELECT s.hash, s.short, p.label, s.first_ts, s.slug, s.session_uuid, s.hidden,
+           ROW_NUMBER() OVER (
+               PARTITION BY COALESCE(s.session_uuid, 'row-' || s.rowid)
+               ORDER BY COALESCE(s.last_ts, s.captured_at) DESC, s.captured_at DESC,
+                        s.rowid DESC
+           ) AS rn
+    FROM session s
+    JOIN project p ON p.id = s.project_id
+)
+"""
+
+
 def _heads(conn: sqlite3.Connection, include_hidden: bool) -> list[_Head]:
     """The head session of every version chain, from the catalog alone (R6).
 
-    A head is a row no other row supersedes; each uuid's chain is linear, so this
-    is exactly one browsable version per session (DESIGN section 6). Hidden rows
-    (warmup / no-summary) are excluded unless include_hidden.
+    A head is the row with the most recent payload in its session_uuid's chain (see
+    `_HEAD_RANK_CTE`) - exactly one browsable version per session (DESIGN section 6).
+    Hidden rows (warmup / no-summary) are excluded unless include_hidden.
     """
     sql = (
-        "SELECT s.hash, s.short, p.label, s.first_ts, s.slug, s.session_uuid"
-        " FROM session s JOIN project p ON p.id = s.project_id"
-        " WHERE s.hash NOT IN (SELECT supersedes FROM session WHERE supersedes IS NOT NULL)"
+        _HEAD_RANK_CTE
+        + "SELECT hash, short, label, first_ts, slug, session_uuid FROM ranked WHERE rn = 1"
     )
     if not include_hidden:
-        sql += " AND s.hidden = 0"
+        sql += " AND hidden = 0"
     heads: list[_Head] = []
     for row in cast(list[tuple[object, ...]], conn.execute(sql).fetchall()):
         hash_ = cast(str, row[0])
@@ -353,17 +379,16 @@ def heads_for_window(
 def head_for_short(conn: sqlite3.Connection, short: str) -> _Head | None:
     """The _Head named by `short` when it is a current, visible head, else None.
 
-    Shares _heads' join and head predicate (one owner, R9): a row that another
-    version supersedes, or a hidden row, is not a head. `ccw render --session`
-    projects only a current head through this, so a superseded or hidden short
-    lays down no dir the next build would immediately prune (R9/F8). A `short`
-    with no row at all also returns None; the CLI distinguishes the two.
+    Shares _HEAD_RANK_CTE's ranking (one owner, R9): a row whose payload is not the
+    most recent in its session_uuid's chain, or a hidden row, is not a head. `ccw
+    render --session` projects only a current head through this, so a superseded or
+    hidden short lays down no dir the next build would immediately prune (R9/F8). A
+    `short` with no row at all also returns None; the CLI distinguishes the two.
     """
     sql = (
-        "SELECT s.hash, s.short, p.label, s.first_ts, s.slug, s.session_uuid"
-        " FROM session s JOIN project p ON p.id = s.project_id"
-        " WHERE s.short = ? AND s.hidden = 0"
-        " AND s.hash NOT IN (SELECT supersedes FROM session WHERE supersedes IS NOT NULL)"
+        _HEAD_RANK_CTE
+        + "SELECT hash, short, label, first_ts, slug, session_uuid FROM ranked"
+        " WHERE short = ? AND hidden = 0 AND rn = 1"
     )
     row = cast("tuple[object, ...] | None", conn.execute(sql, (short,)).fetchone())
     if row is None:

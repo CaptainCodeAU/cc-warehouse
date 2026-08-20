@@ -176,13 +176,18 @@ def _latest_version(conn: sqlite3.Connection, session_uuid: str | None) -> str |
     swapped because the sentence had stood beside working code and would have
     told the next reader that ticket 29 was closed.
 
-    This function picks the right SUPERSEDES TARGET. It does not decide the
-    head. `build._heads` defines a head as a row no other row supersedes, so
-    the newest INSERT is always the head whatever its payload says: import an
-    OLDER copy after a newer one and the older copy becomes current. Proved by
-    execution 2026-08-05, not by reading. That is ticket 29 mechanism 1, which
-    is OPEN and unscoped; do not change this function or `build._heads` to fix
-    it without scoping the change with the principal first.
+    This function picks the SUPERSEDES TARGET, which is a record of insertion
+    order (each new row supersedes whatever was previously latest) - it never
+    decided which row is the head. That used to matter: `build._heads` defined
+    a head as "a row no other row supersedes", so the newest INSERT was always
+    the head whatever its payload said (ticket 29 mechanism 1, proved by
+    execution 2026-08-05). FIXED 2026-08-20: `build._heads`/`head_for_short`
+    now rank each session_uuid's rows by this SAME COALESCE(last_ts,
+    captured_at) ordering directly (`build._HEAD_RANK_CTE`), so head selection
+    and supersedes-target selection agree (R9) and an out-of-order or
+    truncated capture can no longer outrank a fuller, chronologically-later
+    one. This function's own behaviour (which target a NEW row's `supersedes`
+    column points at) is unchanged by that fix.
     """
     if session_uuid is None:
         return None
