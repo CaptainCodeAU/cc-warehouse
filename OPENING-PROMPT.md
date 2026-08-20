@@ -3,76 +3,77 @@
 Read `CLAUDE.md` first, as always. This file is a pointer into where the
 previous session left off, not a replacement for it.
 
-## Where things stand (as of tag `slice-31.2`, 2026-08-20)
+## Where things stand (as of tag `slice-31.3`, 2026-08-20)
 
-The previous session investigated one broken archive folder the operator
-handed over (`CaptainCodeAU-win_go_app_test/20260820-093714+1000_b087d6a2-
-...`), traced it to the daily `ccw sweep` job's cost, and opened
-**ticket 31** (`harness/tickets/31-sweep-full-corpus-cost.md`) with 5
-sub-slices. **31.2 is DONE** (tag `slice-31.2`, commits `26c930e` feat +
-`bc355c7` docs, both pushed to `origin/master`). **31.1, 31.3, 31.4, 31.5
-are still open.**
+**31.1 (folded into 31.2) DONE, 31.2 DONE, 31.3 DONE.** Deployed and verified
+live on this machine (2026-08-20): `ccw doctor` reports `frozen: running from
+~/.local/share/uv/tools/cc-warehouse/...`, PEP 610 `direct_url.json` has no
+`editable` flag. Tomorrow's 12:30 `com.captaincodeau.ccw-sweep` job runs this
+code. **31.4 and 31.5 are the only sub-slices still open.**
 
 Full evidence and reasoning, in order of how much detail each carries:
-1. `contract/PROPOSALS/daily-sweep-full-corpus-cost.md` — the original
-   investigation: real numbers, root cause, what was checked and ruled out.
-2. `harness/tickets/31-sweep-full-corpus-cost.md` — the work order, 31.1
-   through 31.5, including 31.1's retraction and 31.2's full account.
-3. `contract/DESIGN.md` section 15, entry "2026-08-20, ticket 31.2" — the
-   permanent record of the shipped decision.
-4. `Plans/federated-sleeping-lark.md` — the approved implementation plan for
-   31.2 (already executed; kept for reference, not a to-do list anymore).
+1. `harness/tickets/31-sweep-full-corpus-cost.md` — the work order, full
+   31.1-31.3 account (31.1's retraction, 31.2's shipped design, 31.3's
+   measurement-first correction).
+2. `contract/DESIGN.md` section 15, entries "2026-08-20, ticket 31.2" and
+   "2026-08-20, ticket 31.3" — the permanent record of both shipped decisions.
+3. `contract/HARNESS.md` section 8, entry "2026-08-20: A TICKET'S OWN STATED
+   PREMISE WAS NEVER MEASURED" — the process lesson from 31.3, worth reading
+   before touching 31.4 or 31.5.
+4. `Plans/read-opening-prompt-md-fully-and-composed-engelbart.md` — the
+   approved 31.3 plan, including the in-place correction after Step 0's
+   measurement contradicted the plan's own first draft.
 
-Gates as of `slice-31.2`: `uv run pytest` full suite green (1094 + 18 new),
-`uv run pyright` 0 errors, `uv run ruff check` clean, `tests/golden/matrix-
-anchor` untouched.
+Gates as of `slice-31.3`: `uv run pytest` full suite green (1105), `uv run
+pyright` 0 errors, `uv run ruff check` clean, `tests/golden/matrix-anchor`
+untouched.
 
-**Notable process note from this session, worth carrying forward:** a first
-design for 31.1 (guard `build.build()`'s call in `ccw sweep` on
-`keep_projections`) looked safe and was nearly shipped, but would have broken
-archive-page rendering for every session the daily safety net captures. It
-was caught by reading `build._mirror()`'s actual code before writing the fix,
-not by testing alone. The corrected design (31.2) went through two rounds of
-adversarial subagent review before any line shipped. Worth the same care on
-31.3-31.5 — this project's own daily sweep job has already burned one
-almost-shipped mistake this week.
+**31.3 in one paragraph, because the shape matters for 31.4/31.5 too.** The
+ticket's own premise (read+hash is what makes a `skipped_unchanged` item
+expensive) was measured before any design was written and found FALSE:
+read+hash costs ~0.4 ms/file, ~0.3% of the real cost. The actual cost was a
+JSON parse plus a per-item lock file + fresh sqlite connection + `BEGIN
+IMMEDIATE`/COMMIT, hidden because `capture.py`'s own `elapsed_ms` timer stops
+one line before the expensive part. Fixed by moving `sweep.plan()`'s already-
+shipped skip decision onto `sweep()`'s hot path (no new signal, no R1
+exception). **What the fix does NOT explain**: every per-item mechanism
+identified sums to ~72 s for the real corpus; the daily job that started this
+investigation took 2,072.5 s (34.5 min). That ~91% gap was never explained by
+anything in this codebase. A real (non-dry-run) `ccw sweep` run immediately
+after deploying finished in **81.9 s** against the live 21,734-session corpus
+— genuinely fast — but that was an interactive run under this session's own
+load, not launchd's, so whether the DAILY job is now actually fast is
+**still unverified**. Check it before assuming 31.3 solved the daily-cost
+problem end to end.
 
-## What to do next: design decisions for 31.3
+## What to do next
 
-**This is the explicit next task, per the operator.** From
-`harness/tickets/31-sweep-full-corpus-cost.md`, section "31.3":
+**Immediate, low-effort, and answers the open question above**: read
+tomorrow's (or the next) daily sweep's actual wall-clock time, from either
+`~/cc-warehouse-data/catalog.sqlite`'s `capture_event` table (the window
+between the first and last row of the run, same method the original
+investigation used) or a launchd log if one exists. If it is still close to
+34.5 minutes, the ~91% gap is confirmed to be external to this code (the
+leading candidate is this machine's own confirmed resource contention under
+4+ concurrent Claude sessions — `python-process-resource-limits.md`,
+operator memory) and 31.4/31.5 should be scoped with that assumption made
+explicit rather than left implicit. If it dropped substantially, that is
+itself worth recording — it would mean the per-item DB/lock pressure this
+session removed was contending with something else running at the same
+time, not just costing time on its own account.
 
-> Give `sweep()`'s own walk a cheap pre-check before the read+hash. The
-> biggest single win (34-44 minutes measured for the walk alone) and the one
-> part of this ticket with no existing shipped pattern to copy directly -
-> `sweep.py` `_walk_source()` + `capture.capture_transcript()` walk every
-> `.jsonl` under `~/.claude/projects` and fully read+hash every one of them
-> before any skip decision can be made.
+**31.4 (retry-on-lock-contention)**: the ticket's own open question — the
+lock-contention mechanism was never proven, no stack trace was recoverable —
+is now MORE likely to be moot rather than less: 31.3 removed ~16,400 of the
+~17,000 daily write transactions that were the suspected contention source.
+Before writing a retry loop, add debug logging around `_capture_locked`'s
+post-`write_source` steps (`capture.py` ~line 168 onward) and wait for a
+natural recurrence, per the ticket's own instruction — do not assume it is
+already fixed by 31.3, and do not assume it still needs a retry loop either.
 
-Two honest options the proposal named, not a false choice — pick one, refine
-one, or find something better, and say why:
-
-1. A new side-table (source path, mtime, size, last-known hash) checked
-   before the read. Fast, but mtime/size is a *proxy* for content, not
-   content itself — this project's own R1 treats content-hash as the only
-   real identity elsewhere, so this needs a deliberate, recorded exception
-   or a better idea.
-2. Reduce the cost *per skip* instead of avoiding the read: batch or drop
-   per-item `capture_event` logging for `skipped_unchanged` outcomes, so the
-   read+hash still happens but the ~17,000 individual `BEGIN IMMEDIATE`/
-   `COMMIT` transactions collapse into far fewer. Simpler, smaller diff,
-   does not fully solve the wall-clock cost but directly reduces the
-   database write pressure implicated in 31.4.
-
-Before designing: re-read `sweep.py` fresh (it may have drifted since the
-proposal was written) and re-confirm the 17,079/16,382-skipped numbers are
-still roughly representative — they were measured once, on 2026-08-20, not
-guaranteed to still hold.
-
-31.4 (retry-on-lock-contention) and 31.5 (a doctor-level desync check) are
-also still open and lower-priority per the ticket's own ordering, but were
-flagged as worth scoping together with 31.3 since one investigation found
-both. 31.4 specifically has its own open question (the lock-contention
-mechanism is not proven, no stack trace was recoverable) that should be
-resolved with real evidence, not assumed, before writing a retry loop —
-see the ticket's 31.4 section for exactly what to check first.
+**31.5 (doctor-level desync check)**: still fully open, not started. See the
+ticket's own section for the scoping constraint (must stay SessionStart-cheap,
+must not reintroduce the O(everything) cost this whole ticket exists to
+remove) and `contract/DESIGN.md`'s 31.3 entry for why `ccw doctor`'s TEXT
+OUTPUT is a public compatibility surface (`ccw-watch` parses it) that 31.5
+must not change the wording of.
