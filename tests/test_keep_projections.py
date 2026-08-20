@@ -170,6 +170,44 @@ def test_build_still_refreshes_the_archive_when_projections_are_off(
     assert (folder / "transcript.md").is_file(), "build did not restore the archive file"
 
 
+def test_a_plain_build_restores_a_deleted_archive_file_without_rebuild(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Ticket 31: the gap the above test left uncovered. `--rebuild` forces
+    every folder through the full path regardless, so it can never prove the
+    NEW skip-early check (ticket 31) still repairs a damaged folder on a
+    PLAIN `ccw build` - the command an operator actually reaches for."""
+    target = tmp_path / "archive"
+    configure(ccw_env, archive_root=target, keep=False)
+    capture_and_render(ccw_env, UUID_A)
+    folder = next(archive.walk_folders(target))
+    (folder / "transcript.md").unlink()
+
+    result = run_ccw(["build"], ccw_env)
+    assert result.code == 0, result.err
+    assert (folder / "transcript.md").is_file(), "a plain build did not restore the archive file"
+
+
+def test_a_plain_build_restores_a_deleted_archive_jsonl_without_rebuild(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The judgment-call test (ticket 31, operator decision 2026-08-20: keep
+    the repair). `folder_is_current` checks the five GENERATED_NAMES files but
+    never the JSONL beside them - `ccw build` has always happened to restore
+    a deleted archive JSONL as a side effect of always reading from the store
+    first. The skip-early check must not lose that silently."""
+    target = tmp_path / "archive"
+    configure(ccw_env, archive_root=target, keep=False)
+    capture_and_render(ccw_env, UUID_A)
+    folder = next(archive.walk_folders(target))
+    jsonl_path = next(folder.glob("*.jsonl"))
+    jsonl_path.unlink()
+
+    result = run_ccw(["build"], ccw_env)
+    assert result.code == 0, result.err
+    assert next(folder.glob("*.jsonl"), None) is not None, "the archive JSONL was not restored"
+
+
 # ---------------------------------------------------------------------------
 # The footgun, closed
 # ---------------------------------------------------------------------------

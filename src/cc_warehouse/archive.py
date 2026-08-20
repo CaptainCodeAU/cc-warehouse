@@ -440,16 +440,17 @@ def write_not_a_session(archive_root: Path, data: bytes, *, stem: str) -> Path:
     return target
 
 
-def folder_is_current(
+def _current_manifest(
     directory: Path, source_hash: str, options: render.RenderOptions
-) -> bool:
-    """True when `directory`'s five files already reflect this exact payload,
-    these render options and this renderer version - so rebuilding them would
-    produce byte-identical output and the work can be skipped entirely (ticket
-    30). Reads only file presence plus `manifest.json`'s bytes; never touches
-    the JSONL.
+) -> dict[str, object] | None:
+    """The shared core of "does `directory` already reflect this exact payload,
+    these render options, this renderer version" - the part `folder_is_current`
+    (archive folders, which also carry a sub-agent list) and `pages_are_current`
+    (the old `projections/` tree, which never does) both need. Returns the
+    parsed manifest on a match rather than `True`, so a caller that also needs
+    to check `subagents` does not read `manifest.json` twice.
 
-    ANY DOUBT RETURNS FALSE. A missing file, no manifest, an unreadable one, or
+    ANY DOUBT RETURNS None. A missing file, no manifest, an unreadable one, or
     a manifest missing a key all mean "rebuild" - the same conservative
     direction R5 takes everywhere else in this module. That is also what makes
     this safe under an interrupted run: `iter_projection_files` yields
@@ -457,7 +458,7 @@ def folder_is_current(
     manifest, whose `source_hash` will not match and is read here as "rebuild",
     never as "done".
 
-    Five independent things must all hold, because any one being false means
+    Four independent things must all hold, because any one being false means
     the folder is not what it claims to be:
       - All five `GENERATED_NAMES` files are actually present. A manifest that
         still looks current says nothing about its FOUR SIBLINGS: deleting
@@ -468,27 +469,66 @@ def folder_is_current(
       - `source_hash`: the payload itself has not changed.
       - `config`: the RenderOptions used have not changed.
       - `renderer_version`: the code that produced these pages has not changed
-        (added by this same ticket - without it, a `ccw` upgrade would leave
-        every existing folder frozen at the old format forever).
-      - `subagents`: no sub-agent has been added or removed since this folder's
-        manifest last listed them. Without this check a sub-agent captured
-        after its parent's last render would never be recorded, and a later
-        deletion of that sub-agent's folder would be undetectable by
-        `ccw archive --verify` - the exact "most dangerous kind of green"
-        `subagent_records`' own docstring warns about.
+        (added by ticket 30 - without it, a `ccw` upgrade would leave every
+        existing folder frozen at the old format forever).
     """
     if not all((directory / name).exists() for name in GENERATED_NAMES):
-        return False
+        return None
     manifest_path = directory / _MANIFEST
     try:
         manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
-        return False
+        return None
     if manifest.get("source_hash") != source_hash:
-        return False
+        return None
     if manifest.get("config") != asdict(options):
-        return False
+        return None
     if manifest.get("renderer_version") != __version__:
+        return None
+    return manifest
+
+
+def pages_are_current(
+    directory: Path, source_hash: str, options: render.RenderOptions
+) -> bool:
+    """True when `directory`'s five files already reflect this exact payload,
+    these render options and this renderer version (ticket 31) - the same
+    truth `folder_is_current` answers for an archive folder, minus the
+    sub-agent check.
+
+    NOT a weaker version of `folder_is_current` applied somewhere it happens
+    to also work - it is the only correct answer for the old `projections/`
+    tree, which can never carry sub-agents at all: `write_subagent` only ever
+    writes under `archive_root` (it has no `projections/` counterpart), and
+    `capture._archive_subagents_of` returns immediately when no archive is
+    configured. A projection manifest therefore never has a `subagents` key,
+    so calling `folder_is_current` on a projection directory would compare
+    `None` against `subagent_records(directory)`'s `[]` and return False on
+    every call, unconditionally defeating any skip there.
+    """
+    return _current_manifest(directory, source_hash, options) is not None
+
+
+def folder_is_current(
+    directory: Path, source_hash: str, options: render.RenderOptions
+) -> bool:
+    """True when `directory`'s five files already reflect this exact payload,
+    these render options and this renderer version - so rebuilding them would
+    produce byte-identical output and the work can be skipped entirely (ticket
+    30). Reads only file presence plus `manifest.json`'s bytes; never touches
+    the JSONL.
+
+    Everything `pages_are_current` checks, PLUS one more independent thing
+    that only an archive folder can ever be asked: `subagents` - no sub-agent
+    has been added or removed since this folder's manifest last listed them.
+    Without this check a sub-agent captured after its parent's last render
+    would never be recorded, and a later deletion of that sub-agent's folder
+    would be undetectable by `ccw archive --verify` - the exact "most
+    dangerous kind of green" `subagent_records`' own docstring warns about.
+    ANY DOUBT RETURNS FALSE, same rule as the shared core.
+    """
+    manifest = _current_manifest(directory, source_hash, options)
+    if manifest is None:
         return False
     return manifest.get("subagents") == subagent_records(directory)
 

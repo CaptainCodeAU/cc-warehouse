@@ -395,7 +395,13 @@ def _read(config: Config, head: _Head) -> bytes:
         sha256=head.hash,
     )
 def _mirror(
-    config: Config, label: str, short: str, data: bytes, options: render.RenderOptions
+    config: Config,
+    label: str,
+    short: str,
+    data: bytes,
+    options: render.RenderOptions,
+    *,
+    rebuild: bool = False,
 ) -> None:
     """Refresh this session's archive folder, when an archive is configured.
 
@@ -403,6 +409,16 @@ def _mirror(
     ABOVE this one and a module-level import would be a cycle. Never fatal, for
     the same reason the capture path's mirror is not - the item is already
     stored and already reported.
+
+    `rebuild` is forwarded, not dropped (ticket 31 fix): without it,
+    `ccw build --rebuild` silently did nothing to an already-current archive
+    folder, because `write_session_folder` defaults `rebuild=False` and runs
+    its own ticket-30 guard regardless of what `ccw build` was asked to do.
+    That went unnoticed because real drift (a deleted file, a renderer
+    upgrade, a config change) always trips the guard anyway - `--rebuild` on
+    a genuinely current folder was the only case where it mattered, and
+    nothing tested that case until ticket 31 needed `--rebuild` to mean the
+    same thing in both trees.
     """
     if config.archive_root is None:
         return
@@ -416,6 +432,7 @@ def _mirror(
             options,
             config.archive_timezone,
             fallback_stem=f"session-{short}",
+            rebuild=rebuild,
         )
     except Exception:
         return
@@ -469,20 +486,100 @@ _LOCK_HELD_ITEM = "locks/build"
 # built nothing as a built item. Public: the CLI end report keys on it.
 BUILD_LOCK_HELD = "lock-held"
 
+# A head whose every live tree already reflects it, skipped before its payload
+# was ever read (ticket 31). Distinct from "built" so an all-unchanged run
+# does not silently read as "0 built" with no explanation (R10/F6) - the CLI
+# end report keys on it, same shape as BUILD_LOCK_HELD above.
+UNCHANGED = "unchanged"
+
+
+def _archive_dir_for(config: Config, head: _Head) -> Path | None:
+    """This head's archive folder, computed from catalog columns alone - no
+    store or archive read (ticket 31). `None` when no archive is configured.
+
+    SAFE BY CONSTRUCTION, same argument ticket 30 already relies on in
+    `archive._migrate_locked`: this is the SAME `archive_dir` call
+    `_mirror`/`archive.read_payload` make from the same `_Head` columns (R9 -
+    one naming function). If `first_ts` or `session_uuid` is ever missing or
+    disagrees with the payload's own parse, the computed path simply is not
+    the real folder - no manifest is found there, `folder_is_current` returns
+    False, and the caller falls through to the full read-parse-render path.
+    That can only ever cause an UNNECESSARY rebuild, never a wrongful skip.
+    """
+    if config.archive_root is None:
+        return None
+    return archive_dir(
+        config.archive_root,
+        head.label,
+        head.first_ts,
+        head.session_uuid,
+        config.archive_timezone,
+        fallback_stem=f"session-{head.short}",
+    )
+
+
+def _head_is_current(
+    config: Config, head: _Head, projection: Path, options: render.RenderOptions
+) -> bool:
+    """True only when EVERY tree this deployment actually keeps already
+    reflects this exact head - so `build()` can skip reading its payload at
+    all (ticket 31, mirroring ticket 30's `archive.folder_is_current` for
+    `ccw archive`).
+
+    Independently correct rather than leaning on `config.py` refusing
+    `keep_projections=False` with no `archive_root`: if NEITHER tree is in
+    use, nothing was ever proven current, so this returns False rather than
+    trivially True for every head.
+
+    Imports `archive` lazily, same reason `_read`/`_mirror` do (archive.py
+    imports build.py; a module-level import here would be a cycle).
+    """
+    from cc_warehouse import archive
+
+    checked = False
+    if config.keep_projections:
+        if not archive.pages_are_current(projection, head.hash, options):
+            return False
+        checked = True
+    folder = _archive_dir_for(config, head)
+    if folder is not None:
+        if not archive.folder_is_current(folder, head.hash, options):
+            return False
+        # folder_is_current checks the five GENERATED_NAMES files but never
+        # the JSONL beside them; ccw build (no flags) has always happened to
+        # restore a deleted archive JSONL as a side effect of always reading
+        # from the store first. Keep that repair alive explicitly rather than
+        # losing it silently as a side effect of skipping the read (operator
+        # decision, 2026-08-20) - one glob() per head, not a new read.
+        if archive.sole_jsonl(folder) is None:
+            return False
+        checked = True
+    return checked
+
 
 def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False) -> BatchReport:
     """Project the catalog head sessions; --rebuild regenerates every file.
 
     Runs under a locks/build O_EXCL lock (R14/DESIGN section 13): a live holder
     makes build a no-op that projects nothing and returns a single lock-held
-    outcome for the CLI to refuse on; a dead-PID lock is taken over. Incremental
-    by default: a session whose files already hold the current bytes is left
-    mtime-stable; --rebuild writes unconditionally. Retired dirs (superseded
-    versions, relocated labels) are pruned ONLY after a fully-successful build;
-    a build with any failed head keeps the last-good projections instead so a
-    render failure never strands a session with zero projections (F7/F9), and a
-    later clean build reconciles the tree. Item failures are reported and the
-    batch continues (R10); nothing outside projections/ moves.
+    outcome for the CLI to refuse on; a dead-PID lock is taken over.
+
+    INCREMENTAL, TWO LAYERS DEEP (ticket 31). A head whose every live tree
+    already reflects it (`_head_is_current`) is skipped before its payload is
+    ever read from the store - not merely left mtime-stable after a render
+    that happened anyway, which is what this promised before ticket 31 and is
+    now the WEAKER, write-time-only half of the guarantee for a head that
+    still needs a real render. --rebuild bypasses the skip and writes
+    unconditionally, in both trees (`_mirror` forwards it, ticket 31 fix - it
+    used to be silently dropped). `_prune` still sees every head regardless of
+    whether it was skipped: `expected` is populated before the skip check, so
+    a skipped-but-current session's projection dir is never mistaken for
+    retired. Retired dirs (superseded versions, relocated labels) are pruned
+    ONLY after a fully-successful build; a build with any failed head keeps
+    the last-good projections instead so a render failure never strands a
+    session with zero projections (F7/F9), and a later clean build
+    reconciles. Item failures are reported and the batch continues (R10);
+    nothing outside projections/ moves.
     """
     root = config.root
     projections = root / "projections"
@@ -506,13 +603,16 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
             )
             expected.add(directory)
             try:
+                if not rebuild and _head_is_current(config, head, directory, options):
+                    outcomes.append(ItemOutcome(head.short, UNCHANGED, ""))
+                    continue
                 data = _read(config, head)
                 if config.keep_projections:
                     write_projection(directory, data, options, force=rebuild)
                 # `ccw build` has to keep meaning something once the old tree is
                 # retired: it is the verb that rebuilds after a render change,
                 # so it rebuilds whichever tree still exists (slice 19j).
-                _mirror(config, head.label, head.short, data, options)
+                _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
                 outcomes.append(ItemOutcome(head.short, "built", ""))
             except Exception as exc:  # report and continue past a bad item (R10)
                 outcomes.append(

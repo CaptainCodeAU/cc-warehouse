@@ -27,8 +27,10 @@ implementation choice, and these stay green either way.
 """
 
 from pathlib import Path
+from typing import cast
 
-from conftest import basic_session, run_ccw, warehouse_root, write_transcript
+from cc_warehouse import store
+from conftest import basic_session, catalog_rows, run_ccw, warehouse_root, write_transcript
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -138,3 +140,38 @@ def test_a_dry_run_still_writes_nothing(ccw_env: dict[str, str], tmp_path: Path)
 
     assert not archive.exists(), "a dry-run rendered into the archive"
     assert not warehouse_root(ccw_env).exists(), "a dry-run created the warehouse"
+
+
+def test_a_new_session_is_fully_rendered_even_when_the_rest_of_the_corpus_is_current(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Ticket 31: `ccw sweep` calls `build.build()` whenever it stores anything,
+    and `build.build()` now has a cheap pre-check that skips a head whose
+    payload was never read (ticket 31.2). A genuinely NEW session (B) must
+    still be fully rendered by that same call. Deleting A's stored object
+    after the first sweep is the proof: A can only be skipped correctly, never
+    silently reused for B, and B can only be rendered by actually reading its
+    own payload - either mistake would surface as a failure here."""
+    archive = tmp_path / "archive"
+    configure(ccw_env, archive)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    root = warehouse_root(ccw_env)
+    rows = catalog_rows(ccw_env, "SELECT hash FROM session WHERE session_uuid = ?", (UUID_A,))
+    hash_a = str(cast(tuple[object, ...], rows[0])[0])
+    store.object_path(root, hash_a).unlink()
+
+    write_transcript(
+        ccw_env, basic_session(session_id=UUID_B), session_id=UUID_B,
+        encoded_dir="-home-alice-projects-gadget",
+    )
+    result = run_ccw(["sweep"], ccw_env)
+    assert result.code == 0, result.err
+    assert "projection failed" not in result.err, result.err
+
+    dirs = _session_dirs(archive)
+    assert len(dirs) == 2, dirs
+    for directory in dirs:
+        missing = [f for f in PROJECTIONS if not (directory / f).is_file()]
+        assert not missing, f"{directory.name} missing: {missing}"

@@ -777,10 +777,17 @@ def _run_build(args: Sequence[str]) -> int:
         print("build refused: lock held by a live holder", file=sys.stderr)
         return 2
     built = sum(1 for outcome in report.outcomes if outcome.action == "built")
+    unchanged = sum(1 for outcome in report.outcomes if outcome.action == build.UNCHANGED)
     failures = report.failures
     for outcome in failures:
         print(f"build failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
-    print(f"build: {len(report.outcomes)} sessions, {built} built, {len(failures)} failed")
+    # "unchanged" is its own segment, never folded into "built" (R10/F6):
+    # an all-skipped run must not read as "0 built" with no explanation,
+    # mirroring archive.MigrationReport.summary()'s "N unchanged" line.
+    print(
+        f"build: {len(report.outcomes)} sessions, {built} built, "
+        f"{unchanged} unchanged, {len(failures)} failed"
+    )
     return 1 if failures else 0
 
 
