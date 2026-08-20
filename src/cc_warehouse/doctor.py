@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import parser, status, sweep
+from cc_warehouse import archive, parser, status, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
@@ -43,6 +43,16 @@ _OUR_COMMANDS = ("ccw", "cc-warehouse")
 # A hook wrapper is a small script. Anything larger is not one, and reading it
 # would turn a diagnosis into an unbounded file read.
 _WRAPPER_READ_LIMIT = 64 * 1024
+
+# Ticket 31.5: how many of the MOST RECENT archive folders to verify. A desync from an
+# in-flight capture failure shows up in sessions just captured, not one archived months
+# ago, so a small bounded sample catches the failure mode `verify_folder` exists for
+# without reintroducing the O(everything) cost ticket 31 exists to remove elsewhere. An
+# older, long-standing desync outside the sample is NOT caught here -- `ccw archive
+# --verify` over the full tree is still the complete answer, run by hand or by the
+# weekly job (deliberate scope decision, recorded rather than defaulting to "check
+# everything").
+_DESYNC_SAMPLE = 25
 
 
 @dataclass(frozen=True)
@@ -239,6 +249,45 @@ def _folder_moment(name: str) -> datetime | None:
         return None
 
 
+def _recent_archive_folders(archive_root: Path, limit: int) -> list[Path]:
+    """The `limit` most-recently-STARTED archive folders, newest first.
+
+    Ordered by the payload-derived start time encoded in the folder name (R12), never by
+    mtime: an untouched folder still sorts by when its session happened, not by when this
+    check last ran. `archive.walk_folders` sorts by label then name, which is only
+    chronological WITHIN one label, so the moments are collected and re-sorted globally
+    here rather than trusting that order directly."""
+    dated: list[tuple[datetime, Path]] = []
+    for folder in archive.walk_folders(archive_root):
+        moment = _folder_moment(folder.name)
+        if moment is not None:
+            dated.append((moment, folder))
+    dated.sort(key=lambda pair: pair[0], reverse=True)
+    return [folder for _, folder in dated[:limit]]
+
+
+def _desync(config: Config) -> tuple[int, int, str | None]:
+    """Verify the most recently captured archive folders against their own manifests
+    (ticket 31.5). Returns (checked, problems, first problem description or None).
+
+    BOUNDED, DELIBERATELY (see `_DESYNC_SAMPLE`): `archive.verify_folder` reads and
+    re-hashes each folder's JSONL, so a full pass over a 21,000+ folder tree is not
+    SessionStart-cheap -- that cost is exactly what ticket 31 exists to remove elsewhere.
+    """
+    if config.archive_root is None or not config.archive_root.is_dir():
+        return 0, 0, None
+    checked = 0
+    problems = 0
+    first: str | None = None
+    for folder in _recent_archive_folders(config.archive_root, _DESYNC_SAMPLE):
+        checked += 1
+        for problem in archive.verify_folder(folder, config.archive_timezone):
+            problems += 1
+            if first is None:
+                first = f"{folder.name}: {problem.problem}"
+    return checked, problems, first
+
+
 def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     """Uncaptured sessions that the rest of the corpus has moved on without.
 
@@ -342,6 +391,20 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             else f"{count} session(s) OVERDUE, oldest last active {oldest}",
         )
     )
+
+    checked, problems, first_problem = _desync(config)
+    if config.archive_root is None:
+        desync_detail = "no archive configured"
+    elif checked == 0:
+        desync_detail = "no archived sessions yet"
+    elif problems == 0:
+        desync_detail = f"0 problems in the {checked} most recently captured folder(s)"
+    else:
+        desync_detail = (
+            f"{problems} problem(s) in the {checked} most recently captured folder(s),"
+            f" e.g. {first_problem}"
+        )
+    checks.append(Check("desync", problems == 0, desync_detail))
 
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)

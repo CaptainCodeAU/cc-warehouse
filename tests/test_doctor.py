@@ -28,6 +28,10 @@ plus output is not evidence that nothing happened (2026-08-01).
 import json
 from pathlib import Path
 
+import pytest
+
+from cc_warehouse import archive, doctor
+from cc_warehouse.config import Config
 from conftest import (
     basic_session,
     entry,
@@ -355,3 +359,68 @@ def test_doctor_reports_the_uncaptured_gap(
     result = run_ccw(["doctor"], ccw_env)
 
     assert "uncaptured" in result.out.lower(), result.out
+
+
+# ---------------------------------------------------------------------------
+# desync (ticket 31.5): a cheap check for exactly the failure the daily sweep
+# hit once (JSONL archived, catalog row/render/notification never happened)
+# ---------------------------------------------------------------------------
+
+
+def _tamper(folder: Path) -> None:
+    """Break one archive folder's JSONL-vs-manifest agreement (a real desync)."""
+    jsonl_path = next(folder.glob("*.jsonl"))
+    jsonl_path.write_bytes(jsonl_path.read_bytes() + b'{"type":"other","extra":true}\n')
+
+
+def test_a_tampered_archive_folder_fails_doctor_without_a_full_verify(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`verify_folder`'s exact check ("JSONL does not match manifest source_hash") found
+    the ticket 31 folder immediately once run by hand; this pins that doctor now runs it
+    itself, at SessionStart, with no operator having to think to ask for it."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    folder = next(archive.walk_folders(archive_root))
+    _tamper(folder)
+
+    result = run_ccw(["doctor"], ccw_env)
+
+    assert result.code != 0, f"a tampered archive folder exited 0: {result.out!r}"
+    assert "desync" in result.out.lower(), result.out
+    assert folder.name in result.out, result.out
+
+
+def test_desync_check_is_bounded_to_the_recent_sample(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DELIBERATE SCOPE (recorded in `_desync`'s docstring): the sample is the most
+    RECENTLY STARTED folders, so an old, long-standing desync outside it is invisible to
+    this check on purpose -- catching it is `ccw archive --verify`'s job, not doctor's.
+    Pinned directly against `doctor._desync` (in-process) because the sample size is a
+    module constant, not a flag a subprocess run can override."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    write_transcript(ccw_env, basic_session(session_id=UUID_B), session_id=UUID_B)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    folders = {f.name.rpartition("_")[2]: f for f in archive.walk_folders(archive_root)}
+    _tamper(folders[UUID_A])  # the OLDER (2020) session -- outside a sample of 1
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+
+    monkeypatch.setattr(doctor, "_DESYNC_SAMPLE", 1)
+    checked, problems, _ = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1, "sample size was not respected"
+    assert problems == 0, "an out-of-sample desync was caught; the scope decision changed"
+
+    monkeypatch.setattr(doctor, "_DESYNC_SAMPLE", 25)
+    checked, problems, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 2
+    assert problems >= 1, "the same desync, back in-sample, was missed"
+    assert first is not None and UUID_A in first
