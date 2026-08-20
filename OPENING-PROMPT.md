@@ -48,32 +48,57 @@ problem end to end.
 
 ## What to do next
 
-**Immediate, low-effort, and answers the open question above**: read
-tomorrow's (or the next) daily sweep's actual wall-clock time, from either
-`~/cc-warehouse-data/catalog.sqlite`'s `capture_event` table (the window
-between the first and last row of the run, same method the original
-investigation used) or a launchd log if one exists. If it is still close to
-34.5 minutes, the ~91% gap is confirmed to be external to this code (the
-leading candidate is this machine's own confirmed resource contention under
-4+ concurrent Claude sessions — `python-process-resource-limits.md`,
-operator memory) and 31.4/31.5 should be scoped with that assumption made
-explicit rather than left implicit. If it dropped substantially, that is
-itself worth recording — it would mean the per-item DB/lock pressure this
-session removed was contending with something else running at the same
-time, not just costing time on its own account.
+**Operator instruction, 2026-08-20: this session does 31.4 AND 31.5, then
+moves on to whatever else is pending (ticket 27 — see below).**
 
-**31.4 (retry-on-lock-contention)**: the ticket's own open question — the
-lock-contention mechanism was never proven, no stack trace was recoverable —
-is now MORE likely to be moot rather than less: 31.3 removed ~16,400 of the
-~17,000 daily write transactions that were the suspected contention source.
-Before writing a retry loop, add debug logging around `_capture_locked`'s
-post-`write_source` steps (`capture.py` ~line 168 onward) and wait for a
-natural recurrence, per the ticket's own instruction — do not assume it is
-already fixed by 31.3, and do not assume it still needs a retry loop either.
+**First, cheaply**: read the daily sweep's actual wall-clock time since 31.3
+deployed, from `~/cc-warehouse-data/catalog.sqlite`'s `capture_event` table
+(the window between the first and last row of the run, same method the
+original investigation used) or a launchd log if one exists. If it is still
+close to 34.5 minutes, the ~91% gap this ticket never explained is confirmed
+external to this code (leading candidate: this machine's own confirmed
+resource contention under 4+ concurrent Claude sessions —
+`python-process-resource-limits.md`, operator memory) — worth one line in
+the record either way, but not a blocker for 31.4/31.5 below.
 
-**31.5 (doctor-level desync check)**: still fully open, not started. See the
-ticket's own section for the scoping constraint (must stay SessionStart-cheap,
-must not reintroduce the O(everything) cost this whole ticket exists to
-remove) and `contract/DESIGN.md`'s 31.3 entry for why `ccw doctor`'s TEXT
-OUTPUT is a public compatibility surface (`ccw-watch` parses it) that 31.5
-must not change the wording of.
+**31.4 (retry-on-lock-contention).** BE HONEST ABOUT WHAT ONE SESSION CAN
+ACTUALLY FINISH HERE: the ticket's own instruction is "add debug logging,
+then wait for a natural recurrence before writing the retry loop" — the
+underlying mechanism (a `sqlite3.OperationalError` during
+`_capture_locked`'s post-`write_source` steps) was never proven, only
+suspected from one broken folder. What CAN ship in one session: the debug
+logging itself (`capture.py` ~line 168 onward), and a decision, recorded,
+on whether 31.3 removing ~16,400 of the ~17,000 daily write transactions
+that were the suspected contention source makes this moot rather than fixed
+- don't write a retry loop against an unconfirmed cause. If a natural
+recurrence has already happened by the time this session runs (check
+`ccw archive --verify` for a fresh desync, or the operator may simply know),
+diagnose from the real exception instead of guessing.
+
+**31.5 (doctor-level desync check).** Fully open, not started, no external
+dependency - this one CAN close in one session. Scoping constraints from the
+ticket: must stay SessionStart-cheap (no full `ccw archive --verify` over
+21,000+ folders - that reintroduces the exact O(everything) cost this whole
+ticket exists to remove), and `ccw doctor`'s TEXT OUTPUT is a public
+compatibility surface (`ccw-watch` parses the `hook` line and the
+`Uncaptured: N session(s)` figure by regex) - a new check must not change
+that existing wording.
+
+**Then, whatever else is pending: `harness/tickets/27-collapse-to-one-
+folder.md`.** This is the project's actual active-track ticket per
+`CLAUDE.md`'s OPEN/next section, opened before ticket 31 and still the
+thing after it. CORRECTION to `CLAUDE.md`'s own line, found while writing
+this handoff: it currently says ticket 27 is "NOT STARTED, 27.1-27.8" - that
+is STALE. The ticket file itself shows **27.1 DONE 2026-08-05** (`ccw
+reindex` shipped) and **27.2 DONE**, with a real-data comparison whose
+verdict decides the rest of the ticket's order: the catalog is disposable
+for sessions and labels, but NOT YET for aliases (114 of 4,913 recovered
+after a rebuild, 2.3% - that gap is ticket 28.21). So the actual next open
+step in ticket 27 is 27.3 onward, not the beginning. Update `CLAUDE.md`'s
+stale line when picking this up.
+**SAFETY, carried forward exactly as ticket 27 itself states it**: two
+slices in this ticket (27.4, and the withdrawn-forever 27.9) are marked
+DESTRUCTIVE and need the principal's explicit word at the moment of
+running, not in advance, and not because a gate went green. 27.9 specifically
+is WITHDRAWN and STAYS WITHDRAWN - a satisfied precondition is not consent
+- see the ticket's own banner before touching any part of it.

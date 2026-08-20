@@ -136,7 +136,11 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   (DONE 2026-08-03) -> 23 `ccw doctor` + sweep `--dry-run`/`--quiet` (DONE 2026-08-03) ->
   24 make capture work (DONE 2026-08-04, 24.7 excepted, see below) -> 25 rescue the only
   copies (DONE 2026-08-04) -> 26 prove then back up (DONE 2026-08-04, including 26.4) ->
-  27 collapse to one folder (NOT STARTED, 27.1-27.8; 27.9 WITHDRAWN AND STAYS WITHDRAWN).
+  27 collapse to one folder (CORRECTED 2026-08-20, was stale here: **27.1 DONE
+  2026-08-05** (`ccw reindex` shipped) and **27.2 DONE**, verdict "catalog is
+  disposable for sessions and labels, NOT YET for aliases" - see the ticket file
+  for the real-data comparison. 27.3-27.8 are the actual next open work; 27.9
+  WITHDRAWN AND STAYS WITHDRAWN).
   28 is the backlog register (nothing dropped silently), including the go-public audit.
   Read the ticket files; they carry the measurements and the blast-radius checks behind
   each step.
