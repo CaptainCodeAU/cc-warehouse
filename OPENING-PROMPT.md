@@ -47,17 +47,38 @@ is not consent.
 
 1. **`CLAUDE.md` said `cc-warehouse` is "the only thing capturing Claude Code
    sessions on this machine".** False, and the instrument behind it was too
-   narrow: it only enumerated `~/.claude/settings.json`. **17** project-local
+   narrow: it only enumerated `~/.claude/settings.json`. Project-local
    `settings*.json` under `~/CODE` still register a `SessionEnd` hook running
    `export_transcript.sh`. The prior session's figure of 12 was an undercount
    from a shallower walk that missed two `.worktrees/` copies and a duplicated
-   project dir. All 16 such scripts write to `~/CODE/claude-code-transcripts`
-   (the other name, already deleted), so they will recreate that folder.
-   **Still not fixed. Per-project hook config, not this repo's code.**
+   project dir. **CLOSED 2026-08-21, see the next section: 16 armed, not 17,
+   and the operator ruled "leave them".**
 2. **`CLAUDE.md` recorded this tree as 6.5 GB / 7,698 sessions.** It measures
    3.38 GiB / 6,462. The drop is stated as UNRESOLVED, not explained away: no
    session folder left any project dir after 2026-07-24, and the root mtime of
    2026-08-14 cannot be told apart from a Finder `.DS_Store` rewrite.
+
+## The export_transcript.sh hooks: investigated and CLOSED 2026-08-21
+
+The operator asked for a thorough investigation of my "17 hooks still rebuild
+it" claim, then ruled **leave them in place**. Do not reopen this without being
+asked. Full account is in `CLAUDE.md` beside the capture section; the short form:
+
+- **16 armed, not 17.** The 17th registers in `settings.minimal.json`, which
+  Claude Code never reads, and its script is missing too.
+- **The scripts write nothing.** They shell out to `claude-code-transcripts json
+  <path> -o ~/CODE/claude-code-transcripts -a --json`.
+- **That CLI has ZERO destructive calls** across its 26 source files, checked
+  with a proven control. It cannot delete. It only READS `~/.claude` on this
+  path. It cannot reach the warehouse or the archive.
+- **They are dormant.** 12 of the 16 projects have never had a session; 3 more
+  have zero; the one that has any last saw one 2026-07-10.
+- **Cost per fire, measured:** 0.30s, 7 files, 1,992 KiB.
+- **Unresolved:** an earlier note claimed the hook fired 2026-08-18. Could not
+  be reproduced, and the evidence folder was deleted before the check.
+- **Hazard worth remembering:** `claude-code-transcripts` is installed EDITABLE
+  against the frozen SPECIMEN repo, so its live binary is a view of that repo's
+  `src/`. One more reason never to edit the specimen.
 
 ## The method, if another folder ever needs sweeping
 

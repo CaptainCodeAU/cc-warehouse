@@ -239,8 +239,39 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   at a different home dir). A prior session recorded this as 12; that undercount came from
   a shallower walk that missed two `.worktrees/` copies and a duplicated project dir.
   `cc-warehouse` is the only thing capturing INTO THE WAREHOUSE, which is the property that
-  matters here; it is NOT the only exporter still armed on this machine. Fixing those 17 is
-  per-project hook config and is not this repo's code to change.
+  matters here; it is NOT the only exporter still armed on this machine.
+  **THOSE 17 WERE THEN INVESTIGATED IN FULL AND THE OPERATOR RULED "LEAVE THEM"
+  (2026-08-21). The count is 16, not 17, and my own 17 was the overclaim this time.**
+  The 17th is `~/CODE/Scaffoldings/fifty-shades-of-dotfiles/.claude/settings.minimal.json`,
+  a filename Claude Code never reads, whose referenced script does not exist either. Inert
+  twice over. Of the 16 armed, 15 target this machine's home. All 17 registrations are on
+  `SessionEnd` with matcher `prompt_input_exit|logout|other`, so `/clear` does not fire them.
+  **The scripts write nothing themselves.** They shell out to
+  `claude-code-transcripts json <path> -o ~/CODE/claude-code-transcripts -a --json`, so the
+  behaviour is the CLI's, not the hook's. Read that CLI's 26 source files with a proven
+  control: **ZERO destructive calls** (no `rmtree`, `os.remove`, `.unlink(`, `shutil.move`,
+  `os.rmdir`), so it cannot destroy anything; it only READS `~/.claude` on this path; and it
+  cannot reach `~/cc-warehouse-data` or `~/cc-warehouse-archive` at all. It DOES
+  `mkdir(parents=True)`, so it recreates `~/CODE/claude-code-transcripts` on first fire, FLAT
+  as `<uuid>/`, not `Project/uuid/` (that shape came from the plugin's `hook` subcommand).
+  **They also barely ever fire.** Measured two ways with control-proven instruments
+  (`~/.claude/projects` and the archive): 12 of the 16 projects have never had a session at
+  all, 3 more have a project dir holding zero sessions, and the only one with sessions
+  (`~/CODE/CaptainCodeAU/SCRIPTS/devtools-snippets`) last had one 2026-07-10. Cost per fire,
+  measured by running the exact command into a scratchpad on a 976,062-byte transcript:
+  **0.30s wall, 7 files, 1,992 KiB**, no browser, no network, no log. On that evidence the
+  operator chose to leave all 16 in place; fixing them is per-project hook config in 16
+  unrelated repos and is not this repo's code to change.
+  **UNRESOLVED, recorded not explained away:** a prior session's note says this hook was
+  "CONFIRMED FIRING as recently as 2026-08-18". That could not be reproduced. No hooked
+  project had a session near that date in either instrument, and the folder that would have
+  held the evidence was deleted before the check.
+  **WORTH KNOWING, and it is this repo's own documented hazard on someone else's tool:**
+  `claude-code-transcripts` is installed **EDITABLE** (`"dir_info":{"editable":true}`)
+  against `~/CODE/CaptainCodeAU/claude-code-transcripts`, the frozen SPECIMEN repo. The live
+  binary those 16 hooks invoke is therefore a live view of that repo's `src/`. That is
+  exactly the failure mode the frozen-install rule above exists to prevent for `ccw`, and it
+  is one more reason not to edit the specimen.
 - **TICKET 25 IS COMPLETE (2026-08-04). The only-copies are rescued.** `ccw import
   --from DIR` shipped, and the live run imported **4,756 payloads with 0 failures** in
   10m22s: the archive went 14,472 -> 19,226 folders and `ccw archive --verify` reports
