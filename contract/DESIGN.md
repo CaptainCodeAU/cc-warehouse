@@ -1286,6 +1286,38 @@ not part of the projected matrix.
 Ticket 31 is CLOSED as of this entry: 31.1 (folded into 31.2), 31.2, 31.3,
 31.4, and 31.5 all DONE.
 
+**2026-08-20, ticket 27.3: `keep_objects = false` SHIPPED ON THE REAL
+MACHINE, VERIFIED WITH A LIVE SESSION RATHER THAN A FIXTURE.** With the
+operator's explicit go-ahead at the moment of the change (not a standing
+authorization - this ticket's own banner requires it), `~/.config/
+cc-warehouse/config.toml` gained the line, next to the existing
+`keep_projections = false` it mirrors. `config.py`'s existing interlock
+(refuses `keep_objects = false` without `archive_root` set) accepted it
+without incident, confirmed via `ccw doctor`'s `config` line rather than
+assumed from the file alone.
+
+**Verification method, new to this project's practice: a real Claude Code
+session driven through Herdr, not a test fixture.** Opened a session in a
+Herdr-managed pane, got a real reply, exited it with `/exit` to fire a
+genuine SessionEnd hook capture through the actually-installed, actually-
+frozen `ccw` binary - the same one launchd runs, not the repo's `.venv`
+copy. Confirmed on disk: `~/cc-warehouse-data/objects/` held exactly 22,030
+files before and after (the vault stopped growing, not just stopped being
+required to), the session's archive folder appeared under `~/cc-warehouse-
+archive/`, its catalog row exists, and `logs/capture.jsonl` shows a clean
+5 ms `"status": "ok"` line with no `post-archive-write failure` diagnostic
+(31.4's new stage logging, itself only reachable by installing this
+session's own commits first via `uv_tool_reinstall_current_project
+--no-extras` and confirming the swap by reading the installed package's
+source, not by trusting the frozen-mode banner). The same method also
+re-verified 31.4 and 31.5 live before this change: a real hook capture, a
+real non-dry-run `ccw sweep --quiet` against the actual 86-session backlog
+(82.22 s wall-clock, 0 errors, matching 31.3's own 81.9 s figure), and `ccw
+doctor`'s new `desync` check reporting 0 problems against real archive
+folders throughout. Worth reusing for future capture-path changes: the unit
+suite proves the logic; this proves the actually-deployed binary behaves the
+same way against this machine's real hook, real config, and real backlog.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

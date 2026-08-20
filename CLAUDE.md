@@ -139,8 +139,15 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   27 collapse to one folder (CORRECTED 2026-08-20, was stale here: **27.1 DONE
   2026-08-05** (`ccw reindex` shipped) and **27.2 DONE**, verdict "catalog is
   disposable for sessions and labels, NOT YET for aliases" - see the ticket file
-  for the real-data comparison. 27.3-27.8 are the actual next open work; 27.9
-  WITHDRAWN AND STAYS WITHDRAWN).
+  for the real-data comparison. **27.3 DONE 2026-08-20**: `keep_objects = false`
+  is live in `~/.config/cc-warehouse/config.toml` (operator's explicit go-ahead
+  at the time, per this ticket's own requirement), verified with a real Claude
+  Code session that the vault stopped growing while the archive kept working -
+  see `contract/DESIGN.md` section 15, "2026-08-20, ticket 27.3". 27.4-27.8 are
+  the actual next open work; **27.4 is DESTRUCTIVE and needs the principal's
+  explicit word at the moment of running, same as 27.9 did before it was
+  withdrawn** - a green gate is not consent. 27.9 WITHDRAWN AND STAYS
+  WITHDRAWN).
   28 is the backlog register (nothing dropped silently), including the go-public audit.
   Read the ticket files; they carry the measurements and the blast-radius checks behind
   each step.

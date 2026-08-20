@@ -164,7 +164,7 @@ is a SIGNAL, and because what they changed was the design, not the paperwork.
 A fence that can be defeated by a synonym teaches the next session to skip it.
 Neither was widened.
 
-### 27.3  `keep_objects = false`
+### 27.3  DONE 2026-08-20. `keep_objects = false`
 
 A NEW line in `~/.config/cc-warehouse/config.toml`; the key has never been in
 that file and runs on its `config.py:162` default of True today. Reversible by
@@ -173,6 +173,26 @@ deleting the line.
 `config.py:363` refuses `keep_objects = false` when there is no `archive_root`,
 because that combination gives a capture nowhere to store the payload. The
 interlock is already in the operator's favour and should be left alone.
+
+**What shipped and how it was verified, on the real live machine, with the
+operator's explicit go-ahead first.** The line was added to `~/.config/
+cc-warehouse/config.toml` (config file, not repo-tracked - no commit for the
+edit itself). `ccw doctor` immediately confirmed the interlock accepted it
+(`config ... keep_objects=False`, no refusal, since `archive_root` is already
+set on this machine) rather than trusting the config file alone.
+
+Verified end to end with a REAL Claude Code session (via Herdr, not a test
+fixture): opened a session, got a real reply, exited it with `/exit` to fire
+a genuine SessionEnd hook capture. Confirmed directly on disk and in the
+catalog: `~/cc-warehouse-data/objects/` file count stayed at exactly 22,030
+before and after (the vault got NO new file - `keep_objects = false` is
+honoured, not just accepted), the session's archive folder was created
+correctly under `~/cc-warehouse-archive/`, its catalog row exists, `logs/
+capture.jsonl` shows a clean `"status": "ok"` line (5 ms), and no
+`post-archive-write failure` diagnostic line appeared (31.4's stage logging,
+confirming the catalog-write path is unaffected by this config change).
+`ccw doctor` stayed fully green afterward, including the new `desync` check
+(31.5) against the freshly archived folder.
 
 ### 27.4  DESTRUCTIVE: rename `objects/` aside, exercise, then delete
 
