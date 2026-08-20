@@ -5,7 +5,44 @@ ticket 25.5.
 
 This ticket is the CLASS. Ticket 25.5 hit one instance of it and stopped.
 
-## STATUS: mechanism (2) is DONE. Mechanism (1) is OPEN and unscoped.
+## STATUS: mechanism (2) is DONE. Mechanism (1) is DONE 2026-08-20.
+
+**Mechanism (1) fixed 2026-08-20**, scoped with the principal first (as this
+ticket's own text required) after ticket 27.4's exercise step surfaced it
+again in a harder form: `ccw build` raising `FileNotFoundError` instead of
+silently serving the wrong-but-correct content, once `objects/` was
+temporarily renamed aside. `build._heads` and `build.head_for_short` no
+longer define a head as "the row no other row supersedes" (insertion order);
+both now rank each session_uuid's rows by the SAME `COALESCE(last_ts,
+captured_at) DESC, captured_at DESC, rowid DESC` ordering `catalog.
+_latest_version` already used for picking a supersedes TARGET, via one
+shared query fragment (`build._HEAD_RANK_CTE`, R9 - one definition, not four
+independently-inlined copies of the old predicate). `catalog.add_session`'s
+own supersedes-chain-building logic is UNCHANGED - only which row counts as
+head is fixed, not how the chain links.
+
+Verified two ways before trusting it: (1) oracle tests
+(`tests/test_head_selection.py`) reproducing the exact real-world shape - a
+truncated/out-of-order capture of the same uuid arriving with an EARLIER
+`last_ts` than an already-stored fuller capture - RED before the fix
+(confirmed via `git stash` on `build.py` alone), GREEN after, plus a
+regression guard that ordinary in-place growth still promotes the newer,
+larger version exactly as before. (2) On the REAL machine: all 4 sessions
+ticket 27.4's exercise found broken now resolve, via the new query run
+directly against the live catalog, to the exact hash sitting in each
+archive folder (checked by `shasum -a 256` against the same 4 folders,
+before touching the fix - only after does the query agree). Then the full
+27.4 exercise was re-run for real: `objects/` renamed aside a second time,
+`ccw status`/`verify`/`build`/`sweep --quiet`/a real live Claude Code
+session end (via Herdr) all passed clean - `ccw build` specifically went
+from `4 failed` to `0 failed` against the unchanged real corpus. `objects/`
+was restored afterward; the delete itself is still the operator's to run,
+separately, per this ticket's own DESTRUCTIVE marking on 27.4.
+
+Gates: `uv run pytest` (1111 passed; the sole remaining failure is the
+pre-existing, unrelated `.envrc` packaging gap, not this change), `uv run
+pyright` (0 errors), `uv run ruff check` (clean), `tests/golden/matrix-
+anchor` untouched (61 passed, re-run directly).
 
 **Mechanism (2) fixed 2026-08-04** (principal ruling the same day, option 5:
 "fix the writer first, then import"), commit `86394d3`. `write_session_folder`

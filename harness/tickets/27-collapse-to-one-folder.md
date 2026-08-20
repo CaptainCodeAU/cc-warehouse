@@ -194,7 +194,7 @@ confirming the catalog-write path is unaffected by this config change).
 `ccw doctor` stayed fully green afterward, including the new `desync` check
 (31.5) against the freshly archived folder.
 
-### 27.4  DESTRUCTIVE: rename `objects/` aside, exercise, then delete
+### 27.4  DESTRUCTIVE: rename `objects/` aside, exercise, then delete - CODE BLOCKER FIXED 2026-08-20, DELETE ITSELF STILL NOT RUN
 
 Rename, not delete. Then run capture, sweep, build, verify, status and a real
 session end. Only when all of those pass does the renamed directory go, and the
@@ -265,14 +265,41 @@ failed`, confirming both the original symptom and this corrected diagnosis
 without losing or risking anything - the rename-not-delete shape did exactly
 its job twice over.
 
-**Next session must, before re-attempting this slice:** pick up ticket 29
-Mechanism 1 (not a new build.py investigation - that trail is closed by this
-entry), ship its fix with oracle tests first, then re-run the SAME exercise
-(rename `objects/` aside, `status`/`verify`/`build`/`sweep`/a real session
-end) before considering the delete. A clean re-run does not by itself prove
-no other session is waiting to hit this same class through a different
-supersedes chain - name what was checked, same as this entry does, rather
-than asserting "safe now" from one clean run.
+**RESOLVED, same day, same session, with the operator's explicit go-ahead
+before touching `build._heads`/`head_for_short` (both this ticket and
+ticket 29's own docstring warning required scoping that with the principal
+first).** Ticket 29 Mechanism 1 shipped: full account in `harness/tickets/
+29-which-copy-is-the-current-one.md` and `contract/DESIGN.md` section 15,
+"2026-08-20, ticket 29 mechanism 1". In short: `build._heads`/`head_for_
+short` now rank each session_uuid's rows by payload recency (`COALESCE(
+last_ts, captured_at)`, the same ordering `catalog._latest_version` already
+used) instead of by insertion order, via one shared query fragment
+(`build._HEAD_RANK_CTE`, R9). Oracle tests first (`tests/test_head_
+selection.py`, RED confirmed via `git stash` on `build.py` alone, GREEN
+after), full gate suite green, matrix anchor untouched.
+
+**Then the FULL 27.4 exercise was re-run for real, a second time, exactly
+as this entry's previous version asked for:** `objects/` renamed aside
+again, `ccw status`/`verify`/`build`/`sweep --quiet`/a real live Claude Code
+session end (via Herdr) all passed clean. `ccw build` specifically went
+from `4 failed` (before the fix) to `0 failed` (after) against the
+UNCHANGED real 21,460-session corpus - not a smaller or different fixture.
+All 4 previously-failing sessions were checked directly against the fixed
+head-selection query and now resolve to the exact hash sitting in their
+archive folder. `objects/` was restored afterward, same as the first pass.
+
+**What is NOT proven and must not be assumed:** a clean re-run over today's
+corpus does not prove no OTHER session will hit this same class tomorrow
+through a different chain shape this session did not construct as a test
+case (e.g., three-plus versions with more complex tie patterns than the two
+tested). The oracle tests cover the exact measured shape (later-content,
+later-first-ts vs earlier-content, later-INSERT) plus the ordinary growth
+case; they do not exhaustively enumerate every possible chain.
+
+**The delete step ITSELF was still not run and still needs the principal's
+explicit word at the moment of running - fixing the code blocker is not
+that word.** This session's go-ahead covered the fix and its verification,
+not the delete.
 
 ### 27.5  Decide whether `root` moves into the archive
 

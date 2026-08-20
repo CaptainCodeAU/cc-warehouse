@@ -1355,10 +1355,66 @@ locked oracle test it must not break.
 
 `objects/` was renamed back immediately; a second `ccw build` came back `4
 built, 0 failed`, confirming both the symptom and the corrected diagnosis
-without losing or risking anything. **27.4's delete step is blocked on
-ticket 29 Mechanism 1, not on a build.py fix** - read that ticket in full
-before scoping work here. Full account: `harness/tickets/27-collapse-to-
-one-folder.md`, 27.4.
+without losing or risking anything. **27.4's delete step was blocked on
+ticket 29 Mechanism 1 - RESOLVED the same session, see the next entry.**
+Full account: `harness/tickets/27-collapse-to-one-folder.md`, 27.4.
+
+**2026-08-20, ticket 29 mechanism 1: HEAD SELECTION NOW RANKS BY PAYLOAD
+RECENCY, NOT INSERTION ORDER.** Scoped with the principal first, as both
+this ticket's own text and `catalog._latest_version`'s docstring required
+before touching `build._heads`/`head_for_short` ("the most load-bearing
+pair of functions in the project"). The old predicate, "a row no other row
+supersedes", picked the newest INSERT as head regardless of its own
+payload's `last_ts` - `catalog.add_session` always points a new row's
+`supersedes` at whatever was previously latest, so a late or out-of-order
+capture could outrank a fuller, chronologically-later one whose bytes are
+what actually survived in the shared archive folder (`write_source`'s
+"larger payload wins" rule).
+
+**The fix**: both functions now rank each session_uuid's rows via one
+shared query fragment, `build._HEAD_RANK_CTE` - a `ROW_NUMBER() OVER
+(PARTITION BY COALESCE(session_uuid, 'row-' || rowid) ORDER BY COALESCE(
+last_ts, captured_at) DESC, captured_at DESC, rowid DESC)` - the SAME
+ordering `catalog._latest_version` already used to pick a supersedes
+target, so the two functions now agree (R9: one definition of "latest",
+not two). The `COALESCE(session_uuid, 'row-' || rowid)` partition key keeps
+a NULL-session_uuid row in a singleton partition of its own, preserving the
+old predicate's existing behaviour there (a row with no uuid never
+supersedes anything, so it was always its own head) - checked by reading,
+not assumed, since a naive `PARTITION BY session_uuid` would have grouped
+every uuid-less row into ONE partition and silently dropped all but the
+newest from head status. `catalog.add_session`'s supersedes-chain-building
+is UNCHANGED; only which row counts as head moved.
+
+**Verified two ways.** (1) `tests/test_head_selection.py` (new, 2 tests):
+the exact measured real-world shape (a fuller, chronologically-later
+payload already stored; a shorter, earlier-last_ts capture of the same
+uuid arrives AFTER it) proven to keep the fuller one as head, RED before
+the fix via `git stash` on `build.py` alone, GREEN after; plus a regression
+guard that ordinary in-place growth (the common case, where insertion
+order and payload recency always agree) still promotes the newer, larger
+version. (2) On the real machine, before AND after: the 4 sessions ticket
+27.4's exercise found broken were checked directly against the real
+catalog with the new ranking query - all 4 now resolve to the exact hash
+already sitting in their archive folder (confirmed via `shasum -a 256`
+against those same folders). The full 27.4 exercise (`objects/` renamed
+aside, `status`/`verify`/`build`/`sweep --quiet`/a real live session end
+via Herdr) was then re-run end to end: `ccw build` went from `4 failed` to
+`0 failed` against the same unchanged 21,460-session corpus. `objects/` was
+restored afterward; the delete itself was NOT run and still needs the
+principal's explicit word separately, at the moment of running.
+
+Gates: `uv run pytest` (1111 passed; the sole remaining failure is the
+pre-existing `.envrc` packaging gap, unrelated), `uv run pyright` (0
+errors), `uv run ruff check` (clean), `tests/golden/matrix-anchor`
+untouched (61 passed, re-run directly - head selection is not part of the
+projected matrix).
+
+**What this does NOT prove**: a clean re-run over today's corpus does not
+guarantee no other session hits this same class tomorrow through a chain
+shape neither test constructs (three-plus versions with a more complex tie
+pattern, for instance). The oracle tests pin the measured shape and the
+ordinary case; they are not an exhaustive enumeration.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 

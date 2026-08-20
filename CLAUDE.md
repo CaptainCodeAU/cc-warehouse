@@ -145,19 +145,23 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   Code session that the vault stopped growing while the archive kept working -
   see `contract/DESIGN.md` section 15, "2026-08-20, ticket 27.3". **27.4's
   non-destructive half (rename `objects/` aside, exercise) was RUN 2026-08-20
-  and FOUND A REAL BLOCKER: `ccw build` fails 4 of 21,460 sessions with
-  `objects/` renamed away. CORRECTED same session: this is NOT a missing
-  archive fallback in `build._read` (it already has one, verified by
-  re-hashing) - it is ticket 29's ALREADY-OPEN "Mechanism 1"
-  (`harness/tickets/29-which-copy-is-the-current-one.md`): head selection
-  can promote a catalog row whose payload the archive folder does not
-  actually hold. 3 of the 4 failing sessions are the exact uuids ticket 29
-  already named on 2026-08-04/05; the 4th is a fresh same-day instance,
-  proving the mechanism is still live. `objects/` was restored immediately;
-  nothing was lost. **27.4's DELETE STEP IS BLOCKED ON TICKET 29, not on a
-  new build.py fix** - see `contract/DESIGN.md` section 15, "2026-08-20,
-  ticket 27.4" and the ticket file for the full account.** 27.5-27.8 remain
-  open behind it.
+  and FOUND A REAL BLOCKER, then the blocker was FIXED the same session:**
+  `ccw build` failed 4 of 21,460 sessions with `objects/` renamed away,
+  root-caused (after a first, corrected misdiagnosis) to ticket 29's
+  ALREADY-OPEN "Mechanism 1" - head selection could promote a catalog row
+  whose payload the archive folder does not actually hold, because it picked
+  "the newest INSERT" instead of "the newest PAYLOAD". **Ticket 29 mechanism
+  1 is now DONE**: `build._heads`/`head_for_short` rank by payload recency
+  (`COALESCE(last_ts, captured_at)`) instead of insertion order - see
+  `contract/DESIGN.md` section 15, "2026-08-20, ticket 29 mechanism 1". The
+  full 27.4 exercise was re-run after the fix and passed clean end to end
+  (`ccw build`: 4 failed -> 0 failed against the same real corpus); `objects/`
+  was restored afterward. **27.4's CODE blocker is gone. The DELETE ITSELF
+  was still not run and still needs the principal's explicit word at the
+  moment of running - fixing the blocker is not that word.** 27.5-27.8 remain
+  open behind it. See `harness/tickets/27-collapse-to-one-folder.md` (27.4)
+  and `harness/tickets/29-which-copy-is-the-current-one.md` for the full
+  account.
   **27.4 is DESTRUCTIVE and needs the principal's explicit word at the moment
   of running, same as 27.9 did before it was withdrawn** - a green gate is not
   consent. 27.9 WITHDRAWN AND STAYS WITHDRAWN).
