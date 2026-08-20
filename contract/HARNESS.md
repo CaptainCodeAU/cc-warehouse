@@ -854,6 +854,26 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   positive result (a real sweep in 81.9 s against the live corpus) shipped
   anyway, because the fix was correct on its own merits independent of
   whether it explained the full daily gap.
+- 2026-08-20: **A TICKET NAMED ONE FUNCTION; THE REAL GAP WAS IN A CALLER IT
+  DIDN'T NAME.** Ticket 31.4 pointed at `capture._capture_locked` and asked
+  for debug logging around its post-archive-write steps, framed against one
+  broken folder found via the HOOK path. Reading `_capture_locked`'s TWO
+  callers before writing the logging line - not just the function the ticket
+  named - showed the hook path (`_run_hook`) already wraps every capture in a
+  never-raise boundary and reports failures via `notify.report`; the SWEEP
+  path (`sweep.sweep` -> `_capture_item`, invoked by `_run_sweep` with
+  nothing wrapping it) has NO per-item exception handling at all, so an
+  uncaught exception there aborts the whole batch before anything is printed
+  or logged. That is a more complete account of the ticket's own word
+  "silently" than the ticket itself proposed, found by reading one level
+  outward from the named function rather than only the function itself. The
+  fix stayed exactly as scoped (logging, not a new sweep-side handler,
+  because THIS mechanism is also unconfirmed by a live occurrence) - the
+  point is not that the wider read changed what shipped, it is that it
+  changed what got RECORDED as the open question, which the next occurrence
+  needs to be diagnosed against. When a ticket names one function to
+  instrument, read its callers too before writing anything; the ticket's own
+  framing of "where this fails" is a hypothesis, not a boundary.
 
 ---
 

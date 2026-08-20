@@ -1184,6 +1184,108 @@ Whether the daily launchd run reaches a similar number depends on whatever
 was producing the other ~91%, which this ticket did not identify and 31.4/
 31.5 should treat as the standing open question rather than assume closed.
 
+**Cheap check, done first as the next session's handoff asked: no genuine
+post-31.3 launchd run exists yet.** 31.3 was committed and tagged 08:10-08:11
+UTC on 2026-08-20. That day's 12:30-local (02:30 UTC) `com.captaincodeau.
+ccw-sweep` run started and finished (02:30:02-02:38:17 UTC per its 16,382
+individual `skipped_unchanged` rows) BEFORE the deploy - the pre-31.3 shape,
+confirmed from `capture_event` directly rather than assumed. The only
+post-31.3 data point remains the 81.9 s interactive run this same entry
+already flagged as not representative of launchd's own environment. The
+~91% gap stays open; tomorrow's 12:30 run is still the first real test.
+
+**2026-08-20, ticket 31.4: DEBUG LOGGING SHIPPED, THE RETRY LOOP DID NOT -
+AND READING THE CODE FOUND A BIGGER GAP THAN THE ONE THE TICKET NAMED.** The
+ticket's own instruction was narrow: add logging around the post-`_archive_
+source` steps in `capture._capture_locked`, confirm the actual exception on
+the next real occurrence, and do not design a fix for an unconfirmed cause.
+That shipped as written - `catalog.add_session` and `catalog.record_event`
+(`capture.py`) are each wrapped in a narrow try/except that appends a
+stage-labeled line to the existing O_APPEND audit log (`notify.append_log`,
+`logs/capture.jsonl` - R2's sanctioned exception, no new write path) and then
+unconditionally re-raises, so behavior is unchanged except for the added
+line. Reading `_capture_locked` and its two callers before writing anything,
+per the ticket's own discipline, surfaced a mechanism the ticket had not
+named: the HOOK path (`_run_hook`, `cli.py`) already wraps every capture in a
+never-raise boundary and reports any exception via `notify.report` (SPEC
+2.6/F7); the SWEEP path (`sweep.sweep` -> `_capture_item`, `sweep.py`, called
+by `_run_sweep` with nothing wrapping it, `cli.py` ~line 628) has **no
+per-item exception handling at all**, so an uncaught exception from
+`_capture_locked` during a sweep aborts the whole `ccw sweep` process before
+its report is ever built - nothing printed, nothing logged, and every
+still-queued item in that run silently deferred to the next sweep rather
+than lost. This is a more complete account of "silently" than the ticket's
+own framing (a caught-but-unreported failure); it is still analysis, not a
+live occurrence, and the fix (sweep-side per-item exception handling) is
+deliberately UNSHIPPED, matching the same "don't fix an unconfirmed cause"
+instruction.
+
+Also found by reading `catalog.py`'s `writing()` before writing the log
+wrapper: `add_session` and `record_event` are two SEPARATE transactions on
+one connection, so a session CAN end up cataloged (the `session` row
+committed) with no corresponding `stored` `capture_event` row, if
+`record_event` is specifically the one that fails - a real partial-state
+case the new stage label distinguishes from "nothing cataloged at all"
+(an `add_session`-stage failure) for the first time.
+
+**Decision, recorded per the ticket's instruction: 31.3 does not make this
+moot.** 31.3 removed the ~16,382/day `skipped_unchanged` catalog writes
+entirely; the suspected contention population was always the FRESH-IDENTITY
+`add_session`/`record_event` pair (`stored` rows, 753/day, measured today),
+which 31.3 never touched - it only ever ran the skip path, which never wrote
+`stored`. Lower overall daily DB traffic plausibly lowers contention
+probability as a side effect; that is not the same claim as a fix, and it is
+not measured. The retry loop stays where the ticket left it: blocked on a
+confirmed exception, which has not recurred (0 `capture_event` rows with
+`action='error'` in the live catalog, and neither new wrap has fired) as of
+this session.
+
+Oracle tests: `tests/test_capture_stage_logging.py` (new, 2), RED-confirmed
+via `git stash` on `capture.py` alone. Gates: `uv run pytest` 1109 passed
+(the sole remaining failure, `.envrc` untracked, predates this session and
+is not a file either 31.4 or 31.5 touches), `uv run pyright` 0 errors,
+`uv run ruff check` clean.
+
+**2026-08-20, ticket 31.5: A SAMPLED `ccw doctor` CHECK, SCOPED TO RECENT
+FOLDERS BY DESIGN.** `archive.verify_folder`'s "JSONL does not match manifest
+source_hash" check is exactly the instrument that found the real broken
+folder (1 of 21,669), but only when run by hand via `ccw archive --verify`.
+`doctor.py` gained a new `desync` check (blocking, same as `overdue`):
+`doctor._recent_archive_folders` collects every archive folder via the
+existing `archive.walk_folders`, reads each folder-name-encoded start
+timestamp (R12, never mtime - `doctor._folder_moment`, already used by
+`overdue`), and re-sorts globally by that moment (walk_folders is only
+chronological WITHIN one label). `doctor._desync` then runs `archive.
+verify_folder` against just the `_DESYNC_SAMPLE = 25` most recent. Decision,
+recorded rather than defaulted silently: a desync from an in-flight capture
+failure shows up in sessions just captured, not one archived months ago, so
+a small bounded recent sample catches the exact failure mode this ticket
+exists for, without re-adding the O(everything) cost ticket 31 removes
+elsewhere. An old, long-standing desync outside the sample is explicitly NOT
+caught by this check - `ccw archive --verify` over the full tree (by hand,
+or the weekly `com.captaincodeau.ccw-archive` job) stays the complete
+answer. `ccw doctor`'s existing text-output compatibility surface (the
+`hook` line and `Uncaptured: N session(s)` figure `ccw-watch` regexes) is
+untouched: `desync` is a new, distinctly-named check appended after
+`overdue`.
+
+Oracle tests: `tests/test_doctor.py` (+2) - one CLI-level (tamper a real
+archived JSONL, assert non-zero exit and the folder named in the report),
+one in-process against `doctor._desync` directly (the sample size is a
+module constant, not a subprocess-overridable flag) proving the scope
+decision itself: an old tampered folder outside a sample of 1 is invisible,
+the same folder back in-sample (25) is caught. RED-confirmed via `git stash`
+on `doctor.py` alone. Gates: same pytest/ruff run as 31.4 above; `uv run
+pyright` needed `# pyright: ignore[reportPrivateUsage]` on the two direct
+`_desync` calls (no existing codebase precedent for a test calling another
+module's private function, so this was the narrower fix over making
+`_desync` public for a use it does not otherwise need). `tests/golden/
+matrix-anchor` untouched (re-run directly, 61 passed) - doctor's output is
+not part of the projected matrix.
+
+Ticket 31 is CLOSED as of this entry: 31.1 (folded into 31.2), 31.2, 31.3,
+31.4, and 31.5 all DONE.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

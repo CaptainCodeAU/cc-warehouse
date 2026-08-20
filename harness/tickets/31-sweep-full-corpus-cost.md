@@ -7,7 +7,8 @@ broken session folder the operator handed over (`CaptainCodeAU-win_go_app_test/
 the daily `ccw sweep` job. Full evidence, numbers, and reasoning live in that
 proposal; this ticket is the work-order.
 
-**31.1 (folded into 31.2) DONE, 31.2 DONE, 31.3 DONE. 31.4 and 31.5 OPEN.**
+**31.1 (folded into 31.2) DONE, 31.2 DONE, 31.3 DONE, 31.4 DONE (logging only,
+by design - see below), 31.5 DONE. Ticket 31 is CLOSED as of 2026-08-20.**
 
 ## Why this ticket exists
 
@@ -201,7 +202,7 @@ Whether the daily job now runs faster in practice is unverified - the
 launchd's. 31.4 and 31.5 should treat the missing 91% as still open, not
 assume this ticket closed it.
 
-### 31.4  Retry-with-backoff on catalog lock contention in `_capture_locked`
+### 31.4  DONE 2026-08-20 (logging only; the retry loop stays unshipped). Retry-with-backoff on catalog lock contention in `_capture_locked`
 
 The resilience half. `capture.py` `_capture_locked()` writes the archive
 JSONL first (`_archive_source`, ~line 168) and only afterward opens/commits
@@ -221,7 +222,82 @@ exception on the next real occurrence, rather than designing a fix for an
 unconfirmed cause. If a different exception shows up, the fix target changes;
 don't assume.
 
-### 31.5  Wire a cheap desync check into `ccw doctor`
+**What shipped: debug logging only, exactly as scoped above - no retry loop.**
+Reading `_capture_locked` (`capture.py`) before writing anything showed the
+one broken folder's own shape is reachable two ways, and only one of them was
+ever going to surface anything: the HOOK path (`_run_hook`) already wraps
+`capture_transcript` in a never-raise boundary and calls `notify.report` on
+any exception (SPEC 2.6/F7) - so a hook-side failure was already being
+logged, just as a bare `repr(exc)` that never says WHICH post-archive-write
+step failed. The SWEEP path (`sweep.sweep` -> `_capture_item`, `sweep.py`
+~line 224-230) has **no such wrapper at all**: `_run_sweep` (`cli.py` ~line
+628) calls `sweep.sweep()` directly with nothing catching a per-item
+exception, so an uncaught `_capture_locked` failure during a sweep aborts the
+ENTIRE `ccw sweep` process mid-batch, before `report = sweep.sweep(...)`
+ever returns - nothing is printed, nothing is logged, and every item still
+queued in that run is simply never attempted (picked up by the next sweep
+instead, not lost). This is the more complete explanation for "silently":
+not a caught-but-unreported failure, but an escape from every reporting path
+the codebase has, for the one pipeline (sweep) that has no per-item
+try/except at all. **This is analysis from reading the code, not a live
+occurrence - still unconfirmed, per the open question above, and the fix
+target (adding sweep-side per-item exception handling) is deliberately NOT
+shipped here**, matching the ticket's own instruction not to design a fix
+for an unproven cause.
+
+What ships: `catalog.add_session` and `catalog.record_event` (`capture.py`
+~line 186-193, the two calls after `_archive_source`/`_archive_subagents_of`)
+are each wrapped in a narrow try/except that appends a diagnostic line to the
+existing O_APPEND audit log (`notify.append_log`, `logs/capture.jsonl` -
+DESIGN R2's sanctioned exception; no new write path) naming the STAGE
+(`add_session` or `record_event`) and the exception, then unconditionally
+re-raises. Behavior is byte-for-byte unchanged except for the added log line:
+the hook path still reports via `notify.report` exactly as before, and the
+sweep path still has no wrapper (deliberately untouched - see above). Also
+confirmed by reading `catalog.py`: `add_session` and `record_event` are TWO
+SEPARATE `writing()` transactions on the same connection, so a session CAN
+end up cataloged (the `session` row commits) with no corresponding `stored`
+`capture_event` row if `record_event` is the one that fails - a real,
+previously undocumented partial-state case the stage label now distinguishes
+from an `add_session`-stage failure (nothing cataloged at all).
+
+**Decision, recorded as instructed: 31.3 does NOT make this moot.** 31.3
+eliminated the ~16,382/day `skipped_unchanged` catalog writes entirely (they
+now never reach `capture_transcript`). The suspected contention population
+was never those - it is the FRESH-IDENTITY `add_session`/`record_event`
+pair, `capture_event` `action='stored'` rows, measured today at 753/day, a
+count 31.3 does not touch at all (it only ever ran the skip path, which
+never wrote `stored`). Lower overall DB traffic plausibly lowers contention
+PROBABILITY (fewer transactions contending for the same reserved lock across
+a run), but that is a mitigating side effect, not a fix, and it is not
+measured. The retry loop stays exactly where the ticket left it: blocked on
+a confirmed exception, which has not recurred (0 `capture_event` rows with
+`action='error'` in the live catalog as of this session, and the live
+`add_session`/`record_event` wrap has not fired either).
+
+**Cheap check done first, as instructed.** `catalog_event` and the launchd
+job's own record (`launchctl print`, `runs = 6`, `last exit code = 0`) show
+today's 12:30 local (02:30 UTC) `ccw sweep` run happened at 02:30:02-
+02:38:17 UTC, producing 16,382 individual `skipped_unchanged` rows - the
+PRE-31.3 shape. 31.3 was committed and tagged at 08:10-08:11 UTC, after
+today's job had already run. So there has been NO real launchd-triggered
+sweep on the 31.3 code yet; the only post-31.3 data point remains the
+81.9s interactive verification run 31.3's own entry already flagged as not
+representative of launchd's environment/load. Tomorrow's 12:30 run is still
+the first real test - unchanged from what the previous handoff already said,
+now confirmed from the actual event log rather than assumed.
+
+**Oracle tests**: `tests/test_capture_stage_logging.py` (new, 2 tests) -
+monkeypatches `catalog.add_session`/`catalog.record_event` to raise, and
+pins both that the stage-labeled diagnostic line lands in `logs/
+capture.jsonl` AND that the original exception still propagates unchanged
+(no swallowing). RED confirmed via `git stash` on `capture.py` alone before
+GREEN. Gates: `uv run pytest` (1109 passed; the one "unrelated" failure is
+`.envrc`, untracked before this session started, not a file this ticket
+touches - not 31.2/31.3's precedent repeating, a different pre-existing
+gap), `uv run pyright` (0 errors), `uv run ruff check` (clean).
+
+### 31.5  DONE 2026-08-20. Wire a cheap desync check into `ccw doctor`
 
 `archive.py` `verify_folder()`'s "JSONL does not match manifest source_hash"
 check is exactly the right instrument (it found today's broken folder, 1 of
@@ -238,6 +314,44 @@ recently-touched folders only, or a separate lighter instrument is an
 implementation decision, not answered by the proposal - decide and record the
 reasoning, don't default silently to "check everything" and reintroduce the
 exact cost this ticket exists to remove elsewhere.
+
+**Decision, recorded: sampled by recency, not full coverage.** `ccw doctor`
+gained a new `desync` check, blocking (it affects the exit code, same as
+`overdue`). It verifies only the `_DESYNC_SAMPLE = 25` most RECENTLY STARTED
+archive folders (`doctor._recent_archive_folders`, ordered by the payload's
+own start time encoded in the folder name - R12, never mtime), against
+`archive.verify_folder` - the same instrument `ccw archive --verify` uses,
+unmodified. Reasoning: a desync from an in-flight capture failure (this
+ticket's whole motivation) shows up in sessions just captured, not one
+archived months ago, so a small bounded recent sample catches the failure
+mode this check exists for without re-adding the O(everything) cost ticket
+31 exists to remove elsewhere. **Explicitly NOT caught**: an old,
+long-standing desync outside the sample - `ccw archive --verify` over the
+full tree (by hand, or the weekly `com.captaincodeau.ccw-archive` job) stays
+the complete answer; this check is a fast, narrow tripwire for RECENT
+breakage, not a replacement.
+
+`ccw doctor`'s existing TEXT OUTPUT compatibility surface (the `hook` line
+and the `Uncaptured: N session(s)` figure `ccw-watch` regexes - see
+`CLAUDE.md`) is untouched: `desync` is a brand-new check name, appended after
+`overdue`, and nothing about the existing checks' wording changed.
+
+**Oracle tests**: `tests/test_doctor.py` (+2) - one CLI-level (subprocess
+`ccw doctor`) tampering a real archived JSONL and asserting non-zero exit
+plus the folder name in the report, proving the check fires without a
+hand-run `ccw archive --verify`; one in-process against `doctor._desync`
+directly (the sample size is a module constant, not a flag a subprocess run
+can override) proving the SCOPE decision itself: an old tampered folder
+outside a sample of 1 is invisible, the same folder back in-sample (limit
+25) is caught. RED confirmed via `git stash` on `doctor.py` alone before
+GREEN. Gates: same run as 31.4 above (`uv run pytest` 1109 passed + the one
+pre-existing unrelated `.envrc` failure, `uv run pyright` 0 errors after
+adding `# pyright: ignore[reportPrivateUsage]` on the two direct `_desync`
+calls - no other codebase precedent for a test calling another module's
+private function existed to follow, so this was the smallest fix rather than
+widening `_desync` into a public API it does not otherwise need -, `uv run
+ruff check` clean). `tests/golden/matrix-anchor` untouched (re-run directly,
+61 passed) - `ccw doctor` output is not part of the projected matrix.
 
 ## Things already checked and ruled out (do not re-investigate)
 
@@ -275,13 +389,18 @@ it looks stale.
 - `build.build()`'s per-session skip check matches ticket 30's shape
   (source_hash, config, renderer_version) across BOTH trees a deployment might
   keep, ANDed - not a naive single-tree check (31.2).
-- A simulated `sqlite3.OperationalError` during the catalog-write phase of
-  `_capture_locked`, *after* the JSONL write has already succeeded, is
-  retried rather than silently aborting the whole capture (31.4) - contingent
-  on 31.4's open question being resolved first.
-- `ccw doctor`'s new check surfaces a deliberately-desynced folder (JSONL
-  newer than its manifest) without requiring a full `ccw archive --verify`
-  run (31.5).
+- CORRECTED 2026-08-20 (31.4 DONE): this bullet described the retry loop
+  itself, which stayed unshipped exactly as instructed (the lock-contention
+  mechanism is still unproven). What shipped instead: a simulated
+  `sqlite3.OperationalError` from `catalog.add_session` or
+  `catalog.record_event` is logged BY STAGE to `logs/capture.jsonl` and then
+  still propagates (no retry, no swallow) - `tests/
+  test_capture_stage_logging.py`, both directions.
+- DONE 2026-08-20 (31.5): `ccw doctor`'s new `desync` check surfaces a
+  deliberately-desynced folder (JSONL vs. manifest `source_hash`, the check
+  that found the real one) among the 25 most recently captured, without
+  requiring a full `ccw archive --verify` run - `tests/test_doctor.py`, both
+  the CLI-level catch and the in-process scope-boundary proof.
 
 ## Contract excerpts
 
