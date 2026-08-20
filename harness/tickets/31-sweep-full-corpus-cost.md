@@ -7,7 +7,7 @@ broken session folder the operator handed over (`CaptainCodeAU-win_go_app_test/
 the daily `ccw sweep` job. Full evidence, numbers, and reasoning live in that
 proposal; this ticket is the work-order.
 
-**NOT STARTED.**
+**31.1 (folded into 31.2) DONE, 31.2 DONE, 31.3 DONE. 31.4 and 31.5 OPEN.**
 
 ## Why this ticket exists
 
@@ -146,31 +146,60 @@ not yet `git add`ed, not a regression), `uv run pyright` (0 errors), `uv run
 ruff check` (clean). `tests/golden/matrix-anchor` untouched - no projected
 byte moved, only when bytes get (re)written.
 
-### 31.3  Give `sweep()`'s own walk a cheap pre-check before the read+hash
+### 31.3  DONE 2026-08-20. Give `sweep()`'s own walk a cheap pre-check before the read+hash
 
-The biggest single win (34-44 minutes measured today for the walk alone) and
-the one part of this ticket with no existing shipped pattern to copy
-directly - `sweep.py` `_walk_source()` + `capture.capture_transcript()` walk
-every `.jsonl` under `~/.claude/projects` and fully read+hash every one of
-them before any skip decision can be made.
+**The ticket's own premise, measured before any design was written, was
+FALSE.** Read+hash of a real transcript costs ~0.4 ms/file (~7 s/day across
+the ~16,400 daily skips) - not the driver of the 34.5-minute daily window.
+The real per-item cost, measured directly: `_is_subagent_file`'s full JSON
+parse (~44 s/day) and, hidden because `capture.py`'s own `elapsed_ms` timer
+stops one line before it, `record_event`'s per-item lock file + fresh sqlite
+connection + `BEGIN IMMEDIATE`/COMMIT (~19 s/day, timed in isolation against
+a throwaway copy of the real catalog). So the open design question this
+section originally posed (mtime+size side-table vs. reducing per-skip DB
+cost) was answered by neither option as framed: a side-table would have
+spent an R1 exception on the 0.3% of the cost that was never the problem.
 
-Open design question, not decided by the proposal: what's the cheapest signal
-that's still trustworthy enough for this project's own R1 (identity is
-content-hash, not filesystem metadata)? Two honest options, not a false
-choice - pick one, or something better, and say why:
+**What shipped**: `sweep.plan()`'s own already-shipped skip decision (read,
+hash, compare against a cataloged-hashes snapshot) moved onto `sweep()`'s
+hot path, taken ONCE up front rather than invented fresh. A hit skips
+`_is_subagent_file`, the per-hash lock, and the database write entirely and
+is still reported `skipped_unchanged` (R10). The snapshot is never updated
+mid-run, so a session captured elsewhere during the sweep, or two
+identical-content files both new to one run, are unaffected (both fall
+through to the ordinary path exactly as before). R1 and R9 both hold without
+exception - full account in `contract/DESIGN.md` section 15, entry
+"2026-08-20, ticket 31.3".
 
-- A new side-table (source path, mtime, size, last-known hash) checked before
-  the read. Fast, but mtime/size is a *proxy* for content, not content itself.
-- Reduce the cost *per skip* instead of avoiding the read: batch or drop
-  per-item `capture_event` logging for `skipped_unchanged` outcomes, so the
-  read+hash still happens but the ~17,000 individual `BEGIN IMMEDIATE`/
-  `COMMIT` transactions collapse into far fewer. Simpler, smaller diff, does
-  not fully solve the wall-clock cost but directly reduces the database write
-  pressure implicated in 31.4/31.5.
+**Operator decision, 2026-08-20**: the ~16,400/day per-item
+`skipped_unchanged` rows are replaced by one aggregate `capture_event` row
+per run (`action = "sweep-unchanged"`, `session_hash = NULL`, detail carries
+the count), keeping `ccw doctor`'s `fired` check moving on a day nothing new
+is stored.
 
-Whichever is chosen, write the oracle test for "sweep run twice with nothing
-changed between them is a true no-op below the skip line" before
-implementing, per this project's own stated methodology.
+**Oracle tests**: `tests/test_sweep_incremental.py` (new, 11 tests). RED
+confirmed before implementation via `git stash` on the source changes alone,
+GREEN after. Gates: `uv run pytest` (1105 passed, the pre-existing
+"unrelated" `test_every_shipped_file_is_tracked_by_git` failure is the new
+test file not yet `git add`ed, matching 31.2's own precedent, resolved by
+staging it), `uv run pyright` (0 errors), `uv run ruff check` (clean).
+
+**Verified on real data.** A real (non-dry-run) `ccw sweep` against the live
+21,734-session corpus completed in **81.9 s wall-clock** (18,976 items, 200
+stored, one `sweep-unchanged` row of 17,080, `elapsed_ms` 386 for the
+pre-filter pass itself). `ccw doctor` and `ccw archive --verify` both
+confirmed healthy afterward (see DESIGN 15 entry for both readings).
+
+**What this entry does NOT claim**: every per-item mechanism identified here
+sums to roughly 72 s for a corpus this size, nowhere near the 2,072.5 s
+(34.5 min) the daily launchd job actually took on 2026-08-20. That ~91% gap
+was never explained by anything in this codebase; the leading unproven
+candidate is this machine's own confirmed resource contention under 4+
+concurrent sessions, which cannot be reproduced by an isolated measurement.
+Whether the daily job now runs faster in practice is unverified - the
+81.9 s figure above is an interactive run under this session's own load, not
+launchd's. 31.4 and 31.5 should treat the missing 91% as still open, not
+assume this ticket closed it.
 
 ### 31.4  Retry-with-backoff on catalog lock contention in `_capture_locked`
 
@@ -230,6 +259,12 @@ it looks stale.
   between, produces zero reads/hashes/writes for previously-seen files below
   whatever skip line 31.3 lands on (exact assertion depends on the 31.3
   design decision).
+- RESOLVED 2026-08-20 (31.3 DONE): the skip line is "never reaches
+  `capture.capture_transcript`, `_is_subagent_file`'s parse, or a per-hash
+  lock/DB write" - `test_a_second_sweep_never_calls_capture_transcript_
+  for_an_unchanged_session` and `test_a_second_sweep_never_opens_a_per_item_
+  lock_or_catalog_connection` in `tests/test_sweep_incremental.py` pin it
+  both white-box and black-box.
 - CORRECTED 2026-08-20: the bullet that stood here ("`_run_sweep` does not
   call `build.build()` when `keep_projections = false`") described 31.1's
   ORIGINAL, RETRACTED design and directly contradicted the retraction twelve

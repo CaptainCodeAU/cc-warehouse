@@ -1129,6 +1129,61 @@ Two things this review surfaced that ticket 30 itself did not need:
   folder exposed it). Fixed alongside, since the skip depending on `rebuild`
   meaning something in both trees is what made the gap matter.
 
+**2026-08-20, ticket 31.3: THE TICKET'S OWN PREMISE WAS MEASURED AND FOUND
+FALSE, BEFORE THE FIX WAS DESIGNED.** `harness/tickets/31-sweep-full-corpus-
+cost.md` section 31.3 asked what cheap-but-honest signal could replace the
+read+hash `sweep.py` pays for every one of the ~16,400 daily
+`skipped_unchanged` items, on the premise that the read+hash IS the expensive
+part. Timed directly (a 150-file sample over the real corpus): read+hash costs
+~0.4 ms/file, ~7 s total for the day's skips - not the driver of a 34.5-minute
+daily window. The real per-item cost is the machinery WRAPPED AROUND the hash:
+`_is_subagent_file`'s full JSON parse (~44 s/day), and - hidden because
+`capture.py`'s own `elapsed_ms` timer stops one line before it -
+`record_event`'s per-item O_EXCL lock file, fresh `sqlite3.connect` +
+`executescript`, and `BEGIN IMMEDIATE`/INSERT/COMMIT (~19 s/day, timed in
+isolation against a throwaway copy of the real catalog).
+
+Fixed by reusing `sweep.plan()`'s own shipped, tested skip decision
+(`sweep.py` ~line 292: read, hash, compare against a `cataloged_hashes_
+readonly` snapshot) on `sweep()`'s hot path instead of inventing a new
+signal. The snapshot is taken ONCE, before the per-item loop, and never
+updated mid-run: a session captured elsewhere during the sweep is simply
+absent from it and takes the full path (fails toward more work), and two
+files with identical content both new to one run still go stored +
+duplicate-invocation exactly as before, because neither is in the snapshot
+yet either (`test_two_identical_new_files_in_one_sweep_still_get_stored_
+then_duplicate`, `tests/test_sweep_incremental.py`). R1 holds without an
+exception - the skip is decided on the same sha256 `capture._capture_locked`
+decides on, never mtime or size - and R9 holds - `capture_transcript` remains
+the only thing that stores or catalogs; a wrong pre-filter answer only ever
+costs a redundant full pass, never a wrongful skip.
+
+**Operator decision, 2026-08-20: the ~16,400/day per-item `skipped_unchanged`
+`capture_event` rows are replaced by ONE aggregate row per run**, action
+`sweep-unchanged` (a name deliberately distinct from `skipped_unchanged` so
+it can never be miscounted as one session's own event, R10/F6),
+`session_hash = NULL` (the column was already nullable; `catalog.
+record_event`'s signature had just never needed to say so), `detail = "<N>
+unchanged"`. This keeps `ccw doctor`'s `fired` check (`MAX(at) FROM
+capture_event`) moving on a day nothing new is stored, at the cost of one
+transaction instead of thousands.
+
+**THE HEADLINE NUMBER THIS ENTRY DOES NOT CLAIM.** Every per-item mechanism
+named above sums to roughly 72 s across a corpus this size - nowhere near the
+2,072.5 s (34.5 min) the daily job actually took on 2026-08-20. That gap
+(~91%) was not explained by anything in this codebase and is not claimed to
+be closed by this fix; the leading unproven candidate is the machine's own
+independently-confirmed resource contention under 4+ concurrent sessions
+(`python-process-resource-limits.md`, operator memory), which an isolated
+timing measurement cannot reproduce. **What WAS measured, on this machine,
+against the real 21,734-session corpus, immediately after this fix shipped:
+a real (non-dry-run) `ccw sweep` completed in 81.9 s wall-clock** (18,976
+items, 200 stored, 1 aggregate `sweep-unchanged` row of 17,080 - `at`
+`2026-08-20T08:07:37Z`, `elapsed_ms` 386 for the pre-filter pass itself).
+Whether the daily launchd run reaches a similar number depends on whatever
+was producing the other ~91%, which this ticket did not identify and 31.4/
+31.5 should treat as the standing open question rather than assume closed.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

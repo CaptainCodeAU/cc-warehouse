@@ -826,6 +826,35 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   Gates being satisfied is not consent either: 27.9's preconditions all went
   green the same evening he forbade it.
 
+- 2026-08-20: **A TICKET'S OWN STATED PREMISE WAS NEVER MEASURED, AND A
+  DESIGN WAS ALMOST BUILT ON IT.** Ticket 31.3 asked "what's the cheapest
+  signal that can replace the read+hash `ccw sweep` pays for every unchanged
+  file" - phrased as an open design QUESTION, which reads as neutral, but it
+  smuggled in an unstated CLAIM: that the read+hash is what makes the item
+  expensive. Timed before any code was written: read+hash costs ~0.4 ms/file,
+  about 0.3% of a skipped item's real cost. The actual driver was machinery
+  the ticket never named - a JSON parse and a database write cycle hidden
+  behind a timer (`capture.py`'s own `elapsed_ms`) that stops one line before
+  the expensive part starts. A first pass at the fix would have designed a
+  clever cheap signal to avoid the wrong 0.3%, spent an R1 exception doing
+  it, and left the real cost untouched.
+  THE HABIT THIS SHARPENS, not a new one: "explain only what you measured"
+  ([[explain-only-what-you-measured]]) already covers generalizing a shape
+  from one sample or asserting a mechanism from plausibility. This is the
+  same failure one level earlier - a QUESTION's own framing can already
+  contain the unmeasured claim, before any answer is proposed. Read a
+  ticket's "what's the cheapest X" as "is Y actually the expensive part" and
+  check that first, even when the ticket sounds settled on it.
+  A second instance in the SAME slice: the fix's own projected payoff ("34.5
+  min -> under 2 min") was written into the plan BEFORE the isolated timing
+  ran, then had to be retracted in place when the isolated cost (18.8 s) came
+  back nowhere near what would explain the daily number. The retraction is
+  recorded rather than smoothed over (`Plans/read-opening-prompt-md-fully-
+  and-composed-engelbart.md`, "CORRECTED after Step 0"); the real, measured,
+  positive result (a real sweep in 81.9 s against the live corpus) shipped
+  anyway, because the fix was correct on its own merits independent of
+  whether it explained the full daily gap.
+
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
