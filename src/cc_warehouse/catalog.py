@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS capture_event (
     id INTEGER PRIMARY KEY,
     at TEXT,
     session_hash TEXT,
-    action TEXT,                 -- 'stored' | 'skipped_unchanged' | 'superseded' | 'error'
+    -- 'stored' | 'skipped_unchanged' | 'superseded' | 'error' | 'sweep-unchanged'
+    -- (the last names no single payload -- ticket 31.3 -- so session_hash is NULL there)
+    action TEXT,
     elapsed_ms INTEGER,
     detail TEXT
 );
@@ -246,12 +248,15 @@ def add_session(
 
 def record_event(
     conn: sqlite3.Connection,
-    session_hash: str,
+    session_hash: str | None,
     action: str,
     elapsed_ms: int,
     detail: str,
     at: str,
 ) -> None:
+    """`session_hash` is `None` for an aggregate event that names no single
+    payload (ticket 31.3's `sweep-unchanged`) - the column was always
+    nullable; this signature had just never needed to say so before."""
     with writing(conn):
         conn.execute(
             "INSERT INTO capture_event (at, session_hash, action, elapsed_ms, detail)"

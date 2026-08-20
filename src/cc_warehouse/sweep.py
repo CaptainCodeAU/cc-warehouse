@@ -10,7 +10,9 @@ racing the hook harmless. Item failures are reported and the batch continues pas
 
 import os
 import sqlite3
+import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -116,6 +118,42 @@ def _orphan_object_paths(root: Path, cataloged: frozenset[str]) -> list[Path]:
             continue
         orphans.append(path)
     return orphans
+
+
+def _elapsed_ms(start: float) -> int:
+    return max(0, int((time.monotonic() - start) * 1000))
+
+
+def _content_hash(path: Path) -> str | None:
+    """The candidate's sha256, or None on an unreadable file.
+
+    None is treated as "unknown", never as "already known" (ticket 31.3): a
+    read failure here still falls through to the ordinary path, which reports
+    it as an `error` item with a real message (R5/R10) rather than silently
+    dropping it as a false skip."""
+    try:
+        return store.sha256_hex(path.read_bytes())
+    except OSError:
+        return None
+
+
+def _record_sweep_unchanged(root: Path, count: int, elapsed_ms: int) -> None:
+    """One aggregate `capture_event` row for a whole run's worth of
+    already-known items, replacing the ~16,400/day one-row-per-item cost
+    measured 2026-08-20 (ticket 31.3). `action` is deliberately NOT
+    `skipped_unchanged` - that name means "this one payload was unchanged";
+    this row names none, so `session_hash` is NULL and it gets its own
+    action string, never miscountable as one session's own event (R10/F6).
+    Keeps `ccw doctor`'s `fired` check (MAX(at) FROM capture_event) moving on
+    a day nothing new is stored."""
+    conn = catalog.open_catalog(root)
+    try:
+        now_iso = datetime.now(UTC).isoformat()
+        catalog.record_event(
+            conn, None, "sweep-unchanged", elapsed_ms, f"{count} unchanged", now_iso
+        )
+    finally:
+        conn.close()
 
 
 def _is_subagent_file(path: Path) -> bool:
@@ -323,7 +361,22 @@ def sweep(
     inside it (DESIGN 15 entry, block 5). Safe on sweep precisely because import
     is ADDITIVE and re-runnable: narrowing loses nothing, since a later
     unwindowed sweep still picks up whatever was skipped. That is the property
-    `ccw build` lacks, which is why block 5 refuses the pair there."""
+    `ccw build` lacks, which is why block 5 refuses the pair there.
+
+    CHEAP PRE-FILTER (ticket 31.3), before anything else runs for a candidate:
+    its content hash is checked against a snapshot of the catalog taken once,
+    up front. A hit is reported `skipped_unchanged` (R10) without ever
+    reaching `_is_subagent_file`'s JSON parse, `capture_transcript`, a
+    per-hash lock, or a database write - the machinery measured 2026-08-20 to
+    dominate a daily run's real cost, not the read+hash itself (see
+    harness/tickets/31-sweep-full-corpus-cost.md). The snapshot is taken
+    ONCE and never updated mid-run: a session captured elsewhere DURING this
+    sweep is simply absent from it and takes the full path (fails toward more
+    work, never less), and two identical files both new to this run still go
+    stored + duplicate-invocation exactly as before, because neither is in
+    the snapshot yet either. R1 is unaffected (the hash decided is the same
+    one `capture._capture_locked` decides on) and so is R9 (capture_transcript
+    remains the only thing that stores or catalogs)."""
     walk_root = source if source is not None else _default_source()
     if not store.acquire_lock(config.root, _SWEEP_LOCK):
         return BatchReport(
@@ -333,13 +386,23 @@ def sweep(
         transcripts, outcomes = _walk_source(
             walk_root, skip_agents=not config.archive_subagents
         )
+        already_known = _cataloged_hashes(config.root)
         # TWO PASSES, and the order is load-bearing. A sub-agent nests inside
         # its parent's folder, so the parent has to exist first; a single pass in
         # filename order files most sub-agents as orphans purely because they
         # sorted earlier. Sessions first, sub-agents second.
         wanted = [p for p in transcripts if _in_window(p, window)]
         deferred: list[Path] = []
+        skipped = 0
+        skip_elapsed_ms = 0
         for path in wanted:
+            start = time.monotonic()
+            digest = _content_hash(path)
+            if digest is not None and digest in already_known:
+                outcomes.append(ItemOutcome(path.name, "skipped_unchanged", ""))
+                skipped += 1
+                skip_elapsed_ms += _elapsed_ms(start)
+                continue
             if _is_subagent_file(path):
                 deferred.append(path)
                 continue
@@ -352,6 +415,8 @@ def sweep(
             _capture_item(config, path)
             for path in _orphan_object_paths(config.root, cataloged)
         )
+        if skipped:
+            _record_sweep_unchanged(config.root, skipped, skip_elapsed_ms)
         return BatchReport(tuple(outcomes))
     finally:
         store.release_lock(config.root, _SWEEP_LOCK)

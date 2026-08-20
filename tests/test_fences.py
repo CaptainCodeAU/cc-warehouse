@@ -58,6 +58,13 @@ GUARANTEE_PROOFS: dict[tuple[str, str], str] = {
     # string comparison: capture twice into one project and assert the sidecar's
     # mtime did not move, which can only hold if the second render was identical.
     ("archive.py", "identical"): "test_an_unchanged_sidecar_is_not_rewritten",
+    # sweep.py's pre-filter docstring (ticket 31.3) claims two identical files
+    # both new to one run still go stored + duplicate-invocation, unaffected
+    # by the once-up-front catalog snapshot. Proved directly: two files with
+    # the same content, neither cataloged before this run starts.
+    ("sweep.py", "identical"): (
+        "test_two_identical_new_files_in_one_sweep_still_get_stored_then_duplicate"
+    ),
 }
 
 
