@@ -1079,6 +1079,56 @@ beside an OLD manifest, which fails the hash check and forces a rebuild. That
 ordering is now a pinned invariant (`test_manifest_is_yielded_last`,
 `tests/test_archive_incremental.py`), not incidental.
 
+**2026-08-20, ticket 31.2: THE SAME DISEASE, A THIRD TIME, IN `build.build()`.**
+`ccw sweep` calls `build.build()` at the end of every run that captures
+anything (basically daily), and `build.build()` unconditionally read every
+catalog head from the store to decide what changed - ticket 28.20 measured
+~6 minutes of pure CPU for that alone on a 14,246-session corpus, stacked on
+top of sweep's own 34-44 minute file walk. Found while investigating one
+real session whose save half-completed during this exact daily window
+(`contract/PROPOSALS/daily-sweep-full-corpus-cost.md`).
+
+A first attempt (guard the whole `build.build()` call on `keep_projections`)
+was caught and retracted BEFORE any code shipped: `build()`'s `_mirror()` call
+is what renders a swept session's ARCHIVE pages, unconditionally, independent
+of `keep_projections` - it is the only renderer a swept session ever gets,
+since sweep never spawns a per-session detached render child (see
+`tests/test_sweep_projects.py`). Skipping `build()` entirely would have turned
+every safety-net capture into a folder with a saved JSONL and no readable
+pages - deterministically reproducing, for every swept session, the exact
+defect the investigation started from.
+
+Fixed by extending ticket 30's own pattern to a SECOND axis. `archive.
+folder_is_current` was split into a shared core (`archive._current_manifest`)
+plus two public answers over that core: `folder_is_current` (unchanged
+signature and behavior - archive folders, which can carry sub-agents) and the
+new `archive.pages_are_current` (the old `projections/` tree, which never
+can: `write_subagent` only ever writes under `archive_root`, so a projection
+manifest has no `subagents` key and `folder_is_current` unmodified would
+return False there unconditionally). `build._head_is_current` then ANDs
+whichever of the two trees this deployment actually keeps - skipping a head's
+entire read only when EVERY live tree already reflects it - computed from
+catalog columns `_heads()` already selected (`_Head.hash`, `label`,
+`first_ts`, `session_uuid`), no SQL widening needed, same "safe by
+construction" argument ticket 30 already relies on for `_migrate_locked`: a
+wrong computed path just fails to find a manifest and falls through to a
+full rebuild, never a wrongful skip.
+
+Two things this review surfaced that ticket 30 itself did not need:
+
+- `folder_is_current` checks the five `GENERATED_NAMES` files but never the
+  JSONL beside them; `ccw build` had always happened to restore a deleted
+  archive JSONL as a side effect of unconditionally reading from the store.
+  Operator decision (2026-08-20): keep that repair rather than lose it
+  silently - `_head_is_current` also checks `archive.sole_jsonl(folder) is
+  not None`, one `glob()` per archived head.
+- `build._mirror()` never forwarded `rebuild` to `write_session_folder`, so
+  `ccw build --rebuild` had always silently done nothing to an
+  already-current archive folder (masked because real drift always trips
+  `folder_is_current` anyway - only a forced rebuild of a genuinely current
+  folder exposed it). Fixed alongside, since the skip depending on `rebuild`
+  meaning something in both trees is what made the gap matter.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
