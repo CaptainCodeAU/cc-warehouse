@@ -49,6 +49,27 @@ edits to the principal instead.
   verified. `~/CODE/claude-code-transcripts` (224 MB, the 16 legacy per-project hooks)
   was measured the same day and holds ZERO sessions absent from both, so it is genuinely
   redundant; the two names differ by one word, so check which one you are looking at.
+  **THE GATE THIS RULE WAS WAITING ON IS NOW SATISFIED, MEASURED 2026-08-21.** Ticket
+  25.4/25.5 landed 2026-08-04 and the tree was re-swept end to end. Today it measures
+  **3.38 GiB, 6,462 sessions**, not 6.5 GB / 7,698; `du` and the apparent byte sum agree,
+  so nothing is hidden by compression. `ccw import --from ~/CODE/my-claude-code-transcripts
+  --dry-run` reports **6,462 items, 0 would be stored, 0 written** (6,461 would-skip plus
+  1 would-keep-not-a-session). Cataloged is not recoverable, so every payload was ALSO
+  byte-compared against the archive folders directly: **6,460 exact sha256 matches, 2 where
+  the archive holds a strict superset (the tree copy is a byte prefix), 0 genuinely absent.**
+  Seven first read as absent and were the F4 path-as-identity census bug again, keyed on the
+  DIRECTORY NAME; re-resolved by content hash across all 23,731 archive jsonl, 6 are filed
+  under the payload's own `sessionId` and 1 under `_not-sessions/imported/`. The tree is also
+  STATIC: newest session content is 2026-07-24, the only newer files are two `.DS_Store`, and
+  a controlled sweep of 55,329 script/config files found NOTHING that writes to it (the 16
+  `export_transcript.sh` hooks all target `~/CODE/claude-code-transcripts`, the other name).
+  Unresolved and stated as unresolved: the drop from the recorded 7,698 folders to 6,462.
+  No session folder left any project dir after 2026-07-24 (all 54 project mtimes are
+  <= that date), and the root mtime of 2026-08-14 is indistinguishable from a Finder
+  `.DS_Store` rewrite. It does not move the verdict, because the rescue import ran
+  2026-08-04, before that date. **A SATISFIED GATE IS NOT CONSENT.** This bullet no longer
+  blocks a delete on missing data, but the delete itself still needs the principal's
+  explicit word at the moment of running, same as ticket 27.4.
 - **`ccw` IS INSTALLED AS A FROZEN SNAPSHOT, so editing this repo does NOT change what
   the capture hook runs.** After any change you want the hook to pick up, from the repo
   root with the venv active: **`uv_tool_reinstall_current_project --no-extras`**.
@@ -208,6 +229,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   `claude-code-transcripts` tool, writing a second copy of every session) is retired as of
   the same day, confirmed by enumerating all hooks in `~/.claude/settings.json`: `cc-warehouse`
   is now the only thing capturing Claude Code sessions on this machine.
+  **THAT LAST CLAIM IS FALSE AND THE INSTRUMENT BEHIND IT WAS TOO NARROW, corrected
+  2026-08-21.** Enumerating `~/.claude/settings.json` cannot see a hook registered in a
+  PROJECT-LOCAL `.claude/settings.json`, and 17 of them still register a `SessionEnd` hook
+  running `export_transcript.sh`. Population: 135 `settings*.json` under `~/CODE`
+  (explicit walk, maxdepth 7); control token `export_transcript` hit 17, so the count is
+  from a proven instrument. 16 such scripts exist and every destination string in them
+  resolves to `~/CODE/claude-code-transcripts` (14 tilde form, 1 absolute, 1 stale pointing
+  at a different home dir). A prior session recorded this as 12; that undercount came from
+  a shallower walk that missed two `.worktrees/` copies and a duplicated project dir.
+  `cc-warehouse` is the only thing capturing INTO THE WAREHOUSE, which is the property that
+  matters here; it is NOT the only exporter still armed on this machine. Fixing those 17 is
+  per-project hook config and is not this repo's code to change.
 - **TICKET 25 IS COMPLETE (2026-08-04). The only-copies are rescued.** `ccw import
   --from DIR` shipped, and the live run imported **4,756 payloads with 0 failures** in
   10m22s: the archive went 14,472 -> 19,226 folders and `ccw archive --verify` reports
