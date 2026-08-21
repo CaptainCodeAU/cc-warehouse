@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Claude Code, live</title>
+<style>
+:root{
+  /* One dark palette, deliberately -- not a light/dark toggle. --ink used to be
+     the darkest tone (text on a light page) and doubled as the "maximum
+     contrast" accent-panel background; darkening the page makes --ink the
+     LIGHTEST tone (text on a dark page), so that second job moved to its own
+     variable (--void) rather than silently inverting to a bright card. */
+  --paper:#161713;--panel:#1F211C;--ink:#E8E6DC;--ink2:#9BA294;--rule:#33362E;
+  --signal:#DD7565;--ghost:#D6BD8C;--teal:#5EA6AA;--gold:#CBA043;
+  --void:#0A0B09;--dim:#868D7A;--code:#272924;--cavrule:#292B25;
+  --pal5:#7EA378;--pal6:#C67F63;
+  color-scheme:dark;
+  --display:"Arial Narrow","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --body:Georgia,"Iowan Old Style","Times New Roman",serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1280px;margin:0 auto;padding:0 28px 96px}
+b{font-weight:700;color:var(--ink)}
+code{font-family:var(--mono);font-size:.88em;background:var(--code);padding:1px 4px}
+
+.mast{padding:44px 0 28px;border-bottom:2px solid var(--ink)}
+.mast .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink2);margin:0 0 18px}
+.mast h1{font-family:var(--display);font-weight:700;font-size:clamp(38px,6vw,76px);
+  line-height:.96;letter-spacing:-.015em;margin:0 0 16px;text-transform:uppercase}
+.mast h1 em{font-style:normal;color:var(--signal)}
+.mast .sub{font-size:16.5px;max-width:70ch;margin:0 0 8px;color:var(--ink2)}
+
+/* ---------------------------------------------------------------- filters */
+.filterbar{position:sticky;top:0;z-index:30;background:var(--paper);
+  border-bottom:2px solid var(--ink)}
+.filterbar .inner{max-width:1280px;margin:0 auto;padding:12px 28px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.f-group{display:flex;align-items:center;gap:8px}
+.f-label{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;
+  font-size:11.5px;font-weight:700;color:var(--signal)}
+input[type=date]{font-family:var(--mono);font-size:13px;background:var(--panel);
+  border:1px solid var(--rule);padding:5px 7px;color:var(--ink)}
+.btn{font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;
+  font-size:12px;font-weight:700;color:var(--ink);background:var(--panel);
+  border:1px solid var(--ink);padding:6px 12px;cursor:pointer}
+.btn:hover{background:var(--ink);color:var(--paper)}
+.btn.signal{color:var(--signal);border-color:var(--signal)}
+.btn.signal:hover{background:var(--signal);color:var(--paper)}
+.f-summary{font-family:var(--mono);font-size:12px;color:var(--ink2);margin-left:auto}
+.f-summary b{color:var(--signal)}
+
+.proj-wrap{position:relative}
+.proj-toggle{font-family:var(--mono);font-size:13px;background:var(--panel);
+  border:1px solid var(--rule);padding:6px 10px;cursor:pointer;color:var(--ink)}
+.proj-toggle b{color:var(--signal)}
+.proj-panel{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:40;
+  width:min(96vw,900px);max-height:420px;background:var(--panel);border:1px solid var(--ink);
+  box-shadow:0 8px 24px rgba(0,0,0,.25);flex-direction:column}
+.proj-panel.open{display:flex}
+.proj-search{border:none;border-bottom:1px solid var(--rule);padding:10px 12px;
+  font-family:var(--mono);font-size:13px;background:var(--paper);color:var(--ink)}
+.proj-search:focus{outline:none}
+.proj-actions{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--rule)}
+.proj-actions .btn{font-size:10.5px;padding:4px 8px}
+.proj-list{overflow-y:auto;padding:4px 0}
+.proj-item{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:13.5px;
+  cursor:pointer}
+.proj-item:hover{background:var(--paper)}
+.proj-item input{flex-shrink:0;accent-color:var(--signal)}
+.proj-item label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.proj-item .n{flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--ink2);margin-left:auto}
+.proj-item.excluded label{text-decoration:line-through;color:var(--ink2)}
+
+nav{position:sticky;top:49px;z-index:20;background:var(--paper);
+  border-bottom:1px solid var(--rule)}
+nav .inner{max-width:1280px;margin:0 auto;padding:9px 28px;display:flex;gap:16px;
+  overflow-x:auto;scrollbar-width:thin}
+nav a{font-family:var(--mono);font-size:11px;color:var(--ink2);text-decoration:none;
+  white-space:nowrap;padding:3px 0;border-bottom:2px solid transparent}
+nav a:hover,nav a:focus-visible{color:var(--signal);border-bottom-color:var(--signal)}
+
+.panel{background:var(--panel);border:1px solid var(--rule);border-top:2px solid var(--ink);
+  padding:26px 26px 30px;margin:34px 0}
+.panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;
+  margin-bottom:20px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink2);margin:0 0 7px}
+.eyebrow .num{color:var(--signal);font-weight:700}
+.eyebrow .num.whole{color:var(--teal)}
+.panel h2{font-family:var(--display);font-weight:700;font-size:clamp(21px,2.6vw,30px);
+  line-height:1.08;margin:0 0 10px;text-transform:uppercase}
+.lede{margin:0;max-width:82ch;font-size:15px;color:var(--ink2)}
+.tag{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--signal);
+  border:1px solid var(--signal);padding:3px 6px;flex-shrink:0;white-space:nowrap}
+.chart{margin:0;overflow-x:auto}
+.chart-svg{display:block;width:100%;height:auto;min-width:660px}
+.foot{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--rule);
+  font-size:14px;color:var(--ink2);max-width:92ch}
+
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  border:1px solid var(--rule);border-bottom:none;border-right:none}
+.kpi{padding:16px 18px 15px;border-right:1px solid var(--rule);
+  border-bottom:1px solid var(--rule)}
+.kpi-v{font-family:var(--mono);font-size:25px;font-weight:600;letter-spacing:-.02em;
+  margin:0;font-variant-numeric:tabular-nums}
+.kpi-l{font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;
+  font-size:12.5px;font-weight:700;margin:3px 0 0;color:var(--signal)}
+.kpi-n{font-size:12.5px;margin:7px 0 0;color:var(--ink2);line-height:1.42}
+
+.tbl-wrap{overflow-x:auto}
+.tbl{border-collapse:collapse;width:100%;font-size:13.5px;min-width:600px}
+.tbl th{font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;
+  font-size:11.5px;text-align:left;padding:8px 12px 8px 0;border-bottom:1.5px solid var(--ink);
+  color:var(--signal)}
+.tbl td{padding:9px 12px 9px 0;border-bottom:1px solid var(--rule);
+  vertical-align:top;color:var(--ink2)}
+.tbl .num{font-family:var(--mono);text-align:right;white-space:nowrap}
+
+.panel.dark{background:var(--void);color:var(--ink);border-color:var(--void);
+  border-top:2px solid var(--signal)}
+.panel.dark h2,.panel.dark .eyebrow,.panel.dark .lede{color:var(--ink)}
+.panel.dark .eyebrow .num{color:var(--ghost)}
+.cav-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));gap:20px}
+.cav{border-top:1px solid var(--cavrule);padding-top:12px}
+.cav-t{font-family:var(--display);text-transform:uppercase;letter-spacing:.03em;
+  font-size:14.5px;font-weight:700;margin:0 0 6px;line-height:1.2;color:var(--ghost)}
+.cav-d{font-size:13px;margin:0;color:var(--ink2);line-height:1.5}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.grid5{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}
+@media (max-width:720px){.grid2{grid-template-columns:1fr}}
+
+.chart-svg text{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;fill:var(--ink2)}
+.chart-svg .tick{font-size:11px}
+.chart-svg .tick-dim{fill:var(--dim)}
+.chart-svg .axname{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;fill:var(--dim)}
+.chart-svg .rowlbl{font-size:12.5px;fill:var(--ink)}
+.chart-svg .rowval{font-size:11.5px;fill:var(--signal);font-weight:600}
+.chart-svg .flag{font-size:10.5px;letter-spacing:.05em;fill:var(--signal);
+  font-family:"Arial Narrow","Helvetica Neue",Arial,sans-serif;font-weight:700;
+  text-transform:uppercase}
+.empty-note{font-family:var(--mono);font-size:13px;color:var(--ink2);padding:20px 0}
+
+/* ---------------------------------------------------------- effects */
+.chart-svg rect.mark{cursor:default;transition:opacity .12s ease,filter .12s ease}
+.chart-svg rect.mark:hover{filter:brightness(1.18);opacity:.94}
+@media (prefers-reduced-motion:reduce){.chart-svg rect.mark{transition:none}}
+
+.cc-tooltip{position:fixed;z-index:100;pointer-events:none;background:var(--ink);
+  color:var(--paper);font-family:var(--mono);font-size:12.5px;line-height:1.4;
+  padding:7px 10px;max-width:320px;box-shadow:0 6px 18px rgba(0,0,0,.3);
+  opacity:0;transform:translateY(4px);transition:opacity .1s ease,transform .1s ease}
+.cc-tooltip.show{opacity:1;transform:translateY(0)}
+
+.panel{opacity:0;transform:translateY(16px);transition:opacity .5s ease,transform .5s ease}
+.panel.revealed{opacity:1;transform:translateY(0)}
+@media (prefers-reduced-motion:reduce){.panel{transition:none;opacity:1;transform:none}}
+
+#panels{transition:opacity .16s ease}
+#panels.refreshing{opacity:.4}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="mast">
+  <p class="kicker" id="mast-kicker">Claude Code usage &middot; live, filterable</p>
+  <h1>Claude&nbsp;Code,<br><em>your own slice</em></h1>
+  <p class="sub" id="mast-sub">Pick a date range and the projects to skip, up top. Every
+  panel below redraws from that one choice. Hours are <b>engaged_hours</b> throughout &mdash;
+  the only column here that means work done, not idle time.</p>
+</header>
+</div>
+
+<div class="filterbar">
+  <div class="inner">
+    <div class="f-group">
+      <span class="f-label">From</span>
+      <input type="date" id="f-from">
+    </div>
+    <div class="f-group">
+      <span class="f-label">To</span>
+      <input type="date" id="f-to">
+    </div>
+    <div class="proj-wrap">
+      <button class="proj-toggle" id="proj-toggle" type="button">Projects: <b id="proj-count">all included</b> &#9662;</button>
+      <div class="proj-panel" id="proj-panel">
+        <input type="text" class="proj-search" id="proj-search" placeholder="filter project names&hellip;">
+        <div class="proj-actions">
+          <button class="btn" id="proj-clear" type="button">Include all</button>
+          <button class="btn" id="proj-none" type="button">Exclude all</button>
+        </div>
+        <div class="proj-list" id="proj-list"></div>
+      </div>
+    </div>
+    <button class="btn signal" id="f-reset" type="button">Reset</button>
+    <span class="f-summary" id="f-summary"></span>
+  </div>
+</div>
+
+<nav><div class="inner" id="nav-inner"></div></nav>
+
+<div class="wrap" id="panels"></div>
+
+<script>
+/* ==================================================================== */
+/* Data: embedded once, filtered and redrawn entirely client-side.       */
+/* ==================================================================== */
+const DATA = /*__CCSTATS_DATA_JSON__*/;
+
+/* ---------------------------------------------------------------- util */
+const COLS = DATA.cols;
+const IDX = {};
+for (const k of Object.keys(COLS)) { IDX[k] = {}; COLS[k].forEach((name, i) => IDX[k][name] = i); }
+const LK = DATA.lookups;
+const WEEKDAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+/* Point at the CSS custom properties rather than duplicating hex values --
+   an inline <svg> in the same document reads var() from the page's own
+   cascade, so the chart colors and the CSS palette can never drift apart. */
+const SIGNAL = "var(--signal)", TEAL = "var(--teal)", GOLD = "var(--gold)",
+      GHOST = "var(--ghost)", RULE = "var(--rule)";
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtHours(h) { return (h >= 1000 ? (h/1000).toFixed(1)+"k" : h.toFixed(h < 10 ? 1 : 0)) + "h"; }
+function fmtUSD(v) {
+  if (v >= 1000) return "US$" + (v/1000).toFixed(1) + "k";
+  return "US$" + v.toFixed(v < 10 ? 2 : 0);
+}
+function fmtInt(v) { return v.toLocaleString("en-US"); }
+function fmtTok(v) {
+  if (v >= 1e9) return (v/1e9).toFixed(2) + "B";
+  if (v >= 1e6) return (v/1e6).toFixed(1) + "M";
+  if (v >= 1e3) return (v/1e3).toFixed(1) + "k";
+  return String(v);
+}
+/* Full-precision variants for the Overview KPI tiles, which always show one
+   decimal and full thousands separators (never the compact k/M suffixes the
+   space-constrained charts use). */
+function fmtHoursPrecise(h) { return h.toLocaleString("en-US", {minimumFractionDigits:1, maximumFractionDigits:1}) + " h"; }
+function fmtUSDFull(v) { return "US$" + Math.round(v).toLocaleString("en-US"); }
+
+/* Pure calendar-day arithmetic on 'YYYY-MM-DD' strings. Uses Date.UTC only
+   as an epoch-day counter -- NEVER the reader's own browser timezone, since
+   local_date/local_hour/local_weekday are already correct Melbourne-local
+   values computed server-side (see CHART-BRIEF.md). Do not "helpfully"
+   re-derive them with `new Date(str)` local parsing anywhere in this file. */
+function ymd(s) { const [y,m,d] = s.split("-").map(Number); return {y,m,d}; }
+function epochDay(s) { const {y,m,d} = ymd(s); return Math.floor(Date.UTC(y, m-1, d) / 86400000); }
+function epochDayToStr(e) {
+  const d = new Date(e * 86400000);
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth()+1).padStart(2,"0") + "-" + String(d.getUTCDate()).padStart(2,"0");
+}
+function daysInMonth(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+function monthKey(s) { const {y,m} = ymd(s); return y + "-" + String(m).padStart(2,"0"); }
+function isoWeekKey(s) {
+  const {y,m,d} = ymd(s);
+  const date = new Date(Date.UTC(y, m-1, d));
+  const day = (date.getUTCDay() + 6) % 7; // 0=Mon
+  date.setUTCDate(date.getUTCDate() - day + 3);
+  const firstThu = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((date - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay()+6)%7)) / 7);
+  return date.getUTCFullYear() + "-W" + String(week).padStart(2,"0");
+}
+
+/* ------------------------------------------------------------- SVG mini */
+const NS = "http://www.w3.org/2000/svg";
+const HATCH_DEF = `<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" `
+  + `patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--paper)"/>`
+  + `<line x1="0" y1="0" x2="0" y2="6" stroke="var(--signal)" stroke-width="2" stroke-opacity="0.55"/>`
+  + `</pattern></defs>`;
+
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / mag;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * mag;
+}
+
+/* Vertical bar chart: one value per category, ticked y-axis, optional hatch
+   flag + a short caption per bar (partial months, the 2026-08-20 outlier). */
+function barChart(items, opt) {
+  opt = opt || {};
+  const W = Math.max(660, items.length * (opt.barGap || 92) + 100);
+  const H = opt.height || 380;
+  const padL = 56, padR = 20, padT = 40, padB = opt.subLabels ? 70 : 46;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxV = niceMax(Math.max(...items.map(d => d.value), 0) * 1.12);
+  const n = items.length || 1;
+  const bw = Math.min(80, plotW / n * 0.62);
+  const step = plotW / n;
+  let out = HATCH_DEF;
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = maxV * i / ticks;
+    const y = padT + plotH - (plotH * i / ticks);
+    out += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" `
+         + `stroke="${RULE}" stroke-width="1" stroke-opacity="0.55"/>`;
+    out += `<text x="${padL-8}" y="${(y+3.5).toFixed(1)}" class="tick" text-anchor="end">${opt.tickFmt ? opt.tickFmt(v) : Math.round(v)}</text>`;
+  }
+  items.forEach((d, i) => {
+    const x = padL + step * i + (step - bw) / 2;
+    const h = plotH * (d.value / maxV || 0);
+    const y = padT + plotH - h;
+    const fill = d.hatch ? "url(#hatch)" : (d.color || SIGNAL);
+    const title = esc(d.title || (d.label + ": " + (opt.valueFmt ? opt.valueFmt(d.value) : d.value)));
+    out += `<rect class="mark" data-tip="${title}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" `
+         + `height="${Math.max(0,h).toFixed(1)}" fill="${fill}" stroke="${d.hatch ? SIGNAL : fill}" stroke-width="1"/>`;
+    if (opt.valueFmt) out += `<text x="${(x+bw/2).toFixed(1)}" y="${Math.max(padT-6, y-6).toFixed(1)}" class="tick" text-anchor="middle">${opt.valueFmt(d.value)}</text>`;
+    out += `<text x="${(x+bw/2).toFixed(1)}" y="${(padT+plotH+16).toFixed(1)}" class="tick" text-anchor="middle">${esc(d.label)}</text>`;
+    if (d.sub) out += `<text x="${(x+bw/2).toFixed(1)}" y="${(padT+plotH+30).toFixed(1)}" class="tick tick-dim" text-anchor="middle">${esc(d.sub)}</text>`;
+    if (d.flag) out += `<text x="${(x+bw/2).toFixed(1)}" y="${(padT-20).toFixed(1)}" class="flag" text-anchor="middle">${esc(d.flag)}</text>`;
+  });
+  return svgWrap(W, H, out) + `</svg>`;
+}
+function svgWrap(W, H, inner) { return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" xmlns="${NS}" role="img" preserveAspectRatio="xMidYMid meet">${inner}`; }
+
+/* Horizontal bar list: ranked rows, label left, bar + value right. Used for
+   Projects, Repositories, Models, Tools, Skills & agents. */
+function hbarChart(items, opt) {
+  opt = opt || {};
+  const rowH = 26, padL = opt.labelW || 210, padR = 90, padT = 10;
+  const W = 900, H = padT * 2 + items.length * rowH;
+  const plotW = W - padL - padR;
+  const scale = opt.log ? "log" : "linear";
+  const values = items.map(d => Math.max(d.value, opt.log ? 1 : 0));
+  const maxV = Math.max(...values, 1);
+  const toX = v => {
+    if (scale === "log") return plotW * Math.log(Math.max(v,1)) / Math.log(Math.max(maxV,2));
+    return plotW * v / maxV;
+  };
+  let out = "";
+  items.forEach((d, i) => {
+    const y = padT + i * rowH;
+    const w = Math.max(toX(Math.max(d.value, opt.log ? 1 : 0)), d.value > 0 ? 2 : 0);
+    const title = esc(d.title || (d.label + ": " + (opt.valueFmt ? opt.valueFmt(d.value) : d.value)));
+    out += `<text x="${padL-8}" y="${(y+rowH/2+4).toFixed(1)}" class="rowlbl" text-anchor="end">${esc(d.label)}</text>`;
+    out += `<rect class="mark" data-tip="${title}" x="${padL}" y="${(y+4).toFixed(1)}" width="${w.toFixed(1)}" height="${rowH-10}" fill="${d.color || SIGNAL}"/>`;
+    out += `<text x="${(padL+w+8).toFixed(1)}" y="${(y+rowH/2+4).toFixed(1)}" class="rowval">${opt.valueFmt ? opt.valueFmt(d.value) : d.value}</text>`;
+  });
+  return svgWrap(W, H, out) + `</svg>`;
+}
+
+/* Generic heatmap grid (hour-of-day x weekday, and project x month). */
+function heatmap(rowLabels, colLabels, matrix, opt) {
+  opt = opt || {};
+  const cellW = opt.cellW || 26, cellH = opt.cellH || 22;
+  const padL = opt.labelW || 140, padT = 30;
+  const W = padL + colLabels.length * cellW + 20, H = padT + rowLabels.length * cellH + 10;
+  const maxV = Math.max(...matrix.flat(), 0.0001);
+  let out = "";
+  colLabels.forEach((c, ci) => {
+    out += `<text x="${(padL+ci*cellW+cellW/2).toFixed(1)}" y="20" class="tick tick-dim" text-anchor="middle">${esc(c)}</text>`;
+  });
+  rowLabels.forEach((r, ri) => {
+    out += `<text x="${padL-8}" y="${(padT+ri*cellH+cellH/2+4).toFixed(1)}" class="rowlbl" text-anchor="end">${esc(r)}</text>`;
+    colLabels.forEach((c, ci) => {
+      const v = matrix[ri][ci] || 0;
+      const t = Math.pow(v / maxV, 0.55);
+      const alpha = (0.06 + t * 0.9).toFixed(3);
+      const x = padL + ci * cellW, y = padT + ri * cellH;
+      const title = esc(`${r} · ${c}: ${opt.valueFmt ? opt.valueFmt(v) : v}`);
+      out += `<rect class="mark" data-tip="${title}" x="${x}" y="${y}" width="${cellW-2}" height="${cellH-2}" `
+           + `fill="${SIGNAL}" fill-opacity="${v > 0 ? alpha : 0.04}"/>`;
+    });
+  });
+  return svgWrap(W, H, out) + `</svg>`;
+}
+
+/* Stacked bar (Model x month cost share). */
+function stackedBar(xLabels, series, opt) {
+  opt = opt || {};
+  const padL = 56, padR = 20, padT = 20, padB = 44;
+  const W = Math.max(660, xLabels.length * 92 + 100), H = opt.height || 300;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const totals = xLabels.map((_, i) => series.reduce((s, ser) => s + (ser.values[i] || 0), 0));
+  const maxV = niceMax(Math.max(...totals, 0) * 1.1);
+  const n = xLabels.length || 1;
+  const bw = Math.min(74, plotW / n * 0.62);
+  const step = plotW / n;
+  let out = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = maxV * i / 4, y = padT + plotH - plotH * i / 4;
+    out += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="${RULE}" stroke-width="1" stroke-opacity="0.55"/>`;
+    out += `<text x="${padL-8}" y="${(y+3.5).toFixed(1)}" class="tick" text-anchor="end">${opt.tickFmt ? opt.tickFmt(v) : Math.round(v)}</text>`;
+  }
+  xLabels.forEach((lbl, i) => {
+    const x = padL + step * i + (step - bw) / 2;
+    let yCursor = padT + plotH;
+    series.forEach(ser => {
+      const v = ser.values[i] || 0;
+      const h = plotH * (v / maxV || 0);
+      yCursor -= h;
+      const title = esc(`${lbl} · ${ser.label}: ${opt.valueFmt ? opt.valueFmt(v) : v}`);
+      out += `<rect class="mark" data-tip="${title}" x="${x.toFixed(1)}" y="${yCursor.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" fill="${ser.color}"/>`;
+    });
+    out += `<text x="${(x+bw/2).toFixed(1)}" y="${(padT+plotH+16).toFixed(1)}" class="tick" text-anchor="middle">${esc(lbl)}</text>`;
+  });
+  return svgWrap(W, H, out) + `</svg>`;
+}
+
+function legend(series) {
+  return `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">` + series.map(s =>
+    `<span style="font-family:var(--mono);font-size:12px;color:var(--ink2)">`
+    + `<span style="display:inline-block;width:10px;height:10px;background:${s.color};margin-right:6px;vertical-align:-1px"></span>${esc(s.label)}</span>`
+  ).join("") + `</div>`;
+}
+
+function table(columns, rows) {
+  let out = `<div class="tbl-wrap"><table class="tbl"><thead><tr>`;
+  columns.forEach(c => out += `<th${c.num ? ' style="text-align:right"' : ""}>${esc(c.label)}</th>`);
+  out += `</tr></thead><tbody>`;
+  rows.forEach(r => {
+    out += `<tr>`;
+    columns.forEach((c, i) => out += `<td${c.num ? ' class="num"' : ""}>${esc(r[i])}</td>`);
+    out += `</tr>`;
+  });
+  out += `</tbody></table></div>`;
+  return out;
+}
+
+/* ------------------------------------------------------------- filter state */
+/* Default start date: 2026-06-08 (the operator's own preferred window),
+   clamped into the embedded range so this never points before the data
+   actually starts if the dashboard is later rebuilt with a shorter span. */
+const DEFAULT_FROM = "2026-06-08" >= DATA.min_date ? "2026-06-08" : DATA.min_date;
+/* Baked in at build time via `dashboard.py --include`/`--exclude` (substring,
+   repeatable) -- resolved to real project_labels there, so this side just
+   maps names to indices. A stale name with no matching project is silently
+   skipped here; dashboard.py itself already warns about that at build time. */
+function defaultExcludedIndices() {
+  const nameToIndex = new Map(LK.projects.map((name, i) => [name, i]));
+  const out = new Set();
+  (DATA.default_unticked_projects || []).forEach(name => {
+    if (nameToIndex.has(name)) out.add(nameToIndex.get(name));
+  });
+  return out;
+}
+const state = { from: DEFAULT_FROM, to: DATA.max_date, excluded: defaultExcludedIndices() };
+
+function inRange(row) {
+  const d = row[IDX.S.date];
+  return d >= state.from && d <= state.to && !state.excluded.has(row[IDX.S.project]);
+}
+
+/* Recomputed on every filter change. */
+let FS = [], FS_set = null;
+
+function recomputeFilteredSessions() {
+  FS = [];
+  FS_set = new Set();
+  DATA.S.forEach((row, i) => { if (inRange(row)) { FS.push(row); FS_set.add(i); } });
+}
+
+/* ==================================================================== */
+/* Panel definitions                                                     */
+/* ==================================================================== */
+const PANELS = [];
+function panel(id, title, opt, render) {
+  PANELS.push({ id, title, opt: opt || {}, render });
+}
+
+/* ---- 01 Overview ---- */
+panel("overview", "Headline totals for your range", {}, () => {
+  if (!FS.length) return { eyebrow: "0 sessions", body: emptyNote() };
+
+  let engagedSec = 0, wallSec = 0, activeSec = 0, cost = 0;
+  let tokIn = 0, tokOut = 0, tokThink = 0, tokCacheRead = 0, tokCacheWrite = 0, prompts = 0, toolUses = 0, turns = 0;
+  const wallMinutes = [];
+  const projSet = new Set(), repoSet = new Set(), dateSet = new Set();
+  FS.forEach(r => {
+    engagedSec += r[IDX.S.engagedSec]; wallSec += r[IDX.S.wallSec]; activeSec += r[IDX.S.activeSec];
+    cost += r[IDX.S.cost]; tokIn += r[IDX.S.tokIn]; tokOut += r[IDX.S.tokOut]; tokThink += r[IDX.S.tokThinking];
+    tokCacheRead += r[IDX.S.tokCacheRead]; tokCacheWrite += r[IDX.S.tokCacheWrite]; prompts += r[IDX.S.prompts];
+    toolUses += r[IDX.S.toolUses]; turns += r[IDX.S.turns];
+    wallMinutes.push(r[IDX.S.wallSec] / 60);
+    projSet.add(r[IDX.S.project]); repoSet.add(r[IDX.S.repo]); dateSet.add(r[IDX.S.date]);
+  });
+  wallMinutes.sort((a,b) => a-b);
+  const mid = wallMinutes.length >> 1;
+  const median = wallMinutes.length % 2 ? wallMinutes[mid] : (wallMinutes[mid-1]+wallMinutes[mid])/2;
+  const mean = wallMinutes.reduce((s,v) => s+v, 0) / wallMinutes.length;
+
+  const spanDays = epochDay(state.to) - epochDay(state.from) + 1;
+  const activeDays = dateSet.size;
+  const missingDays = spanDays - activeDays;
+  let missingNote = "";
+  if (missingDays > 0 && missingDays <= 6) {
+    const names = [];
+    for (let d = epochDay(state.from); d <= epochDay(state.to); d++) {
+      const ds = epochDayToStr(d);
+      if (!dateSet.has(ds)) names.push(ds.slice(5));
+    }
+    missingNote = ` The other ${missingDays} were quiet -- no session at all: ${names.join(", ")}.`;
+  } else if (missingDays > 6) {
+    missingNote = ` The other ${missingDays} were quiet -- no session at all.`;
+  }
+
+  // Whole-corpus, date-range-only (never project-filtered -- same reason as the Concurrency panel).
+  const oRows = DATA.O.filter(r => r[IDX.O.date] >= state.from && r[IDX.O.date] <= state.to);
+  const elapsedH = oRows.reduce((s,r) => s + r[IDX.O.elapsedHours], 0);
+  let peakC = 0, peakDay = "";
+  oRows.forEach(r => { if (r[IDX.O.maxConcurrent] > peakC) { peakC = r[IDX.O.maxConcurrent]; peakDay = r[IDX.O.date]; } });
+
+  const engagedH = engagedSec/3600, wallH = wallSec/3600, activeH = activeSec/3600;
+  const perWeek = engagedH / (spanDays/7);
+  const perActiveDay = engagedH / (activeDays || 1);
+  const crRatio = tokOut > 0 ? Math.round(tokCacheRead/tokOut) : 0;
+  const toolsPerPrompt = prompts > 0 ? (toolUses/prompts).toFixed(1) : "0";
+
+  // Model FAMILY cost split for the API-cost tile (opus/sonnet/haiku/fable,
+  // version numbers rolled together) -- just out of curiosity. A handful of
+  // families, so no top-N/"other" bucketing is needed the way a per-version
+  // split would.
+  function modelFamily(rawName) {
+    const stripped = (rawName || "unknown").replace(/^claude-/, "");
+    const m = stripped.match(/^[a-zA-Z]+/);
+    return m ? m[0] : stripped;
+  }
+  const modelCost = new Map();
+  DATA.M.forEach(row => {
+    if (!FS_set.has(row[IDX.M.session])) return;
+    const rawName = LK.models[row[IDX.M.model]];
+    // <synthetic> is a $0 placeholder Claude Code writes for an interrupted
+    // reply, not a real priced model.
+    if (rawName === "<synthetic>") return;
+    const fam = modelFamily(rawName);
+    modelCost.set(fam, (modelCost.get(fam) || 0) + row[IDX.M.cost]);
+  });
+  const modelRows = [...modelCost.entries()].sort((a,b) => b[1]-a[1]);
+  const modelCostTotal = modelRows.reduce((s,[,c]) => s+c, 0);
+  let modelSplit = "no priced model usage in range";
+  if (modelCostTotal > 0 && modelRows.length) {
+    modelSplit = modelRows.map(([fam, c]) => `${Math.round(c/modelCostTotal*100)}% ${fam}`).join(", ");
+  }
+
+  const tiles = [
+    { v: fmtInt(FS.length), l: "sessions with a reply",
+      n: "Only sessions where Claude actually replied count here -- shells and empty starts don't." },
+    { v: spanDays + " days", l: "days covered",
+      n: `You had at least one session on ${activeDays} of these days.${missingNote || " Every single day in range had one."}` },
+    { v: fmtHoursPrecise(engagedH), l: "hours you actually worked",
+      n: `This is the number that matters: any break longer than 5 minutes gets cut out, so it's real working time, not just session-open time. (Session spans simply added up, no idle removed: ${fmtHoursPrecise(wallH)}.)` },
+    { v: fmtHoursPrecise(perWeek), l: "average hours per week",
+      n: `Spread across every day in range, including days off. On a day you actually worked, it's closer to ${perActiveDay.toFixed(1)} h.` },
+    { v: fmtHoursPrecise(elapsedH), l: "time with a session open",
+      n: "Clock time with at least one session open." },
+    { v: fmtHoursPrecise(activeH), l: "time waiting on replies",
+      n: "Includes idle waiting, so it's not a work number -- just here for reference. No chart uses this one." },
+    { v: median.toFixed(1) + " min", l: "typical session length",
+      n: `Half your sessions are shorter than this. A handful of very long ones drag the average way up. (Plain average, no adjustment: ${mean.toFixed(1)} min.)` },
+    { v: fmtInt(turns), l: "claude's replies", n: "Every reply Claude sent back, counted once each." },
+    { v: fmtInt(toolUses), l: "tool calls",
+      n: `Every time Claude used a tool -- search, file edit, and so on. Averages ${toolsPerPrompt} per message you sent. Full breakdown in the Tools chart below.` },
+    { v: fmtInt(prompts), l: "messages you sent", n: "Only messages with real text in them -- blank ones don't count." },
+    { v: fmtTok(tokIn+tokOut+tokCacheRead+tokCacheWrite), l: "total tokens, all types",
+      n: `Everything added up -- what you sent, what Claude wrote back, and both kinds of cache traffic. Full split in the Tokens chart below. (You've touched ${repoSet.size} repos / ${projSet.size} projects in this range.)` },
+    { v: fmtTok(tokOut), l: "tokens claude wrote", n: `${fmtTok(tokThink)} of these were Claude "thinking" before it answered -- already counted inside this number, not extra.` },
+    { v: fmtTok(tokCacheRead), l: "cache reads", n: `For every token Claude wrote, it pulled about ${crRatio} from cache. Cache reads are cheap -- a tenth the price of a normal token.` },
+    { v: fmtUSDFull(cost), l: "API cost",
+      n: `By model: ${modelSplit}.` },
+    { v: String(peakC), l: "most sessions running at once",
+      n: peakDay ? `Your busiest moment: ${peakC} sessions running at the same time, on ${peakDay}.` : "No overlap data in this date range." },
+  ];
+
+  return { eyebrow: `<span class="num">${fmtInt(FS.length)}</span> sessions in range`,
+    body: `<div class="kpi-grid">` + tiles.map(t =>
+      `<div class="kpi"><p class="kpi-v">${t.v}</p><p class="kpi-l">${esc(t.l)}</p>`
+      + `<p class="kpi-n">${t.n}</p></div>`
+    ).join("") + `</div>` };
+});
+
+/* ---- 02 Daily ---- */
+panel("daily", "Engaged hours per day", { lede: "One bar per active day in your range. Sessions run in parallel on this machine, so daily hours can exceed 24 &mdash; that is correct, not a bug." }, () => {
+  const byDate = new Map();
+  FS.forEach(r => {
+    const d = r[IDX.S.date];
+    const e = byDate.get(d) || { hours: 0, sessions: 0 };
+    e.hours += r[IDX.S.engagedSec] / 3600; e.sessions += 1;
+    byDate.set(d, e);
+  });
+  const dates = [...byDate.keys()].sort();
+  if (!dates.length) return { eyebrow: "0 days", body: emptyNote() };
+  const items = dates.map(d => ({
+    label: d.slice(5), value: byDate.get(d).hours, sub: byDate.get(d).sessions + " sess",
+    flag: d === "2026-08-20" ? "outlier" : null,
+    color: d === "2026-08-20" ? GOLD : SIGNAL,
+    title: `${d} · ${byDate.get(d).hours.toFixed(1)}h engaged · ${byDate.get(d).sessions} sessions`,
+  }));
+  const html = barChart(items, { valueFmt: fmtHours, barGap: 40, height: 340 });
+  return { eyebrow: `<span class="num">${dates.length}</span> active days`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 03 Weekly ---- */
+panel("weekly", "Weekly engaged hours", {}, () => {
+  const byWeek = new Map();
+  FS.forEach(r => {
+    const wk = isoWeekKey(r[IDX.S.date]);
+    const e = byWeek.get(wk) || { hours: 0, cost: 0, sessions: 0 };
+    e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.sessions += 1;
+    byWeek.set(wk, e);
+  });
+  const weeks = [...byWeek.keys()].sort();
+  if (!weeks.length) return { eyebrow: "0 weeks", body: emptyNote() };
+  const items = weeks.map(w => ({
+    label: w.slice(6), value: byWeek.get(w).hours, sub: fmtUSD(byWeek.get(w).cost),
+    title: `${w} · ${byWeek.get(w).hours.toFixed(1)}h · ${byWeek.get(w).sessions} sessions · ${fmtUSD(byWeek.get(w).cost)}`,
+  }));
+  const html = barChart(items, { valueFmt: fmtHours, barGap: 56 });
+  return { eyebrow: `<span class="num">${weeks.length}</span> weeks, ISO`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 04 Monthly ---- */
+panel("monthly", "Months in your range, partial ones marked", {}, () => {
+  const byMonth = new Map();
+  FS.forEach(r => {
+    const mk = monthKey(r[IDX.S.date]);
+    const e = byMonth.get(mk) || { hours: 0, cost: 0, sessions: 0, days: new Set() };
+    e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.sessions += 1;
+    e.days.add(r[IDX.S.date]);
+    byMonth.set(mk, e);
+  });
+  const months = [...byMonth.keys()].sort();
+  if (!months.length) return { eyebrow: "0 months", body: emptyNote() };
+  const fromDay = ymd(state.from).d, toDay = ymd(state.to).d;
+  const items = months.map((mk, i) => {
+    const [y, m] = mk.split("-").map(Number);
+    const dim = daysInMonth(y, m);
+    const isFirst = i === 0, isLast = i === months.length - 1;
+    let partial = null;
+    if (isFirst && fromDay > 1) partial = "partial: from the " + fromDay + (fromDay===1?"st":fromDay===2?"nd":fromDay===3?"rd":"th");
+    if (isLast && toDay < dim) partial = partial || ("partial: to the " + toDay);
+    const e = byMonth.get(mk);
+    return { label: mk, value: e.hours, sub: e.sessions + " sess", hatch: !!partial, flag: partial,
+      title: `${mk}${partial ? " · " + partial : ""} · ${e.hours.toFixed(1)}h · ${e.sessions} sessions · ${fmtUSD(e.cost)}` };
+  });
+  const html = barChart(items, { valueFmt: fmtHours, barGap: 130, height: 400 });
+  return { eyebrow: `<span class="num">${months.length}</span> months`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 05 Concurrency (whole corpus by design, date-only) ---- */
+panel("concurrency", "How much time overlapped, whole corpus", {
+  lede: "From overlap_day, precomputed across every project (it needs real interval overlap math, not a per-session sum) &mdash; the project filter above does not narrow this panel, only the date range does.",
+}, () => {
+  const rows = DATA.O.filter(r => r[IDX.O.date] >= state.from && r[IDX.O.date] <= state.to);
+  if (!rows.length) return { eyebrow: "0 days", body: emptyNote() };
+  const items = rows.map(r => ({
+    label: r[IDX.O.date].slice(5), value: r[IDX.O.summedHours],
+    sub: "x" + r[IDX.O.concurrency].toFixed(1),
+    title: `${r[IDX.O.date]} · ${r[IDX.O.summedHours].toFixed(1)}h summed vs ${r[IDX.O.elapsedHours].toFixed(1)}h elapsed clock time · up to ${r[IDX.O.maxConcurrent]} concurrent`,
+  }));
+  const html = barChart(items, { valueFmt: fmtHours, barGap: 30, height: 320 });
+  const maxC = Math.max(...rows.map(r => r[IDX.O.maxConcurrent]));
+  return { eyebrow: `up to <span class="num whole">${maxC}</span> sessions at once`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 06 Session sizes ---- */
+panel("sizes", "Most sessions are short; cost concentrates in the long ones", {}, () => {
+  const buckets = [
+    { label: "<15m", max: 0.25 }, { label: "15-30m", max: 0.5 }, { label: "30-60m", max: 1 },
+    { label: "1-2h", max: 2 }, { label: "2-4h", max: 4 }, { label: "4h+", max: Infinity },
+  ];
+  const counts = buckets.map(() => ({ n: 0, cost: 0 }));
+  FS.forEach(r => {
+    const h = r[IDX.S.engagedSec] / 3600;
+    const bi = buckets.findIndex(b => h <= b.max);
+    const b = counts[bi < 0 ? buckets.length - 1 : bi];
+    b.n += 1; b.cost += r[IDX.S.cost];
+  });
+  const totalCost = counts.reduce((s,c) => s + c.cost, 0) || 1;
+  const items = buckets.map((b, i) => ({
+    label: b.label, value: counts[i].n,
+    sub: (counts[i].cost / totalCost * 100).toFixed(0) + "% of cost",
+    title: `${b.label} · ${counts[i].n} sessions · ${fmtUSD(counts[i].cost)} (${(counts[i].cost/totalCost*100).toFixed(0)}% of cost in range)`,
+  }));
+  const html = barChart(items, { valueFmt: fmtInt, barGap: 110, height: 320 });
+  return { eyebrow: `<span class="num">${FS.length}</span> sessions bucketed by engaged hours`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 07 Projects ---- */
+panel("projects", "Top 15 by cost, keyed on project_label", {}, () => {
+  const by = new Map();
+  FS.forEach(r => {
+    const p = r[IDX.S.project];
+    const e = by.get(p) || { hours: 0, cost: 0, n: 0 };
+    e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.n += 1;
+    by.set(p, e);
+  });
+  const rows = [...by.entries()].sort((a,b) => b[1].cost - a[1].cost).slice(0, 15);
+  if (!rows.length) return { eyebrow: "0 projects", body: emptyNote() };
+  const items = rows.map(([p, e]) => ({
+    label: LK.projects[p], value: e.cost,
+    title: `${LK.projects[p]} · ${fmtUSD(e.cost)} · ${e.hours.toFixed(1)}h · ${e.n} sessions`,
+  }));
+  return { eyebrow: `<span class="num">${by.size}</span> projects in range, top 15 shown`,
+    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtUSD })}</figure>${COST_CAPTION}` };
+});
+
+/* ---- 08 Repositories ---- */
+panel("repos", "The same work, keyed on repo_root", { lede: "Subdirectories fold into their parent repo here; project_label above does not." }, () => {
+  const by = new Map();
+  FS.forEach(r => {
+    const p = r[IDX.S.repo];
+    const e = by.get(p) || { hours: 0, cost: 0, n: 0 };
+    e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.n += 1;
+    by.set(p, e);
+  });
+  const rows = [...by.entries()].sort((a,b) => b[1].cost - a[1].cost).slice(0, 15);
+  if (!rows.length) return { eyebrow: "0 repos", body: emptyNote() };
+  const items = rows.map(([p, e]) => ({
+    label: LK.repos[p], value: e.cost, color: TEAL,
+    title: `${LK.repos[p]} · ${fmtUSD(e.cost)} · ${e.hours.toFixed(1)}h · ${e.n} sessions`,
+  }));
+  return { eyebrow: `<span class="num">${by.size}</span> repos in range, top 15 shown`,
+    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtUSD })}</figure>${COST_CAPTION}` };
+});
+
+/* ---- 09 Project x month ---- */
+panel("proj-month", "Where the work moved, month by month", { lede: "Top 10 projects by cost in range; cell shade is engaged hours that project-month." }, () => {
+  const totalByProj = new Map();
+  FS.forEach(r => totalByProj.set(r[IDX.S.project], (totalByProj.get(r[IDX.S.project])||0) + r[IDX.S.cost]));
+  const topProj = [...totalByProj.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(e=>e[0]);
+  const months = [...new Set(FS.map(r => monthKey(r[IDX.S.date])))].sort();
+  if (!topProj.length || !months.length) return { eyebrow: "0 projects", body: emptyNote() };
+  const matrix = topProj.map(() => months.map(() => 0));
+  FS.forEach(r => {
+    const pi = topProj.indexOf(r[IDX.S.project]);
+    if (pi < 0) return;
+    const mi = months.indexOf(monthKey(r[IDX.S.date]));
+    matrix[pi][mi] += r[IDX.S.engagedSec] / 3600;
+  });
+  const html = heatmap(topProj.map(p => LK.projects[p]), months, matrix, { valueFmt: fmtHours, labelW: 190 });
+  return { eyebrow: `top <span class="num">${topProj.length}</span> projects &times; ${months.length} months`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 10 Models ---- */
+panel("models", "Models by cost in range", {}, () => {
+  const by = new Map();
+  DATA.M.forEach(row => {
+    if (!FS_set.has(row[IDX.M.session])) return;
+    const m = row[IDX.M.model];
+    const e = by.get(m) || { cost: 0, tokIn: 0, tokOut: 0 };
+    e.cost += row[IDX.M.cost]; e.tokIn += row[IDX.M.tokIn]; e.tokOut += row[IDX.M.tokOut];
+    by.set(m, e);
+  });
+  const rows = [...by.entries()].sort((a,b) => b[1].cost - a[1].cost);
+  if (!rows.length) return { eyebrow: "0 models", body: emptyNote() };
+  const items = rows.map(([m, e]) => ({
+    label: LK.models[m] || "(unknown)", value: e.cost,
+    title: `${LK.models[m]} · ${fmtUSD(e.cost)} · ${fmtTok(e.tokIn)} in / ${fmtTok(e.tokOut)} out`,
+  }));
+  return { eyebrow: `<span class="num">${rows.length}</span> models used`,
+    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtUSD, labelW: 170 })}</figure>${COST_CAPTION}` };
+});
+
+/* ---- 11 Model x month ---- */
+panel("model-month", "Model mix as a share of each month's cost", {}, () => {
+  const months = [...new Set(FS.map(r => monthKey(r[IDX.S.date])))].sort();
+  const modelTotals = new Map();
+  DATA.M.forEach(row => {
+    if (!FS_set.has(row[IDX.M.session])) return;
+    modelTotals.set(row[IDX.M.model], (modelTotals.get(row[IDX.M.model])||0) + row[IDX.M.cost]);
+  });
+  const topModels = [...modelTotals.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6).map(e=>e[0]);
+  if (!months.length || !topModels.length) return { eyebrow: "0 months", body: emptyNote() };
+  const palette = [SIGNAL, TEAL, GOLD, GHOST, "var(--pal5)", "var(--pal6)"];
+  const series = topModels.map((m, ci) => ({
+    label: LK.models[m] || "(unknown)", color: palette[ci % palette.length],
+    values: months.map(() => 0),
+  }));
+  DATA.M.forEach(row => {
+    if (!FS_set.has(row[IDX.M.session])) return;
+    const mi = topModels.indexOf(row[IDX.M.model]);
+    if (mi < 0) return;
+    const srow = DATA.S[row[IDX.M.session]];
+    const monIdx = months.indexOf(monthKey(srow[IDX.S.date]));
+    if (monIdx < 0) return;
+    series[mi].values[monIdx] += row[IDX.M.cost];
+  });
+  const html = stackedBar(months, series, { valueFmt: fmtUSD });
+  return { eyebrow: `top <span class="num">${topModels.length}</span> models &times; ${months.length} months`,
+    body: `<figure class="chart">${html}</figure>${legend(series)}${COST_CAPTION}` };
+});
+
+/* ---- 12 Tokens ---- */
+panel("tokens", "Four token classes, log axis", {}, () => {
+  const sums = { in: 0, out: 0, cw: 0, cr: 0 };
+  FS.forEach(r => {
+    sums.in += r[IDX.S.tokIn]; sums.out += r[IDX.S.tokOut];
+    sums.cw += r[IDX.S.tokCacheWrite]; sums.cr += r[IDX.S.tokCacheRead];
+  });
+  const items = [
+    { label: "input", value: sums.in, color: SIGNAL },
+    { label: "output", value: sums.out, color: TEAL },
+    { label: "cache write", value: sums.cw, color: GOLD },
+    { label: "cache read", value: sums.cr, color: GHOST },
+  ].map(d => ({ ...d, title: `${d.label}: ${fmtTok(d.value)} tokens` }));
+  return { eyebrow: "log scale, cache read usually dwarfs the rest",
+    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtTok, log: true, labelW: 130 })}</figure>` };
+});
+
+/* ---- 13 Thinking ---- */
+panel("thinking", "Thinking as a slice of output tokens", {
+  lede: "Recorded only from 2026-08-12 (Claude Code 2.1.228) onward. Zero before that date means not recorded, not \"no thinking happened.\"",
+}, () => {
+  const validFrom = "2026-08-12";
+  const validRows = FS.filter(r => r[IDX.S.date] >= validFrom);
+  const think = validRows.reduce((s,r) => s + r[IDX.S.tokThinking], 0);
+  const out = validRows.reduce((s,r) => s + r[IDX.S.tokOut], 0);
+  const pct = out > 0 ? (think / out * 100) : 0;
+  const items = [
+    { label: "output (non-thinking)", value: Math.max(out - think, 0), color: TEAL },
+    { label: "thinking", value: think, color: SIGNAL },
+  ].map(d => ({ ...d, title: `${d.label}: ${fmtTok(d.value)} tokens` }));
+  return { eyebrow: validRows.length ? `<span class="num">${pct.toFixed(1)}%</span> of output, from ${validFrom}` : "no sessions on/after " + validFrom + " in range",
+    body: validRows.length ? `<figure class="chart">${hbarChart(items, { valueFmt: fmtTok, labelW: 170 })}</figure>` : emptyNote() };
+});
+
+/* ---- 14 Hour heatmap ---- */
+panel("hours", "Weekday by hour, Melbourne local time", { lede: `Timezone: <b>${esc(DATA.timezone)}</b>, DST-aware, from cc-warehouse's own config &mdash; not this browser's clock.` }, () => {
+  const matrix = WEEKDAY_NAMES.map(() => Array.from({length:24}, () => 0));
+  FS.forEach(r => { matrix[r[IDX.S.weekday]][r[IDX.S.hour]] += r[IDX.S.engagedSec] / 3600; });
+  const cols = Array.from({length:24}, (_,h) => h % 3 === 0 ? String(h) : "");
+  const html = heatmap(WEEKDAY_NAMES, cols, matrix, { valueFmt: fmtHours, cellW: 26, labelW: 50 });
+  return { eyebrow: `engaged hours by hour &times; weekday, ${esc(DATA.timezone)}`,
+    body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 15 By weekday ---- */
+panel("weekday", "Engaged hours per weekday", {}, () => {
+  const sums = WEEKDAY_NAMES.map(() => 0);
+  const days = WEEKDAY_NAMES.map(() => new Set());
+  FS.forEach(r => { sums[r[IDX.S.weekday]] += r[IDX.S.engagedSec]/3600; days[r[IDX.S.weekday]].add(r[IDX.S.date]); });
+  const items = WEEKDAY_NAMES.map((w,i) => ({
+    label: w, value: sums[i], sub: days[i].size + "d active",
+    title: `${w} · ${sums[i].toFixed(1)}h total · ${days[i].size} active ${w}s in range`,
+  }));
+  const html = barChart(items, { valueFmt: fmtHours, barGap: 100, height: 320 });
+  return { eyebrow: "0 = Monday", body: `<figure class="chart">${html}</figure>` };
+});
+
+/* ---- 16 Tools ---- */
+panel("tools", "Top 20 tools by call count", {}, () => {
+  const by = new Map();
+  DATA.T.forEach(row => {
+    if (!FS_set.has(row[IDX.T.session])) return;
+    const t = row[IDX.T.tool];
+    const e = by.get(t) || { n: 0, err: 0 };
+    e.n += row[IDX.T.count]; e.err += row[IDX.T.errors];
+    by.set(t, e);
+  });
+  const rows = [...by.entries()].sort((a,b) => b[1].n - a[1].n).slice(0, 20);
+  if (!rows.length) return { eyebrow: "0 tool calls", body: emptyNote() };
+  const items = rows.map(([t, e]) => ({
+    label: LK.tools[t], value: e.n,
+    title: `${LK.tools[t]} · ${fmtInt(e.n)} calls · ${e.err} error(s)`,
+  }));
+  return { eyebrow: `<span class="num">${by.size}</span> distinct tools, top 20 shown, log scale`,
+    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtInt, log: true, labelW: 170 })}</figure>` };
+});
+
+/* ---- 17 Skills & agents ---- */
+panel("skills", "Top 8 in each kind", {}, () => {
+  const kinds = LK.attrKinds;
+  const byKind = kinds.map(() => new Map());
+  DATA.A.forEach(row => {
+    if (!FS_set.has(row[IDX.A.session])) return;
+    const ki = row[IDX.A.kind];
+    if (ki < 0) return;
+    const m = byKind[ki];
+    m.set(row[IDX.A.name], (m.get(row[IDX.A.name])||0) + row[IDX.A.count]);
+  });
+  const anyData = byKind.some(m => m.size);
+  if (!anyData) return { eyebrow: "0 attributed calls", body: emptyNote() };
+  const cards = kinds.map((k, ki) => {
+    const rows = [...byKind[ki].entries()].sort((a,b) => b[1]-a[1]).slice(0, 8);
+    if (!rows.length) return "";
+    const items = rows.map(([name, n]) => ({ label: name, value: n, title: `${name}: ${n}` }));
+    return `<div><p class="eyebrow">${esc(k)}</p><figure class="chart">${hbarChart(items, { valueFmt: fmtInt, labelW: 140 })}</figure></div>`;
+  }).filter(Boolean).join("");
+  return { eyebrow: "agent / mcp_server / mcp_tool / plugin / skill", body: `<div class="grid2">${cards}</div>` };
+});
+
+/* ---- 18 Worktrees ---- */
+panel("worktrees", "Worktree sessions in range", {}, () => {
+  const wt = FS.filter(r => r[IDX.S.worktree]);
+  const repos = new Set(wt.map(r => r[IDX.S.repo]));
+  const hours = wt.reduce((s,r) => s + r[IDX.S.engagedSec], 0) / 3600;
+  return { eyebrow: `<span class="num">${wt.length}</span> worktree sessions`,
+    body: `<div class="kpi-grid"><div class="kpi"><p class="kpi-v">${wt.length}</p><p class="kpi-l">worktree sessions</p></div>`
+      + `<div class="kpi"><p class="kpi-v">${repos.size}</p><p class="kpi-l">repos with a worktree</p></div>`
+      + `<div class="kpi"><p class="kpi-v">${fmtHours(hours)}</p><p class="kpi-l">engaged hours in worktrees</p></div></div>` };
+});
+
+/* ---- 19 Top sessions ---- */
+panel("top-sessions", "The 50 most expensive sessions in range", {}, () => {
+  const rows = [...FS].sort((a,b) => b[IDX.S.cost] - a[IDX.S.cost]).slice(0, 50);
+  if (!rows.length) return { eyebrow: "0 sessions", body: emptyNote() };
+  const tRows = rows.map(r => [
+    r[IDX.S.date], LK.projects[r[IDX.S.project]],
+    (r[IDX.S.engagedSec]/3600).toFixed(1) + "h", fmtUSD(r[IDX.S.cost]),
+    fmtTok(r[IDX.S.tokIn] + r[IDX.S.tokOut]),
+  ]);
+  return { eyebrow: `of <span class="num">${FS.length}</span> in range`,
+    body: table([{label:"Date"},{label:"Project"},{label:"Hours",num:true},{label:"Cost",num:true},{label:"Tokens (in+out)",num:true}], tRows) };
+});
+
+/* ---- 20 CC versions ---- */
+panel("versions", "Claude Code builds in range", {}, () => {
+  const by = new Map();
+  FS.forEach(r => { const v = r[IDX.S.ccVersion]; by.set(v, (by.get(v)||0)+1); });
+  const rows = [...by.entries()].sort((a,b) => b[1]-a[1]).slice(0, 12);
+  if (!rows.length) return { eyebrow: "0 versions", body: emptyNote() };
+  const items = rows.map(([v,n]) => ({ label: LK.ccversions[v] || "(unknown)", value: n, title: `${LK.ccversions[v]}: ${n} sessions` }));
+  return { eyebrow: `<span class="num">${by.size}</span> distinct builds, top 12 shown`,
+    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtInt, labelW: 150 })}</figure>` };
+});
+
+function emptyNote() { return `<p class="empty-note">Nothing in this range with the current filters.</p>`; }
+
+/* CHART-BRIEF.md: the cost disclaimer must appear on the chart itself, not
+   only in prose elsewhere on the page. Appended to every panel whose PRIMARY
+   value is a dollar figure (Projects, Repositories, Models, Model x month). */
+const COST_CAPTION = `<p class="foot" style="margin-top:8px;padding-top:0;border-top:none">`
+  + `cost = API list-price equivalent, not billed spend</p>`;
+
+/* ---- Caveats (static, whole corpus, not filter-reactive) ---- */
+const CAVEATS = [
+  ["engaged_hours only", "Never active_hours (that includes idle wait). elapsed_hours only means \"hours with a session open\", not effort &mdash; it is not charted here."],
+  ["Cost is not a bill", DATA.cost_note],
+  ["is_real filters shells", "About 6 in 10 transcript files never got a reply (SDK/hook/interrupted launches). Every panel here already filters to real sessions."],
+  ["Two project keys", "project_label (what you actually worked in) and repo_root (subdirectories folded into their parent) are different keys. Each panel says which it uses."],
+  ["Thinking tokens", "Recorded only from 2026-08-12 onward. tok_thinking is a subset of tok_output; never add them."],
+  ["Concurrency is whole-corpus", "It mixes every project by definition and only narrows with the date range, not the project filter."],
+  ["Timezone", `local_date/hour/weekday are ${DATA.timezone ? esc(DATA.timezone) : "(unknown)"}, DST-aware, from cc-warehouse's own config &mdash; never this browser's clock.`],
+  ["This file is private", "It embeds real project folder names. Keep it local; do not upload it anywhere."],
+];
+
+/* ==================================================================== */
+/* Effects: a custom tooltip (native <title> is slow and ugly), a scroll-
+   reveal fade-in for panels, and a brief cross-fade when filters change.
+   All plain CSS/JS -- no chart library, no CDN, same self-contained-file
+   habit as the rest of this project. */
+/* ==================================================================== */
+const raf = typeof requestAnimationFrame !== "undefined"
+  ? requestAnimationFrame : (fn) => setTimeout(fn, 16);
+
+const tooltipEl = document.createElement("div");
+tooltipEl.className = "cc-tooltip";
+document.body.appendChild(tooltipEl);
+let tooltipTarget = null;
+
+function positionTooltip(x, y) {
+  const pad = 14;
+  const vw = (typeof window !== "undefined" && window.innerWidth) || 1200;
+  const vh = (typeof window !== "undefined" && window.innerHeight) || 800;
+  const tw = tooltipEl.offsetWidth || 220, th = tooltipEl.offsetHeight || 40;
+  let left = x + pad, top = y + pad;
+  if (left + tw > vw - 8) left = x - tw - pad;
+  if (top + th > vh - 8) top = y - th - pad;
+  tooltipEl.style.left = left + "px";
+  tooltipEl.style.top = top + "px";
+}
+document.addEventListener("mouseover", e => {
+  const el = e.target.closest && e.target.closest("[data-tip]");
+  if (!el) return;
+  tooltipTarget = el;
+  tooltipEl.textContent = el.getAttribute("data-tip");
+  tooltipEl.classList.add("show");
+  positionTooltip(e.clientX, e.clientY);
+});
+document.addEventListener("mousemove", e => {
+  if (tooltipTarget) positionTooltip(e.clientX, e.clientY);
+});
+document.addEventListener("mouseout", e => {
+  const el = e.target.closest && e.target.closest("[data-tip]");
+  if (el && el === tooltipTarget) { tooltipTarget = null; tooltipEl.classList.remove("show"); }
+});
+
+const revealObserver = typeof IntersectionObserver !== "undefined"
+  ? new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add("revealed"); revealObserver.unobserve(e.target); }
+      });
+    }, { threshold: 0.08, rootMargin: "0px 0px -40px 0px" })
+  : null;
+function revealPanels(container) {
+  const panelEls = container.querySelectorAll ? container.querySelectorAll(".panel") : [];
+  panelEls.forEach(el => revealObserver ? revealObserver.observe(el) : el.classList.add("revealed"));
+}
+
+/* ==================================================================== */
+/* Render                                                                */
+/* ==================================================================== */
+function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48); }
+
+function renderAll() {
+  recomputeFilteredSessions();
+  const container = document.getElementById("panels");
+  const navInner = document.getElementById("nav-inner");
+  let html = "", nav = "";
+  PANELS.forEach(p => {
+    let out;
+    try { out = p.render(); }
+    catch (err) { out = { eyebrow: "error", body: `<p class="empty-note">This panel failed to draw: ${esc(err.message)}</p>` }; }
+    const anchorId = "p-" + p.id;
+    nav += `<a href="#${anchorId}">${esc(p.title.length > 34 ? p.title.slice(0,32)+"…" : p.title)}</a>`;
+    html += `<section class="panel" id="${anchorId}">`
+      + `<div class="panel-head"><div>`
+      + `<p class="eyebrow">${out.eyebrow || ""}</p>`
+      + `<h2>${esc(p.title)}</h2>`
+      + (p.opt.lede ? `<p class="lede">${p.opt.lede}</p>` : "")
+      + `</div></div>${out.body}</section>`;
+  });
+  html += `<section class="panel dark" id="p-caveats"><div class="panel-head"><div>`
+    + `<p class="eyebrow"><span class="num">${CAVEATS.length}</span> caveats</p>`
+    + `<h2>What would make these charts wrong</h2></div></div>`
+    + `<div class="cav-grid">` + CAVEATS.map(([t,d]) => `<div class="cav"><p class="cav-t">${esc(t)}</p><p class="cav-d">${d}</p></div>`).join("") + `</div>`
+    + `</section>`;
+  nav += `<a href="#p-caveats">Caveats</a>`;
+  container.innerHTML = html;
+  navInner.innerHTML = nav;
+  updateSummary();
+  revealPanels(container);
+}
+
+function updateSummary() {
+  document.getElementById("f-summary").innerHTML =
+    `<b>${fmtInt(FS.length)}</b> of ${fmtInt(DATA.S.length)} sessions shown`;
+  const excludedCount = state.excluded.size;
+  document.getElementById("proj-count").textContent =
+    excludedCount === 0 ? "all included" : excludedCount + " excluded";
+}
+
+/* ------------------------------------------------------------- controls */
+let redrawTimer = null;
+function scheduleRedraw() {
+  clearTimeout(redrawTimer);
+  const container = document.getElementById("panels");
+  container.classList.add("refreshing");
+  redrawTimer = setTimeout(() => {
+    renderAll();
+    raf(() => container.classList.remove("refreshing"));
+  }, 90);
+}
+
+const fromInput = document.getElementById("f-from");
+const toInput = document.getElementById("f-to");
+fromInput.min = toInput.min = DATA.min_date;
+fromInput.max = toInput.max = DATA.max_date;
+fromInput.value = state.from; toInput.value = state.to;
+fromInput.addEventListener("change", () => { state.from = fromInput.value || DATA.min_date; scheduleRedraw(); });
+toInput.addEventListener("change", () => { state.to = toInput.value || DATA.max_date; scheduleRedraw(); });
+
+document.getElementById("f-reset").addEventListener("click", () => {
+  state.from = DEFAULT_FROM; state.to = DATA.max_date; state.excluded = defaultExcludedIndices();
+  fromInput.value = state.from; toInput.value = state.to;
+  buildProjList(); renderAll();
+});
+
+/* Project checklist */
+const projPanel = document.getElementById("proj-panel");
+const projToggle = document.getElementById("proj-toggle");
+const projList = document.getElementById("proj-list");
+const projSearch = document.getElementById("proj-search");
+
+const projOrder = LK.projects.map((name, i) => i).sort((a,b) => LK.projects[a].localeCompare(LK.projects[b]));
+
+function buildProjList(filterText) {
+  const q = (filterText || "").toLowerCase();
+  let html = "";
+  projOrder.forEach(i => {
+    const name = LK.projects[i];
+    if (q && !name.toLowerCase().includes(q)) return;
+    const excluded = state.excluded.has(i);
+    html += `<div class="proj-item${excluded ? " excluded" : ""}" data-i="${i}">`
+      + `<input type="checkbox" ${excluded ? "" : "checked"}><label title="${esc(name || "(none)")}">${esc(name || "(none)")}</label></div>`;
+  });
+  projList.innerHTML = html || `<div class="proj-item"><label>no match</label></div>`;
+}
+projList.addEventListener("click", e => {
+  const item = e.target.closest(".proj-item[data-i]");
+  if (!item) return;
+  const i = Number(item.dataset.i);
+  if (state.excluded.has(i)) state.excluded.delete(i); else state.excluded.add(i);
+  buildProjList(projSearch.value);
+  scheduleRedraw();
+});
+projSearch.addEventListener("input", () => buildProjList(projSearch.value));
+projToggle.addEventListener("click", () => { projPanel.classList.toggle("open"); if (projPanel.classList.contains("open")) projSearch.focus(); });
+document.addEventListener("click", e => {
+  if (!e.target.closest(".proj-wrap")) projPanel.classList.remove("open");
+});
+document.getElementById("proj-clear").addEventListener("click", () => { state.excluded.clear(); buildProjList(projSearch.value); scheduleRedraw(); });
+document.getElementById("proj-none").addEventListener("click", () => { LK.projects.forEach((_,i) => state.excluded.add(i)); buildProjList(projSearch.value); scheduleRedraw(); });
+
+document.getElementById("mast-kicker").textContent =
+  `${DATA.timezone} · ${fmtInt(DATA.S.length)} sessions embedded · ${DATA.min_date} to ${DATA.max_date}`;
+
+buildProjList();
+renderAll();
+</script>
+</body>
+</html>
