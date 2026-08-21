@@ -23,8 +23,9 @@ preferred start).
 projects start TICKED in the page's own project checklist -- every project
 is still embedded and still choosable either way, this only changes the
 starting state, and Reset restores it. Substring, not exact-match or a glob:
-a pattern matches `project_label` if it appears anywhere in it, so a name IS
-a valid pattern (a "substring" that happens to be the whole string). `--exclude`
+a pattern matches `project_label` if it appears anywhere in it, case-insensitive,
+so a name IS a valid pattern (a "substring" that happens to be the whole
+string). `--exclude`
 is a denylist (those matches start unticked, everything else stays ticked).
 `--include` is an allowlist (only those matches start ticked, everything else
 starts unticked). Given both, `--exclude` narrows `--include`'s allowlist
@@ -102,7 +103,8 @@ def resolve_unticked(
     Substring matching, not exact or glob: a pattern matches `project_label`
     if it appears anywhere in it -- start, middle, end, or the whole string
     (an exact match is just the special case of a pattern that IS the whole
-    name). Every pattern in a list is independent; matching ANY one is enough.
+    name). Case-insensitive, so `--exclude tax` also matches `Tax_Bhencho`.
+    Every pattern in a list is independent; matching ANY one is enough.
 
     `include` is an allowlist: when given, only matches start ticked and
     everything else starts unticked. `exclude` is a denylist: matches start
@@ -111,7 +113,8 @@ def resolve_unticked(
     """
 
     def matches(name: str, patterns: list[str]) -> bool:
-        return any(pattern in name for pattern in patterns)
+        lname = name.lower()
+        return any(pattern.lower() in lname for pattern in patterns)
 
     ticked = {p for p in all_projects if matches(p, include)} if include else set(all_projects)
     if exclude:
@@ -121,7 +124,7 @@ def resolve_unticked(
     unmatched = [
         pattern
         for pattern in (*include, *exclude)
-        if not any(pattern in p for p in all_projects)
+        if not any(pattern.lower() in p.lower() for p in all_projects)
     ]
     return unticked, unmatched
 

@@ -123,19 +123,8 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-bottom-color:var(--si
   vertical-align:top;color:var(--ink2)}
 .tbl .num{font-family:var(--mono);text-align:right;white-space:nowrap}
 
-.panel.dark{background:var(--void);color:var(--ink);border-color:var(--void);
-  border-top:2px solid var(--signal)}
-.panel.dark h2,.panel.dark .eyebrow,.panel.dark .lede{color:var(--ink)}
-.panel.dark .eyebrow .num{color:var(--ghost)}
-.cav-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));gap:20px}
-.cav{border-top:1px solid var(--cavrule);padding-top:12px}
-.cav-t{font-family:var(--display);text-transform:uppercase;letter-spacing:.03em;
-  font-size:14.5px;font-weight:700;margin:0 0 6px;line-height:1.2;color:var(--ghost)}
-.cav-d{font-size:13px;margin:0;color:var(--ink2);line-height:1.5}
-
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:22px}
 .grid5{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}
-@media (max-width:720px){.grid2{grid-template-columns:1fr}}
+.stack1{display:flex;flex-direction:column;gap:26px}
 
 .chart-svg text{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;fill:var(--ink2)}
 .chart-svg .tick{font-size:11px}
@@ -171,7 +160,7 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-bottom-color:var(--si
 <div class="wrap">
 <header class="mast">
   <p class="kicker" id="mast-kicker">Claude Code usage &middot; live, filterable</p>
-  <h1>Claude&nbsp;Code,<br><em>your own slice</em></h1>
+  <h1>.cc-warehouse<br><em>/ stats</em></h1>
   <p class="sub" id="mast-sub">Pick a date range and the projects to skip, up top. Every
   panel below redraws from that one choice. Hours are <b>engaged_hours</b> throughout &mdash;
   the only column here that means work done, not idle time.</p>
@@ -219,6 +208,25 @@ const COLS = DATA.cols;
 const IDX = {};
 for (const k of Object.keys(COLS)) { IDX[k] = {}; COLS[k].forEach((name, i) => IDX[k][name] = i); }
 const LK = DATA.lookups;
+/* Claude Code's own background-agent tooling creates a throwaway folder per
+   agent run (".claude/worktrees/agent-<random hex>"), and each one gets its
+   own project_label -- Git treats it as a separate repo root, but it is the
+   same underlying project, not real distinct work. Fold ONLY this pattern
+   back onto its parent label for aggregation. Named worktrees and genuinely
+   separate sub-repos (e.g. "-DIB-governor", "-.worktree-web") are real,
+   deliberately distinct work and are left alone. */
+function canonicalProjectName(label) {
+  return (label || "").replace(/-\.claude-worktrees-agent-[0-9a-f]+$/i, "");
+}
+const CANON_PROJECT = LK.projects.map(canonicalProjectName);
+/* Model FAMILY (opus/sonnet/haiku/fable), version numbers rolled together.
+   Shared with the Overview KPI tile's own model-cost split so both use the
+   exact same grouping. */
+function modelFamily(rawName) {
+  const stripped = (rawName || "unknown").replace(/^claude-/, "");
+  const m = stripped.match(/^[a-zA-Z]+/);
+  return m ? m[0] : stripped;
+}
 const WEEKDAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 /* Point at the CSS custom properties rather than duplicating hex values --
    an inline <svg> in the same document reads var() from the page's own
@@ -231,8 +239,8 @@ function esc(s) {
 }
 function fmtHours(h) { return (h >= 1000 ? (h/1000).toFixed(1)+"k" : h.toFixed(h < 10 ? 1 : 0)) + "h"; }
 function fmtUSD(v) {
-  if (v >= 1000) return "US$" + (v/1000).toFixed(1) + "k";
-  return "US$" + v.toFixed(v < 10 ? 2 : 0);
+  if (v >= 1000) return "US$ " + (v/1000).toFixed(1) + "k";
+  return "US$ " + v.toFixed(v < 10 ? 2 : 0);
 }
 function fmtInt(v) { return v.toLocaleString("en-US"); }
 function fmtTok(v) {
@@ -245,7 +253,7 @@ function fmtTok(v) {
    decimal and full thousands separators (never the compact k/M suffixes the
    space-constrained charts use). */
 function fmtHoursPrecise(h) { return h.toLocaleString("en-US", {minimumFractionDigits:1, maximumFractionDigits:1}) + " h"; }
-function fmtUSDFull(v) { return "US$" + Math.round(v).toLocaleString("en-US"); }
+function fmtUSDFull(v) { return "US$ " + Math.round(v).toLocaleString("en-US"); }
 
 /* Pure calendar-day arithmetic on 'YYYY-MM-DD' strings. Uses Date.UTC only
    as an epoch-day counter -- NEVER the reader's own browser timezone, since
@@ -352,16 +360,36 @@ function hbarChart(items, opt) {
 /* Generic heatmap grid (hour-of-day x weekday, and project x month). */
 function heatmap(rowLabels, colLabels, matrix, opt) {
   opt = opt || {};
-  const cellW = opt.cellW || 26, cellH = opt.cellH || 22;
-  const padL = opt.labelW || 140, padT = 30;
-  const W = padL + colLabels.length * cellW + 20, H = padT + rowLabels.length * cellH + 10;
+  const cellH = opt.cellH || 22;
+  const padL = opt.labelW || 140, padT = 30, padR = 20;
+  /* Same 660-unit floor barChart() already uses (matches the page's own
+     .chart-svg{min-width:660px}). Without it, a heatmap with few columns
+     (e.g. a 3-month range) computes a tiny natural width, the browser
+     stretches that tiny viewBox up to fill the panel anyway, and every
+     font-size in it -- defined in the SAME viewBox units -- gets stretched
+     right along with it. Measured: a 390-unit-wide chart rendered at
+     1170px, a 3x blow-up, on a 3-column range. Growing cellW (not just
+     padding blank space) to hit the floor keeps text at its real size AND
+     fills the cells out properly, exactly how barChart's own bars already
+     grow to fill its floor. */
+  const cols = colLabels.length || 1;
+  const cellW = Math.max(opt.cellW || 26, (660 - padL - padR) / cols);
+  const W = padL + colLabels.length * cellW + padR, H = padT + rowLabels.length * cellH + 10;
   const maxV = Math.max(...matrix.flat(), 0.0001);
+  /* Row labels are right-aligned to end at padL-8 and grow LEFTWARD from
+     there; anything past x=0 is clipped by the viewBox. Truncate to what
+     padL can actually hold (~8px/char in this panel's serif body font at
+     12.5px, measured against real rendered project names, not guessed)
+     rather than letting a long project name spill off the edge. Full name
+     still reachable via the existing data-tip hover system. */
+  const maxLabelChars = Math.max(3, Math.floor((padL - 16) / 8));
+  const truncLabel = (s) => s.length > maxLabelChars ? s.slice(0, maxLabelChars - 1) + "…" : s;
   let out = "";
   colLabels.forEach((c, ci) => {
     out += `<text x="${(padL+ci*cellW+cellW/2).toFixed(1)}" y="20" class="tick tick-dim" text-anchor="middle">${esc(c)}</text>`;
   });
   rowLabels.forEach((r, ri) => {
-    out += `<text x="${padL-8}" y="${(padT+ri*cellH+cellH/2+4).toFixed(1)}" class="rowlbl" text-anchor="end">${esc(r)}</text>`;
+    out += `<text x="${padL-8}" y="${(padT+ri*cellH+cellH/2+4).toFixed(1)}" class="rowlbl" text-anchor="end" data-tip="${esc(r)}">${esc(truncLabel(r))}</text>`;
     colLabels.forEach((c, ci) => {
       const v = matrix[ri][ci] || 0;
       const t = Math.pow(v / maxV, 0.55);
@@ -432,6 +460,19 @@ function table(columns, rows) {
    clamped into the embedded range so this never points before the data
    actually starts if the dashboard is later rebuilt with a shorter span. */
 const DEFAULT_FROM = "2026-06-08" >= DATA.min_date ? "2026-06-08" : DATA.min_date;
+/* Default end date: the reader's own real "today", not the day the file was
+   built. This is the one legitimate use of the browser's local clock in this
+   file -- it reads no embedded date string (unlike ymd() above, which never
+   local-parses one), it only asks "what day is it right now". Clamped to
+   DATA.max_date since nothing past the last embedded day has any data to
+   show; a file opened the same day it was built gets today, an older file
+   gracefully falls back to its newest embedded day instead of showing a
+   frozen, ever-more-stale hardcoded date. */
+function todayLocal() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+const DEFAULT_TO = todayLocal() < DATA.max_date ? todayLocal() : DATA.max_date;
 /* Baked in at build time via `dashboard.py --include`/`--exclude` (substring,
    repeatable) -- resolved to real project_labels there, so this side just
    maps names to indices. A stale name with no matching project is silently
@@ -444,7 +485,7 @@ function defaultExcludedIndices() {
   });
   return out;
 }
-const state = { from: DEFAULT_FROM, to: DATA.max_date, excluded: defaultExcludedIndices() };
+const state = { from: DEFAULT_FROM, to: DEFAULT_TO, excluded: defaultExcludedIndices() };
 
 function inRange(row) {
   const d = row[IDX.S.date];
@@ -516,15 +557,9 @@ panel("overview", "Headline totals for your range", {}, () => {
   const crRatio = tokOut > 0 ? Math.round(tokCacheRead/tokOut) : 0;
   const toolsPerPrompt = prompts > 0 ? (toolUses/prompts).toFixed(1) : "0";
 
-  // Model FAMILY cost split for the API-cost tile (opus/sonnet/haiku/fable,
-  // version numbers rolled together) -- just out of curiosity. A handful of
-  // families, so no top-N/"other" bucketing is needed the way a per-version
-  // split would.
-  function modelFamily(rawName) {
-    const stripped = (rawName || "unknown").replace(/^claude-/, "");
-    const m = stripped.match(/^[a-zA-Z]+/);
-    return m ? m[0] : stripped;
-  }
+  // Model FAMILY cost split for the API-cost tile (modelFamily() above,
+  // shared with the "Models by cost" panel) -- a handful of families, so no
+  // top-N/"other" bucketing is needed the way a per-version split would.
   const modelCost = new Map();
   DATA.M.forEach(row => {
     if (!FS_set.has(row[IDX.M.session])) return;
@@ -651,18 +686,40 @@ panel("monthly", "Months in your range, partial ones marked", {}, () => {
 
 /* ---- 05 Concurrency (whole corpus by design, date-only) ---- */
 panel("concurrency", "How much time overlapped, whole corpus", {
-  lede: "From overlap_day, precomputed across every project (it needs real interval overlap math, not a per-session sum) &mdash; the project filter above does not narrow this panel, only the date range does.",
+  lede: "From overlap_day, precomputed across every project (it needs real interval overlap math, not a per-session sum) &mdash; the project filter above does not narrow this panel, only the date range does. One bar per ISO week: this data has no project dimension to group by, it is a day-by-day whole-corpus total, so a wide date range means a lot of days -- weekly keeps it readable.",
 }, () => {
   const rows = DATA.O.filter(r => r[IDX.O.date] >= state.from && r[IDX.O.date] <= state.to);
   if (!rows.length) return { eyebrow: "0 days", body: emptyNote() };
-  const items = rows.map(r => ({
-    label: r[IDX.O.date].slice(5), value: r[IDX.O.summedHours],
-    sub: "x" + r[IDX.O.concurrency].toFixed(1),
-    title: `${r[IDX.O.date]} · ${r[IDX.O.summedHours].toFixed(1)}h summed vs ${r[IDX.O.elapsedHours].toFixed(1)}h elapsed clock time · up to ${r[IDX.O.maxConcurrent]} concurrent`,
-  }));
-  const html = barChart(items, { valueFmt: fmtHours, barGap: 30, height: 320 });
+  /* Roll daily overlap_day rows up to ISO weeks. Both hour columns are safe
+     to sum (each day is a disjoint, non-overlapping slice of clock time);
+     concurrency is then RECOMPUTED from the weekly sums (summed/elapsed),
+     never averaged day-to-day, so it stays the true whole-week ratio.
+     maxConcurrent is the max of the days' own peaks: the real weekly peak
+     happens within some single day, and that day's figure already is its
+     true instantaneous max, so no per-session reconstruction is needed. */
+  const byWeek = new Map();
+  rows.forEach(r => {
+    const wk = isoWeekKey(r[IDX.O.date]);
+    const e = byWeek.get(wk) || { summed: 0, elapsed: 0, maxConcurrent: 0, days: 0 };
+    e.summed += r[IDX.O.summedHours];
+    e.elapsed += r[IDX.O.elapsedHours];
+    e.maxConcurrent = Math.max(e.maxConcurrent, r[IDX.O.maxConcurrent]);
+    e.days += 1;
+    byWeek.set(wk, e);
+  });
+  const weeks = [...byWeek.keys()].sort();
+  const items = weeks.map(wk => {
+    const e = byWeek.get(wk);
+    const conc = e.elapsed > 0 ? e.summed / e.elapsed : 0;
+    return {
+      label: wk.slice(6), value: e.summed,
+      sub: "x" + conc.toFixed(1),
+      title: `${wk}, ${e.days} day${e.days === 1 ? "" : "s"} · ${e.summed.toFixed(1)}h summed vs ${e.elapsed.toFixed(1)}h elapsed clock time · up to ${e.maxConcurrent} concurrent`,
+    };
+  });
+  const html = barChart(items, { valueFmt: fmtHours, barGap: 56, height: 320 });
   const maxC = Math.max(...rows.map(r => r[IDX.O.maxConcurrent]));
-  return { eyebrow: `up to <span class="num whole">${maxC}</span> sessions at once`,
+  return { eyebrow: `up to <span class="num whole">${maxC}</span> sessions at once, by week`,
     body: `<figure class="chart">${html}</figure>` };
 });
 
@@ -691,19 +748,21 @@ panel("sizes", "Most sessions are short; cost concentrates in the long ones", {}
 });
 
 /* ---- 07 Projects ---- */
-panel("projects", "Top 15 by cost, keyed on project_label", {}, () => {
+panel("projects", "Top 15 by cost, keyed on project_label", {
+  lede: "Auto-generated background-agent worktree folders are folded into their parent project here (see CANON_PROJECT above); named worktrees and separate sub-repos are not -- they are real, distinct work.",
+}, () => {
   const by = new Map();
   FS.forEach(r => {
-    const p = r[IDX.S.project];
-    const e = by.get(p) || { hours: 0, cost: 0, n: 0 };
+    const name = CANON_PROJECT[r[IDX.S.project]];
+    const e = by.get(name) || { hours: 0, cost: 0, n: 0 };
     e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.n += 1;
-    by.set(p, e);
+    by.set(name, e);
   });
   const rows = [...by.entries()].sort((a,b) => b[1].cost - a[1].cost).slice(0, 15);
   if (!rows.length) return { eyebrow: "0 projects", body: emptyNote() };
-  const items = rows.map(([p, e]) => ({
-    label: LK.projects[p], value: e.cost,
-    title: `${LK.projects[p]} · ${fmtUSD(e.cost)} · ${e.hours.toFixed(1)}h · ${e.n} sessions`,
+  const items = rows.map(([name, e]) => ({
+    label: name, value: e.cost,
+    title: `${name} · ${fmtUSD(e.cost)} · ${e.hours.toFixed(1)}h · ${e.n} sessions`,
   }));
   return { eyebrow: `<span class="num">${by.size}</span> projects in range, top 15 shown`,
     body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtUSD })}</figure>${COST_CAPTION}` };
@@ -729,41 +788,51 @@ panel("repos", "The same work, keyed on repo_root", { lede: "Subdirectories fold
 });
 
 /* ---- 09 Project x month ---- */
-panel("proj-month", "Where the work moved, month by month", { lede: "Top 10 projects by cost in range; cell shade is engaged hours that project-month." }, () => {
+panel("proj-month", "Where the work moved, month by month", { lede: "Top 10 projects by cost in range; cell shade is engaged hours that project-month. Auto-generated background-agent worktree folders are folded into their parent project here, same as the cost panel above." }, () => {
   const totalByProj = new Map();
-  FS.forEach(r => totalByProj.set(r[IDX.S.project], (totalByProj.get(r[IDX.S.project])||0) + r[IDX.S.cost]));
+  FS.forEach(r => {
+    const name = CANON_PROJECT[r[IDX.S.project]];
+    totalByProj.set(name, (totalByProj.get(name)||0) + r[IDX.S.cost]);
+  });
   const topProj = [...totalByProj.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(e=>e[0]);
   const months = [...new Set(FS.map(r => monthKey(r[IDX.S.date])))].sort();
   if (!topProj.length || !months.length) return { eyebrow: "0 projects", body: emptyNote() };
   const matrix = topProj.map(() => months.map(() => 0));
   FS.forEach(r => {
-    const pi = topProj.indexOf(r[IDX.S.project]);
+    const name = CANON_PROJECT[r[IDX.S.project]];
+    const pi = topProj.indexOf(name);
     if (pi < 0) return;
     const mi = months.indexOf(monthKey(r[IDX.S.date]));
     matrix[pi][mi] += r[IDX.S.engagedSec] / 3600;
   });
-  const html = heatmap(topProj.map(p => LK.projects[p]), months, matrix, { valueFmt: fmtHours, labelW: 190 });
+  const html = heatmap(topProj, months, matrix, { valueFmt: fmtHours, labelW: 190, cellW: 60 });
   return { eyebrow: `top <span class="num">${topProj.length}</span> projects &times; ${months.length} months`,
     body: `<figure class="chart">${html}</figure>` };
 });
 
 /* ---- 10 Models ---- */
-panel("models", "Models by cost in range", {}, () => {
+panel("models", "Models by cost in range", {
+  lede: "One bar per model family (opus/sonnet/haiku/fable) -- version numbers are summed together, same grouping as the API-cost KPI tile above.",
+}, () => {
   const by = new Map();
   DATA.M.forEach(row => {
     if (!FS_set.has(row[IDX.M.session])) return;
-    const m = row[IDX.M.model];
-    const e = by.get(m) || { cost: 0, tokIn: 0, tokOut: 0 };
+    const rawName = LK.models[row[IDX.M.model]];
+    // <synthetic> is a $0 placeholder Claude Code writes for an interrupted
+    // reply, not a real priced model.
+    if (rawName === "<synthetic>") return;
+    const fam = modelFamily(rawName);
+    const e = by.get(fam) || { cost: 0, tokIn: 0, tokOut: 0 };
     e.cost += row[IDX.M.cost]; e.tokIn += row[IDX.M.tokIn]; e.tokOut += row[IDX.M.tokOut];
-    by.set(m, e);
+    by.set(fam, e);
   });
   const rows = [...by.entries()].sort((a,b) => b[1].cost - a[1].cost);
   if (!rows.length) return { eyebrow: "0 models", body: emptyNote() };
-  const items = rows.map(([m, e]) => ({
-    label: LK.models[m] || "(unknown)", value: e.cost,
-    title: `${LK.models[m]} · ${fmtUSD(e.cost)} · ${fmtTok(e.tokIn)} in / ${fmtTok(e.tokOut)} out`,
+  const items = rows.map(([fam, e]) => ({
+    label: fam, value: e.cost,
+    title: `${fam} · ${fmtUSD(e.cost)} · ${fmtTok(e.tokIn)} in / ${fmtTok(e.tokOut)} out`,
   }));
-  return { eyebrow: `<span class="num">${rows.length}</span> models used`,
+  return { eyebrow: `<span class="num">${rows.length}</span> model families used`,
     body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtUSD, labelW: 170 })}</figure>${COST_CAPTION}` };
 });
 
@@ -892,7 +961,7 @@ panel("skills", "Top 8 in each kind", {}, () => {
     const items = rows.map(([name, n]) => ({ label: name, value: n, title: `${name}: ${n}` }));
     return `<div><p class="eyebrow">${esc(k)}</p><figure class="chart">${hbarChart(items, { valueFmt: fmtInt, labelW: 140 })}</figure></div>`;
   }).filter(Boolean).join("");
-  return { eyebrow: "agent / mcp_server / mcp_tool / plugin / skill", body: `<div class="grid2">${cards}</div>` };
+  return { eyebrow: "agent / mcp_server / mcp_tool / plugin / skill", body: `<div class="stack1">${cards}</div>` };
 });
 
 /* ---- 18 Worktrees ---- */
@@ -907,8 +976,21 @@ panel("worktrees", "Worktree sessions in range", {}, () => {
 });
 
 /* ---- 19 Top sessions ---- */
-panel("top-sessions", "The 50 most expensive sessions in range", {}, () => {
-  const rows = [...FS].sort((a,b) => b[IDX.S.cost] - a[IDX.S.cost]).slice(0, 50);
+panel("top-sessions", "The 25 most expensive sessions in range", {}, () => {
+  const rows = [...FS].sort((a,b) => b[IDX.S.cost] - a[IDX.S.cost]).slice(0, 25);
+  if (!rows.length) return { eyebrow: "0 sessions", body: emptyNote() };
+  const tRows = rows.map(r => [
+    r[IDX.S.date], LK.projects[r[IDX.S.project]],
+    (r[IDX.S.engagedSec]/3600).toFixed(1) + "h", fmtUSD(r[IDX.S.cost]),
+    fmtTok(r[IDX.S.tokIn] + r[IDX.S.tokOut]),
+  ]);
+  return { eyebrow: `of <span class="num">${FS.length}</span> in range`,
+    body: table([{label:"Date"},{label:"Project"},{label:"Hours",num:true},{label:"Cost",num:true},{label:"Tokens (in+out)",num:true}], tRows) };
+});
+
+/* ---- 19b Top sessions by duration ---- */
+panel("longest-sessions", "The 25 longest sessions in range", {}, () => {
+  const rows = [...FS].sort((a,b) => b[IDX.S.engagedSec] - a[IDX.S.engagedSec]).slice(0, 25);
   if (!rows.length) return { eyebrow: "0 sessions", body: emptyNote() };
   const tRows = rows.map(r => [
     r[IDX.S.date], LK.projects[r[IDX.S.project]],
@@ -920,16 +1002,6 @@ panel("top-sessions", "The 50 most expensive sessions in range", {}, () => {
 });
 
 /* ---- 20 CC versions ---- */
-panel("versions", "Claude Code builds in range", {}, () => {
-  const by = new Map();
-  FS.forEach(r => { const v = r[IDX.S.ccVersion]; by.set(v, (by.get(v)||0)+1); });
-  const rows = [...by.entries()].sort((a,b) => b[1]-a[1]).slice(0, 12);
-  if (!rows.length) return { eyebrow: "0 versions", body: emptyNote() };
-  const items = rows.map(([v,n]) => ({ label: LK.ccversions[v] || "(unknown)", value: n, title: `${LK.ccversions[v]}: ${n} sessions` }));
-  return { eyebrow: `<span class="num">${by.size}</span> distinct builds, top 12 shown`,
-    body: `<figure class="chart">${hbarChart(items, { valueFmt: fmtInt, labelW: 150 })}</figure>` };
-});
-
 function emptyNote() { return `<p class="empty-note">Nothing in this range with the current filters.</p>`; }
 
 /* CHART-BRIEF.md: the cost disclaimer must appear on the chart itself, not
@@ -937,18 +1009,6 @@ function emptyNote() { return `<p class="empty-note">Nothing in this range with 
    value is a dollar figure (Projects, Repositories, Models, Model x month). */
 const COST_CAPTION = `<p class="foot" style="margin-top:8px;padding-top:0;border-top:none">`
   + `cost = API list-price equivalent, not billed spend</p>`;
-
-/* ---- Caveats (static, whole corpus, not filter-reactive) ---- */
-const CAVEATS = [
-  ["engaged_hours only", "Never active_hours (that includes idle wait). elapsed_hours only means \"hours with a session open\", not effort &mdash; it is not charted here."],
-  ["Cost is not a bill", DATA.cost_note],
-  ["is_real filters shells", "About 6 in 10 transcript files never got a reply (SDK/hook/interrupted launches). Every panel here already filters to real sessions."],
-  ["Two project keys", "project_label (what you actually worked in) and repo_root (subdirectories folded into their parent) are different keys. Each panel says which it uses."],
-  ["Thinking tokens", "Recorded only from 2026-08-12 onward. tok_thinking is a subset of tok_output; never add them."],
-  ["Concurrency is whole-corpus", "It mixes every project by definition and only narrows with the date range, not the project filter."],
-  ["Timezone", `local_date/hour/weekday are ${DATA.timezone ? esc(DATA.timezone) : "(unknown)"}, DST-aware, from cc-warehouse's own config &mdash; never this browser's clock.`],
-  ["This file is private", "It embeds real project folder names. Keep it local; do not upload it anywhere."],
-];
 
 /* ==================================================================== */
 /* Effects: a custom tooltip (native <title> is slow and ugly), a scroll-
@@ -1026,12 +1086,6 @@ function renderAll() {
       + (p.opt.lede ? `<p class="lede">${p.opt.lede}</p>` : "")
       + `</div></div>${out.body}</section>`;
   });
-  html += `<section class="panel dark" id="p-caveats"><div class="panel-head"><div>`
-    + `<p class="eyebrow"><span class="num">${CAVEATS.length}</span> caveats</p>`
-    + `<h2>What would make these charts wrong</h2></div></div>`
-    + `<div class="cav-grid">` + CAVEATS.map(([t,d]) => `<div class="cav"><p class="cav-t">${esc(t)}</p><p class="cav-d">${d}</p></div>`).join("") + `</div>`
-    + `</section>`;
-  nav += `<a href="#p-caveats">Caveats</a>`;
   container.innerHTML = html;
   navInner.innerHTML = nav;
   updateSummary();
@@ -1067,7 +1121,7 @@ fromInput.addEventListener("change", () => { state.from = fromInput.value || DAT
 toInput.addEventListener("change", () => { state.to = toInput.value || DATA.max_date; scheduleRedraw(); });
 
 document.getElementById("f-reset").addEventListener("click", () => {
-  state.from = DEFAULT_FROM; state.to = DATA.max_date; state.excluded = defaultExcludedIndices();
+  state.from = DEFAULT_FROM; state.to = DEFAULT_TO; state.excluded = defaultExcludedIndices();
   fromInput.value = state.from; toInput.value = state.to;
   buildProjList(); renderAll();
 });
