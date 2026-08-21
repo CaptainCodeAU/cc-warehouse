@@ -9,13 +9,28 @@ of running, not in advance.
 > every gate 27.9 was waiting on is now satisfied. That is NOT permission. Read
 > 27.9 before acting on any part of this ticket.
 
+## Status, 2026-08-21
+
+**27.1, 27.2, 27.3 and 27.4 are all CLOSED. 27.5-27.8 are open. 27.9 is
+withdrawn and stays withdrawn.** The `objects/` delete HAS been run and
+re-verified; see 27.4, which said the opposite until this date.
+
 ## Why this ticket exists
 
-The end state has ONE folder. Today there are two warehouse trees plus two
-legacy exporter trees, and the reason is simply that a migration is half done.
+The end state has ONE folder. When this was written there were two warehouse
+trees plus two legacy exporter trees, because a migration was half done.
 
     ~/cc-warehouse-data       1.5 GB   objects/ + catalog.sqlite + locks/
     ~/cc-warehouse-archive    5.1 GB   the deliverable
+
+**Measured again 2026-08-21, after 27.3 and 27.4 landed:**
+
+    ~/cc-warehouse-data        52 MB   catalog.sqlite + locks/ + logs/   (no objects/)
+    ~/cc-warehouse-archive    9.3 GB   the deliverable, 22,130 session folders
+
+The vault is gone and the catalog is what remains beside the archive, which is
+the shape 27.5-27.8 now act on. The figures above are the ORIGINAL ones kept
+for the record, not current.
 
 The archive was proved a byte-exact superset of the vault except the 7 workflow
 journals, which ticket 25 moves in. After that the vault holds nothing unique.
@@ -194,7 +209,7 @@ confirming the catalog-write path is unaffected by this config change).
 `ccw doctor` stayed fully green afterward, including the new `desync` check
 (31.5) against the freshly archived folder.
 
-### 27.4  DESTRUCTIVE: rename `objects/` aside, exercise, then delete - CODE BLOCKER FIXED 2026-08-20, DELETE ITSELF STILL NOT RUN
+### 27.4  DONE. Rename `objects/` aside, exercise, then delete - CODE BLOCKER FIXED 2026-08-20, DELETE RUN AND VERIFIED
 
 Rename, not delete. Then run capture, sweep, build, verify, status and a real
 session end. Only when all of those pass does the renamed directory go, and the
@@ -296,10 +311,32 @@ tested). The oracle tests cover the exact measured shape (later-content,
 later-first-ts vs earlier-content, later-INSERT) plus the ordinary growth
 case; they do not exhaustively enumerate every possible chain.
 
-**The delete step ITSELF was still not run and still needs the principal's
-explicit word at the moment of running - fixing the code blocker is not
-that word.** This session's go-ahead covered the fix and its verification,
-not the delete.
+**THE DELETE HAS SINCE BEEN RUN. 27.4 IS CLOSED.** The paragraph that stood
+here said the opposite and was left behind when the delete happened; corrected
+2026-08-21. What it used to say, kept because the reasoning is still right for
+every future destructive step: the code fix and its verification were covered
+by that session's go-ahead, the delete was not, and fixing a blocker is not
+consent to act.
+
+**Re-verified first-hand on 2026-08-21, by four independent instruments,
+because a document claiming a destructive step is still pending is exactly how
+one gets done twice:**
+
+1. `~/cc-warehouse-data/` holds `catalog.sqlite`, `locks` and `logs` and
+   nothing else, 52 MB. No `objects/`.
+2. No renamed-aside copy survives: a `find` across `$HOME` at depth 2 for
+   `objects*` and `*objects-aside*` returned nothing.
+3. `ccw doctor` reports `keep_objects=False`, "capture is working",
+   "0 problems in the 25 most recently captured folder(s)", and a capture as
+   recent as 2026-08-21T06:41Z.
+4. The archive carries what the vault used to: 22,130 session folders,
+   22,137 payload `.jsonl`, 9.3 GB; and 40 catalog sessions drawn at random
+   resolved to a real archive payload 40 times out of 40.
+
+`OPENING-PROMPT.md`, written 2026-08-21, already recorded 27.1-27.4 as closed
+"including the `objects/` delete", so the disagreement was between documents
+and not about the fact. `CLAUDE.md` carried the same stale claim and was
+corrected in the same pass.
 
 ### 27.5  Decide whether `root` moves into the archive
 

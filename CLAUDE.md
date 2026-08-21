@@ -87,6 +87,14 @@ edits to the principal instead.
   `--editable` overrides it. Two instruments that cannot both miss:
   - `ccw doctor` prints an `install` line with the mode AND the directory it is running
     from. This reads `cc_warehouse.__file__`, which is where the code actually loaded.
+    **RUN IT FROM OUTSIDE THE REPO, or it answers about the wrong binary.** This
+    repo's `.envrc` (tracked 2026-08-21) sources `.venv/bin/activate`, so any shell
+    that has `cd`-ed here puts `.venv/bin/ccw` ahead of `~/.local/bin/ccw` on PATH
+    and `ccw doctor` then truthfully reports **`editable`** - about the venv copy,
+    which is NOT what the hook runs. Seen and misread as a rule violation on
+    2026-08-21. The unambiguous form:
+    `env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/bin:/bin" ~/.local/bin/ccw doctor`,
+    which reports `frozen`, agreeing with `direct_url.json`.
   - PEP 610 records what uv did:
     `find ~/.local/share/uv/tools/cc-warehouse -name direct_url.json -exec cat {} \;`
     -> `"dir_info":{}` frozen, `"dir_info":{"editable":true}` not. Use `find`, NOT a glob:
@@ -177,15 +185,25 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   `contract/DESIGN.md` section 15, "2026-08-20, ticket 29 mechanism 1". The
   full 27.4 exercise was re-run after the fix and passed clean end to end
   (`ccw build`: 4 failed -> 0 failed against the same real corpus); `objects/`
-  was restored afterward. **27.4's CODE blocker is gone. The DELETE ITSELF
-  was still not run and still needs the principal's explicit word at the
-  moment of running - fixing the blocker is not that word.** 27.5-27.8 remain
-  open behind it. See `harness/tickets/27-collapse-to-one-folder.md` (27.4)
+  was restored afterward. **27.4 IS DONE. THE DELETE HAS BEEN RUN, and this
+  paragraph said the opposite until 2026-08-21.** It read "the DELETE ITSELF
+  was still not run and still needs the principal's explicit word", which by
+  then was false, and a stale pending-destructive note is the exact shape that
+  gets a destructive step done twice. Re-verified first-hand on 2026-08-21,
+  four ways: `~/cc-warehouse-data/` now holds only `catalog.sqlite`, `locks`
+  and `logs` (52 MB) with NO `objects/` and no renamed-aside copy anywhere
+  under `$HOME` at depth 2; `ccw doctor` reports `keep_objects=False`, "capture
+  is working" and "0 problems in the 25 most recently captured folder(s)"; the
+  archive holds 22,130 session folders and 22,137 payload `.jsonl` (9.3 GB);
+  and 40 catalog sessions sampled at random resolved to a real archive payload
+  40 times out of 40. `OPENING-PROMPT.md` (written 2026-08-21) already recorded
+  it as closed, so the drift was between documents, not about the fact.
+  **27.5-27.8 remain open.** See `harness/tickets/27-collapse-to-one-folder.md`
   and `harness/tickets/29-which-copy-is-the-current-one.md` for the full
   account.
-  **27.4 is DESTRUCTIVE and needs the principal's explicit word at the moment
-  of running, same as 27.9 did before it was withdrawn** - a green gate is not
-  consent. 27.9 WITHDRAWN AND STAYS WITHDRAWN).
+  **THE RULE 27.4 WAS UNDER STILL STANDS FOR EVERY FUTURE DESTRUCTIVE STEP:
+  a green gate is not consent, and the principal's word is needed at the moment
+  of running.** 27.9 WITHDRAWN AND STAYS WITHDRAWN).
   28 is the backlog register (nothing dropped silently), including the go-public audit.
   Read the ticket files; they carry the measurements and the blast-radius checks behind
   each step.
@@ -372,10 +390,15 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   `--hljs`; needs a light palette designed and the highlight.js token colours re-checked
   for contrast.
 - **Non-blocking**: the architecture review was HELD 2026-07-24 at `1517bba` (commit
-  18fa5be) and its decay banner is retired; this line previously said a review was still
-  due, which was stale. Since that snapshot `src/` has moved again (slices 14-17), so the
-  board's line refs will have drifted and a re-derive is worth doing before its cards are
-  acted on. `cc-warehouse-architecture/SOURCE.md` is canonical.
+  18fa5be) and its decay banner was retired at the time. **BOTH OF THOSE COMMITS ARE
+  GONE, found 2026-08-21**: `git cat-file -t` cannot resolve `1517bba` or `18fa5be`,
+  because the repository was deleted and re-created on 2026-08-10 for the go-public
+  audit (ticket 28.20), which rewrote history. So the board's every `file:line` is
+  anchored to nothing, its drift cannot even be measured (`git rev-list 1517bba..HEAD`
+  does not run), and its retired decay banner was retired against an unreachable
+  commit. The card REASONING still stands; the refs do not. A fresh review at a live
+  commit is the only fix, which is ticket 28.13. A decay banner recording all of this
+  now sits at the top of `cc-warehouse-architecture/SOURCE.md`, which is canonical.
 
 ## Standing lessons (full form in HARNESS section 8)
 

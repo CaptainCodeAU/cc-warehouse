@@ -8,6 +8,30 @@
 > their decisions; a candidate that needs a contract change says so and waits for the
 > principal's ruling (the card-8 pattern).
 >
+> ## ⛔ DECAY BANNER, added 2026-08-21: THIS BOARD'S ANCHOR NO LONGER EXISTS
+>
+> **Every `file:line` on this board was derived at master `1517bba`, and that commit
+> is NOT in this repository.** Checked with `git cat-file -t`: both `1517bba` and the
+> `18fa5be` that `CLAUDE.md` names beside it are MISSING. They were lost when the
+> repository was deleted and re-created on 2026-08-10 (ticket 28.20, the go-public
+> audit), which rewrote history; the board was not re-anchored afterward.
+>
+> **What this means, precisely.** No line reference below can be verified against the
+> commit it was taken from, and none can be checked for decay either, because there is
+> nothing to diff against. `git rev-list 1517bba..HEAD` does not run. The repository is
+> now at 236 commits with HEAD at `3b284e5`.
+>
+> **What is still usable:** the REASONING on each card, and its verdict. Those were
+> verified first-hand at the time and do not depend on a line number.
+> **What is not:** every `file:line`, every "N commits stale" claim, and the retired
+> decay banner quoted in the snapshot note below, which is retired against a commit
+> that cannot be consulted.
+>
+> **Do not patch the line numbers by hand.** The board is owned by `/architecture` and
+> re-derived, never edited in place. The fix is a fresh review at a live commit, which
+> is ticket 28.13's job. This banner exists so nobody reads a stale ref as a current one
+> in the meantime.
+
 > **Snapshot: FRESH REVIEW 2026-07-24, master `1517bba`.** This supersedes the 2026-07-19
 > review at `56262f6`, whose line refs had decayed across 20 commits and +4,036 src lines.
 > Every file:line below was RE-DERIVED at `1517bba` and re-verified first-hand; the decay
