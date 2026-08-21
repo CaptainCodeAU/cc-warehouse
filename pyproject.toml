@@ -103,7 +103,7 @@ packages = ["src/cc_warehouse"]
 # here so it cannot drift from the CLI it calls. They are excluded from the sdist
 # on purpose: `pip install cc-warehouse` does not install a Claude Code plugin, so
 # shipping them would put files in the tarball that nothing there can use.
-exclude = ["MEMORY", "Plans", "temp", ".claude", ".github", "plugins", ".claude-plugin"]
+exclude = ["MEMORY", "Plans", "temp", "tools", ".claude", ".github", "plugins", ".claude-plugin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

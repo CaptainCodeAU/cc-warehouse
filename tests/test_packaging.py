@@ -65,11 +65,14 @@ SECRET_SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
 # it is the one that actually escaped. `plugins` and `.claude-plugin` are tracked
 # and legitimate, but they are Claude Code assets: nothing installing this package
 # from PyPI can use them, so the exclusion is asserted here rather than left to
-# whoever last edited the hatch config.
+# whoever last edited the hatch config. `tools` is scratch tooling (`ccstats`):
+# tracked so it cannot be lost like `temp` can, but never shipped, since it is
+# not subject to pyright strict or the oracle suite and ships nothing PyPI needs.
 FORBIDDEN_DIRS: tuple[str, ...] = (
     "MEMORY",
     "Plans",
     "temp",
+    "tools",
     ".claude",
     ".github",
     "plugins",

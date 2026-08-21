@@ -123,9 +123,16 @@ edits to the principal instead.
   configuration guides are NAMED HERE BUT DO NOT EXIST, corrected 2026-08-02 after this
   line claimed four for weeks) | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
-  (gitignored once git init lands) | `cc-warehouse-architecture/` the code-architecture
-  review board (SOURCE.md is canonical, index.html is rendered from it by
-  `/architecture`; owned by that command, outside `/refresh`'s sweep scope).
+  (gitignored once git init lands) | `tools/` tracked scratch tooling that is
+  NOT part of `ccw`: outside `src/`, so not subject to pyright strict, the oracle
+  suite or the packaging test (both `pyproject.toml`'s sdist `exclude` and
+  `tests/test_packaging.py`'s `FORBIDDEN_DIRS` name it explicitly). Added
+  2026-08-21 for `tools/ccstats/`, a read-only session-statistics collector
+  that used to live in `temp/` and was one `rm -rf temp/` from being lost with
+  no history; see `tools/ccstats/README.md`. | `cc-warehouse-architecture/` the
+  code-architecture review board (SOURCE.md is canonical, index.html is
+  rendered from it by `/architecture`; owned by that command, outside
+  `/refresh`'s sweep scope).
   CLAUDE.md stays at repo root: Claude Code only auto-loads it from here.
 - Warehouse DATA lives outside this repo (default `~/cc-warehouse-data`); code and
   data never share a directory.
