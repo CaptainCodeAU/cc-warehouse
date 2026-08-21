@@ -1,36 +1,34 @@
-# Opening prompt for a fresh session, 2026-08-21 (fourth handoff of the day)
+# Opening prompt for a fresh session, 2026-08-22 (fifth handoff, item 2 now fully closed)
 
-## Next task: TWO things before item 3. Read "Item 2's two open threads" just
-## below first, then work item 3 (ticket 27.5-27.8). Item 1 is fully DONE.
-## The order is decided; do not re-litigate it.
+## Next task: ticket 27.5-27.8 (item 3 below). Items 1 and 2 are BOTH fully
+## DONE. Read "One loose end inside item 2" just below before starting item 3
+## - it is small, but it is a real unanswered question, not a settled one.
 
-### Item 2's two open threads, both explicitly deferred to this session by the operator
+### One loose end inside item 2, not urgent, not blocking
 
-1. **Apply the operator's `--include`/`--exclude` list.** The dashboard build
-   (item 2 below) now takes `--include SUBSTRING` / `--exclude SUBSTRING`
-   (both repeatable, substring match against `project_label`) to set which
-   projects start ticked/unticked in the live page's checklist - see item 2's
-   third-round addendum for exactly how these compose. **The operator said,
-   verbatim, they will give the actual list of substrings in this fresh
-   session** - it was NOT given in the prior session, so nothing is baked in
-   yet. Ask for it, then run `uv run python3 tools/ccstats/dashboard.py`
-   with the right flags and hand back the file. Do not guess the list.
-2. **Investigate deterministic generation of `dashboard_template.html`, in
-   depth.** The operator's own words: take it "in depth" this session, not a
-   quick pass. The prior session's parting note (in item 2's addendum) scoped
-   the question but did not start it: which parts of that file are genuinely
-   mechanical (the CSS palette, the chart-drawing primitives, maybe the KPI
-   tile scaffolding) versus which need editorial judgement each time (caption
-   wording, what a new panel should say) - only the former is a good target
-   for a script/codegen approach that would cost fewer tokens per future
-   edit. Scope it, then propose an approach, before rewriting anything.
+The prior session's second open thread (deterministic generation of
+`dashboard_template.html`) WAS investigated this session, by a sub-agent, in
+depth as asked. Measured, not guessed: the file is 1,118 lines / 59,228
+bytes, ~55% mechanical (CSS palette, SVG/JS chart primitives, effects/
+controls wiring - already factored into shared functions, called once each,
+so there is little duplicated boilerplate left to extract) and ~45%
+editorial (the 20 panel definitions, 469 lines, each mixing bespoke
+aggregation logic with bespoke caption wording - inherently not scriptable).
 
-Plus "anything else that's pending" (the operator's own phrase) - read the
-rest of this file for what that covers; nothing here is being narrowed
-silently.
+The sub-agent's recommendation was NOT a codegen script. It was: write a
+short "panel contract" doc so a future edit reads that doc plus one example
+panel, instead of the whole 1,118-line file - the real cost driver is
+context size, not duplicated code, and a small CSS-palette codegen would
+save little (15 lines, rarely edited).
 
-The operator asked for the remaining work to be ordered and handed over. It is
-ordered here. Work down the list. Ask before starting anything NOT on it.
+This was put to the operator as a 2-option decision (write the doc now /
+skip). **The operator never picked either option** - the conversation moved
+straight into giving the `--include`/`--exclude` list instead, and it was
+never revisited across the rest of the session despite four more rounds of
+dashboard work landing on the exact file this would apply to. Nothing was
+written. Ask the operator before doing anything here; do not assume "yes"
+just because the file has since had six more rounds of hand-edits that a
+panel-rules doc would have made cheaper.
 
 ---
 
@@ -81,14 +79,14 @@ consistent; a second `collect.py` run left exactly one `sessions.sqlite` and no
 `.prev`/`.building` file, anywhere; `--out` writes to an arbitrary directory and
 is refused for `~/.claude`.
 
-### 2. Build an interactive stats dashboard (operator request, 2026-08-21) - shipped, TWO THREADS STILL OPEN
+### 2. Build an interactive stats dashboard - DONE, CLOSED 2026-08-22
 
-**The dashboard itself shipped, three rounds of follow-ups deep. Two threads
-are explicitly deferred to the NEXT session - see "Item 2's two open
-threads" at the very top of this file before reading anything below.** The
-investigation just below is the ORIGINAL brief this was built from; left
-intact rather than rewritten. See the DONE block just before item 3 for what
-actually shipped, round by round.
+**Both threads this file used to hand to "the next session" are now
+resolved.** The `--include`/`--exclude` list was given and applied (see
+below). The codegen investigation ran and its outcome is the loose-end note
+at the very top of this file. Everything below this line, through "Fourth
+round", is history kept intact rather than rewritten; skip to "Fourth round"
+for what actually changed most recently.
 
 The operator wants a browser dashboard, like the one already sitting at
 `~/.cc-warehouse/stats/claude-code-dashboard.html`, but with two live controls:
@@ -177,6 +175,10 @@ must NEVER be uploaded via the Artifact tool or any other external host: that
 folder is explicitly gitignored and "must never be committed" per
 `tools/ccstats/README.md`'s own Safety section, and an upload would publish
 that same private data externally regardless of who is asked to view it.
+**The dashboard's own on-page reminder of this ("this file is private, do not
+upload it") was removed 2026-08-22 along with the Caveats panel it lived in -
+see "Fourth round" below. The rule itself still applies in full; only the
+on-page text is gone.**
 
 **DONE 2026-08-21. Option 2 (live in the browser) was chosen, confirmed with
 the operator first via a decision table + AskUserQuestion, per their standing
@@ -209,6 +211,7 @@ rules carried over and checked by execution, not assumed: engaged_hours only
 "cost is not a bill" disclaimer placed ON the four cost-primary charts
 themselves (Projects/Repositories/Models/Model x month), not only in prose,
 and the 2026-08-12 thinking-token recording-start date stated on that panel.
+**CC versions and Caveats were both REMOVED 2026-08-22, see "Fourth round".**
 
 **Scope trims, stated rather than hidden**: Concurrency reads whole-corpus
 `overlap_day` (real interval-overlap math, not reconstructable from a
@@ -216,6 +219,8 @@ per-session duration) and narrows only by date, not by the project filter -
 the panel says so. Worktrees reports counts only, no `worktree_name` list.
 Top sessions shows 50, not 200. Every other panel is fully live on both
 filters, wired to the one filter bar per the operator's requirement.
+**Top sessions is now 25, not 50, and Concurrency's bars are now weekly, not
+daily - see "Fourth round".**
 
 **Verified, not just eyeballed**: no browser was available this session
 (`mcp__claude-in-chrome` reported "Browser extension is not connected"), so
@@ -233,7 +238,8 @@ case for divide-by-zero on an empty array. What was NOT verified: how it
 actually looks and behaves in a real browser (mouse clicks on the project
 checklist, the sticky bar's scroll behaviour, visual match to the static
 dashboard's spacing) - Node proves the math and that nothing throws, not
-pixel rendering. Worth a real look next time a browser is available.
+pixel rendering. **A real browser WAS available 2026-08-22 and was used
+extensively - see "Fourth round".**
 
 Also fixed along the way: `tests/test_ccstats_fences.py::test_no_module_can_
 delete_anything` caught a real defect before it shipped - the first draft of
@@ -337,14 +343,199 @@ way as the rounds before it: real database cross-checks (model-family
 percentages, substring-match counts, allowlist+denylist composition all
 independently confirmed against direct SQL/counts), 99 tests, ruff clean.
 
-**Operator ask for a FUTURE session, not started**: investigate how much of
-`dashboard_template.html`'s generation could become deterministic/scripted
-rather than requiring an LLM to hand-edit template strings for every tweak
-(a KPI wording change, a new tile, a color adjustment) - the goal is fewer
-tokens spent per future edit. Worth scoping before attempting: which parts
-are genuinely mechanical (the CSS palette, the chart-drawing primitives) vs.
-which need editorial judgement each time (KPI caption wording, what a new
-panel should say) - only the former is a good target for codegen/scripting.
+**Fourth round, 2026-08-22 session, item 2 fully CLOSED.** A real browser was
+available this whole session (`mcp__claude-in-chrome`). One environment note
+worth keeping: `file://` URLs are refused by the navigate tool ("Can't
+interact with browser-internal or unparseable URLs") even with a fresh tab,
+tried three times. Worked around by serving `~/.cc-warehouse/stats` with
+`uv run python3 -m http.server 8721 --bind 127.0.0.1` (loopback only) each
+time a visual check was needed, then killing it after. Reuse this pattern
+rather than re-discovering it.
+
+1. **The operator's real `--include`/`--exclude` list, given this session and
+   applied.** Final exclude list (no include list given, so nothing is
+   allowlisted - everything not excluded stays ticked): `private-`,
+   `<local-username>-`, `Tools-google-auth-2fa-exporter`, `Tools-clawfidence`,
+   `Scripts-littlesnitch_blocklist`, `Scripts-devtools-snippets`,
+   `Scaffoldings-`, `Playground-skills_playground`, `Ideas-Whryte_app_clone`,
+   `Ideas-GitFoot_FluidAudio_vanilla`, `Ideas-Browser_Automation_System`,
+   `CaptainCodeAU-Tax_`, `CaptainCodeAU-claude-code-transcripts`,
+   `CaptainCodeAU-EXTENSIONS-`, `CaptainCodeAU-Proxmox-`,
+   `CaptainCodeAU-Plex_Server`, `CaptainCodeAU-SCAFFOLDINGS-`, `3rdParty-`,
+   `CaptainCodeAU-tax`, `CaptainCodeAU-wisdom_grabber`, `Ideas-GitFoot`,
+   `CaptainCodeAU-hermes`, `CaptainCodeAU-cc-print-shop`. Printed the live
+   118-project list from `sessions.sqlite` first so the operator could
+   copy/paste real names rather than guess them; two case-mismatch misses
+   (`CaptainCodeAU-tax-data-sprint` vs `Tax_`, `CaptainCodeAU-SCRIPTS-` vs
+   `Scripts-`) were caught and flagged before the operator asked for
+   case-insensitive matching outright.
+
+2. **Case-insensitive `--include`/`--exclude` matching.** `resolve_unticked()`
+   in `dashboard.py` lower-cases both sides before the substring check (was
+   exact-case `pattern in name`). Verified with a probe insert/compare, not
+   just by re-running the build.
+
+3. **Default end date now tracks the reader's real "today"**, not the day
+   the file was built. `todayLocal()` (local, not UTC, calendar date) +
+   `DEFAULT_TO = todayLocal() < DATA.max_date ? todayLocal() : DATA.max_date`
+   added to `dashboard_template.html`; `DEFAULT_FROM`'s own 2026-06-08 default
+   is untouched. Verified by running the generated file's own script headless
+   under Node against the live embedded data: `todayLocal()` correctly
+   returned the real machine date while `DEFAULT_TO` correctly clamped to the
+   newest embedded day when today's data was not embedded yet.
+
+4. **"Where the work moved, month by month" (the `proj-month` heatmap), TWO
+   separate real bugs, both operator-reported, both fixed:**
+   - Month column headers (e.g. "2026-06", "2026-07", "2026-08") were
+     rendering stacked on top of each other, unreadable. Cause: `heatmap()`'s
+     default `cellW` (26 SVG units) was sized for 1-2 char labels (used
+     correctly by the OTHER heatmap call, weekday x hour, 24 short columns);
+     a 7-char month key needed much more room. Fixed by passing `cellW: 60`
+     for this call specifically.
+   - Long project row labels were losing characters off the START (e.g.
+     "CaptainCodeAU-COWORK..." rendered as "OWORK-Best-Practice-Docs..."),
+     because row labels are right-anchored and grow LEFTWARD past x=0, which
+     the SVG viewBox clips. Fixed generically inside `heatmap()`: labels now
+     truncate with an ellipsis to what the label column can actually hold
+     (~8px/char, tuned against the real rendered names after an initial
+     6.5px/char estimate still clipped by ~3 characters), with the full name
+     still reachable via the existing `data-tip` hover tooltip.
+   - **A THIRD, worse bug in the same panel was found only after the operator
+     reported "text very large, alignment issues" post-fix**: for a narrow
+     date range (few month columns), the heatmap's own natural width (e.g.
+     390 SVG units for 3 months) was far below the page's real rendered
+     panel width (measured 1,170px via `getBoundingClientRect()`), so the
+     browser stretched the whole viewBox - text included - by 3x to fill the
+     container. `barChart()` already guards against exactly this
+     (`Math.max(660, ...)`, matching the page's own `.chart-svg{min-width:
+     660px}`); `heatmap()` had no equivalent floor. Fixed by growing `cellW`
+     (not padding blank space) so the natural width always reaches 660,
+     mirroring how `barChart()`'s own bars already expand to fill its floor.
+     Verified by DOM measurement before and after: viewBox went from
+     `0 0 390 260` rendered at 1170px (3.0x stretch) to `0 0 660 260` at
+     1170px (1.77x), in the same range as the "Top 15 by cost" panel's own
+     1.3x - no longer an outlier.
+
+5. **"How much time overlapped, whole corpus" (Concurrency), operator-flagged
+   as "tremendous number of bars".** These bars are per DAY, not per project
+   (the panel has no project dimension at all, by design - it needs real
+   interval-overlap math across every project). A ~75-day default range gave
+   75 thin daily bars. Rolled up to one bar per ISO week (11 bars for the
+   default range) inside the panel's own render function: `summedHours` and
+   `elapsedHours` are safely additive across days (each day is a disjoint,
+   non-overlapping clock-time slice), `concurrency` is RECOMPUTED from the
+   weekly sums rather than averaged day-to-day, and `maxConcurrent` is the
+   max of the days' own peaks (the true weekly peak occurs within some single
+   day, and that day's own figure is already its true instantaneous max - no
+   session-level reconstruction needed). Verified two ways: an independent
+   Python rollup against the live database matched the panel's own 11 bars
+   exactly (1,188.7h / 941.3h / 811.0h / ... down to 533.0h), and the same
+   figures were then read directly off the rendered chart in the browser and
+   matched again.
+
+6. **Project-list "noise" consolidation, operator-flagged on "Top 15 by
+   cost" and (by the operator's own words) likely elsewhere too.** Measured
+   first, not assumed: only 2 panels actually GROUP by project at all -
+   "Top 15 by cost" and the month-by-month heatmap (a separate "repos" panel
+   already exists, keyed on `repo_root`, and already folds ordinary
+   subdirectories and named worktrees into their parent - that panel was
+   left untouched). The real noise turned out to be a narrower thing than
+   "worktree labels" in general: Claude Code's own background-agent tooling
+   creates a throwaway folder per agent run
+   (`.claude/worktrees/agent-<random hex>`), and each one gets counted as
+   its own `project_label` / `repo_root` because Git genuinely treats a
+   linked worktree as its own toplevel. Measured: 15 such rows, 30 sessions
+   total, 12 of them for `cc-warehouse` alone. Put to the operator as a
+   2-option decision (fold only this auto-generated pattern / fold
+   everything the same way `repo_root` already does); **the operator chose
+   "fold only the junk"**. Implemented as `canonicalProjectName()` (a regex
+   stripping the `-.claude-worktrees-agent-<hex>` suffix) applied only inside
+   the two grouping panels via a shared `CANON_PROJECT` lookup array - real
+   named worktrees (`-.worktree-web`) and genuinely separate sub-repos
+   (`-DIB-governor`) are deliberately left alone, since those are real,
+   distinct work. Verified: an independent Python rollup (fold logic +
+   exclude list both applied) matched the live panel's "42 projects in
+   range" figure and its top-15 dollar amounts exactly, including
+   `cc-warehouse` at US$ 3,948.02 (base US$ 3,774.78 + the 12 folded-in
+   agent-worktree sessions summing to US$ 173.24, cross-checked
+   independently too).
+
+7. **Title changed** from "Claude Code, your own slice" to
+   ".cc-warehouse / stats" (the page's `<h1>`; the `<title>` tag itself,
+   "Claude Code, live", was not part of the ask and is unchanged).
+
+8. **"Models by cost in range" now groups by model FAMILY** (opus/sonnet/
+   haiku/fable, version numbers summed together), not by exact model
+   string, per the operator's explicit ask. The Overview KPI tile already
+   did this with its own local `modelFamily()` function; hoisted that to a
+   shared top-level function so both panels use identical logic instead of
+   risking two copies drifting apart, and matched its existing
+   `<synthetic>`-row exclusion (a $0 placeholder for an interrupted reply,
+   not a real priced model). Verified against a direct SQL rollup (with the
+   exclude list applied): opus US$ 38,138.38, fable US$ 9,424.43, sonnet
+   US$ 6,167.83, haiku US$ 64.34 - matched the rendered US$ 38.1k / 9.4k /
+   6.2k / 64 exactly.
+
+9. **"Top 8 in each kind" alignment fix, operator-flagged.** Was a 2-column
+   CSS grid (`.grid2`); since each kind (agent/mcp_server/mcp_tool/plugin/
+   skill) has a different row count and label lengths, the two columns never
+   lined up cleanly. Switched to a single stacked column (`.stack1`, a plain
+   flex column with a 26px gap) per the operator's own suggestion. The now-
+   fully-unused `.grid2` CSS rule and its media query were deleted rather
+   than left dead.
+
+10. **Sessions tables, operator-requested change plus a new addition.** "The
+    50 most expensive sessions in range" is now "The 25 most expensive
+    sessions in range" (`slice(0, 50)` -> `slice(0, 25)`). Added a new panel,
+    "The 25 longest sessions in range" (`longest-sessions`), same columns,
+    sorted by engaged hours descending instead of cost descending.
+
+11. **"Claude Code builds in range" panel removed entirely**, per the
+    operator's explicit "it's kind of useless, get rid of it." Only the
+    display panel was removed - the underlying `ccVersion` data column and
+    lookup table in the embedded payload are untouched, so nothing else in
+    the file lost data it depends on.
+
+12. **The Caveats section ("What would make these charts wrong") removed
+    entirely**, per the operator's explicit "it comes across very negative."
+    Removed the `CAVEATS` array, its rendering block and nav link inside
+    `renderAll()`, and the now-dead `.panel.dark`/`.cav-grid`/`.cav`/
+    `.cav-t`/`.cav-d` CSS rules. **Flagged to the operator in chat, not
+    silently dropped**: this section was the ONLY place the page told a
+    reader "this file is private, do not upload it." That specific reminder
+    is now gone from the page itself; the underlying privacy rule (never
+    upload this file, it embeds real folder names) still fully applies per
+    this document's own Privacy paragraph above - it is just no longer
+    printed on the page for a reader who has not seen this file or
+    `tools/ccstats/README.md`.
+
+13. **A space added after "US$" everywhere**, per the operator's explicit
+    ask. Both dollar-formatting functions (`fmtUSD`, `fmtUSDFull` in
+    `dashboard_template.html`) changed from `"US$" + ...` to `"US$ " + ...`;
+    these are the only two places the string "US$" is built anywhere in the
+    file, confirmed by grep before editing, so no dollar figure on the page
+    was missed.
+
+**Verification method for this whole round**: `ruff check` and the 99-test
+`pytest` suite stayed green throughout and after every change (no NEW tests
+were added this round - every change here is in `dashboard_template.html`'s
+client-side JS, which the Python test suite does not and cannot exercise;
+`dashboard.py`'s own case-insensitivity change likewise has no dedicated
+pytest coverage, only the ad-hoc DB probe described above). Every numeric
+claim above was independently cross-checked against `sessions.sqlite` with a
+fresh Python query, separate from the dashboard's own code, THEN confirmed
+a second time by opening the real rebuilt file in a live Chrome tab (via the
+local http-server workaround) and reading the same numbers off the actual
+rendered page - not assumed from the JS alone. Browser console was checked
+for errors after every rebuild (`read_console_messages`, pattern
+`error|Error|exception|NaN|undefined`); none were found at any point this
+round. **What is still NOT covered by an automated test**: none of
+`dashboard_template.html`'s JS is under `pytest` at all, by design (it is a
+generated static asset, not a `ccw` module) - the only guard against a
+future regression in any of these 13 fixes is a human, or a future session,
+re-opening the file in a browser and looking. Worth remembering before
+trusting a future "the tests still pass" as proof this page still renders
+correctly.
 
 ### 3. Ticket 27.5-27.8, the last open track
 
@@ -401,12 +592,12 @@ fresh review at a live commit, via `/architecture`, never hand-patching refs.
 
 ### 7. ccstats polish, once item 1 has made it safe
 
-In rough value order: `--until` (only `--since` exists, so no closed period can
-be charted - **this is also the prerequisite item 2's date-range control
-needs; doing it there instead of twice is fine**) · split the three long
-functions (`collect.scan_transcript` 330, `make_docs.main` 273, `facts.compute`
-153) · re-check model prices (pinned at 2026-06-24, every dollar figure
-drifts) · incremental collect (re-reads all 25k transcripts every run, ~25 s).
+In rough value order: ~~`--until` (only `--since` exists...)~~ **DONE, landed
+as part of item 2 above (2026-08-21) - closed here instead of twice, as
+already noted.** Remaining: split the three long functions
+(`collect.scan_transcript` 330, `make_docs.main` 273, `facts.compute` 153) ·
+re-check model prices (pinned at 2026-06-24, every dollar figure drifts) ·
+incremental collect (re-reads all 25k transcripts every run, ~25 s).
 
 ---
 
@@ -441,59 +632,43 @@ drifts) · incremental collect (re-reads all 25k transcripts every run, ~25 s).
   `ssh-add -l` reported "no identities" and `git push` failed on access rights.
   Commits `3b284e5` and `a366275` are LOCAL AND UNPUSHED. The operator must run
   `ssh-add` themselves; a session cannot.
+- **NEW, 2026-08-22: `file://` navigation is refused by the Chrome browser
+  tool** (`mcp__claude-in-chrome__navigate`), even to a brand-new tab -
+  "Can't interact with browser-internal or unparseable URLs." To visually
+  check any local HTML file (this dashboard included), serve its directory
+  over loopback first: `uv run python3 -m http.server <port> --bind
+  127.0.0.1` from that directory, navigate to `http://127.0.0.1:<port>/file`,
+  then kill the server when done. Worked cleanly every time this session.
 
 ## What the previous session did
 
-Completed item 1 in full: moved `temp/ccstats/` to `tools/ccstats/`, fixed the
-`.prev` disk leak with an atomic `tempfile.mkstemp` + `os.replace` publish, added
-`resolve_out`/`Out` (a fenced, single-resolution write root replacing 5 hardcoded
-copies of `OUT_DIR`), and added `--out DIR` / `CCSTATS_OUT`. Kept the packaging
-gate green by adding `tools` to `pyproject.toml`'s sdist exclude and
-`tests/test_packaging.py`'s `FORBIDDEN_DIRS`. Verified all of it: all 3 gates
-green, the ccstats suite grew 72 -> 86 tests, and a full real-data run through
-all 5 scripts landed cleanly in `~/.cc-warehouse/stats/` (see item 1's DONE
-note above for the exact figures).
+This session closed out item 2 in full - see "Fourth round, 2026-08-22
+session" above for the complete 13-item account (the operator's real
+`--include`/`--exclude` list, case-insensitive matching, a live "today"
+default end date, three real bugs found and fixed in the month-by-month
+heatmap including a 3x text-stretch bug only surfaced after the first fix
+looked "done", a daily-to-weekly rollup of the Concurrency panel, folding 15
+auto-generated agent-worktree rows into their real projects, a title change,
+model-family grouping, a layout fix, a 50->25 sessions-table change plus a
+new 25-longest table, two whole panels removed at the operator's request,
+and a spacing fix applied dashboard-wide) - and ran the codegen-scoping
+investigation the prior session deferred, whose outcome did NOT get a
+decision from the operator (see "One loose end inside item 2" at the very
+top of this file).
 
-The operator then asked whether `~/cc-warehouse-stats/` (the old location) was
-safe to delete. It was NOT quite: `CHART-BRIEF.md` existed only there, not
-regenerated by anything. The operator moved it across by hand, then deleted the
-old folder themselves. **`~/cc-warehouse-stats/` is gone; confirmed 2026-08-21.**
+Every fix was verified twice: once against `sessions.sqlite` independently
+(fresh SQL/Python, never through the dashboard's own code), and a second
+time by actually opening the rebuilt file in a live Chrome tab and reading
+the same numbers or looking at the same panel with the harness's own eyes -
+a real browser was available all session, unlike the session that built the
+dashboard originally. `file://` URLs turned out to be blocked by the browser
+tool; the loopback-http-server workaround (see "Two environment facts"
+above) should save the next session from re-discovering that.
 
-Separately noticed while checking: `claude-code-dashboard.html` had ALREADY
-appeared in the new `~/.cc-warehouse/stats/` before this session put anything
-there, byte-identical to the old copy, same mtime, different inode - so not a
-hardlink or symlink, something else copied it. Not explained; not this
-session's doing. Worth a glance if it matters later, but it did not block
-anything here.
-
-The operator then asked for an interactive version of that dashboard (own date
-range, own project-exclude list), and asked for this to be investigated and
-written up here rather than built now - see item 2 above for the full findings
-and the two-option design fork. Nothing for item 2 has been built. Read
-`CHART-BRIEF.md` (now in `~/.cc-warehouse/stats/`) before starting it; it is
-the actual style brief the current dashboard was built from.
-
-**Standing lesson from the session before this one, still true**: verified
-OUTPUTS are not verified CODE. Five real defects in this same stats tooling
-were found by an external reviewer, not by self-checks, before item 1 even
-began (`elapsed_hours` off by 2.3x from un-clipped day boundaries, a fixed +10
-timezone offset that mis-bucketed 577 sessions, hardcoded prose numbers that
-disagreed with the live sheets, unfiltered totals mixed with filtered ones,
-`active_hours` documented as compute time when it is wall time including idle).
-Test the code, not just its output, especially before building item 2 on top
-of it.
-
-**This session (the one this handoff is being written from) built item 2 in
-full and iterated on it four more rounds from live operator feedback** - see
-item 2's addendum, below its investigation section, for the complete
-round-by-round record (KPI tiles, dark theme, US$, the include/exclude
-substring filter, the strikethrough removal, and the rest). It ends here with
-two threads explicitly handed to the NEXT session rather than guessed at: the
-operator's actual `--include`/`--exclude` list (not given yet), and an
-in-depth look at deterministic/scripted generation of
-`dashboard_template.html` - both flagged at the very top of this file. No
-browser was available to this session at any point; every check that would
-normally be "open it and look" was instead done by running the page's own
-JavaScript headless under Node against the real database and cross-checking
-the numbers independently - a real limitation, not a shortcut, and worth
-someone actually opening the file in a browser when one is next available.
+**What was NOT done, on purpose or otherwise:** item 3 (ticket 27.5-27.8) was
+not started - all of this session's time went to item 2's follow-ups, which
+kept arriving faster than they could be closed. No pytest coverage was added
+for anything in this round, since every change lives in
+`dashboard_template.html`'s client-side JS, which the Python suite does not
+reach at all - the only regression guard for any of today's 13 fixes is a
+human looking at the page again later.
