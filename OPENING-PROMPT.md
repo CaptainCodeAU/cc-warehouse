@@ -1,4 +1,4 @@
-# Opening prompt for a fresh session, 2026-08-23 (ninth handoff: ticket 28.13 and ccstats polish both closed)
+# Opening prompt for a fresh session, 2026-08-23 (tenth handoff: item 7's "incremental collect" leftover closed)
 
 ## Next task: nothing in items 1-7, or in ticket 28.22 / ticket 30's flagged
 ## defect, is open work any more. Items 1, 2, 2b are DONE. Item 3 (really just
@@ -6,13 +6,15 @@
 ## decision, not by anything left to do. Tickets 28.22 and 30's equal-size
 ## defect are both fixed. Ticket 28.13 (the architecture board) is re-derived
 ## at a live commit, with two live bugs it surfaced also fixed. Item 7
-## (ccstats polish) had its function-split and price-recheck sub-items done;
-## only "incremental collect" remains, not started. See the corrections inside
-## each numbered section below for the full account of each.
+## (ccstats polish) is now FULLY DONE: its function-split and price-recheck
+## sub-items were already closed, and "incremental collect" (its one
+## remaining leftover) landed this session - see the correction inside item 7
+## below for the full account. See the corrections inside each numbered
+## section below for the full account of each.
 ## **Pick up from "Also on record, not scheduled" near the end of this file,
 ## or from `CLAUDE.md`'s OPEN/next section**: ticket 24.7 (session-start
-## capture freshness, partly closed from outside this repo), ticket 28's
-## remaining backlog items, or item 7's "incremental collect" leftover.
+## capture freshness, partly closed from outside this repo), or ticket 28's
+## remaining backlog items. Nothing else from items 1-7 is open.
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -717,8 +719,34 @@ the temporary one, recorded in a comment so it does not read as a future
 oversight. `PRICES_READ_ON` bumped to 2026-08-23. Full account: the commit
 that landed all three (`dcac852`).
 
-**Remaining, not started:** incremental collect (re-reads all 25k transcripts
-every run, ~25 s).
+~~**Remaining, not started:** incremental collect (re-reads all 25k transcripts
+every run, ~25 s).~~ **DONE 2026-08-23, item 7 now fully closed.**
+`collect.py` gained `scan-cache.sqlite`, a sibling to `sessions.sqlite`
+published the same way (temp file + `os.replace`, R2): each transcript's own
+scan result is cached keyed by its path + size + mtime, so an unchanged file
+is served from the cache instead of being re-read and re-parsed. It is pure
+derived data, not a second copy of session content (R1) - deleting it, or
+passing the new `--no-cache` flag, just falls back to a full scan (R5/R10).
+Cache validity is auto-invalidated by a fingerprint (`CACHE_SCHEMA_VERSION` +
+`PRICES_READ_ON` + the detected local timezone), because `cost_usd` and
+`local_date`/`local_hour` are baked into every cached row and would otherwise
+keep reporting numbers only true under the OLD prices/zone forever, since a
+finished session's file never changes again. A `--limit` smoke-test run reads
+the cache but never overwrites it, since it only ever sees a slice of the
+corpus and writing that back would evict every other session's entry.
+
+11 new tests in `tools/ccstats/tests/test_incremental_cache.py` (110 total,
+up from 99), each verified red-then-green with a real `git stash` of just the
+production changes - every one failed against the pre-cache code before
+passing once restored. Measured on the real archive via `CCSTATS_OUT` pointed
+at a scratch dir (never touching `~/.cc-warehouse/stats`): a cold run over
+26,678 transcripts took 26.9s; a warm rerun with nothing changed took 7.5s
+(26,675 cache hits, 3 rescanned - real live sessions that genuinely changed
+between the two runs). A follow-up micro-optimisation (reusing a cache hit's
+own raw JSON text instead of decoding then re-encoding it) was tried and
+measured to make no real difference, so it was reverted in favour of the
+simpler symmetric code - **explain only what you measured**, not what seems
+like it should help. `README.md` documents the new file and flag.
 
 ---
 
@@ -889,3 +917,30 @@ open as of this ninth handoff. Standing candidates for a future session: ticket 
 capture freshness - partly closed already from outside this repo), the remaining items in ticket
 28's backlog register, and ccstats' "incremental collect" (item 7's one leftover, a real feature,
 not a cleanup - re-reads all ~25k transcripts every run, roughly 25 seconds).
+
+---
+
+**Later the same day (tenth handoff).** Given a straight choice between "incremental collect" and
+picking an item from ticket 28's backlog, the operator picked incremental collect. See the
+correction inside item 7 above for the full technical account - short version: `collect.py` now
+caches each transcript's own scan result in a sibling `scan-cache.sqlite`, keyed by path + size +
+mtime, so an unchanged file (almost all of them, once a session ends) is reused instead of being
+re-read and re-parsed. A price or timezone change auto-invalidates the whole cache, since both are
+baked into every cached row (`cost_usd`, `local_date`/`local_hour`) and an old row would otherwise
+keep reporting stale numbers forever. `--no-cache` and `--limit`'s "never overwrite the cache with
+a partial slice" behaviour are both new flags/rules, documented in `README.md`.
+
+11 new tests (110 total), each proved red-then-green against a real `git stash` of just the
+production changes. Measured on the real archive via a `CCSTATS_OUT` scratch dir (never touching
+`~/.cc-warehouse/stats`): 26.9s cold, 7.5s warm with nothing changed - roughly 3.6x. A follow-up
+attempt to shave the warm run further (reusing a cache hit's own raw JSON text instead of decoding
+then re-encoding it) was tried and measured to make no real difference, so it was reverted in favour
+of the simpler, symmetric code rather than kept on the assumption it must help.
+
+One commit, pushed. Full suite re-confirmed green (1,137 main-repo tests, 110 ccstats tests, ruff
+clean on both).
+
+**What was NOT done:** item 7 is now fully closed - nothing from items 1-7 remains open. Standing
+candidates for a future session, unchanged from the ninth handoff: ticket 24.7 (session-start
+capture freshness, partly closed already from outside this repo) and the remaining items in ticket
+28's backlog register.

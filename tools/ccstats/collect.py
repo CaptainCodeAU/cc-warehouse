@@ -12,6 +12,18 @@ Run:  uv run python3 tools/ccstats/collect.py
 Flags: --limit N    scan only N transcripts (smoke test)
        --quiet      suppress per-stage progress
        --out DIR    write here instead of the default (or set CCSTATS_OUT)
+       --no-cache   ignore the scan cache and rescan every transcript
+
+Most transcripts never change once a session ends, so a full run re-reads and
+re-parses ~25k files it already scanned last time. `scan-cache.sqlite` (beside
+`sessions.sqlite`, in the same output directory) remembers each file's own
+scan result keyed by its path + size + mtime; an unchanged file is served from
+the cache instead of being re-read. A `--limit` smoke-test run reads the cache
+but never overwrites it (it only ever sees a slice of the corpus, and writing
+that slice back would evict every other session's cached entry). The cache is
+purely an optimisation: delete it, pass `--no-cache`, or feed it garbage, and
+the next run just falls back to a full, correct scan (R5/R10) - nothing here
+is a second copy of session data (R1), only of numbers already derived from it.
 
 Read `tools/ccstats/README.md` for what every column means and the caveats that
 come with the dollar figures.
@@ -98,6 +110,14 @@ CACHE_READ = 0.10
 
 # Model ids that are known non-billable sentinels, not missing prices.
 KNOWN_FREE = {"<synthetic>"}
+
+# Bump whenever `scan_transcript` (or anything it calls) changes what it
+# derives from a transcript's bytes - a new/changed column, a fixed formula,
+# a different tool-name normalisation, anything. This is the manual half of
+# cache invalidation; `PRICES_READ_ON` and the detected local timezone are the
+# automatic half (see `_cache_fingerprint` below) because those two change the
+# meaning of an old row WITHOUT anyone touching this function.
+CACHE_SCHEMA_VERSION = 1
 
 _UNPRICED: Counter[str] = Counter()
 _PRICE_CACHE: dict[tuple[str, str], tuple[float, float] | None] = {}
@@ -1212,9 +1232,90 @@ def export_csv(conn: sqlite3.Connection, note: str, out: Out) -> list[str]:
 
 
 
+# --------------------------------------------------------------- scan cache
+# `sessions.sqlite` is always rebuilt from scratch (R2's temp-file + replace
+# idiom), but the EXPENSIVE step is reading and parsing 25k JSONL files, not
+# writing SQLite rows. Almost none of those files change between two runs -
+# a session's transcript only grows while it is live, then sits untouched
+# forever - so `scan_transcript`'s own result for an unchanged file is cached
+# in a sibling database, keyed by that file's own path + size + mtime.
+#
+# A cache miss (new file, changed file, no cache, wrong fingerprint, a
+# corrupted row) always falls back to a full re-scan. Nothing here can make a
+# result WRONGER than a full scan would - only slower - which is the whole
+# point of treating it as an optimisation rather than a dependency (R5/R10).
+
+
+def _cache_fingerprint() -> str:
+    """Everything besides a transcript's own bytes that can change what a
+    cached row means. A cached session row bakes in `cost_usd` (from the
+    price table) and `local_date`/`local_hour` (from the detected timezone);
+    if either changes, an old row for an untouched file would keep reporting
+    numbers that were only ever true under the OLD prices or the OLD zone.
+    Mismatched against the stored fingerprint, the whole cache is treated as
+    empty - simplest possible invalidation, and correct by construction."""
+    return f"{CACHE_SCHEMA_VERSION}|{PRICES_READ_ON}|{_LOCAL_TZ_NAME}"
+
+
+def _open_cache_ro(path: Path) -> sqlite3.Connection | None:
+    """A read-only handle to the previous run's cache, or None if there is
+    nothing usable to read from it. Point lookups only, by design: the whole
+    cache is never loaded into memory at once, so peak memory stays flat with
+    corpus size the same way the existing batched scan already is."""
+    if not path.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        row = conn.execute("SELECT value FROM meta WHERE key = 'fingerprint'").fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or row[0] != _cache_fingerprint():
+        conn.close()
+        return None
+    return conn
+
+
+def _cache_lookup(
+    cache_ro: sqlite3.Connection | None, key: str, path: Path, size: int, mtime_ns: int
+) -> Scan | None:
+    """The cached `Scan` for `key` if the cache still describes this exact
+    file (same path, size and mtime), else None.
+
+    Measured, not assumed: reusing the row's own raw JSON text on a hit
+    (skipping the decode-then-re-encode when writing the new cache) was tried
+    and made no measurable difference against the real archive - the SQL
+    lookups and JSON decode dominate, not the encode - so the simpler,
+    symmetric form (always re-encode) is what shipped."""
+    if cache_ro is None:
+        return None
+    try:
+        row = cache_ro.execute(
+            "SELECT source_path, size_bytes, mtime_ns, session_json, turns_json,"
+            " tools_json, attrs_json FROM cache WHERE key = ?",
+            (key,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    src_path, cached_size, cached_mtime, session_json, turns_json, tools_json, attrs_json = row
+    if src_path != str(path) or cached_size != size or cached_mtime != mtime_ns:
+        return None
+    try:
+        out = Scan()
+        out.session = json.loads(session_json)
+        out.turns = [tuple(r) for r in json.loads(turns_json)]
+        out.tools = [tuple(r) for r in json.loads(tools_json)]
+        out.attrs = [tuple(r) for r in json.loads(attrs_json)]
+    except (ValueError, TypeError):
+        return None
+    return out
+
+
 def main() -> int:
     argv = sys.argv[1:]
     quiet = "--quiet" in argv
+    no_cache = "--no-cache" in argv
     limit = 0
     if "--limit" in argv:
         limit = int(argv[argv.index("--limit") + 1])
@@ -1252,27 +1353,39 @@ def main() -> int:
     # file is the more complete one, because a short capture is a byte prefix
     # of the long one. Deciding first means each session is parsed once and
     # nothing but the winner list is held in memory.
-    winners: dict[str, tuple[Source, int]] = {}
+    winners: dict[str, tuple[Source, int, int]] = {}
     superseded = 0
     for src in sources:
         try:
-            size = src.path.stat().st_size
+            stat = src.path.stat()
         except OSError:
             continue
+        size = stat.st_size
         if src.is_subagent:
             key = f"agent:{src.path.stem}"
         else:
             key = src.path.stem
         prior = winners.get(key)
         if prior is None:
-            winners[key] = (src, size)
+            winners[key] = (src, size, stat.st_mtime_ns)
             continue
         superseded += 1
-        prior_src, prior_size = prior
+        prior_src, prior_size, _prior_mtime = prior
         if size > prior_size or (size == prior_size and src.tree == "archive"):
-            winners[key] = (src, size)
+            winners[key] = (src, size, stat.st_mtime_ns)
 
     say(f"{len(winners):,} distinct sessions ({superseded:,} duplicate payloads collapsed)")
+
+    # A --limit run only ever sees a slice of the corpus. Writing that slice
+    # back as "the cache" would evict every session outside the slice, so a
+    # smoke test still READS the cache (useful for testing the cache itself)
+    # but never overwrites it.
+    write_cache = limit == 0
+    cache_ro = None if no_cache else _open_cache_ro(out.cache)
+    if no_cache:
+        say("--no-cache: rescanning every transcript")
+    elif cache_ro is None:
+        say("no usable scan cache found; scanning every transcript")
 
     # ------------------------------------------------------------ write out
     # Publish via mkstemp + os.replace (DESIGN R2's idiom): build into a fresh
@@ -1319,6 +1432,28 @@ def main() -> int:
     )
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
 
+    # The new cache, built the exact same way (temp file + os.replace) and for
+    # the exact same reason: a crash mid-run must leave the last good cache
+    # untouched rather than a half-written one that would be silently trusted
+    # next time.
+    cache_building_path: Path | None = None
+    cache_conn: sqlite3.Connection | None = None
+    if write_cache:
+        cache_fd, cache_name = tempfile.mkstemp(
+            dir=out.root, prefix="scan-cache.", suffix=".sqlite.building"
+        )
+        os.close(cache_fd)
+        cache_building_path = Path(cache_name)
+        cache_conn = sqlite3.connect(cache_building_path)
+        cache_conn.execute("PRAGMA journal_mode = OFF")
+        cache_conn.execute("PRAGMA synchronous = OFF")
+        cache_conn.execute(
+            "CREATE TABLE cache (key TEXT PRIMARY KEY, source_path TEXT,"
+            " size_bytes INTEGER, mtime_ns INTEGER, session_json TEXT,"
+            " turns_json TEXT, tools_json TEXT, attrs_json TEXT)"
+        )
+        cache_conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+
     placeholders = ", ".join("?" for _ in SESSION_COLUMNS)
     insert_session = f"INSERT INTO session VALUES ({placeholders})"
 
@@ -1330,7 +1465,8 @@ def main() -> int:
     turn_rows: list[tuple[object, ...]] = []
     tool_rows: list[tuple[object, ...]] = []
     attr_rows: list[tuple[object, ...]] = []
-    scanned = unreadable = 0
+    cache_rows: list[tuple[object, ...]] = []
+    scanned = unreadable = cache_hits = cache_misses = 0
     n_rows = {"session": 0, "turn": 0, "tool_call": 0, "attribution": 0}
 
     def flush() -> None:
@@ -1353,15 +1489,26 @@ def main() -> int:
             n_rows["attribution"] += len(attr_rows)
             attr_rows.clear()
         conn.commit()
+        if cache_conn is not None and cache_rows:
+            cache_conn.executemany(
+                "INSERT OR REPLACE INTO cache VALUES (?,?,?,?,?,?,?,?)", cache_rows
+            )
+            cache_rows.clear()
+            cache_conn.commit()
 
-    for key, (src, _size) in winners.items():
-        result = scan_transcript(
-            src.path,
-            source_tree=src.tree,
-            container=src.container,
-            is_subagent=src.is_subagent,
-            parent_uuid=src.parent,
-        )
+    for key, (src, size, mtime_ns) in winners.items():
+        result = _cache_lookup(cache_ro, key, src.path, size, mtime_ns)
+        if result is not None:
+            cache_hits += 1
+        else:
+            result = scan_transcript(
+                src.path,
+                source_tree=src.tree,
+                container=src.container,
+                is_subagent=src.is_subagent,
+                parent_uuid=src.parent,
+            )
+            cache_misses += 1
         if result is None:
             unreadable += 1
             continue
@@ -1371,13 +1518,22 @@ def main() -> int:
         turn_rows.extend((key, *row[1:]) for row in result.turns)
         tool_rows.extend((key, *row[1:]) for row in result.tools)
         attr_rows.extend((key, *row[1:]) for row in result.attrs)
+        if cache_conn is not None:
+            cache_rows.append((
+                key, str(src.path), size, mtime_ns,
+                json.dumps(result.session), json.dumps(result.turns),
+                json.dumps(result.tools), json.dumps(result.attrs),
+            ))
         if len(sess_rows) >= BATCH:
             flush()
             if not quiet and scanned % 5000 < BATCH:
-                say(f"  ... {scanned:,} / {len(winners):,} parsed")
+                say(f"  ... {scanned:,} / {len(winners):,} parsed ({cache_hits:,} cached)")
     flush()
+    if cache_ro is not None:
+        cache_ro.close()
 
-    say(f"parsed {scanned:,} sessions ({unreadable:,} unreadable)")
+    say(f"parsed {scanned:,} sessions ({unreadable:,} unreadable,"
+        f" {cache_hits:,} from cache, {cache_misses:,} rescanned)")
 
     for stmt in (
         "CREATE INDEX idx_session_date ON session(local_date)",
@@ -1465,6 +1621,9 @@ def main() -> int:
         "sessions_parsed": scanned,
         "duplicate_payloads_collapsed": superseded,
         "unreadable_files": unreadable,
+        "cache_hits": cache_hits,
+        "cache_rescanned": cache_misses,
+        "cache_written": cache_conn is not None,
         "rows": dict(n_rows),
         "totals": {
             "files": totals[0],
@@ -1494,6 +1653,14 @@ def main() -> int:
     conn.close()
     os.replace(building_path, out.db)
 
+    if cache_conn is not None and cache_building_path is not None:
+        cache_conn.execute(
+            "INSERT INTO meta VALUES ('fingerprint', ?)", (_cache_fingerprint(),)
+        )
+        cache_conn.commit()
+        cache_conn.close()
+        os.replace(cache_building_path, out.cache)
+
     say("")
     say(json.dumps(report["totals"], indent=2))
     say("")
@@ -1503,6 +1670,12 @@ def main() -> int:
     say(f"\nwrote {out.db}")
     say(f"      {out.report}")
     say(f"      {len(files)} csv files in {out.root}")
+    if cache_conn is not None:
+        say(f"      {out.cache}  ({cache_hits:,} cached, {cache_misses:,} rescanned)")
+    elif limit:
+        say(f"      {out.cache} left untouched (--limit run)")
+    else:
+        say(f"      {out.cache} left untouched")
     say(f"done in {report['elapsed_seconds']}s")
     return 0
 

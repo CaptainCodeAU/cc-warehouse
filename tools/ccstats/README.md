@@ -40,7 +40,7 @@ for you interactively - see **The live dashboard**, below.
 | `check_consistency.py` | fence: asserts the workbook and the guide state the same figures |
 | `verify.py` | proves read-only by execution and reconciles against `catalog.sqlite` |
 | `common.py` | paths, the write-root resolver and its fence, the cost disclaimer, the ONE `--since`/`--until` window implementation |
-| `tests/` | 99 tests, one per defect found (plus the `--until` coverage). `uv run pytest tools/ccstats/tests -q` |
+| `tests/` | 110 tests, one per defect found (plus the `--until` and incremental-cache coverage). `uv run pytest tools/ccstats/tests -q` |
 
 ## The live dashboard
 
@@ -160,6 +160,7 @@ refuses an unpadded date: loudly, before any write happens.
 | `sessions.csv` `turns.csv` | raw rows, one line per session / per assistant turn |
 | `projects.csv` `daily.csv` `hourly.csv` `models.csv` `tools.csv` `attribution.csv` `overlap.csv` | the views, ready to plot |
 | `collect-report.json` | what was scanned, the totals, and the self-check results |
+| `scan-cache.sqlite` | `collect.py`'s own incremental cache (see below) - safe to delete, `--no-cache` ignores it |
 | `claude-code-dashboard-live.html` | the interactive dashboard (see **The live dashboard**, below) |
 
 ## Verify it
@@ -190,6 +191,17 @@ before.
   mid-build can leave an orphaned `*.sqlite.building` file; it is reported (in
   `collect-report.json` under `stale_building_files`) and left for the
   operator to remove, never deleted automatically.
+- `scan-cache.sqlite` is published the same way, for the same reason. Most
+  transcripts never change once a session ends, so `collect.py` remembers each
+  file's own scan result (keyed by its path, size and mtime) instead of
+  re-reading and re-parsing every one of ~25k transcripts on every run -
+  measured on the real archive: 26.9s cold, 7.5s warm with nothing changed.
+  It is pure derived data, never a second copy of session content (R1), and
+  purely an optimisation: delete it, pass `--no-cache`, or let it get
+  corrupted, and the next run just falls back to a full, correct scan. A price
+  update or a timezone change invalidates it automatically (both are baked
+  into every cached row). A `--limit` smoke-test run reads it but never
+  overwrites it, since it only ever sees a slice of the corpus.
 - Never touches `~/.claude`, the archive, or the warehouse.
 - The output folder holds real absolute paths, project names and a prompt
   preview per session. **It must never be committed.** It sits outside the repo

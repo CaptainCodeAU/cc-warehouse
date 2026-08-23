@@ -116,6 +116,10 @@ class Out:
         return self.root / "collect-report.json"
 
     @property
+    def cache(self) -> Path:
+        return self.root / "scan-cache.sqlite"
+
+    @property
     def sessions_csv(self) -> Path:
         return self.root / "sessions-real.csv"
 
