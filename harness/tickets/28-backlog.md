@@ -45,7 +45,28 @@ here into their own ticket when they are taken up.
   every file it generated. Defensible either way; currently inherited rather
   than decided.
 
-- **28.3  `--limit` on sweep.** Useful for exercising a slice of a large import.
+- **28.3  `--limit` on sweep. DONE 2026-08-24.** Useful for exercising a slice
+  of a large import. `--limit N` (and `--limit=N`) caps `sweep._walk_source`'s
+  transcript list to the first N in sorted (path) order, applied identically
+  to a real run and to `--dry-run` (R9: one walk, one place the cap lives).
+  It bounds candidates WALKED, not sessions stored - the existing
+  already-known skip still applies on top of whatever the cap lets through -
+  and the orphan-object catch-up pass is untouched, since it reads `objects/`,
+  not the source tree the flag exists to bound.
+
+  A malformed value (missing, non-numeric, zero, or negative) is a usage
+  error, exit 2, same posture as `--source`'s own validation (R5): a silent
+  `--limit 0` would look identical to a fresh, empty warehouse, so it refuses
+  loudly instead. Narrowing a run loses nothing, same property `--since`/
+  `--until` already have: a later unlimited sweep still picks up whatever a
+  limited one left behind.
+
+  12 oracle tests in `tests/test_sweep_limit.py`, proved red against a real
+  `git stash` of just the production diff (8 of 12 failed pre-fix; the other
+  4 are the usage-error tests, which the pre-existing "unrecognised option"
+  guard already satisfied before `--limit` was a known flag - correctly
+  unaffected, not a gap in the tests). Full suite: 1,175 passed, ruff clean,
+  pyright 0 errors.
 
 - **28.22  Fence `ccw doctor`'s text output. DONE 2026-08-23.** Recorded
   2026-08-18 (ticket 30's Appendix, deployment facts from outside this repo).

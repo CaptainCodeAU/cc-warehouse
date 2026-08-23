@@ -1,34 +1,20 @@
-# Opening prompt for a fresh session, 2026-08-23 (twelfth handoff: ticket 24.7 closed,
-# a second real doctor.py defect found and fixed, the discarded repo cleaned up)
+# Opening prompt for a fresh session, 2026-08-24 (thirteenth handoff: ticket
+# 28.1 (`ccw render --open`) and ticket 28.3 (`ccw sweep --limit`) both DONE)
 
 ## Next task: nothing in items 1-7, ticket 28.22, ticket 30's flagged defect,
-## ticket 28.13, ticket 24.7, or ticket 28.19 is open work any more. Items 1, 2, 2b
-## are DONE. Item 3 (really just ticket 27.8) got the decision it was blocked on
-## and stays NOT DONE by that decision, not by anything left to do. Tickets
-## 28.22 and 30's equal-size defect are both fixed. Ticket 28.13 (the
-## architecture board) is re-derived at a live commit, with two live bugs it
-## surfaced also fixed. Item 7 (ccstats polish) is FULLY DONE. **Ticket 24.7
-## (session-start capture freshness) is now FULLY DONE, 2026-08-23 - see the
-## eleventh AND twelfth handoff entries at the end of this file for the full
-## account. Short version: the first build went into `claude-transcript-
-## exporter@gz-claude-code-plugins`, a plugin already RETIRED since ticket
-## 28.19 landed 2026-08-10; redone in the real, live plugin,
-## `cc-capture@cc-warehouse` at `plugins/cc-capture/` in THIS repo; verified
-## for real via a Herdr-driven fresh Claude Code session, not just unit tests.
-## Finding that mistake surfaced a SECOND real defect in `ccw doctor` itself -
-## it could report a retired plugin's leftover cache as a working hook - fixed
-## oracle-tests-first, and `doctor` now names which plugin actually serves the
-## hook. A new CLAUDE.md hard rule and two memory files exist specifically so
-## this class of mistake (trusting docs over a tool's own live enabled-state)
-## does not recur, in this repo or elsewhere. The discarded work in
-## `gz-claude-code-plugins` was reverted (not force-pushed, a normal revert
-## commit) and that repo's READMEs now say RETIRED at the top; the GitHub repo
-## itself was NOT archived (operator picked revert+notice over full archive).**
+## ticket 28.13, ticket 24.7, ticket 28.19, ticket 28.1, or ticket 28.3 is open
+## work any more. Items 1, 2, 2b are DONE. Item 3 (really just ticket 27.8) got
+## the decision it was blocked on and stays NOT DONE by that decision, not by
+## anything left to do. Item 7 (ccstats polish) is FULLY DONE. Tickets 24.7,
+## 28.13, 28.19, 28.22, 30's equal-size defect, 28.1, and 28.3 are all DONE -
+## see the eleventh through thirteenth handoff entries at the end of this file
+## for the full accounts.
 ## **Pick up from "Also on record, not scheduled" near the end of this file,
 ## or from `CLAUDE.md`'s OPEN/next section**: ticket 28's remaining backlog
-## items (28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14) are the standing
-## candidate. Nothing else from items 1-7, or from tickets
-## 24.7/28.13/28.19/28.22/30, is open.
+## items (28.2, 28.9, 28.10, 28.11, 28.12, 28.14) are the standing candidate,
+## plus `ccw share --open` as a possible fast follow-up to 28.1 (not itself a
+## numbered ticket item). Nothing else from items 1-7, or from tickets
+## 24.7/28.1/28.3/28.13/28.19/28.22/30, is open.
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -770,14 +756,14 @@ like it should help. `README.md` documents the new file and flag.
   outside this repo by `ccw-watch`.~~ **DONE 2026-08-23**, and now owned by
   this project's own plugin rather than borrowed - see the eleventh-handoff
   entry at the end of this file.
-- **Ticket 28**, the backlog register. **28.1 (`--open`) DONE 2026-08-24**,
-  scoped to `ccw render` only (`ccw share`'s multi-session `index.html` left
-  for later - see the ticket's own DONE note in
-  `harness/tickets/28-backlog.md`). Still open in it: optional secret
-  redaction on personal projections (28.2), `--limit` on sweep (28.3),
-  `render_html` costing 74x the payload (28.9), test gaps (28.10),
-  markdown/HTML for sub-agents (28.11), re-homing an orphaned sub-agent when
-  its parent arrives (28.12), `prefers-color-scheme` for shared pages (28.14).
+- **Ticket 28**, the backlog register. **28.1 (`--open`) and 28.3 (`--limit`
+  on sweep) BOTH DONE 2026-08-24** (see the ticket's own DONE notes in
+  `harness/tickets/28-backlog.md`; 28.1 scoped to `ccw render` only,
+  `ccw share`'s multi-session `index.html` left for later). Still open in it:
+  optional secret redaction on personal projections (28.2), `render_html`
+  costing 74x the payload (28.9), test gaps (28.10), markdown/HTML for
+  sub-agents (28.11), re-homing an orphaned sub-agent when its parent arrives
+  (28.12), `prefers-color-scheme` for shared pages (28.14).
   **28.19 was ALREADY DONE (2026-08-10, `4b8dde4`) and this list was stale about
   it until 2026-08-23** - the plugin has lived in-repo at `plugins/cc-capture/`
   for two weeks, installed as `cc-capture@cc-warehouse`; the old
@@ -1155,6 +1141,34 @@ the way 28.19 did.
 
 One commit, pushed (production + tests + doc updates together, since the change is small).
 
-**What was NOT done:** nothing new opened this handoff. Standing candidates for a future session,
-unchanged apart from 28.1's closure: ticket 28's remaining backlog items (28.2, 28.3, 28.9, 28.10,
-28.11, 28.12, 28.14), and `ccw share --open` as a possible fast follow-up to today's work.
+**What was NOT done:** nothing new opened this part of the handoff. See the continuation directly
+below for 28.3, picked next in the same session.
+
+---
+
+**Same day, continuing the thirteenth handoff.** Asked the operator to pick again from the
+remaining backlog via a 3-option question (`--limit` on sweep 28.3 / the `render_html` perf issue
+28.9 / stop for now). Operator picked `--limit` on sweep.
+
+**28.3 DONE.** `ccw sweep --limit N` (and `--limit=N`) caps `sweep._walk_source`'s transcript list
+to the first N in sorted (path) order - useful for exercising a slice of a source tree that can run
+to tens of thousands of files in a real deployment, without walking the whole thing. Applied
+identically to a real sweep and to `--dry-run` (one walk implementation, one place the cap lives).
+It bounds candidates WALKED, never sessions STORED: the existing already-known skip still applies
+on top, and the orphan-object catch-up pass (reads `objects/`, not the source tree) is untouched.
+A malformed value (missing, non-numeric, zero, or negative) is a usage error, exit 2, matching
+`--source`'s own validation posture - a silent `--limit 0` would look identical to a fresh, empty
+warehouse. Narrowing a run loses nothing: a later unlimited sweep still picks up whatever a limited
+one left behind, the same property `--since`/`--until` already have.
+
+12 new oracle tests (`tests/test_sweep_limit.py`), proved red-then-green with a real `git stash` of
+just the production diff (8 of 12 failed pre-fix; the other 4, the usage-error tests, were already
+satisfied by the pre-existing "unrecognised option" guard before `--limit` was a known flag -
+correctly unaffected, not a gap). Full suite: 1,175 passed, ruff clean, pyright 0 errors.
+
+One commit, pushed. Ticket 28's own entry and this file's backlog pointer were both updated in
+place.
+
+**What was NOT done:** nothing new opened this handoff. Standing candidates for a future session:
+ticket 28's remaining backlog items (28.2, 28.9, 28.10, 28.11, 28.12, 28.14), and `ccw share --open`
+as a possible fast follow-up to 28.1's work above.

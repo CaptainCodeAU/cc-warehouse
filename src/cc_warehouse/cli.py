@@ -597,6 +597,36 @@ def _sweep_source(args: Sequence[str]) -> tuple[Path | None, str | None]:
     return Path(raw), None
 
 
+def _sweep_limit(args: Sequence[str]) -> tuple[int | None, str | None]:
+    """Resolve the optional `--limit N` / `--limit=N` cap on `ccw sweep`
+    (ticket 28.3): exercise a slice of a large source tree instead of walking
+    the whole thing. Mirrors `_sweep_source`'s shape: no `--limit` at all is
+    (None, None); a missing, non-numeric, or non-positive value is a usage
+    error rather than a silent 0-item run or an unbounded one (R5)."""
+    raw: str | None = None
+    seen = False
+    for i, arg in enumerate(args):
+        if arg == "--limit":
+            raw = args[i + 1] if i + 1 < len(args) else None
+            seen = True
+            break
+        if arg.startswith("--limit="):
+            raw = arg[len("--limit=") :]
+            seen = True
+            break
+    if not seen:
+        return None, None
+    if raw is None:
+        return None, "sweep: --limit requires a whole number (no value given)"
+    try:
+        value = int(raw)
+    except ValueError:
+        return None, f"sweep: --limit requires a whole number, got {raw!r}"
+    if value <= 0:
+        return None, f"sweep: --limit requires a whole number > 0, got {value}"
+    return value, None
+
+
 def _run_sweep(args: Sequence[str]) -> int:
     """`ccw sweep`: capture transcripts the hook missed under a locks/sweep lock.
 
@@ -607,6 +637,10 @@ def _run_sweep(args: Sequence[str]) -> int:
     source, source_error = _sweep_source(args)
     if source_error is not None:
         print(source_error, file=sys.stderr)
+        return 2
+    limit, limit_error = _sweep_limit(args)
+    if limit_error is not None:
+        print(limit_error, file=sys.stderr)
         return 2
     window, problem = _window_flags(args)
     if problem is not None:
@@ -619,7 +653,7 @@ def _run_sweep(args: Sequence[str]) -> int:
         # A rehearsal, not a run. sweep.plan takes no lock and opens the catalog
         # read-only, so a dry-run on a warehouse that does not exist yet leaves
         # it that way (ticket 23; test_dry_run_on_a_fresh_root_creates_no_warehouse).
-        planned = sweep.plan(config, source, keep)
+        planned = sweep.plan(config, source, keep, limit=limit)
         failures = planned.failures
         for outcome in failures:
             detail = outcome.detail or outcome.action
@@ -634,7 +668,7 @@ def _run_sweep(args: Sequence[str]) -> int:
                 f"{would_store} would be stored, 0 written"
             )
         return 1 if failures else 0
-    report = sweep.sweep(config, source, keep)
+    report = sweep.sweep(config, source, keep, limit=limit)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         print("sweep refused: lock held by a live holder", file=sys.stderr)
         return 2
@@ -1940,6 +1974,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--source DIR", "walk DIR instead of ~/.claude/projects"),
             ("--since DATE", "import only sessions from DATE onward (local day)"),
             ("--until DATE", "import only sessions up to DATE, inclusive"),
+            ("--limit N", "consider at most N transcripts (exercise a slice)"),
             ("--dry-run", "name what a real run would import; writes NOTHING"),
             ("--quiet", "no stdout; failures and the exit code are unaffected"),
         ),

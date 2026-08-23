@@ -46,7 +46,7 @@ def _default_source() -> Path:
 
 
 def _walk_source(
-    walk_root: Path, *, skip_agents: bool = True
+    walk_root: Path, *, skip_agents: bool = True, limit: int | None = None
 ) -> tuple[list[Path], list[ItemOutcome]]:
     """The jsonl transcripts under walk_root plus a NAMED error item per directory that
     could not be listed; both sorted for determinism, agent-* skipped.
@@ -56,7 +56,14 @@ def _walk_source(
     (an F7 under-capture that still exits 0). The onerror callback turns each directory
     OSError into a reported item (its .filename is the unreadable path) so the CLI names it
     and the exit code is non-zero, while the walk continues for the readable siblings
-    (R5/R10). A missing source directory yields an empty walk rather than a crash (R5)."""
+    (R5/R10). A missing source directory yields an empty walk rather than a crash (R5).
+
+    `limit` (ticket 28.3, `ccw sweep --limit N`) caps the TRANSCRIPT list only, taken
+    after the deterministic sort so a run is reproducible; the error list is never
+    truncated, since a directory ccw could not list is worth reporting regardless of how
+    small a slice was asked for. It is the walk-level knob for exercising a slice of a
+    large source tree, not a promise about how many end up STORED - `already_known`
+    skips and window filtering still apply to whatever this returns."""
     if not walk_root.is_dir():
         return [], []
     errors: list[ItemOutcome] = []
@@ -79,7 +86,10 @@ def _walk_source(
             if not path.is_file():
                 continue
             found.append(path)
-    return sorted(found), sorted(errors, key=lambda outcome: outcome.item)
+    transcripts = sorted(found)
+    if limit is not None:
+        transcripts = transcripts[:limit]
+    return transcripts, sorted(errors, key=lambda outcome: outcome.item)
 
 
 def _cataloged_hashes(root: Path) -> frozenset[str]:
@@ -303,6 +313,7 @@ def plan(
     config: Config,
     source: Path | None = None,
     window: "Callable[[str | None], bool] | None" = None,
+    limit: int | None = None,
 ) -> BatchReport:
     """What a real sweep WOULD do, writing nothing at all (`--dry-run`).
 
@@ -325,7 +336,9 @@ def plan(
     `stored`, so a plan is never mistaken for a result in the same report shape.
     """
     walk_root = source if source is not None else _default_source()
-    transcripts, outcomes = _walk_source(walk_root, skip_agents=not config.archive_subagents)
+    transcripts, outcomes = _walk_source(
+        walk_root, skip_agents=not config.archive_subagents, limit=limit
+    )
     already = cataloged_hashes_readonly(config.root)
     for path in (p for p in transcripts if _in_window(p, window)):
         try:
@@ -346,6 +359,7 @@ def sweep(
     config: Config,
     source: Path | None = None,
     window: "Callable[[str | None], bool] | None" = None,
+    limit: int | None = None,
 ) -> BatchReport:
     """Capture whatever the hook missed, then adopt orphan store objects (slice 5).
 
@@ -376,7 +390,15 @@ def sweep(
     stored + duplicate-invocation exactly as before, because neither is in
     the snapshot yet either. R1 is unaffected (the hash decided is the same
     one `capture._capture_locked` decides on) and so is R9 (capture_transcript
-    remains the only thing that stores or catalogs)."""
+    remains the only thing that stores or catalogs).
+
+    `limit` (ticket 28.3, `ccw sweep --limit N`) caps the WALK to the first N
+    transcripts in sorted order, for exercising a slice of a large source tree
+    (a real deployment can be tens of thousands of files) rather than the whole
+    thing. It bounds candidates considered, not sessions stored: some of the N
+    may already be `skipped_unchanged`. The orphan-object catch-up pass below is
+    unaffected - it reads `objects/`, not the source tree, and is not the cost
+    this flag exists to bound."""
     walk_root = source if source is not None else _default_source()
     if not store.acquire_lock(config.root, _SWEEP_LOCK):
         return BatchReport(
@@ -384,7 +406,7 @@ def sweep(
         )
     try:
         transcripts, outcomes = _walk_source(
-            walk_root, skip_agents=not config.archive_subagents
+            walk_root, skip_agents=not config.archive_subagents, limit=limit
         )
         already_known = _cataloged_hashes(config.root)
         # TWO PASSES, and the order is load-bearing. A sub-agent nests inside
