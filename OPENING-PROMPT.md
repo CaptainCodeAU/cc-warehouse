@@ -1,15 +1,17 @@
-# Opening prompt for a fresh session, 2026-08-23 (seventh handoff: item 3's decision made, item 2's loose end written)
+# Opening prompt for a fresh session, 2026-08-23 (eighth handoff: ticket 28.22 and ticket 30's equal-size defect both closed)
 
-## Next task: nothing in items 1-3 is open work any more. Items 1, 2, 2b are
-## DONE. Item 3 (really just ticket 27.8) got the decision it was blocked on
-## this session - see the correction inside item 3 - and stays NOT DONE by
-## that decision, not by anything left to do. The item-2 loose end (a short
-## guide for `dashboard_template.html`) was written this session too - see
-## the correction just below. **Pick up from "Also on record, not scheduled"
-## near the end of this file, or from `CLAUDE.md`'s OPEN/next section**:
-## ticket 30's equal-size payload defect, ticket 28.22 (fence `ccw doctor`'s
-## text output), ticket 28.13 (re-derive the architecture board), or ccstats
-## polish (item 7 below).
+## Next task: nothing in items 1-3, or in ticket 28.22 / ticket 30's flagged
+## defect (item 4/5 below), is open work any more. Items 1, 2, 2b are DONE.
+## Item 3 (really just ticket 27.8) got the decision it was blocked on this
+## session - see the correction inside item 3 - and stays NOT DONE by that
+## decision, not by anything left to do. The item-2 loose end (a short guide
+## for `dashboard_template.html`) was written this session too. Later the
+## same day, asked to pick between item 4 (ticket 30's equal-size defect) and
+## item 5 (ticket 28.22) and told to do both: did 28.22 first (recommended,
+## it was quick), then item 4 - see the corrections inside each section below.
+## **Pick up from "Also on record, not scheduled" near the end of this file,
+## or from `CLAUDE.md`'s OPEN/next section**: ticket 28.13 (re-derive the
+## architecture board), or ccstats polish (item 7 below).
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -641,6 +643,23 @@ case. Recorded at the end of `harness/tickets/30-incremental-archive-rebuild.md`
 
 Correctness of the deliverable beats everything below it.
 
+**CLOSED 2026-08-23.** `write_session_folder` now reads and compares the actual
+bytes when sizes match, instead of assuming equal size means equal content
+(F1). A mismatch takes the same conservative branch as a smaller payload (R5) -
+declined, recorded in the manifest with its own reason string, tracked in a new
+`FolderResult.refused_equal_size` field kept separate from `refused_smaller` so
+the two causes are never conflated. Scoped to `write_session_folder` only -
+`write_source`/`write_subagent` share the same size-only pattern but never
+render a second set of files that could disagree with the JSONL, so neither
+reproduces the actual failure mode. Oracle tests (`tests/test_equal_size_
+refusal.py`, 7 tests, plus one addition to the locked `test_archive_layout.py`)
+were verified red-then-green with a real `git stash` of just the production
+fix - every one failed against the pre-fix code, the end-to-end test with the
+exact real-world "JSONL does not match manifest source_hash" symptom, before
+passing once restored. Full account: `harness/tickets/30-incremental-archive-
+rebuild.md`'s own closing note. Full suite: 1,122 passed, ruff clean, pyright
+0 errors.
+
 ### 5. Ticket 28.22: fence `ccw doctor`'s text output
 
 `~/.local/bin/ccw-watch` (a DIFFERENT repo, `fifty-shades-of-dotfiles`) runs at
@@ -649,6 +668,19 @@ line's wording and the `Uncaptured: N session(s)` figure. **Nothing in this
 repo's suite protects that shape**, so a reformat breaks an external consumer
 with nothing here going red. Pin the exact substrings a known-external parser
 depends on, not the whole output.
+
+**CLOSED 2026-08-23, done FIRST (of items 4 and 5) since it was the quick
+one.** Read ccw-watch's actual source rather than trust the "hook line's
+wording" framing above, which turned out to be imprecise - ccw-watch never
+matches on the word "hook" at all. The real, narrower contract: exit code,
+the literal `"Uncaptured: <N> session"` substring (`status.py:152`, extracted
+by ccw-watch's own `sed`), and a leading `"FAIL"` on a failed blocking check's
+line (`doctor.py:440`, read by ccw-watch's own `grep`).
+`tests/test_doctor_external_contract.py` pins both by running those EXACT
+sed/grep commands against real `ccw doctor` output, and was proved to
+actually catch a break (mutated the wording, watched it go red, reverted).
+No production code changed - a protective test only. Full account:
+`harness/tickets/28-backlog.md`'s 28.22 entry.
 
 Cheap, and this session nearly tripped over `doctor`'s output twice.
 
@@ -766,7 +798,39 @@ rather than hidden" paragraph still says "Top sessions shows the top 50... not 2
 own item-2 "Fourth round" notes say that panel is 25, not 50, as of 2026-08-22. Out of scope for
 this session's actual task; worth a one-line fix next time that file is touched.
 
-**What was NOT done:** nothing from items 1-3 remains open. The next real work is whatever the
-operator picks from "Also on record, not scheduled" below or `CLAUDE.md`'s OPEN/next section -
-ticket 30's equal-size payload defect, ticket 28.22, ticket 28.13, or ccstats polish (item 7) are
-the standing candidates, none started this session.
+**What was NOT done, as of the seventh handoff:** nothing from items 1-3 remains open. The next
+real work is whatever the operator picks from "Also on record, not scheduled" below or
+`CLAUDE.md`'s OPEN/next section - ticket 30's equal-size payload defect, ticket 28.22, ticket
+28.13, or ccstats polish (item 7) are the standing candidates, none started this session.
+
+---
+
+**Later the same day (eighth handoff).** Given the choice between ticket 30's equal-size defect
+(item 4) and ticket 28.22 (item 5) and told to do both, picking which one to start with. Started
+with 28.22 (the recommendation, since it was quick and closed a real risk): read `ccw-watch`'s
+actual source in `fifty-shades-of-dotfiles` rather than trust this repo's own prior description of
+what it depends on, found that description was imprecise (ccw-watch never matches on the word
+"hook"), and wrote `tests/test_doctor_external_contract.py` pinning the real, narrower contract by
+running ccw-watch's own sed/grep commands against real `ccw doctor` output - verified red-then-green
+by mutating the wording it depends on and watching the test catch it. Then ticket 30's equal-size
+defect: `write_session_folder` now compares actual bytes (not just size) when an offered payload
+matches the archived one's length, taking the same conservative "refuse and record" branch as a
+smaller payload when they differ. Verified the SAME way - a real `git stash` of just the production
+fix showed every new/changed test fail against the pre-fix code, the end-to-end one with the exact
+real-world "JSONL does not match manifest source_hash" symptom, before all passed once restored.
+
+One incidental fix along the way: a doc edit for 28.22 named `fifty-shades-of-dotfiles`'s own
+tracked copy of the script by its internal path, which uses that repo's OWN home-dir-mirroring
+folder convention, not a real username - but the packaging gate's privacy-scan heuristic (`test_
+packaging.py`) reads any slash-separated "home" segment followed by a word as a real user's home
+directory, so it went red. Reworded the doc rather than touched the locked scan test.
+
+Four commits, all pushed: `a197853` (PANEL-CONTRACT.md), `f60bc24` (ticket 27.8's decision record),
+`32a31a3` (ticket 28.22's fence test), `f7f598c` + `962680a` (the packaging-gate reword and ticket
+30's fix, split because the test file landed a commit early by an unintentional `git add` carry-over
+- harmless, but worth knowing the history looks that way if anyone reads it later). Full suite
+re-confirmed green after every change (1,122 tests, ruff clean, pyright 0 errors).
+
+**What was NOT done:** nothing from items 1-5 remains open as of this eighth handoff. Ticket 28.13
+(re-derive the architecture board) and ccstats polish (item 7) are the standing next candidates;
+neither started this session.
