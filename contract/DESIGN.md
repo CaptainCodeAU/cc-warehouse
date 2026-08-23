@@ -1416,6 +1416,89 @@ shape neither test constructs (three-plus versions with a more complex tie
 pattern, for instance). The oracle tests pin the measured shape and the
 ordinary case; they are not an exhaustive enumeration.
 
+**2026-08-22, ticket 27.5/27.6: `root` STAYS SEPARATE FROM THE ARCHIVE -
+DECIDED, NOT DEFAULTED.** Put to the principal as a real fork (the ticket's
+own text: "decided rather than defaulted"), with 27.6's guard read done
+first as the ticket ordered. The principal chose to keep them separate.
+
+The guard read (27.6) surfaced a concrete cost for the alternative:
+`cli.py:_run_archive`'s existing refusal (`if target.resolve() ==
+config.root.resolve(): ... "must not be the warehouse itself"`) exists to
+stop `ccw archive --to` from writing on top of the tree it reads from. If
+`root == archive_root`, every ordinary `ccw archive --to <archive_root>`
+call would resolve `target == config.root` and hit that exact refusal - the
+guard would need its own rework before a merge could even run, not just the
+new oracle test the ticket's own list already flagged.
+
+That, plus the ticket's own recorded ARGUMENT AGAINST (an archive is
+valuable because it does not change; `catalog.sqlite` and `locks/` are
+churn inside the thing being backed up), settled it. No code changed: this
+was already today's behaviour, so the decision is a recorded non-default
+rather than a diff. The oracle test the ticket's own list named ("root ==
+archive_root: a capture writes exactly one copy...") is now moot and not
+written, since that shape was rejected rather than shipped.
+
+**2026-08-22, ticket 27.7: RULING (b) WAS ALREADY IMPLEMENTED - closing the
+ticket's paperwork, not new code.** Measured before assuming: `cli.py:
+_run_verify` already redirects `ccw verify` to `_archive_verify` exactly
+when `not config.keep_objects and config.archive_root is not None`, which
+is the live config on this machine. `tests/test_retire_objects.py::
+test_verify_checks_the_archive_once_the_store_is_retired` (and its
+damage-detecting twin) already lock this in and were green before this
+session touched anything. This landed earlier without a matching close-out
+note on ticket 27 itself. No code or test change; the ticket's own status
+is updated to reflect it.
+
+**2026-08-22, ticket 27.8: FLIPPING `keep_objects`'S DEFAULT WAS ATTEMPTED,
+MEASURED, AND REVERTED - `store.py` STAYS AS IS.** The ticket's premise
+("dead once the vault goes") does not hold project-wide: `keep_objects:
+bool = True` (`config.py:162`) remains the tool's shipped default, exercised
+whenever `archive_root` is unset and whenever a config never sets the key
+explicitly, so `store.put`/`get`/`has`/`verify_walk` are not dead code, only
+unused on this one machine's explicit override.
+
+Put to the principal with that framing; the principal chose to go further
+and flip the CODE default too (`keep_objects` OFF by default once
+`archive_root` is set, ON otherwise), which would have made the vault
+genuinely unused in the common case and unblocked deleting it.
+
+Implemented oracle-tests-first (`tests/test_retire_objects.py`, RED
+confirmed before the `config.py` change), then the flip itself:
+`_keep_objects` computing its `_bool` default as `not has_archive` instead
+of a flat `True`. The changed slice's own tests, and the whole-repo `ruff`/
+`pyright` gates, passed - but the FULL suite did not: **7 pre-existing
+tests failed**, none of them incidental -
+`test_an_unwritable_archive_still_stores_the_session` /
+`test_the_store_still_holds_the_payload_too` (archive_durable),
+`test_an_unwritable_archive_root_does_not_lose_the_capture` /
+`test_the_ordinary_projection_survives_an_archive_failure` (archive_live),
+`test_render_and_build_work_with_the_store_objects_removed`
+(archive_reads), `test_a_plain_build_restores_a_deleted_archive_jsonl_
+without_rebuild` (keep_projections),
+`test_a_new_session_is_fully_rendered_even_when_the_rest_of_the_corpus_is_
+current` (sweep_projects). Every one is a resilience test: the vault, ON BY
+DEFAULT today, is what lets a capture survive an unwritable archive and
+lets `ccw build` recover a deleted archive JSONL. Flipping the default
+removes that safety net from every install that has set `archive_root` but
+never touched `keep_objects` - which, per the field's own comment ("True by
+default. Set false once the archive is proven"), was always meant to be an
+explicit, per-operator, informed opt-in (exactly how ticket 27.3 did it on
+this machine), not a silent global default change.
+
+This directly contradicts R5 ("the conservative branch is the default"):
+today's default (dual-write) IS the conservative branch, and flipping it
+makes the LOWER-redundancy state the default without the operator ever
+choosing it. `config.py` and `tests/test_retire_objects.py` were reverted
+(`git checkout --`) back to the committed baseline; the full suite was
+re-confirmed green afterward (1112 passed, ruff clean, pyright 0 errors),
+with nothing left uncommitted.
+
+**Verdict: `store.py` is not retirable today, by design, not by oversight.**
+The vault stays the shipped default until a future session decides to
+remove `keep_objects` as a feature entirely (making `archive_root`
+mandatory and every install single-copy) - a materially bigger, still
+undecided change with its own blast radius, not attempted here.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

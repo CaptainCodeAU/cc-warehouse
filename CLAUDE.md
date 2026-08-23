@@ -205,9 +205,28 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   and 40 catalog sessions sampled at random resolved to a real archive payload
   40 times out of 40. `OPENING-PROMPT.md` (written 2026-08-21) already recorded
   it as closed, so the drift was between documents, not about the fact.
-  **27.5-27.8 remain open.** See `harness/tickets/27-collapse-to-one-folder.md`
-  and `harness/tickets/29-which-copy-is-the-current-one.md` for the full
-  account.
+  **27.5-27.7 CLOSED 2026-08-22. 27.8 was attempted, measured, and reverted -
+  it is NOT done.** 27.5 (whether `root` moves into the archive): decided
+  AGAINST by the principal, after 27.6's guard read found that merging would
+  make every `ccw archive --to <archive_root>` call trip the existing
+  "must not be the warehouse itself" refusal; no code changed. 27.7 (`ccw
+  verify` becomes archive integrity) turned out to already be shipped and
+  tested; only the ticket's paperwork was stale. **27.8 (retire `store.py`)
+  is blocked on a real finding, not an oversight**: `keep_objects: bool =
+  True` is still the tool's shipped default project-wide (only this
+  machine's config overrides it), so the vault code is not dead in general.
+  Flipping that CODE default (tried on the principal's word, oracle-tests-
+  first) broke 7 pre-existing tests, all genuine resilience tests (an
+  unwritable archive, a deleted archive JSONL) - it would have removed a
+  safety net from every install that sets `archive_root` without explicitly
+  opting into `keep_objects = false`, inverting R5 (today's default IS the
+  conservative branch). Reverted cleanly; full suite re-confirmed green.
+  Retiring `store.py` for real needs a bigger, still-undecided call: dropping
+  `keep_objects` as a feature and making `archive_root` mandatory. See
+  `harness/tickets/27-collapse-to-one-folder.md` and `contract/DESIGN.md`
+  section 15 ("2026-08-22, ticket 27.5/27.6" and "...27.8") for the full
+  account, and `harness/tickets/29-which-copy-is-the-current-one.md` for the
+  unrelated ticket 29 material this section also used to point to.
   **THE RULE 27.4 WAS UNDER STILL STANDS FOR EVERY FUTURE DESTRUCTIVE STEP:
   a green gate is not consent, and the principal's word is needed at the moment
   of running.** 27.9 WITHDRAWN AND STAYS WITHDRAWN).

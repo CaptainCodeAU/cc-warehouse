@@ -9,11 +9,13 @@ of running, not in advance.
 > every gate 27.9 was waiting on is now satisfied. That is NOT permission. Read
 > 27.9 before acting on any part of this ticket.
 
-## Status, 2026-08-21
+## Status, 2026-08-22
 
-**27.1, 27.2, 27.3 and 27.4 are all CLOSED. 27.5-27.8 are open. 27.9 is
-withdrawn and stays withdrawn.** The `objects/` delete HAS been run and
-re-verified; see 27.4, which said the opposite until this date.
+**27.1-27.7 are all CLOSED. 27.8 was attempted and reverted - see its own
+section, it is NOT done and needs a bigger decision first. 27.9 is withdrawn
+and stays withdrawn.** The `objects/` delete HAS been run and re-verified; see
+27.4, which said the opposite until 2026-08-21. 27.5-27.7 closed 2026-08-22
+(27.5 by a principal decision, 27.7 turned out to already be shipped).
 
 ## Why this ticket exists
 
@@ -350,11 +352,25 @@ churn inside the thing being backed up. The alternative is to leave the root
 where it is and let it hold nothing but regenerable state, which 27.1 makes
 free to discard.
 
+**27.5 CLOSED 2026-08-22: DECIDED AGAINST.** Put to the principal after 27.6's
+guard read (below), which found a concrete cost the ARGUMENT AGAINST above did
+not even need: merging would make every ordinary `ccw archive --to
+<archive_root>` call trip the existing "must not be the warehouse itself"
+refusal, since `target` and `config.root` would then always resolve equal. The
+principal chose to keep them separate. No code changed - this was already
+today's behaviour, so the ticket's own listed oracle test ("root ==
+archive_root: a capture writes exactly one copy...") is now moot and was not
+written. Full account: `contract/DESIGN.md` section 15, "2026-08-22, ticket
+27.5/27.6".
+
 ### 27.6  Re-read the `ccw archive --to` guard
 
 Ticket 19h made `--to` refuse to target the warehouse. If the warehouse root
 becomes the archive, that guard either blocks a legitimate run or waves through
 a bad one. Read it before 27.5, not after.
+
+**27.6 DONE 2026-08-22.** Read `cli.py:_run_archive`'s guard before 27.5 as
+ordered; its finding is what closed 27.5 above.
 
 ### 27.7  Reconcile `ccw verify` with ruling (b)
 
@@ -362,10 +378,41 @@ Ruling (b) says `ccw verify` BECOMES archive integrity. Today that behaviour
 lives on `ccw archive --verify` and plain `verify` still re-hashes the vault.
 Once the vault is gone, plain `verify` has nothing to check.
 
+**27.7 WAS ALREADY DONE, CLOSED 2026-08-22 (paperwork only).** `cli.py:
+_run_verify` already redirects to `_archive_verify` exactly when
+`not config.keep_objects and config.archive_root is not None` - the live
+config on this machine - and `tests/test_retire_objects.py::
+test_verify_checks_the_archive_once_the_store_is_retired` (plus its
+damage-detecting twin) already locks it in, green before this session touched
+anything. It shipped earlier without a matching close-out note here. No code
+or test change today.
+
 ### 27.8  Retire `store.py`
 
 Dead once the vault goes. Ticket 19's instruction stands: do not delete the
 module until the migration has run and been verified.
+
+**27.8 ATTEMPTED, MEASURED, REVERTED 2026-08-22. NOT DONE, AND NOT SAFE TO DO
+TODAY.** The premise ("dead once the vault goes") does not hold project-wide:
+`keep_objects: bool = True` (`config.py:162`) is still the tool's shipped
+default, so `store.put`/`get`/`has`/`verify_walk` are only unused on THIS
+machine's explicit override, not dead in general.
+
+Flipping the code default too (so the vault turns off automatically once
+`archive_root` is set) was tried, oracle-tests-first, and broke 7 pre-existing
+tests - all genuine resilience tests (an unwritable archive no longer falls
+back to the vault; `ccw build` can no longer recover a deleted archive JSONL
+from it). That is a real safety-net loss for every install that sets
+`archive_root` but never explicitly touches `keep_objects`, and it inverts R5
+(today's dual-write default IS the conservative branch). Reverted cleanly
+(`git checkout --` on both changed files); full suite re-confirmed green
+(1112 passed). `store.py` is untouched. Full account: `contract/DESIGN.md`
+section 15, "2026-08-22, ticket 27.8".
+
+Genuinely retiring `store.py` needs a bigger, still-undecided call: dropping
+`keep_objects` as a feature entirely and making `archive_root` mandatory. Not
+attempted here; a future session should not restart this without that decision
+first.
 
 ### 27.9  WITHDRAWN 2026-08-04 BY THE PRINCIPAL. DO NOT DO THIS.
 
