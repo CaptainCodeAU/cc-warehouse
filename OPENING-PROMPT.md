@@ -1,23 +1,29 @@
-# Opening prompt for a fresh session, 2026-08-23 (eleventh handoff: ticket 24.7 closed)
+# Opening prompt for a fresh session, 2026-08-23 (twelfth handoff: ticket 24.7 closed,
+# a second real doctor.py defect found and fixed, the discarded repo cleaned up)
 
 ## Next task: nothing in items 1-7, ticket 28.22, ticket 30's flagged defect,
-## ticket 28.13, or ticket 24.7 is open work any more. Items 1, 2, 2b are
-## DONE. Item 3 (really just ticket 27.8) got the decision it was blocked on
+## ticket 28.13, ticket 24.7, or ticket 28.19 is open work any more. Items 1, 2, 2b
+## are DONE. Item 3 (really just ticket 27.8) got the decision it was blocked on
 ## and stays NOT DONE by that decision, not by anything left to do. Tickets
 ## 28.22 and 30's equal-size defect are both fixed. Ticket 28.13 (the
 ## architecture board) is re-derived at a live commit, with two live bugs it
 ## surfaced also fixed. Item 7 (ccstats polish) is FULLY DONE. **Ticket 24.7
-## (session-start capture freshness) is now FULLY DONE too, 2026-08-23 - see
-## the eleventh-handoff entry at the end of this file for the full account,
-## including TWO real corrections found by testing against real data before
-## calling it shipped: a design fix (do not alarm on the chronic uncaptured
-## count, key it on doctor's own broken-streak instead), and a bigger one -
-## the first build went into `claude-transcript-exporter@gz-claude-code-
-## plugins`, a plugin already RETIRED since ticket 28.19 landed 2026-08-10.
-## The real, live plugin is `cc-capture@cc-warehouse`, in THIS repo at
-## `plugins/cc-capture/`, and that is where the work was redone. Ticket 28.19
-## itself is also DONE (it just was not recorded as such until now).** See
-## the corrections inside each numbered section below for the full account.
+## (session-start capture freshness) is now FULLY DONE, 2026-08-23 - see the
+## eleventh AND twelfth handoff entries at the end of this file for the full
+## account. Short version: the first build went into `claude-transcript-
+## exporter@gz-claude-code-plugins`, a plugin already RETIRED since ticket
+## 28.19 landed 2026-08-10; redone in the real, live plugin,
+## `cc-capture@cc-warehouse` at `plugins/cc-capture/` in THIS repo; verified
+## for real via a Herdr-driven fresh Claude Code session, not just unit tests.
+## Finding that mistake surfaced a SECOND real defect in `ccw doctor` itself -
+## it could report a retired plugin's leftover cache as a working hook - fixed
+## oracle-tests-first, and `doctor` now names which plugin actually serves the
+## hook. A new CLAUDE.md hard rule and two memory files exist specifically so
+## this class of mistake (trusting docs over a tool's own live enabled-state)
+## does not recur, in this repo or elsewhere. The discarded work in
+## `gz-claude-code-plugins` was reverted (not force-pushed, a normal revert
+## commit) and that repo's READMEs now say RETIRED at the top; the GitHub repo
+## itself was NOT archived (operator picked revert+notice over full archive).**
 ## **Pick up from "Also on record, not scheduled" near the end of this file,
 ## or from `CLAUDE.md`'s OPEN/next section**: ticket 28's remaining backlog
 ## items (28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14) are the standing
@@ -1021,17 +1027,88 @@ since the plugin genuinely is in this repo. One test could not exist in the disc
 all: a LIVE check that every `CCW_*` name the wrapper sets is a real name in
 `cc_warehouse.config.ENV_VARS`, importing that module directly rather than hand-mirroring its
 contents. Verified against real data again in the new location: the real machine (310 chronic
-uncaptured, healthy doctor verdict) produces no output and one `"status": "ok"` log line. The old,
-now-dead copy in `gz-claude-code-plugins` was left in place rather than deleted - harmless, inert,
-not the operator's ask this round - and ticket 28.19's own entry in `harness/tickets/28-backlog.md`
-was corrected from open to `DONE 2026-08-10`. Full account:
-`harness/tickets/24-make-capture-work.md`'s "24.7 DONE" section and
-`harness/tickets/28-backlog.md`'s corrected 28.19 entry.
+uncaptured, healthy doctor verdict) produces no output and one `"status": "ok"` log line.
+**"Left in place rather than deleted" below is STALE as of the twelfth handoff - see that section**;
+ticket 28.19's own entry in `harness/tickets/28-backlog.md` was corrected from open to
+`DONE 2026-08-10`. Full account: `harness/tickets/24-make-capture-work.md`'s "24.7 DONE" section
+and `harness/tickets/28-backlog.md`'s corrected 28.19 entry.
 
 Full cc-warehouse suite re-confirmed green after the correction: 1,152 tests, ruff clean, pyright 0
 errors.
 
-**What was NOT done:** nothing from items 1-7, or from tickets 24.7/28.13/28.22/30, remains open
-as of this eleventh handoff. Ticket 28.19 is not open either - it was already done, the record was
-just wrong. The only standing candidate for a future session is ticket 28's backlog register
-(28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14).
+**What was NOT done, as of the eleventh handoff:** nothing from items 1-7, or from tickets
+24.7/28.13/28.22/30, remained open. Ticket 28.19 was not open either - it was already done, the
+record was just wrong. **This was not actually the end of the day - see the twelfth handoff below
+for real-data verification via Herdr, a second real defect found and fixed in `ccw doctor` itself,
+and cleanup of the discarded repo.**
+
+---
+
+**Twelfth handoff, same day, same session, prompted by the operator's own tip ("you can always use
+Herdr to launch a claude code session in a new pane... to do a fresh test without context
+pollution") plus three follow-up questions.**
+
+**Herdr verification, not just unit tests.** Split a sibling pane, started a fresh Claude Code
+session (`herdr agent start`), ran `/plugin marketplace update cc-warehouse` in it (confirmed:
+"Updated 1 marketplace, 1 plugin bumped", and the cache grew a new commit directory,
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<new-hash>/`, already carrying the SessionStart
+entry). Started a SECOND, genuinely fresh session and confirmed via the shared hook log
+(`~/.claude/logs/ccw-hook.log`) that Claude Code's own SessionStart plumbing - not a manual script
+invocation - actually fired `ccw-freshness-check.py` and logged a fresh, correct "ok" line. Closed
+both test panes afterward.
+
+**The operator then asked three questions, all answered by checking live state rather than
+assuming:** (1) had the discarded `gz-claude-code-plugins` commit been reverted - no, not yet, but
+confirmed harmless (`extraKnownMarketplaces` in `~/.claude/settings.json` has NO entry for that
+marketplace at all - fully removed, not just disabled); (2) the full path to `cc-capture` and
+whether it is the same one in this repo - yes, source at
+`plugins/cc-capture/` here, running copy at
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<commit-hash>/`; (3) what could prevent this exact
+mistake from recurring, "not even accidentally".
+
+**Answering (3) surfaced a SECOND real defect, this time in `ccw doctor` itself**, found while
+designing the safeguard rather than assumed: `_hook_commands` globbed every plugin's cached
+`hooks.json` with no regard for whether Claude Code still had that plugin enabled, so a retired
+plugin's leftover cache directory (proven to exist on this exact machine -
+`~/.claude/plugins/cache/gz-claude-code-plugins/claude-transcript-exporter/d8107737a5ee/`, and it
+even carries Claude Code's OWN `.orphaned_at` marker, timestamp 2026-08-10T10:01:39Z, ~23 minutes
+after the ticket 28.19 commit) could still be reported as a working capture hook. Fixed
+oracle-tests-first (3 new tests in `tests/test_doctor.py`, proved red against the pre-fix code:
+a plugin absent from `enabledPlugins`, one explicitly `false`, and the positive case of one that
+really is `true`): `doctor.py` now reads `enabledPlugins` and only counts a plugin-sourced hook when
+its exact `plugin@marketplace` key is `true` there, and the `hook` line now NAMES the serving
+plugin (`found via cc-capture@cc-warehouse: ...`). Verified against real data via the editable dev
+build (`uv run ccw doctor`): correctly ignores the real orphaned `gz-claude-code-plugins` cache and
+correctly names `cc-capture@cc-warehouse`. One incidental fix along the way: a docstring using the
+word "identical" tripped the R8/F6 guarantee-words fence
+(`tests/test_fences.py::test_guarantee_words_cite_their_proving_test`) - reworded rather than
+exempted, since the word was decorative prose, not an actual guarantee this function proves.
+
+**A new hard rule went into `CLAUDE.md`** naming `cc-capture@cc-warehouse` as the only live capture
+plugin and stating the exact check to run (`enabledPlugins`) before touching any hook file in any
+repo. **Two memory files were also written/updated** (outside this repo, in the project's
+Claude-memory directory): `ccw-deployment-on-this-machine.md` gained the plugin-migration facts and
+the `.orphaned_at` timeline; a new `verify-live-state-before-editing-hooks.md` (type: feedback)
+records the general lesson - check a tool's own live enabled-state before editing its
+config, never infer it from a repo's docs - for reuse beyond this repo.
+
+**The operator then chose, from a 3-option question, to "clean it up"**: in
+`gz-claude-code-plugins`, `git revert --no-edit` undid the discarded commit (history preserved,
+nothing force-pushed), and both that repo's top-level README and the plugin's own README gained a
+prominent "RETIRED 2026-08-10" notice pointing at `cc-capture@cc-warehouse` in this repo. Both
+commits pushed.
+
+Five commits this handoff, all pushed to cc-warehouse: the `_run_hook` skip-reporting fix, the
+freshness-check rebuild in the right plugin, the `doctor.py` `enabledPlugins` safeguard, and the
+`CLAUDE.md` hard rule (four separate commits from earlier in the day, listed here for completeness)
+plus none new to cc-warehouse in this specific handoff beyond what the "24.7 DONE" and
+`enabledPlugins` sections above already cover. Two commits pushed to `gz-claude-code-plugins`: the
+revert and the retirement-notice docs commit. Full cc-warehouse suite re-confirmed green after
+every change this handoff: 1,155 tests, ruff clean, pyright 0 errors.
+
+**What was NOT done:** nothing from items 1-7, or from tickets 24.7/28.13/28.19/28.22/30, remains
+open as of this twelfth handoff. The `gz-claude-code-plugins` repo itself was NOT archived on
+GitHub - the operator picked the middle option (revert + retirement notice), not the "archive the
+whole repo too" option, so that remains available as a future ask if wanted but is not done. The
+only standing candidate for a future session is ticket 28's backlog register (28.1, 28.2, 28.3,
+28.9, 28.10, 28.11, 28.12, 28.14).
