@@ -74,11 +74,15 @@ def opts(mode: str) -> RenderOptions:
 
 
 def md(data: bytes, mode: str) -> tuple[str, str]:
-    return render_markdown(data, opts(mode))
+    # render_markdown returns UTF-8 bytes (ticket 28.9, Fix A); decode once
+    # here so every test in this file keeps comparing plain text.
+    full, compact = render_markdown(data, opts(mode))
+    return full.decode("utf-8"), compact.decode("utf-8")
 
 
 def html(data: bytes, mode: str) -> tuple[str, str]:
-    return render_html(data, opts(mode))
+    full, compact = render_html(data, opts(mode))
+    return full.decode("utf-8"), compact.decode("utf-8")
 
 
 # ---------------------------------------------------------------------------

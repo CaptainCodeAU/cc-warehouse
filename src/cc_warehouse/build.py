@@ -253,25 +253,19 @@ def iter_projection_files(
     itself is pinned by `test_manifest_is_yielded_last` in
     `tests/test_archive_incremental.py`.
     """
+    # render_markdown/render_html return UTF-8 bytes directly (ticket 28.9, Fix
+    # A) -- no intermediate str to encode-then-del here any more.
     full_md, compact_md = render.render_markdown(data, options)
-    encoded = full_md.encode("utf-8")
+    yield _TRANSCRIPT_FULL, full_md
     del full_md
-    yield _TRANSCRIPT_FULL, encoded
-    del encoded
-    encoded = compact_md.encode("utf-8")
+    yield _TRANSCRIPT_COMPACT, compact_md
     del compact_md
-    yield _TRANSCRIPT_COMPACT, encoded
-    del encoded
 
     full_html, compact_html = render.render_html(data, options)
-    encoded = full_html.encode("utf-8")
+    yield _CONVERSATION_FULL, full_html
     del full_html
-    yield _CONVERSATION_FULL, encoded
-    del encoded
-    encoded = compact_html.encode("utf-8")
+    yield _CONVERSATION_COMPACT, compact_html
     del compact_html
-    yield _CONVERSATION_COMPACT, encoded
-    del encoded
 
     manifest = render.build_manifest(data, options)
     yield _MANIFEST, json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"

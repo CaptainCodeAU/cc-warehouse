@@ -1103,13 +1103,20 @@ def _elapsed_labels(conv: Conversation) -> list[str | None]:
 
 def _render(
     conv: Conversation, meta: ParsedSession, policy: _Policy, source_hash: str
-) -> str:
+) -> bytes:
     lines = _header(meta, policy, conv, source_hash)
     labels = _elapsed_labels(conv)
     for turn, elapsed in zip(conv.turns, labels, strict=True):
         lines.extend(_render_turn(turn, conv.prompt_count, policy, elapsed))
     lines.extend(_files_index_md(conv))
-    return "\n".join(lines).rstrip() + "\n"
+    # Encode each fragment before joining (ticket 28.9, Fix A): CPython stores
+    # an entire joined str at 4 bytes/char the moment ANY piece contains one
+    # astral-plane character (several of this file's \N{...} icons are), even
+    # though the surrounding ASCII content only needs 1. Joining bytes instead
+    # keeps each fragment's own (small) cost and never materializes one giant
+    # wide-char string.
+    body = b"\n".join(line.encode("utf-8") for line in lines)
+    return body.rstrip() + b"\n"
 
 
 def _full_policy(options: RenderOptions) -> _Policy:
@@ -1182,14 +1189,18 @@ def _compact_policy(options: RenderOptions) -> _Policy:
     )
 
 
-def render_markdown(data: bytes, options: RenderOptions) -> tuple[str, str]:
-    """Return (transcript.md full, transcript.compact.md).
+def render_markdown(data: bytes, options: RenderOptions) -> tuple[bytes, bytes]:
+    """Return (transcript.md full, transcript.compact.md), each UTF-8 bytes.
 
     Both variants are produced by one policy-parameterized core over the shared
     conversation model (parser.build_conversation): the full variant keeps
     thinking, typed tool rows, machinery, and folded system-reminders; the
     compact variant is conversation only. Output is deterministic -- it derives
     from payload internals, never file mtimes (R12).
+
+    Returns bytes, not str (ticket 28.9, Fix A): every caller was encoding the
+    result to UTF-8 immediately anyway, and returning str here would force the
+    astral-plane-icon 4-byte-per-char penalty back onto the whole document.
     """
     conv = build_conversation(data)
     meta = parse_session(data)
@@ -2155,10 +2166,10 @@ def _render_page(
     repo: str | None,
     source_hash: str,
     options: RenderOptions,
-) -> str:
+) -> bytes:
     anchors = _AnchorAllocator()
     whole = _render(conv, meta, policy, source_hash)
-    whole_payload = base64.b64encode(whole.encode("utf-8")).decode("ascii")
+    whole_payload = base64.b64encode(whole).decode("ascii")
     parts = _document_head(_title(meta), options)
     parts.append(f'<div id="whole-transcript" hidden data-copy-src="{whole_payload}"></div>')
     variant = ' <span class="badges">(compact)</span>' if policy.variant_note else ""
@@ -2181,11 +2192,14 @@ def _render_page(
     if date_block:
         parts.append(date_block)
     parts.extend(["</body>", "</html>"])
-    return "\n".join(parts) + "\n"
+    # Same reasoning as _render's final join (ticket 28.9, Fix A): encode each
+    # fragment before joining, so the icons' astral-plane characters cannot
+    # force the entire multi-MB page into 4-byte-per-char storage.
+    return b"\n".join(p.encode("utf-8") for p in parts) + b"\n"
 
 
-def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
-    """Return (conversation.html, conversation.compact.html) contents.
+def render_html(data: bytes, options: RenderOptions) -> tuple[bytes, bytes]:
+    """Return (conversation.html, conversation.compact.html), each UTF-8 bytes.
 
     Both variants are complete single pages built from the shared conversation
     model. The per-block markdown fragments render_markdown joins are the single
@@ -2194,6 +2208,9 @@ def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
     reproduces its transcript.md source verbatim (DESIGN section 6; proven by
     test_copy_as_markdown_payloads_equal_transcript_fragments). The compact
     variant reuses the policy that strips thinking, tools, machinery, reminders.
+
+    Returns bytes, not str (ticket 28.9, Fix A) -- see render_markdown's own
+    docstring for why.
     """
     conv = build_conversation(data)
     meta = parse_session(data)

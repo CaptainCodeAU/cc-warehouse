@@ -54,23 +54,27 @@ def test_the_fixture_really_carries_a_lone_surrogate() -> None:
 @pytest.mark.parametrize("bad", (LONE_HIGH, LONE_LOW))
 def test_a_lone_surrogate_does_not_stop_the_markdown(bad: str) -> None:
     """The regression, stated as the thing that actually failed: the rendered
-    text must be encodable, because that encode is what the write does."""
-    full, compact = render.render_markdown(_session_with(f"x {bad} y"), render.RenderOptions())
-    full.encode("utf-8")
-    compact.encode("utf-8")
+    text must be encodable, because that encode is what the write does.
+
+    render_markdown returns UTF-8 bytes directly now (ticket 28.9, Fix A): the
+    encode that used to happen here, after the call, now happens INSIDE it, so
+    a lone surrogate that survived to this point would raise
+    UnicodeEncodeError from the call itself. Simply calling it is the
+    assertion.
+    """
+    render.render_markdown(_session_with(f"x {bad} y"), render.RenderOptions())
 
 
 @pytest.mark.parametrize("bad", (LONE_HIGH, LONE_LOW))
 def test_a_lone_surrogate_does_not_stop_the_html(bad: str) -> None:
-    full, compact = render.render_html(_session_with(f"x {bad} y"), render.RenderOptions())
-    full.encode("utf-8")
-    compact.encode("utf-8")
+    render.render_html(_session_with(f"x {bad} y"), render.RenderOptions())
 
 
 def test_the_surrogate_becomes_the_replacement_character() -> None:
     """U+FFFD is the standard representation, so a reader sees the conventional
     "something was here and it was broken" glyph rather than a hole."""
     full, _ = render.render_markdown(_session_with(f"a{LONE_HIGH}b"), render.RenderOptions())
+    full = full.decode("utf-8")
     assert REPLACEMENT in full
     assert LONE_HIGH not in full
 
@@ -81,6 +85,7 @@ def test_surrounding_text_survives_intact() -> None:
     full, _ = render.render_markdown(
         _session_with(f"KEEPBEFORE{LONE_HIGH}KEEPAFTER"), render.RenderOptions()
     )
+    full = full.decode("utf-8")
     assert "KEEPBEFORE" in full
     assert "KEEPAFTER" in full
 
@@ -89,6 +94,7 @@ def test_a_well_formed_emoji_is_untouched() -> None:
     """The fix must not touch valid astral characters, which arrive as PROPER
     surrogate pairs in JSON and decode to one legal character."""
     full, _ = render.render_markdown(_session_with("waving 👋 hand"), render.RenderOptions())
+    full = full.decode("utf-8")
     assert "👋" in full
     assert REPLACEMENT not in full
 

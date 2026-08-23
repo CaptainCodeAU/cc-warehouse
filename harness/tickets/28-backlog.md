@@ -277,6 +277,43 @@ here into their own ticket when they are taken up.
   Reproduction scripts saved at `temp/ticket-28.9-render-perf/` (gitignored,
   reusable across sessions).
 
+  **Fix A DONE 2026-08-24 (Fix B not started, separate, riskier).** `_render`
+  and `_render_page` (`render.py`) now encode each fragment to UTF-8 bytes
+  before the final join (`b"\n".join(...)`) instead of joining `str` and
+  encoding afterward; `render_markdown`/`render_html`'s PUBLIC return type
+  changed from `tuple[str, str]` to `tuple[bytes, bytes]`, since every real
+  caller (`build.py`'s two `iter_projection_files` sites) was encoding the
+  result immediately anyway. `build.py` simplified to match (no more
+  encode-then-`del` dance). ~40 call sites across 10 test files updated to
+  decode at the point of use; none of their assertions changed.
+
+  Verified, not assumed: full suite 1,175 passed, ruff clean, pyright 0
+  errors. Output proved BYTE-IDENTICAL before/after on two independent
+  payloads - the synthetic 1.60 MiB repro and a real 8.3 MB session from
+  this machine's own transcripts (`cmp` on all 5 projection files each way,
+  via `git stash`/`stash pop` around the production diff). Peak memory on
+  the synthetic repro dropped from 61.16 MiB to 28.00 MiB (peak/input ratio
+  38.18x -> 17.48x) - better than the ~26 MiB / ~27x this ticket's own plan
+  estimated, because the fix reached BOTH `_render` and `_render_page`, not
+  only the HTML page's own join.
+
+  Real-browser check done per the operator's explicit requirement (not
+  pytest alone): the real 8.3 MB session's `conversation.html` served over
+  `127.0.0.1` and opened in an actual Chrome tab via `claude-in-chrome`.
+  Zero console errors on load and after interaction. All four copy-button
+  levels (row, phase, turn, whole-transcript) clicked and their clipboard
+  content read back programmatically: the whole-transcript button's output
+  is CHARACTER-IDENTICAL to `transcript.md` (545,316 chars, `===` true) and
+  the row/phase/turn buttons' output is each a substring of it, matching
+  `test_copy_as_markdown_payloads_equal_transcript_fragments`'s own
+  guarantee. Icons (astral-plane emoji included) render correctly and
+  round-trip through copy intact.
+
+  Fix B (the four-level base64 duplication, Mechanism 2) is NOT started -
+  it is the riskier half, touches the locked DESIGN section 6 guarantee
+  directly, and per the operator-approved plan needs its own build-then-test
+  pass, not bundled into this one.
+
 - **28.10  Test gaps still open:** symlinked archive root; folder-name
   collision; ENOSPC mid-write; cross-tree reconciliation as a TEST rather than
   a hand-check; rename-then-rebuild for `project.json`.

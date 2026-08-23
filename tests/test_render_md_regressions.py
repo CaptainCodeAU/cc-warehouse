@@ -18,7 +18,15 @@ import json
 from collections.abc import Mapping
 
 from cc_warehouse.parser import build_conversation
-from cc_warehouse.render import RenderOptions, render_markdown
+from cc_warehouse.render import RenderOptions
+from cc_warehouse.render import render_markdown as _render_markdown_bytes
+
+
+def render_markdown(data: bytes, options: RenderOptions) -> tuple[str, str]:
+    """render_markdown returns UTF-8 bytes (ticket 28.9, Fix A); decode once
+    here so every test in this file keeps comparing plain text."""
+    full, compact = _render_markdown_bytes(data, options)
+    return full.decode("utf-8"), compact.decode("utf-8")
 
 
 def payload(*entries: Mapping[str, object]) -> bytes:

@@ -184,6 +184,28 @@ fix change, does it change functionality" and were told Fix A is a pure invisibl
 while Fix B is designed to look the same but touches a locked guarantee and needs real proof,
 not just a green test suite.
 
+**FIX A DONE 2026-08-24, FIX B NOT STARTED.** `_render`/`_render_page` in `render.py` now
+encode each fragment to UTF-8 bytes before the final join instead of joining `str` first;
+`render_markdown`/`render_html` return `tuple[bytes, bytes]` (were `tuple[str, str]`); `build.py`
+simplified to match; ~40 test call sites across 10 files updated to decode at point of use, no
+assertion logic changed. All three gates green (1,175 tests, ruff clean, pyright 0 errors).
+Output proved byte-identical before/after on BOTH the synthetic repro and a real 8.3 MB session
+from this machine (`cmp` via `git stash`). Peak memory on the synthetic repro: 61.16 MiB -> 28.00
+MiB (38.18x -> 17.48x of input), beating the ~26 MiB estimate because the fix reached both
+`_render` and `_render_page`. Real-browser check done (not skipped): the real session's
+`conversation.html` served over loopback and opened in an actual Chrome tab via
+`claude-in-chrome` - zero console errors, and all four copy-button levels (row/phase/turn/whole)
+clicked with clipboard content read back programmatically: the whole-transcript copy is
+character-identical to `transcript.md` (545,316 chars), the finer levels are each a substring of
+it, matching the locked `test_copy_as_markdown_payloads_equal_transcript_fragments` guarantee.
+Full account and exact numbers: `harness/tickets/28-backlog.md`'s 28.9 entry.
+
+Fix B is unstarted and is its own separate build-then-test pass, per the plan above - it is
+the riskier half and touches the DESIGN section 6 contract guarantee directly. Do not start it
+without the operator's go-ahead in a given session, since picking between the two Fix B shapes
+(server-side reuse vs. client-side reconstruction) is itself a decision this file says to make
+explicit, not default silently.
+
 Update `harness/tickets/28-backlog.md`'s 28.9 entry and this section once each fix lands,
 the same way every other closed ticket in this file has been annotated in place.
 

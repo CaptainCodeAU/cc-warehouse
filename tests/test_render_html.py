@@ -18,7 +18,10 @@ REMINDER = "secret internal reminder text"
 
 
 def render_pair() -> tuple[str, str]:
-    return render_html(rich_session(), RenderOptions())
+    # render_html returns UTF-8 bytes (ticket 28.9, Fix A); decode once here so
+    # every test in this file keeps comparing plain text.
+    full, compact = render_html(rich_session(), RenderOptions())
+    return full.decode("utf-8"), compact.decode("utf-8")
 
 
 def test_both_variants_are_complete_single_pages() -> None:
@@ -42,6 +45,7 @@ def test_copy_as_markdown_payloads_equal_transcript_fragments() -> None:
     """SPEC 7 KEEP (oracle required): every data-copy-src payload equals the
     corresponding transcript.md fragment byte for byte."""
     full_md, _ = render_markdown(rich_session(), RenderOptions())
+    full_md = full_md.decode("utf-8")
     full_html, _ = render_pair()
     payloads = re.findall(r'data-copy-src="([^"]+)"', full_html)
     assert payloads, "no copy-as-markdown payloads found"

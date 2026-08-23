@@ -68,9 +68,22 @@ def _diff(name: str, expected: str, produced: str) -> str:
     return f"{name} is no longer byte-identical:\n" + "\n".join(list(delta)[:60])
 
 
+def _md(data: bytes, options: render.RenderOptions) -> tuple[str, str]:
+    """render_markdown returns UTF-8 bytes (ticket 28.9, Fix A); every test in
+    this file compares text, so decode once at this one seam."""
+    full, compact = render.render_markdown(data, options)
+    return full.decode("utf-8"), compact.decode("utf-8")
+
+
+def _html(data: bytes, options: render.RenderOptions) -> tuple[str, str]:
+    """Same reasoning as _md, for render_html."""
+    full, compact = render.render_html(data, options)
+    return full.decode("utf-8"), compact.decode("utf-8")
+
+
 def _rendered(data: bytes, options: render.RenderOptions) -> dict[str, str]:
-    full_md, compact_md = render.render_markdown(data, options)
-    full_html, compact_html = render.render_html(data, options)
+    full_md, compact_md = _md(data, options)
+    full_html, compact_html = _html(data, options)
     produced = (full_md, compact_md, full_html, compact_html)
     return dict(zip(PROJECTION_FILES, produced, strict=True))
 
@@ -202,7 +215,7 @@ def test_unsuffixed_subagents_off_actually_strips_the_full_variant() -> None:
     full variant. Named separately from the loop above because four of the five
     classes lose only their block while sub-agents also lose their phase."""
     data = matrix_session()
-    full_off, _ = render.render_markdown(data, render.RenderOptions(subagents=False))
+    full_off, _ = _md(data, render.RenderOptions(subagents=False))
     assert "SUBAGENTMARKER" not in full_off
     assert "SUBAGENTREPLY" not in full_off
 
@@ -228,16 +241,16 @@ def test_the_compact_markdown_note_never_denies_what_it_carries() -> None:
     now shrinks to match the policy.
     """
     data = matrix_session()
-    _, default_note = render.render_markdown(data, render.RenderOptions())
+    _, default_note = _md(data, render.RenderOptions())
     assert "no thinking, tools, or reminders." in default_note
 
-    _, with_tools = render.render_markdown(
+    _, with_tools = _md(
         data, render.RenderOptions(tool_output_compact=True)
     )
     assert "TOOLSTDOUTMARKER" in with_tools
     assert "tools" not in _variant_line(with_tools)
 
-    _, with_reminders = render.render_markdown(
+    _, with_reminders = _md(
         rich_session(), render.RenderOptions(reminders_compact="show")
     )
     line = _variant_line(with_reminders)
@@ -256,10 +269,10 @@ def test_the_compact_html_meta_note_never_denies_what_it_carries() -> None:
     fixing the instance is what this test pins.
     """
     data = matrix_session()
-    _, default_page = render.render_html(data, render.RenderOptions())
+    _, default_page = _html(data, render.RenderOptions())
     assert "compact variant, thinking and tool detail omitted" in default_page
 
-    _, with_tools = render.render_html(data, render.RenderOptions(tool_output_compact=True))
+    _, with_tools = _html(data, render.RenderOptions(tool_output_compact=True))
     assert "TOOLSTDOUTMARKER" in with_tools, "the page really does carry tool blocks"
     assert "tool detail omitted" not in with_tools
     assert "compact variant, thinking omitted" in with_tools
@@ -297,7 +310,7 @@ def test_no_thinking_render_toggle_exists_on_either_variant() -> None:
     data = matrix_session()
     for position in ("caption", "marker", "off"):
         options = render.RenderOptions(thinking_withheld=position)
-        full_md, compact_md = render.render_markdown(data, options)
+        full_md, compact_md = _md(data, options)
         assert "deep thoughts about widgets" in full_md, position
         assert "deep thoughts about widgets" not in compact_md, position
 

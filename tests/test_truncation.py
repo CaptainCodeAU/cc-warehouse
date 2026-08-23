@@ -54,8 +54,10 @@ def _session(body: str) -> bytes:
 
 
 def _md(body: str, cap: int) -> str:
+    # render_markdown returns UTF-8 bytes (ticket 28.9, Fix A); decode once
+    # here so every test in this file keeps comparing plain text.
     full, _compact = render.render_markdown(_session(body), _options(cap))
-    return full
+    return full.decode("utf-8")
 
 
 def _options(cap: int, **extra: object) -> render.RenderOptions:
@@ -85,7 +87,7 @@ def test_an_explicit_zero_equals_absent() -> None:
     render exactly what an unset key renders."""
     assert _md(MULTILINE_BODY, 0) == _md(MULTILINE_BODY, 0)
     absent = render.render_markdown(_session(MULTILINE_BODY), render.RenderOptions())[0]
-    assert _md(MULTILINE_BODY, 0) == absent
+    assert _md(MULTILINE_BODY, 0) == absent.decode("utf-8")
 
 
 @pytest.mark.parametrize("name", (
@@ -100,10 +102,10 @@ def test_no_cap_keeps_the_anchor(name: str) -> None:
     full_md, compact_md = render.render_markdown(data, options)
     full_html, compact_html = render.render_html(data, options)
     produced: dict[str, str] = {
-        "transcript.md": full_md,
-        "transcript.compact.md": compact_md,
-        "conversation.html": full_html,
-        "conversation.compact.html": compact_html,
+        "transcript.md": full_md.decode("utf-8"),
+        "transcript.compact.md": compact_md.decode("utf-8"),
+        "conversation.html": full_html.decode("utf-8"),
+        "conversation.compact.html": compact_html.decode("utf-8"),
     }
     assert produced[name] == golden.read_text(encoding="utf-8")
 
@@ -168,6 +170,7 @@ def test_the_marker_reaches_the_html_variant_too() -> None:
     """One policy, both emitters. Slice 14's lesson: a self-describing string
     fixed in one emitter and not the other is the recurring defect here."""
     full, _compact = render.render_html(_session(MULTILINE_BODY), _options(100))
+    full = full.decode("utf-8")
     assert "stored" in full.lower()
     omitted = _manifest_loss(MULTILINE_BODY, 100)["truncated_chars"]
     assert str(omitted) in full
@@ -241,6 +244,7 @@ def test_the_cap_reaches_a_matrix_opened_compact_variant() -> None:
     renders, "full by default; compact if the matrix opened it"."""
     options = _options(100, tool_output_compact=True)
     _full, compact = render.render_markdown(_session(BLOB_BODY), options)
+    compact = compact.decode("utf-8")
     assert "z" in compact, "the matrix did not open tool output in compact"
     assert BLOB_BODY not in compact, "the cap did not reach the compact variant"
 

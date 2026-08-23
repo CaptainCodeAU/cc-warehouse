@@ -52,14 +52,16 @@ SIZE_LETTER = {"small": "s", "medium": "m", "large": "l"}
 
 
 def _pages(**chrome: object) -> dict[str, str]:
+    # render_markdown/render_html return UTF-8 bytes (ticket 28.9, Fix A);
+    # decode once here so every test in this file keeps comparing plain text.
     options = render.RenderOptions(**chrome)  # pyright: ignore[reportArgumentType]
     full_md, compact_md = render.render_markdown(matrix_session(), options)
     full_html, compact_html = render.render_html(matrix_session(), options)
     return {
-        "transcript.md": full_md,
-        "transcript.compact.md": compact_md,
-        "conversation.html": full_html,
-        "conversation.compact.html": compact_html,
+        "transcript.md": full_md.decode("utf-8"),
+        "transcript.compact.md": compact_md.decode("utf-8"),
+        "conversation.html": full_html.decode("utf-8"),
+        "conversation.compact.html": compact_html.decode("utf-8"),
     }
 
 

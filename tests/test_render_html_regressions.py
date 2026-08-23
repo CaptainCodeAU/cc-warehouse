@@ -13,7 +13,15 @@ clusters the oracle did not cover. Cited in harness/tickets/07-render-html.md.
 import json
 from collections.abc import Mapping
 
-from cc_warehouse.render import RenderOptions, render_html
+from cc_warehouse.render import RenderOptions
+from cc_warehouse.render import render_html as _render_html_bytes
+
+
+def render_html(data: bytes, options: RenderOptions) -> tuple[str, str]:
+    """render_html returns UTF-8 bytes (ticket 28.9, Fix A); decode once here so
+    every test in this file keeps comparing plain text."""
+    full, compact = _render_html_bytes(data, options)
+    return full.decode("utf-8"), compact.decode("utf-8")
 
 
 def payload(*entries: Mapping[str, object]) -> bytes:
@@ -115,18 +123,18 @@ def test_hljs_modes_control_the_one_external_reference() -> None:
         Path(render.__file__).parent / "vendor" / "highlight.min.js"
     ).read_text(encoding="utf-8")
 
-    cdn, _ = render.render_html(data, render.RenderOptions(hljs="cdn"))
+    cdn, _ = render_html(data, render.RenderOptions(hljs="cdn"))
     assert cdn.count("cdnjs.cloudflare.com") == 1, "personal pages keep exactly one CDN ref"
     assert "onerror" in cdn, "the graceful fallback was dropped"
     assert vendored not in cdn, "the cdn mode shipped the payload too"
 
-    inline, inline_compact = render.render_html(data, render.RenderOptions(hljs="inline"))
+    inline, inline_compact = render_html(data, render.RenderOptions(hljs="inline"))
     for page in (inline, inline_compact):
         assert "cdnjs.cloudflare.com" not in page, "an inlined page still calls out to a CDN"
         assert vendored in page, "the inlined payload is not the vendored file verbatim"
         assert "hljs.highlightAll()" in page, "highlighting is not actually invoked"
 
-    off, _ = render.render_html(data, render.RenderOptions(hljs="off"))
+    off, _ = render_html(data, render.RenderOptions(hljs="off"))
     assert "cdnjs.cloudflare.com" not in off
     assert vendored not in off, "hljs=off still shipped the payload"
 

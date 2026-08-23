@@ -241,18 +241,20 @@ def unhandled_blocks_session(session_id: str = UUID_BLOCKS) -> bytes:
 
 
 def full_markdown(data: bytes) -> str:
+    # render_markdown returns UTF-8 bytes (ticket 28.9, Fix A); decode once here
+    # so every test in this file keeps comparing plain text.
     full, _compact = render_markdown(data, RenderOptions())
-    return full
+    return full.decode("utf-8")
 
 
 def compact_markdown(data: bytes) -> str:
     _full, compact = render_markdown(data, RenderOptions())
-    return compact
+    return compact.decode("utf-8")
 
 
 def full_html(data: bytes) -> str:
     page, _compact = render_html(data, RenderOptions())
-    return page
+    return page.decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
