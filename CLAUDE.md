@@ -18,6 +18,20 @@ edits to the principal instead.
 
 ## Hard rules
 
+- **THE ONLY LIVE CAPTURE PLUGIN IS `cc-capture@cc-warehouse`, at `plugins/cc-capture/`
+  IN THIS REPO** (moved here 2026-08-10, ticket 28.19). Before editing ANY Claude Code
+  hook/plugin file, in this repo or any other, run
+  `uv run python3 -c "import json; print(json.load(open('$HOME/.claude/settings.json'))['enabledPlugins'])"`
+  and confirm the target plugin's `plugin@marketplace` key is `true` there. Do not
+  infer "which plugin is live" from a CLAUDE.md narrative, a ticket's prose, or which
+  repo "looks current" - all three were stale on 2026-08-23 and a session built a real
+  feature (ticket 24.7) into `claude-transcript-exporter@gz-claude-code-plugins`, a
+  plugin Claude Code had already fully removed from `enabledPlugins` two weeks earlier.
+  `ccw doctor`'s `hook` line now names the live plugin directly (`found via
+  cc-capture@cc-warehouse: ...`) as a faster check than reading settings.json by hand -
+  a stale/orphaned plugin's leftover cache can no longer be mistaken for it (fixed the
+  same day, `src/cc_warehouse/doctor.py`'s `enabledPlugins` gate). See
+  `harness/tickets/24-make-capture-work.md`'s "24.7 DONE" section for the full account.
 - Python 3.12+, **stdlib-only runtime**. Tests may import pytest, nothing else
   third-party.
 - **Oracle tests before implementation.** Never port tests from the specimen suite.
