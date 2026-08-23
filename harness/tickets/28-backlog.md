@@ -357,10 +357,26 @@ secret-shaped strings, no data files tracked, 127 files).
   payload on stdin. This is the exact failure that hit the old plugin, where the
   colliding package happened to be harmless.
 
-- **28.19  Move the plugin into this repo.** `plugins/<name>/` plus a root
-  `.claude-plugin/marketplace.json`. Documented and normal: Anthropic's own
-  `anthropics/claude-code` carries a marketplace manifest at its root while
-  being a software project. Removes the cross-repo drift that caused the
-  ten-day outage. Note the plugin name is an immutable slug once published, so
-  the final name must be chosen before the first publish, and PolyForm
-  Noncommercial may sit awkwardly with a community-marketplace submission.
+- **28.19  Move the plugin into this repo. DONE 2026-08-10 (`4b8dde4`).**
+  `plugins/<name>/` plus a root `.claude-plugin/marketplace.json`. Documented
+  and normal: Anthropic's own `anthropics/claude-code` carries a marketplace
+  manifest at its root while being a software project. Removes the cross-repo
+  drift that caused the ten-day outage. Note the plugin name is an immutable
+  slug once published, so the final name must be chosen before the first
+  publish, and PolyForm Noncommercial may sit awkwardly with a
+  community-marketplace submission.
+
+  Installed as `cc-capture@cc-warehouse`, a deliberately different slug from
+  the old `claude-transcript-exporter@gz-claude-code-plugins` so both could be
+  installed and verified side by side during the migration. **Verified
+  2026-08-23** (found while working ticket 24.7 in the wrong place first):
+  `~/.claude/settings.json`'s `enabledPlugins` carries `"cc-capture@cc-warehouse":
+  true` and no entry at all for the old slug - it is not merely disabled, it is
+  gone from the enabled set. This ticket's own CLOSING note, and CLAUDE.md's
+  OPEN/next list, had both gone stale by still calling this open; corrected the
+  same day ticket 24.7's freshness signal was added to the now-current
+  `plugins/cc-capture/` in-repo plugin. `plugins/` and `.claude-plugin/` are
+  excluded from ruff, pyright, and the sdist (pyproject.toml), but ARE covered
+  by this repo's own oracle suite as of ticket 24.7 (`tests/test_cc_capture_
+  freshness.py`), which is the whole point this ticket's own text predicted:
+  "removes the cross-repo drift."

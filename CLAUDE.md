@@ -265,16 +265,23 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   substring `ccw`, so 24.7's stated freshness gap is at least partly closed by something
   this repo does not own or control.
   **24.7 IS NOW FULLY DONE, 2026-08-23, owned by this project rather than borrowed from
-  `ccw-watch`.** A new `SessionStart` hook, `ccw-freshness-check.py`, ships in the plugin
-  (`gz-claude-code-plugins`, registered in that repo's `hooks.json` beside the existing
-  `SessionEnd` capture hook) and reads `ccw doctor`'s own PASS/FAIL verdict, escalating on
-  how many consecutive session-starts in a row it has been broken, clearing the moment it
-  is fixed. Corrected from the ticket's own literal wording after running the first draft
+  `ccw-watch`.** A new `SessionStart` hook, `ccw-freshness-check.py`, ships in
+  `plugins/cc-capture/hooks/` (THIS repo, registered in that plugin's own `hooks.json`
+  beside the existing `SessionEnd` capture hook) and reads `ccw doctor`'s own PASS/FAIL
+  verdict, escalating on how many consecutive session-starts in a row it has been broken,
+  clearing the moment it is fixed. **It was FIRST built in the wrong place** -
+  `gz-claude-code-plugins`, home of `claude-transcript-exporter`, a plugin already retired
+  since ticket 28.19 moved cc-warehouse's real plugin into this repo on 2026-08-10
+  (`4b8dde4`, installed as `cc-capture@cc-warehouse`; `~/.claude/settings.json`'s
+  `enabledPlugins` has no entry at all for the old slug) - and redone here once that was
+  found. Also corrected from the ticket's own literal wording after running the first draft
   against real data: it does NOT alarm on the raw `Uncaptured: N session(s)` figure, which
   sits at 250-350 on this machine permanently and which `doctor.py` itself treats as
   non-blocking - a threshold on that number alone printed ALERT every session on a
-  perfectly healthy install. Full account: `harness/tickets/24-make-capture-work.md`'s
-  "24.7 DONE 2026-08-23" section. **`ccw doctor`'s TEXT OUTPUT IS THEREFORE A PUBLIC
+  perfectly healthy install. Ticket 28.19's own entry in `harness/tickets/28-backlog.md` was
+  itself stale (recorded open when it had shipped two weeks earlier) and is corrected too.
+  Full account: `harness/tickets/24-make-capture-work.md`'s "24.7 DONE 2026-08-23" section.
+  **`ccw doctor`'s TEXT OUTPUT IS THEREFORE A PUBLIC
   COMPATIBILITY SURFACE, not an internal detail**: `ccw-watch` parses the `hook` line's
   wording and the `Uncaptured: N session(s)` figure with a regex. Changing that wording or
   dropping that figure breaks an external consumer silently. This dependency is also the

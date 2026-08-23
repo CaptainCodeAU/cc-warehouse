@@ -1,5 +1,5 @@
 {
-  "description": "Capture the session into cc-warehouse on session end",
+  "description": "Capture the session into cc-warehouse on session end; warn at session start if capture has fallen behind",
   "hooks": {
     "SessionEnd": [
       {
@@ -8,6 +8,17 @@
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py",
             "timeout": 45
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-freshness-check.py",
+            "timeout": 20
           }
         ]
       }

@@ -9,13 +9,20 @@
 ## surfaced also fixed. Item 7 (ccstats polish) is FULLY DONE. **Ticket 24.7
 ## (session-start capture freshness) is now FULLY DONE too, 2026-08-23 - see
 ## the eleventh-handoff entry at the end of this file for the full account,
-## including a real design correction found by testing against real data
-## before shipping.** See the corrections inside each numbered section below
-## for the full account of each.
+## including TWO real corrections found by testing against real data before
+## calling it shipped: a design fix (do not alarm on the chronic uncaptured
+## count, key it on doctor's own broken-streak instead), and a bigger one -
+## the first build went into `claude-transcript-exporter@gz-claude-code-
+## plugins`, a plugin already RETIRED since ticket 28.19 landed 2026-08-10.
+## The real, live plugin is `cc-capture@cc-warehouse`, in THIS repo at
+## `plugins/cc-capture/`, and that is where the work was redone. Ticket 28.19
+## itself is also DONE (it just was not recorded as such until now).** See
+## the corrections inside each numbered section below for the full account.
 ## **Pick up from "Also on record, not scheduled" near the end of this file,
 ## or from `CLAUDE.md`'s OPEN/next section**: ticket 28's remaining backlog
-## items are the standing candidate. Nothing else from items 1-7, or from
-## tickets 24.7/28.13/28.22/30, is open.
+## items (28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14) are the standing
+## candidate. Nothing else from items 1-7, or from tickets
+## 24.7/28.13/28.19/28.22/30, is open.
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -761,8 +768,15 @@ like it should help. `README.md` documents the new file and flag.
   optional secret redaction on personal projections (28.2), `--limit` on sweep
   (28.3), `render_html` costing 74x the payload (28.9), test gaps (28.10),
   markdown/HTML for sub-agents (28.11), re-homing an orphaned sub-agent when
-  its parent arrives (28.12), `prefers-color-scheme` for shared pages (28.14),
-  move the plugin into this repo (28.19).
+  its parent arrives (28.12), `prefers-color-scheme` for shared pages (28.14).
+  **28.19 was ALREADY DONE (2026-08-10, `4b8dde4`) and this list was stale about
+  it until 2026-08-23** - the plugin has lived in-repo at `plugins/cc-capture/`
+  for two weeks, installed as `cc-capture@cc-warehouse`; the old
+  `claude-transcript-exporter@gz-claude-code-plugins` is gone from
+  `~/.claude/settings.json`'s `enabledPlugins` entirely, not merely disabled.
+  Found the hard way: ticket 24.7's freshness signal was first built against
+  the old, dead plugin before this was caught and the work redone in the
+  right place - see the eleventh-handoff correction below.
 - **Ticket 31's inherited open question:** the lock-contention mechanism is
   still UNPROVEN. Debug logging shipped; the retry loop was deliberately not
   written until the real exception is observed. Do not design a fix for an
@@ -989,6 +1003,35 @@ local path would violate this project's own "no personal machine paths" rule): t
 Full cc-warehouse suite re-confirmed green after the fix: 1,138 tests, ruff clean, pyright 0
 errors.
 
+**CORRECTION, same handoff, found immediately after the operator read the summary above:** the
+SessionStart hook had been built and pushed into the WRONG, DEAD plugin. `claude-transcript-
+exporter@gz-claude-code-plugins` was already retired - ticket 28.19 had moved the plugin into this
+very repo two weeks earlier (2026-08-10, `4b8dde4`, installed as `cc-capture@cc-warehouse`), and
+this file's own "Also on record" list and CLAUDE.md's OPEN/next section were both stale about it,
+still calling 28.19 open. Proof: `~/.claude/settings.json`'s `enabledPlugins` carries only
+`"cc-capture@cc-warehouse": true` - the old slug is not merely `false`, it is absent entirely, and
+the plugin cache for it is pinned to a commit from before this session even started.
+
+Redone in the right place: `ccw-freshness-check.py` and the `SessionStart` hooks.json entry now
+live in `plugins/cc-capture/hooks/` (this repo), identical logic to the discarded copy. This time
+the oracle tests landed inside cc-warehouse's OWN gated suite
+(`tests/test_cc_capture_freshness.py`, pytest, 14 tests) instead of a hand-rolled `unittest` file in
+a separate repo - the original ticket's "the fences belong in this repo" is now literally true,
+since the plugin genuinely is in this repo. One test could not exist in the discarded version at
+all: a LIVE check that every `CCW_*` name the wrapper sets is a real name in
+`cc_warehouse.config.ENV_VARS`, importing that module directly rather than hand-mirroring its
+contents. Verified against real data again in the new location: the real machine (310 chronic
+uncaptured, healthy doctor verdict) produces no output and one `"status": "ok"` log line. The old,
+now-dead copy in `gz-claude-code-plugins` was left in place rather than deleted - harmless, inert,
+not the operator's ask this round - and ticket 28.19's own entry in `harness/tickets/28-backlog.md`
+was corrected from open to `DONE 2026-08-10`. Full account:
+`harness/tickets/24-make-capture-work.md`'s "24.7 DONE" section and
+`harness/tickets/28-backlog.md`'s corrected 28.19 entry.
+
+Full cc-warehouse suite re-confirmed green after the correction: 1,152 tests, ruff clean, pyright 0
+errors.
+
 **What was NOT done:** nothing from items 1-7, or from tickets 24.7/28.13/28.22/30, remains open
-as of this eleventh handoff. The only standing candidate for a future session is ticket 28's
-backlog register (28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14, 28.19).
+as of this eleventh handoff. Ticket 28.19 is not open either - it was already done, the record was
+just wrong. The only standing candidate for a future session is ticket 28's backlog register
+(28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14).

@@ -257,9 +257,10 @@ speak - `notify.SPEAKING_STATUSES` is unchanged). Oracle test:
 `tests/test_capture.py::test_kill_switch_reports_skipped_rather_than_silently`,
 proved red against the pre-fix code, green after.
 
-**The plugin (`gz-claude-code-plugins`, a different repo).** A new
-`SessionStart` hook, `ccw-freshness-check.py`, registered in `hooks.json`
-alongside the existing `SessionEnd` capture hook.
+**The plugin - FIRST BUILT IN THE WRONG, DEAD REPO, then redone. See the
+correction at the end of this section before reading the rest of this one at
+face value.** A new `SessionStart` hook, `ccw-freshness-check.py`, registered
+in `hooks.json` alongside the existing `SessionEnd` capture hook.
 
 A real design correction, found by running the first draft against this
 machine's actual data rather than trusting the ticket's literal wording: "reads
@@ -285,24 +286,39 @@ that fails) escalates mild -> WARNING (streak 2-4) -> ALERT (streak 5+), then
 goes silent and resets to streak 0 the moment the fake doctor reports healthy
 again.
 
-**The "belongs in this repo" note above did not hold.** The wrapper files
-physically live in `gz-claude-code-plugins`, a separate git repository on
-disk; hardcoding that repo's local path into a cc-warehouse test would break
-for anyone who clones this repo without that sibling checkout at that exact
-path, which is the same class of problem this project's own "no personal
-machine paths" rule exists to prevent. The oracle tests instead live in that
-other repo, as its own first test file
-(`gz-claude-code-plugins/tests/test_freshness_check.py`, stdlib `unittest`,
-14 tests, no dependency added), scanning that repo's own `hooks/` directory
-with relative paths. All 14 proved green; the `uv tool run` fence and the
-`CCW_*` bijection check both scan real files rather than trusting a comment.
-The `CCW_*` bijection is necessarily a hand-kept mirror of
-`cc_warehouse.config.ENV_VARS` rather than a live cross-repo import - there is
-no dependency between the two repos to make it otherwise - so it catches a
-wrapper-side typo but not a rename made only on the cc-warehouse side.
+**THE CORRECTION, found immediately after the paragraphs above shipped:**
+`gz-claude-code-plugins` is `claude-transcript-exporter`'s repo, and that
+plugin was ALREADY RETIRED - ticket 28.19 moved cc-warehouse's real capture
+plugin into THIS repo on 2026-08-10 (`4b8dde4`), installed as
+`cc-capture@cc-warehouse`. Proof: `~/.claude/settings.json`'s `enabledPlugins`
+carries `"cc-capture@cc-warehouse": true` and no entry at all for the old
+slug - not disabled, absent. Every paragraph above this one describes real,
+tested, working code, sitting in a plugin Claude Code no longer loads on this
+machine. It was left in place (harmless, inert - see `harness/tickets/
+28-backlog.md`'s corrected 28.19 entry) rather than reverted, since the
+operator had not asked for that repo touched at all and undoing a harmless
+commit is its own risk for no benefit.
 
-Full suite re-confirmed green in cc-warehouse after the fix: 1,138 tests,
-ruff clean, pyright 0 errors.
+The real work: identical `ccw-freshness-check.py` logic, this time in
+`plugins/cc-capture/hooks/` (this repo) with a matching `SessionStart` entry
+in that plugin's own `hooks.json`. This finally makes the ORIGINAL "the
+fences belong in this repo" note true rather than aspirational: the oracle
+tests are `tests/test_cc_capture_freshness.py` (14 tests, this repo's own
+pytest suite, not a hand-rolled `unittest` file elsewhere), scanning
+`plugins/cc-capture/hooks/` with paths relative to this repo. One test is
+strictly better than what the discarded copy could do: the `CCW_*` bijection
+imports `cc_warehouse.config.ENV_VARS` LIVE rather than hand-mirroring it,
+since the two now share one repo and one dependency graph. `plugins/` and
+`.claude-plugin/` stay excluded from ruff, pyright, and the sdist
+(pyproject.toml - the hook runs under whatever `python3` the system
+provides, not this project's py312 target), but are now covered by this
+repo's own oracle suite for the first time. Verified against real data again
+in the correct location: 310 chronic uncaptured sessions with a healthy
+doctor verdict still prints nothing, through the real file this machine's
+plugin cache will actually load once updated.
+
+Full suite re-confirmed green in cc-warehouse after the correction: 1,152
+tests, ruff clean, pyright 0 errors.
 
 ## Why there is a `ticket-24` tag on a docs commit
 

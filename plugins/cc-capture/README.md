@@ -39,6 +39,15 @@ The wrapper is deliberately thin. It resolves an executable, runs it, and report
 Everything that could be a decision is a decision in `ccw`, where it is covered by
 the oracle suite.
 
+On `SessionStart`, `ccw-freshness-check.py` runs `ccw doctor` and, only if its
+verdict is unhealthy, prints one line into the next session's context. It
+escalates the longer that stays true (a small streak kept in
+`~/.claude/logs/ccw-freshness-state.json`) and goes silent again the moment
+`ccw doctor` is healthy. It does NOT alarm on the ordinary "Uncaptured: N
+session(s)" backlog figure `ccw doctor` also prints - that number sits at a
+few hundred on a perfectly healthy install, and `ccw doctor` itself does not
+treat it as a failure either. Oracle tests: `tests/test_cc_capture_freshness.py`.
+
 ## Why it lives in the cc-warehouse repository
 
 It used to live in a separate marketplace repository, and that separation is what
@@ -91,3 +100,6 @@ tail -5 ~/.claude/logs/ccw-hook.log # what happened on the last few session ends
 A `hook` line reading FAIL means no capture hook is registered at all. A `fired`
 line reading FAIL means one is registered but has never run, which usually means
 the session has not ended since you installed it.
+
+`~/.claude/logs/ccw-hook.log` also carries one line per session-start freshness
+check, tagged `"source": "ccw-freshness-check"`.
