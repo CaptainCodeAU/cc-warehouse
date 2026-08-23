@@ -146,6 +146,31 @@ def test_a_smaller_payload_is_refused_and_the_refusal_is_recorded(tmp_path: Path
     ]
 
 
+def test_an_equal_size_content_mismatch_is_refused_and_recorded(tmp_path: Path) -> None:
+    """Ticket 30's flagged case, closed 2026-08-23: same SIZE as the archived
+    payload is not the same thing as same BYTES (F1). A distinct field from
+    `refused_smaller` (`refused_equal_size`), and a distinct manifest reason,
+    because F6 says the reason is never allowed to go silent OR be misreported."""
+    archived = session_with(UUID_A, prompt="Do the thing")
+    offered = session_with(UUID_A, prompt="Do the OTHER")
+    assert len(offered) == len(archived), "fixture precondition: equal length"
+    assert offered != archived, "fixture precondition: different content"
+
+    archive.write_session_folder(tmp_path, LABEL, archived, OPTS, ZONE)
+    result = archive.write_session_folder(tmp_path, LABEL, offered, OPTS, ZONE)
+
+    assert result.refused_equal_size
+    assert not result.refused_smaller
+    assert result.jsonl.read_bytes() == archived
+    manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
+    assert "replace_refused" in manifest
+    assert manifest["replace_refused"]["reason"] != (
+        "a re-captured payload was smaller than the archived one"
+    ), "an equal-size mismatch must not be reported as the smaller-payload case"
+    assert manifest["replace_refused"]["archived_bytes"] == len(archived)
+    assert manifest["replace_refused"]["offered_bytes"] == len(offered)
+
+
 def test_re_writing_an_identical_payload_leaves_the_jsonl_untouched(tmp_path: Path) -> None:
     """Idempotence: the migration has to be safe to run twice, and a rewrite
     that churns mtimes for nothing would make a backup tool think every session
@@ -157,6 +182,7 @@ def test_re_writing_an_identical_payload_leaves_the_jsonl_untouched(tmp_path: Pa
     assert second.jsonl.stat().st_mtime_ns == before
     assert not second.replaced
     assert not second.refused_smaller
+    assert not second.refused_equal_size
 
 
 # ---------------------------------------------------------------------------

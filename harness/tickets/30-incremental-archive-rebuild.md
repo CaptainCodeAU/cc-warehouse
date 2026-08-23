@@ -122,3 +122,36 @@ beside them still holds the OLD bytes. Pre-existing, in ticket 29's family
 (mechanism 2 fixed the size-known-different case; this is the equal-size case),
 unrelated to and unchanged by this ticket. Recorded rather than folded into an
 unrelated fix.
+
+**CLOSED 2026-08-23.** `write_session_folder` now reads the existing JSONL's
+bytes (not just its size) whenever the offered payload is the same length, and
+compares content directly: identical bytes still take the true no-op path
+(unchanged, no mtime churn - the common case, proved to still hold by
+`test_re_writing_an_identical_payload_leaves_the_jsonl_untouched`); different
+bytes now take the SAME conservative branch as a smaller payload (R5) - the
+JSONL is left alone and the fact is recorded in the manifest with its own
+reason string ("...same size...but had different content"), distinct from the
+smaller-payload wording so the two causes are never conflated. A new
+`FolderResult.refused_equal_size` field (and a matching `MigrationReport`
+list/summary line) keeps this reason from being folded into `refused_smaller`,
+which would have misreported it.
+
+Scoped to `write_session_folder` only - `write_source` (the hook's synchronous
+JSONL-only durability write) and `write_subagent` share the same "equal size
+assumed equal content" pattern in their own local decisions, but neither
+renders a second set of files that could disagree with the JSONL, so neither
+reproduces the actual failure mode (`ccw archive --verify` reporting "JSONL
+does not match manifest source_hash"). Left unchanged rather than folded in,
+per "don't add abstractions beyond what the task requires."
+
+Oracle tests written first and PROVED to catch the real defect before the fix
+landed: `tests/test_equal_size_refusal.py` (7 tests, the rendering-consistency
+angle, mirroring `test_refused_render.py`'s mechanism-2 file) and one addition
+to the already-locked `tests/test_archive_layout.py`
+(`test_an_equal_size_content_mismatch_is_refused_and_recorded`, plus a new
+assertion on the existing idempotence test). Verified red-then-green by
+`git stash`-ing only the production fix: every new/changed test failed against
+the pre-fix code, including the end-to-end one, which failed with the EXACT
+real-world symptom - `archive: ... JSONL does not match manifest source_hash` -
+then all passed once the stash was restored. Full suite re-confirmed green
+afterward (1,122 passed, ruff clean, pyright 0 errors).

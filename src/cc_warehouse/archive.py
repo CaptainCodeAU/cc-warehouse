@@ -67,6 +67,12 @@ class FolderResult:
     wrote_projections: bool
     replaced: bool = False
     refused_smaller: bool = False
+    # Ticket 30's flagged equal-size case, mechanism 2's twin: the offered
+    # payload was the same SIZE as the archived one but not the same BYTES.
+    # A distinct field from `refused_smaller` on purpose - the reason is
+    # different, and folding it into that field would misreport it in the
+    # manifest and in `MigrationReport.summary()`.
+    refused_equal_size: bool = False
     skipped_current: bool = False
 
 
@@ -93,6 +99,10 @@ class MigrationReport:
     lock_held: bool = False
     skipped_not_a_session: list[str] = field(default_factory=list[str])
     refused_smaller: list[str] = field(default_factory=list[str])
+    # Ticket 30's flagged equal-size case: same size as archived, different
+    # content. Counted separately from `refused_smaller` (never folded in)
+    # because F6 says the reason is never allowed to go silent.
+    refused_equal_size: list[str] = field(default_factory=list[str])
     failed: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
 
     def summary(self) -> str:
@@ -104,6 +114,7 @@ class MigrationReport:
             f" {self.skipped_current} unchanged,"
             f" {len(self.skipped_not_a_session)} not sessions,"
             f" {len(self.refused_smaller)} refused as smaller,"
+            f" {len(self.refused_equal_size)} refused as equal-size mismatch,"
             f" {len(self.failed)} failed"
         )
 
@@ -550,9 +561,15 @@ def write_session_folder(
     it. Size is legal here under R1 as amended 2026-08-02 - it answers "which of
     two payloads KNOWN to differ is larger", which is a different question from
     "are these the same bytes", and only the latter is reserved to sha256.
+    EQUAL size does not license skipping the "are these the same bytes" question
+    (ticket 30's flagged case, closed 2026-08-23): a same-size payload with
+    different content is refused exactly like a smaller one, never silently
+    treated as identical, because size alone cannot show it is not an
+    improvement OR a regression.
 
-    A refusal (the new payload is smaller) is RECORDED in manifest.json rather
-    than being silent (F6).
+    A refusal - the new payload is smaller, OR the same size with different
+    content - is RECORDED in manifest.json rather than being silent (F6), with
+    a reason naming which of the two it was.
 
     THE PAYLOAD THAT RENDERS IS THE ONE THAT SURVIVED (ticket 29, 2026-08-04).
     Refusing to shrink the JSONL and then rendering the refused bytes over the
@@ -597,19 +614,30 @@ def write_session_folder(
     jsonl = directory / f"{stem}{_JSONL_SUFFIX}"
 
     replaced = False
-    refused = False
+    refused_smaller = False
+    refused_equal_size = False
     if jsonl.exists():
-        existing = jsonl.stat().st_size
-        if len(data) > existing:
+        existing_bytes = jsonl.read_bytes()
+        if len(data) > len(existing_bytes):
             store.atomic_write(jsonl, data)
             replaced = True
-        elif len(data) < existing:
+        elif len(data) < len(existing_bytes):
             # The conservative branch (R5/F7): keep what is there, and say so.
-            refused = True
-        # Equal size is left alone; identical content is the common case and a
-        # rewrite would churn mtimes for nothing (idempotence).
+            refused_smaller = True
+        elif data != existing_bytes:
+            # F1: equal SIZE must never stand in for equal CONTENT - only the
+            # smaller/larger ordering is licensed to read size as an answer at
+            # all. A genuine content difference at equal size gets the same
+            # conservative branch as "smaller" (R5): the offered bytes cannot
+            # be shown to be an improvement, so they are declined, not guessed
+            # at (ticket 30's flagged equal-size case, mechanism 2's twin).
+            refused_equal_size = True
+        # else: identical size AND identical bytes -- the true idempotent
+        # no-op. Rewriting them would churn a mtime a backup tool reads, for
+        # nothing.
     else:
         store.atomic_write(jsonl, data)
+    refused = refused_smaller or refused_equal_size
 
     # On a refusal the folder renders from the payload ON DISK, not from the one
     # just declined, so the generated files keep describing the JSONL beside
@@ -626,12 +654,19 @@ def write_session_folder(
     if hidden:
         # Archived, but no markdown or HTML: today's hidden behaviour, preserved
         # deliberately by the 2026-08-02 ruling.
-        return FolderResult(directory, jsonl, False, replaced, refused)
+        return FolderResult(
+            directory, jsonl, False, replaced,
+            refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
+        )
 
     if not refused and not rebuild:
         source_hash = store.sha256_hex(rendered)
         if folder_is_current(directory, source_hash, options):
-            return FolderResult(directory, jsonl, True, replaced, refused, skipped_current=True)
+            return FolderResult(
+                directory, jsonl, True, replaced,
+                refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
+                skipped_current=True,
+            )
 
     # STREAMED, one payload at a time. Holding all five at once cost 8.2 GB of
     # traced heap on a 100 MB session, 78x the payload; the real 114 MB object
@@ -644,10 +679,22 @@ def write_session_folder(
             # sub-agent list, so a reader can tell "none" from "this manifest
             # predates the feature" (F6).
             payload = _with_subagents(payload, subagent_records(directory))
-            if refused:
-                payload = _with_refusal(payload, jsonl.stat().st_size, len(data))
+            if refused_smaller:
+                payload = _with_refusal(
+                    payload, jsonl.stat().st_size, len(data),
+                    "a re-captured payload was smaller than the archived one",
+                )
+            elif refused_equal_size:
+                payload = _with_refusal(
+                    payload, jsonl.stat().st_size, len(data),
+                    "a re-captured payload was the same size as the archived one"
+                    " but had different content",
+                )
         store.atomic_write(directory / name, payload)
-    return FolderResult(directory, jsonl, True, replaced, refused)
+    return FolderResult(
+        directory, jsonl, True, replaced,
+        refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
+    )
 
 
 def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> bytes:
@@ -657,13 +704,14 @@ def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> 
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
-def _with_refusal(manifest_bytes: bytes, archived: int, offered: int) -> bytes:
+def _with_refusal(manifest_bytes: bytes, archived: int, offered: int, reason: str) -> bytes:
     """Record a refused replacement IN the manifest. Never silent (F6): a
-    truncated re-capture must not be able to leave the archive unchanged without
-    saying why."""
+    re-capture that leaves the archive unchanged must always say why - there is
+    more than one reason (smaller, or same size but different content), so the
+    reason is a parameter rather than a hardcoded string."""
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
     manifest["replace_refused"] = {
-        "reason": "a re-captured payload was smaller than the archived one",
+        "reason": reason,
         "archived_bytes": archived,
         "offered_bytes": offered,
     }
@@ -777,6 +825,8 @@ def _migrate_locked(
             report.archived_without_projections += 1
         if result.refused_smaller:
             report.refused_smaller.append(hash_)
+        if result.refused_equal_size:
+            report.refused_equal_size.append(hash_)
         if progress and index % progress == 0:
             print(f"  {index}/{len(rows)} {report.summary()}", flush=True)
     return report
