@@ -1379,11 +1379,18 @@ def _run_repair(rest: Sequence[str]) -> int:
     short, then calls the SAME render path the hook's detached child uses (`ccw render
     --session s:<key>`), synchronously -- repair is an explicit operator/scheduled
     action, not a hook, so waiting on it is fine. Never touches a folder outside
-    doctor's own bounded recent sample (R9: one instrument, shared)."""
+    doctor's own bounded recent sample (R9: one instrument, shared).
+
+    `--quiet` matches `sweep`'s own contract exactly (cli.py `_run_sweep`): drops the
+    STDOUT summary only, so a scheduled run's log stays empty when nothing was wrong
+    and non-empty exactly when it wasn't -- failures still go to stderr and the exit
+    code is unaffected."""
+    quiet = "--quiet" in rest
     config = _load(rest)
     folders, broken = doctor.desync_detail(config)
     if not broken:
-        print(f"repair: 0 problems in the {len(folders)} most recently captured folder(s)")
+        if not quiet:
+            print(f"repair: 0 problems in the {len(folders)} most recently captured folder(s)")
         return 0
     conn = catalog.open_catalog(config.root)
     try:
@@ -1416,11 +1423,13 @@ def _run_repair(rest: Sequence[str]) -> int:
             fixed += 1
     finally:
         conn.close()
-    total_problems = sum(len(p) for _, p in broken)
-    print(
-        f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
-        f"{len(folders)} most recently captured: {fixed} fixed, {len(still_broken)} still broken"
-    )
+    if not quiet:
+        total_problems = sum(len(p) for _, p in broken)
+        print(
+            f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
+            f"{len(folders)} most recently captured: {fixed} fixed, "
+            f"{len(still_broken)} still broken"
+        )
     for line in still_broken:
         print(f"  {line}", file=sys.stderr)
     return 0 if not still_broken else 1
@@ -1950,7 +1959,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
     "status": ((("(no options)", "recent captures, counts, store size, last errors"),), False),
     "doctor": ((("(no options)", "is capture working, and if not since when"),), False),
     "repair": (
-        (("(no options)", "re-render recent archive folders doctor's desync check flags"),),
+        (("--quiet", "no stdout on success; failures and the exit code are unaffected"),),
         False,
     ),
     "verify": ((("(no options)", "re-hash objects and cross-check the catalog"),), False),

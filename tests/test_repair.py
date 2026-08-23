@@ -104,6 +104,31 @@ def test_repair_is_a_quiet_no_op_when_nothing_is_broken(
     assert before == after, "repair touched files that were never broken"
 
 
+def test_repair_quiet_drops_stdout_but_not_the_exit_code_or_failures(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Matches `sweep --quiet` (cli.py `_run_sweep`): silent on stdout either
+    way, but the exit code and any per-item failure lines on stderr are
+    unaffected -- a scheduled `ccw repair --quiet` stays quiet when nothing is
+    wrong and still speaks (on stderr) when something needs a human."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    clean = run_ccw(["repair", "--quiet"], ccw_env)
+    assert clean.code == 0
+    assert clean.out == "", f"--quiet still printed to stdout: {clean.out!r}"
+
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+    fixed = run_ccw(["repair", "--quiet"], ccw_env)
+    assert fixed.code == 0
+    assert fixed.out == "", f"--quiet still printed to stdout: {fixed.out!r}"
+    for name in archive.GENERATED_NAMES:
+        assert (folder / name).exists(), "--quiet must not skip the actual repair"
+
+
 def test_repair_is_bounded_to_the_same_recent_sample_as_doctor(
     ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
