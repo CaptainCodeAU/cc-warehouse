@@ -239,6 +239,44 @@ here into their own ticket when they are taken up.
   a dict holding five payloads was wrong, streaming recovered 0.4 GB of 8.2.
   Documented today only in a test comment. Needs its own ticket.
 
+  **INVESTIGATED 2026-08-24, NOT YET IMPLEMENTED - full plan in
+  `OPENING-PROMPT.md`'s "ACTIVE TASK: ticket 28.9" section, read that before
+  touching this.** The 100 MB/7.26 GiB historical figures were NOT
+  re-verified at that scale; a smaller synthetic case (1.60 MiB in, 40 turns)
+  WAS measured twice independently and reproduced 38.18x peak/input (61.16
+  MiB peak). Two distinct, independent mechanisms found, to be fixed and
+  TESTED (pytest + `claude-in-chrome` in a real browser) SEPARATELY, in a
+  fresh session, per the operator's explicit instruction:
+  - Mechanism 1 (Fix A, low risk, zero visible/functional change): 15 of the
+    23 emoji icons `render.py` uses are outside the Unicode Basic
+    Multilingual Plane (confirmed by lookup: BELL, BOOKMARK TABS, BUST IN
+    SILHOUETTE, CLIPBOARD, ELECTRIC PLUG, GLOBE WITH MERIDIANS, JIGSAW
+    PUZZLE PIECE, LEFT-POINTING MAGNIFYING GLASS, LINK SYMBOL, MICROSCOPE,
+    OCTAGONAL SIGN, PAPERCLIP, ROBOT FACE, THOUGHT BALLOON, WRENCH - the
+    last being `_row_icon`'s own default fallback). CPython stores an
+    ENTIRE string at 4 bytes/char the moment it contains even one such
+    character, confirmed with an isolated repro
+    (`sys.getsizeof('x'*999999 + chr(0x1F50C))` = 4,000,060 vs 1,000,041 for
+    pure ASCII). The single largest retained allocation in the measured run
+    is the final `"\n".join(parts)` string: 20.6 MiB retained for a 5.14 MiB
+    UTF-8-encoded page, a ~4x inflation matching exactly. Fix: build/join as
+    UTF-8 bytes instead of `str` (both `build.py` call sites already
+    `.encode("utf-8")` the result immediately, so this is a natural fit, not
+    a new requirement).
+  - Mechanism 2 (Fix B, higher risk, touches a locked contract guarantee):
+    the page's copy-as-markdown buttons pre-bake an independent base64 copy
+    at FOUR nested levels (row, phase, turn, whole-transcript), each a
+    superset of the one below, all held at once before the final join. By
+    design, not a bug - but `contract/DESIGN.md` section 6 locks "copy-as-
+    markdown payloads equal the transcript.md fragments byte for byte",
+    proven by `tests/test_render_html.py::
+    test_copy_as_markdown_payloads_equal_transcript_fragments`. A fix here
+    must keep that guarantee intact and PROVE it in a real browser (click
+    every copy-button level, check the copied text), not just keep pytest
+    green.
+  Reproduction scripts saved at `temp/ticket-28.9-render-perf/` (gitignored,
+  reusable across sessions).
+
 - **28.10  Test gaps still open:** symlinked archive root; folder-name
   collision; ENOSPC mid-write; cross-tree reconciliation as a TEST rather than
   a hand-check; rename-then-rebuild for `project.json`.

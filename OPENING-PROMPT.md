@@ -1,20 +1,191 @@
 # Opening prompt for a fresh session, 2026-08-24 (thirteenth handoff: ticket
-# 28.1 (`ccw render --open`) and ticket 28.3 (`ccw sweep --limit`) both DONE)
+# 28.1 and 28.3 DONE; ticket 28.9 INVESTIGATED and IN PROGRESS - see below)
 
-## Next task: nothing in items 1-7, ticket 28.22, ticket 30's flagged defect,
-## ticket 28.13, ticket 24.7, ticket 28.19, ticket 28.1, or ticket 28.3 is open
-## work any more. Items 1, 2, 2b are DONE. Item 3 (really just ticket 27.8) got
-## the decision it was blocked on and stays NOT DONE by that decision, not by
-## anything left to do. Item 7 (ccstats polish) is FULLY DONE. Tickets 24.7,
-## 28.13, 28.19, 28.22, 30's equal-size defect, 28.1, and 28.3 are all DONE -
-## see the eleventh through thirteenth handoff entries at the end of this file
-## for the full accounts.
-## **Pick up from "Also on record, not scheduled" near the end of this file,
-## or from `CLAUDE.md`'s OPEN/next section**: ticket 28's remaining backlog
-## items (28.2, 28.9, 28.10, 28.11, 28.12, 28.14) are the standing candidate,
-## plus `ccw share --open` as a possible fast follow-up to 28.1 (not itself a
-## numbered ticket item). Nothing else from items 1-7, or from tickets
-## 24.7/28.1/28.3/28.13/28.19/28.22/30, is open.
+## Next task: **ticket 28.9 (render_html's memory cost) is the ACTIVE task,
+## mid-flight, with an operator-approved plan. Read "ACTIVE TASK: ticket 28.9"
+## immediately below this block before doing anything else - it has the full
+## investigation, the exact numbers, the two-phase plan, and the testing
+## requirement (Claude-in-Chrome, real browser, not just pytest).** Nothing in
+## items 1-7, ticket 28.22, ticket 30's flagged defect, ticket 28.13, ticket
+## 24.7, ticket 28.19, ticket 28.1, or ticket 28.3 is open work any more - see
+## the eleventh through thirteenth handoff entries at the end of this file for
+## those accounts. Once 28.9 is done, the standing next candidates are ticket
+## 28's other backlog items (28.2, 28.10, 28.11, 28.12, 28.14) and `ccw share
+## --open` as a possible fast follow-up to 28.1 - see "Also on record, not
+## scheduled" near the end of this file.
+
+## ACTIVE TASK: ticket 28.9, cut `conversation.html`'s memory cost
+
+**Where this stands**: investigated end-to-end and the mechanism is confirmed with real,
+reproduced measurements (not guesses). NO PRODUCTION CODE HAS BEEN CHANGED YET. The operator
+explicitly asked for this to be BUILT and TESTED in a fresh session, in two separate steps
+(Fix A, then test it; Fix B, then test it), with the testing step done for real in a browser
+via the `claude-in-chrome` extension, not just `pytest`. Read this whole section before
+touching any code.
+
+**The ticket**: `harness/tickets/28-backlog.md`'s "28.9" entry. Original note (undated
+precisely, from the 2026-08-03/04 backlog investigation): "`render_html` costs 74x the payload
+and emits about 6.3x its size (a 100 MB session projects to a 633 MB page, 7.26 GiB peak).
+Latent: the largest real page is 17.7 MiB." **That 74x/633MB/7.26GiB figure was NEVER
+independently re-verified at that scale this session** - only a smaller synthetic case (below)
+was actually measured. Treat the 100 MB/7.26 GiB numbers as historical, not re-confirmed.
+
+**What was actually measured, twice, independently, same result both times** (once by a forked
+sub-agent, once by the primary session re-running the SAME script cold, matching to the KiB).
+Synthetic payload: 40 turns, each with a Bash `tool_use` + a 20 KB `tool_result` (shape matches
+`tests/conftest.py`'s `entry()`/`jsonl()` helpers), built and measured with `tracemalloc`:
+
+| metric | value |
+|---|---|
+| input payload | 1,679,860 B (1.60 MiB) |
+| `conversation.html` (full) output | 5,391,271 B (5.14 MiB) |
+| `conversation.compact.html` output | 76,601 B (0.07 MiB) |
+| wall time for `render_html()` | ~0.54 s |
+| traced peak (tracemalloc) | 61.16 MiB |
+| **peak / input ratio** | **38.18x** |
+
+Stage-isolated peaks (same payload, each stage measured alone): `build_conversation` 6.62 MiB
+(parser overhead, transient, not the problem); `_render` (plain markdown) peak 6.51 MiB for a
+0.80 MiB output (~8x, same underlying cause as below); **`_render_page` FULL variant: peak
+59.51 MiB to produce a 5.14 MiB string - effectively the entire run's peak**; `_render_page`
+COMPACT variant: peak only 0.77 MiB (compact strips tool output by default, so it has far less
+content to duplicate at each copy-button level - see below - which is itself confirming
+evidence for the mechanism).
+
+**Reproduction scripts are saved at `temp/ticket-28.9-render-perf/`** (this repo, gitignored,
+NOT the session scratchpad, which does not survive into a new session): `profile_render.py`
+(whole `render_html`, tracemalloc + timing, the numbers above), `profile_render_stages.py`
+(isolates `build_conversation` / `_render` / `_render_page` full vs compact), `profile_render_dup.py`
+(confirms the duplication mechanism with a base64 substring probe). Run with `uv run python3
+temp/ticket-28.9-render-perf/profile_render.py` from the repo root; each edits `sys.path`
+itself and needs no other setup.
+
+**TWO DISTINCT, INDEPENDENT MECHANISMS were found, and the plan below treats them as two
+separate fixes on purpose - they have very different risk profiles:**
+
+**Mechanism 1 (Fix A target): an emoji forces the WHOLE final HTML string into 4-byte-per-char
+storage.** Confirmed with a tiny, fully isolated repro (not part of the scratch scripts above,
+run it fresh if you want to re-see it):
+
+```
+uv run python3 -c "
+import sys
+print(sys.getsizeof('x'*999999 + chr(0x1F50C)))   # one astral-plane char -> 4,000,060 bytes
+print(sys.getsizeof('x'*1000000))                  # pure ASCII        -> 1,000,041 bytes
+"
+```
+
+CPython's compact-string representation stores an ENTIRE string at 4 bytes per character the
+moment it contains even ONE character outside the Basic Multilingual Plane (code point >
+0xFFFF, e.g. most emoji). `src/cc_warehouse/render.py` uses 23 different `\N{...}` named-emoji
+escapes as UI icons; **15 of them are astral-plane** (confirmed by looking each one up):
+`BELL`, `BOOKMARK TABS`, `BUST IN SILHOUETTE`, `CLIPBOARD`, `ELECTRIC PLUG`, `GLOBE WITH
+MERIDIANS`, `JIGSAW PUZZLE PIECE`, `LEFT-POINTING MAGNIFYING GLASS`, `LINK SYMBOL`,
+`MICROSCOPE`, `OCTAGONAL SIGN`, `PAPERCLIP`, `ROBOT FACE`, `THOUGHT BALLOON`, `WRENCH`.
+`WRENCH` (U+1F527) is `_row_icon`'s DEFAULT fallback for any unmapped tool-block kind (grep
+`_ROW_ICONS.get(block.kind, "\N{WRENCH}")`), so almost every real page with any tool call
+trips this. Measured effect on the 1.60 MiB payload above: the single largest retained
+allocation in the whole run is `render.py:2184` (`"\n".join(parts) + "\n"`, confirm the exact
+line by grepping - it may have moved), **20.6 MiB retained for what ends up as a 5.14 MiB
+UTF-8-encoded string** - a ~4x inflation matching the astral-plane mechanism exactly. Fixing
+just this (see Fix A below) should save roughly 15 MiB of the 59.5 MiB peak on this payload,
+i.e. cut the peak/input ratio from ~38x toward roughly ~27x, PURELY from this one mechanism -
+not the full win, but a real, well-understood, zero-risk chunk of it.
+
+**Mechanism 2 (Fix B target): the page's per-block "copy as markdown" buttons pre-bake a
+separate base64 copy at FOUR nested levels.** Confirmed by reading the code, not just
+inferred: `render.py` computes and `base64.b64encode()`s a `fragment` string independently at
+each of these sites (grep to confirm current line numbers, they will drift):
+- row / block level, inside `_phase_html` (`payload = base64.b64encode(fragment...)`, the row's
+  own block content)
+- phase level, inside `_phase_html` (a SEPARATE `fragment` covering every row already counted
+  above, base64'd again)
+- turn/section level, inside `_section_html` (a SEPARATE `fragment` covering the whole turn -
+  every phase and row inside it, counted twice already, base64'd a third time)
+- whole-transcript level, inside `_render_page` (`whole = _render(...)`, the entire document,
+  base64'd a fourth time, as one big blob rather than once per block)
+
+Each level's `fragment` is a SUPERSET of the levels nested inside it, so real transcript
+content that is N levels deep ends up base64-encoded roughly N+1 times, all held in the same
+`parts` list simultaneously before the final join. This is BY DESIGN, not a bug: every copy
+button, at every granularity, needs its own ready-to-click payload. **This is a genuinely
+tested, locked contract guarantee, not just a convention**: `contract/DESIGN.md` section 6,
+line ~158, "copy-as-markdown payloads equal the transcript.md fragments byte for byte", proven
+by `tests/test_render_html.py::test_copy_as_markdown_payloads_equal_transcript_fragments`
+(read it before touching this - it asserts every `data-copy-src` payload, base64-decoded, is a
+substring of the FULL `transcript.md` text; loose enough that a correctly-reconstructed
+fragment - built by concatenating the SAME already-existing smaller fragments in the SAME
+order - should still satisfy it, but this needs PROVING against the real test, not assumed).
+
+**THE OPERATOR-APPROVED PLAN, in this exact order, ALL of it in a fresh session:**
+
+1. **Fix A**: stop the astral-plane emoji from inflating the WHOLE final HTML string. The
+   clean shape (confirm by reading `build.py`'s `iter_projection_files` first): `render_html`
+   and `render_markdown` currently return `str`, and BOTH of `build.py`'s call sites
+   immediately do `.encode("utf-8")` on the result anyway. Building the `parts` list (and the
+   equivalent in `_render`/`render_markdown`) as UTF-8 BYTES per-fragment and joining with
+   `b"\n".join(...)` avoids ever materializing one giant wide-char Python `str` - each small
+   fragment stays cheap even if it individually contains an emoji, because the 4x penalty only
+   applies to the ONE STRING that touches the emoji, not to everything concatenated with it
+   later once it's already bytes. This is very likely a real, if moderate-sized, refactor
+   (dozens of `.append`/`.extend` call sites across a 2,296-line file), NOT a one-line patch -
+   scope it properly before diving in. **Zero visible/functional change is the whole point**:
+   same emoji, same HTML, same bytes on disk, same everything a reader sees or copies - only
+   HOW the bytes get built changes. If `render_html`/`render_markdown`'s public return type
+   changes from `str` to `bytes`, update every caller (`build.py`'s two `iter_projection_files`
+   call sites, and any test that currently asserts against a `str` return - there are several,
+   e.g. `tests/test_render_html.py`, `tests/test_render_markdown.py` if it exists, grep first).
+2. **Test Fix A for real**, per the operator's explicit requirement:
+   - `uv run pytest`, `uv run ruff check`, `uv run pyright` all green (the usual gates).
+   - Re-run `temp/ticket-28.9-render-perf/profile_render.py` and confirm the peak actually
+     dropped, roughly in line with the ~15 MiB / ~26% estimate above - if it did not move
+     noticeably, the fix did not land where expected and needs re-diagnosis before moving on.
+   - **`claude-in-chrome`, a REAL browser tab, on a REAL generated `conversation.html`.**
+     `file://` URLs are refused by the navigate tool (see "Two environment facts" below in
+     this file) - serve the directory locally first: `uv run python3 -m http.server <port>
+     --bind 127.0.0.1` from the folder holding the generated HTML, then navigate to
+     `http://127.0.0.1:<port>/conversation.html`. Check: the page loads with zero console
+     errors (`read_console_messages`), looks visually identical to a pre-fix render (same
+     icons, same layout - Fix A must not change a single visible pixel), and EVERY copy
+     button (row, phase, turn, whole-transcript) still works and copies text. Kill the server
+     after.
+3. **Only after Fix A is confirmed working, move to Fix B**: reduce the actual N-level base64
+   duplication from Mechanism 2. This is the RISKIER half - it touches the DESIGN section 6
+   contract guarantee above. Two shapes exist, genuinely different risk (pick one and say why,
+   or ask, per this project's own house style - do not default to whichever is less code):
+   - **Server-side reuse**: build the phase/turn/whole-transcript `fragment` strings by
+     concatenating the SAME already-built row-level fragment strings (in the same order
+     `_phase_md`/the turn markdown builder already uses), instead of re-deriving them from a
+     separate pass - saves the DUPLICATE COMPUTATION, and likely also memory since fewer
+     distinct large strings exist, but the coarser levels are still pre-baked and shipped in
+     the HTML (page weight is roughly unchanged, only the redundant intermediate work is cut).
+   - **Client-side reconstruction**: ship ONLY the row-level (finest-grained) `data-copy-src`
+     payloads server-side; have the phase/turn/whole-transcript copy buttons' JS handler
+     (`_copy_script`, grep for it) walk the DOM at CLICK TIME and concatenate the child
+     fragments it finds, instead of reading a pre-baked attribute. This is the bigger win on
+     PAGE WEIGHT (not just build-time memory) but is the more invasive change and the one that
+     most directly needs `test_copy_as_markdown_payloads_equal_transcript_fragments` to keep
+     passing UNCHANGED (or, if the operator agrees the test's own wording should adjust, that
+     is a contract edit and needs the operator's explicit word first, same as ticket 27.8's
+     `keep_objects` decision did - never just relax a locked oracle test to make a perf fix
+     pass, per this project's own "contract fences: narrow, never dodge" rule).
+   Either shape: the output a reader sees and can copy must remain byte-identical to what it
+   is today. That is the property to protect, not a specific implementation.
+4. **Test Fix B for real**, same three-part bar as step 2 (gates green, re-profile, real
+   Chrome tab) PLUS one more check that step 2 did not need: click every level of copy button
+   in the real browser tab, read the clipboard content back (or read the DOM/console to confirm
+   what was copied), and confirm it still matches the corresponding `transcript.md` fragment
+   byte for byte - this is the step that actually proves the contract guarantee survived, not
+   just that pytest still passes.
+
+**Do not skip straight to Fix B, and do not consider either fix "done" on `pytest` alone** -
+both of those were the operator's explicit instructions, given after they asked "what does the
+fix change, does it change functionality" and were told Fix A is a pure invisible optimization
+while Fix B is designed to look the same but touches a locked guarantee and needs real proof,
+not just a green test suite.
+
+Update `harness/tickets/28-backlog.md`'s 28.9 entry and this section once each fix lands,
+the same way every other closed ticket in this file has been annotated in place.
 
 ### One loose end inside item 2, not urgent, not blocking
 
