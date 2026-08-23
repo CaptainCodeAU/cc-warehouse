@@ -1,8 +1,12 @@
-# Opening prompt for a fresh session, 2026-08-22 (fifth handoff, item 2 now fully closed)
+# Opening prompt for a fresh session, 2026-08-23 (sixth handoff: /dashboard shipped + tested, item 3 still not started)
 
-## Next task: ticket 27.5-27.8 (item 3 below). Items 1 and 2 are BOTH fully
-## DONE. Read "One loose end inside item 2" just below before starting item 3
-## - it is small, but it is a real unanswered question, not a settled one.
+## Next task: ticket 27.5-27.8 (item 3 below) - CORRECTED this session: only
+## 27.8 is actually still open. 27.5-27.7 were already closed 2026-08-22; this
+## file itself was stale on that until now (see the correction inside item 3).
+## Items 1 and 2 are DONE; item 2 gained a new `/dashboard` Claude Code
+## command this session (item 2b below) - built, fixed, and tested for real.
+## Read "One loose end inside item 2" just below before starting item 3 - it
+## has now been asked and deferred across THREE sessions running.
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -537,20 +541,71 @@ re-opening the file in a browser and looking. Worth remembering before
 trusting a future "the tests still pass" as proof this page still renders
 correctly.
 
+### 2b. `/dashboard` Claude Code command - DONE, tested 2026-08-23
+
+Not part of the original plan - the operator asked for it mid-session, after asking how the live
+dashboard actually works under the hood. A project-local slash command,
+`.claude/commands/dashboard.md` (only usable inside this repo, matching `/refresh` and
+`/architecture`'s existing pattern). It wraps `tools/ccstats/dashboard.py`: asks whether to
+refresh the underlying data (always asks - operator's explicit choice, not auto-decided), asks
+for (or reuses a saved) project-exclude list, builds the dashboard, serves it once over loopback
+(`file://` is refused by the browser tool - see "Two environment facts" below), hands over the
+link, then stops the server once the operator confirms they're done looking. Documented in
+`tools/ccstats/README.md` under "The live dashboard" (the top-level repo `README.md` never
+mentions `ccstats` at all, confirmed by grep with a control - `tools/` is explicitly not part of
+`ccw`, so this is the correct home, not the main README).
+
+**A real design gap was found and fixed before testing, not after**: the first draft hardcoded
+`~/.cc-warehouse/stats` everywhere instead of honouring `CCSTATS_OUT` the way `dashboard.py` and
+`collect.py` already do. Fixed by resolving the output root once (Step 0 in the command file) and
+using that everywhere instead. This is what let the test below use a scratch folder instead of
+the operator's real one.
+
+**Tested end to end, for real, not just read over**: the operator asked for this specifically -
+"we can't test it in this session, it'll get polluted" - so a single forked agent spun up a
+genuinely separate Claude Code session in a new Herdr pane (`herdr agent start`), drove it through
+`/dashboard` with `CCSTATS_OUT` pointed at a scratch folder, then opened the real output file in a
+real Chrome tab via claude-in-chrome. Result: **PASS**. First run correctly skipped the refresh
+question (nothing to refresh yet) and ran `collect.py` unconditionally as designed; the
+exclude-list question worked and saved correctly (tmp-file + rename, per R2); the build and serve
+steps produced a working link; the page rendered with zero console errors, real numbers, and a
+live filter toggle that visibly recomputed totals with no reload; the server was confirmed stopped
+afterward (`lsof`); and three real production files (`sessions.sqlite`,
+`claude-code-dashboard-live.html`, and the fact that `dashboard-defaults.json` still does not
+exist for real) were all confirmed untouched by mtime/existence check. One non-defect finding
+worth knowing for next time: driving a fresh Claude Code session's own numbered-choice UI by
+sending a literal digit (e.g. `"2"`) through `herdr agent prompt` does NOT select that option -
+Enter just confirms whatever option is already highlighted (the default). Send the option's actual
+wording instead, or use `herdr agent send-keys` for arrow keys.
+
+Three commits, all pushed: `ca83ce7` (the command itself), `72e0b82` (the `CCSTATS_OUT` fix +
+README documentation). A memory was also saved this session: always give the operator a full path
+or link for anything to open, never a bare filename.
+
 ### 3. Ticket 27.5-27.8, the last open track
 
-**27.1-27.4 are CLOSED**, including the `objects/` delete, re-verified
-2026-08-21 (see the ticket; CLAUDE.md and the ticket both claimed the opposite
-until then). What remains:
+**CORRECTED 2026-08-23: this section was stale.** It read as if all four sub-tickets were still
+open. They are not - `CLAUDE.md`'s own OPEN/next section already recorded the real state as of
+2026-08-22 and this file simply had not been reconciled to it until now. Real state:
 
-- **27.5** decide whether `root` moves into the archive
-- **27.6** re-read the `ccw archive --to` guard
-- **27.7** reconcile `ccw verify` with ruling (b)
-- **27.8** retire `store.py`
+- **27.5** (whether `root` moves into the archive) - **DONE.** Decided AGAINST by the principal,
+  after 27.6's guard read showed merging would make every `ccw archive --to <archive_root>` call
+  trip the existing "must not be the warehouse itself" refusal. No code changed.
+- **27.6** (re-read the `ccw archive --to` guard) - **DONE.** This is the read that answered 27.5.
+- **27.7** (reconcile `ccw verify` with ruling (b)) - **DONE.** It turned out to already be shipped
+  and tested; only the ticket's own paperwork was stale, and that's fixed too.
+- **27.8** (retire `store.py`) - **NOT DONE, and NOT just unstarted - actively blocked.** It was
+  attempted this track (`keep_objects` default flipped to `False` in code, oracle-tests-first) and
+  REVERTED: it broke 7 pre-existing tests, all genuine resilience tests (an unwritable archive, a
+  deleted archive JSONL). Retiring `store.py` for real needs a bigger, still-undecided call:
+  dropping `keep_objects` as a feature entirely and making `archive_root` mandatory for every
+  install, not just this machine's config. That is the actual decision the next session needs from
+  the principal before touching this ticket again - not a scoping or measurement task.
 
-**27.8 may now be much smaller than written.** `keep_objects=false` is live and
-`objects/` is gone, so `store.py`'s object surface has no callers left on the
-capture path. MEASURE that before planning; do not assume it.
+So **item 3's real remaining work is just 27.8**, and it starts with a decision, not code. See
+`CLAUDE.md`'s OPEN/next section ("27.5-27.7 CLOSED 2026-08-22...") and
+`harness/tickets/27-collapse-to-one-folder.md` for the full account - this file no longer
+duplicates it now that it's been reconciled once.
 
 **27.9 IS WITHDRAWN AND STAYS WITHDRAWN.** Nothing is ever deleted from
 `~/.claude`. A satisfied gate is not consent.
@@ -652,36 +707,40 @@ incremental collect (re-reads all 25k transcripts every run, ~25 s).
   over loopback first: `uv run python3 -m http.server <port> --bind
   127.0.0.1` from that directory, navigate to `http://127.0.0.1:<port>/file`,
   then kill the server when done. Worked cleanly every time this session.
+- **NEW, 2026-08-23: testing any ccstats script without touching real data** -
+  set `CCSTATS_OUT=<scratch dir>` before running `collect.py`, `dashboard.py`,
+  or `/dashboard` (its Step 0 honours the same variable, fixed this session).
+  Everything lands in the scratch folder instead of `~/.cc-warehouse/stats`,
+  and `resolve_out` still refuses the dangerous roots (this repo, `~/.claude`,
+  the archive, the warehouse data root) even for the scratch value.
+- **NEW, 2026-08-23: a fresh Claude Code session's numbered-choice UI, driven
+  via Herdr's `herdr agent prompt`, does not respond to a literal digit** -
+  sending `"2"` does not select option 2; Enter just confirms whichever option
+  is already highlighted (the default). Send the option's actual wording as
+  text instead, or use `herdr agent send-keys <name> <key>` for real arrow-key
+  navigation. Caught before any real file was touched; see item 2b above.
 
 ## What the previous session did
 
-This session closed out item 2 in full - see "Fourth round, 2026-08-22
-session" above for the complete 13-item account (the operator's real
-`--include`/`--exclude` list, case-insensitive matching, a live "today"
-default end date, three real bugs found and fixed in the month-by-month
-heatmap including a 3x text-stretch bug only surfaced after the first fix
-looked "done", a daily-to-weekly rollup of the Concurrency panel, folding 15
-auto-generated agent-worktree rows into their real projects, a title change,
-model-family grouping, a layout fix, a 50->25 sessions-table change plus a
-new 25-longest table, two whole panels removed at the operator's request,
-and a spacing fix applied dashboard-wide) - and ran the codegen-scoping
-investigation the prior session deferred, whose outcome did NOT get a
-decision from the operator (see "One loose end inside item 2" at the very
-top of this file).
+**2026-08-23 session.** Opened by re-reading this file and confirming the operator wanted item 3
+(ticket 27.5-27.8) next. Instead, the operator asked two follow-up questions about the existing
+dashboard files (what's the difference between the template and the live output; how does the
+template-fill mechanism actually work) - both answered by reading the real code, not from memory.
+That led to a new, unplanned ask: build a way to trigger the dashboard build from inside this
+project. The whole rest of the session went into item 2b (see above) - designing, building, fixing
+a real gap (`CCSTATS_OUT` not honoured), testing it for real via a Herdr-driven separate Claude
+Code session plus a real Chrome tab, and documenting it in `tools/ccstats/README.md`. This file's
+own stale ticket-27 status (item 3, and the "Next task" line at the very top) was also corrected
+this session, sourced from `CLAUDE.md`'s already-current OPEN/next section.
 
-Every fix was verified twice: once against `sessions.sqlite` independently
-(fresh SQL/Python, never through the dashboard's own code), and a second
-time by actually opening the rebuilt file in a live Chrome tab and reading
-the same numbers or looking at the same panel with the harness's own eyes -
-a real browser was available all session, unlike the session that built the
-dashboard originally. `file://` URLs turned out to be blocked by the browser
-tool; the loopback-http-server workaround (see "Two environment facts"
-above) should save the next session from re-discovering that.
+Three commits, all pushed: `ca83ce7` (the `/dashboard` command), `72e0b82` (the `CCSTATS_OUT` fix
+and its README documentation). A memory was saved: always give the operator a full path or link
+for anything to open.
 
-**What was NOT done, on purpose or otherwise:** item 3 (ticket 27.5-27.8) was
-not started - all of this session's time went to item 2's follow-ups, which
-kept arriving faster than they could be closed. No pytest coverage was added
-for anything in this round, since every change lives in
-`dashboard_template.html`'s client-side JS, which the Python suite does not
-reach at all - the only regression guard for any of today's 13 fixes is a
-human looking at the page again later.
+**What was NOT done, again:** item 3 (ticket 27.5-27.8, really just 27.8 now - see the correction
+above) was not started, for the second session running, both times because other work took
+priority. The item-2 loose end (write a short "panel contract" doc for `dashboard_template.html`?)
+was also not decided - offered again at the very start of this session, the operator picked
+"start item 3" over deciding it, and then item 3 itself never got reached either. It is now three
+sessions with no decision on that one; still small, still not blocking, but worth someone actually
+answering it rather than deferring a fourth time.
