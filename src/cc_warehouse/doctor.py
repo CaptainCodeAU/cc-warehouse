@@ -133,9 +133,31 @@ def _mentions_ccw(command: str, plugin_root: Path | None) -> bool:
     return False
 
 
-def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
-    """Every SessionEnd hook command Claude Code would run, paired with its
-    plugin root.
+def _enabled_plugins(home: Path) -> dict[str, bool]:
+    """The `plugin@marketplace` keys Claude Code has explicitly enabled or
+    disabled, from `~/.claude/settings.json`'s `enabledPlugins`.
+
+    Best-effort: a missing or unreadable settings file yields an empty map, so
+    `_hook_commands` then treats every plugin-sourced hook as unconfirmed
+    (excluded) rather than guessing. That is the safe default here: doctor's
+    whole purpose is to not claim capture works when it might not."""
+    path = home / ".claude" / "settings.json"
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    enabled = cast(dict[str, object], loaded).get("enabledPlugins")
+    if not isinstance(enabled, dict):
+        return {}
+    return {k: v is True for k, v in cast(dict[str, object], enabled).items()}
+
+
+def _hook_commands(home: Path) -> list[tuple[str, Path | None, str | None]]:
+    """Every SessionEnd hook command Claude Code would ACTUALLY run, paired
+    with its plugin root and a human-readable `plugin@marketplace` source
+    label (None for a non-plugin, settings.json-level hook).
 
     Both places a capture hook can legitimately live: settings files, and an
     installed plugin's hooks.json. Checking only settings.json would report "no
@@ -150,12 +172,25 @@ def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
     real plugin-registered SessionEnd hook, because settings.json is scanned
     before plugin hooks.json. Doctor would then say "ok" for the wrong hook,
     which survives the real one being removed entirely (found 2026-08-18).
+
+    ALSO GATED ON `enabledPlugins` (found 2026-08-23, a real mistake made while
+    building ticket 24.7): a plugin's cache directory can outlive its removal
+    from Claude Code entirely. `claude-transcript-exporter@gz-claude-code-
+    plugins` was retired when ticket 28.19 moved capture into
+    `cc-capture@cc-warehouse`, but its OLD cached hooks.json could still sit on
+    disk, glob-matched here, a perfectly ordinary-looking hooks.json. Without
+    this check doctor would report a hook Claude Code will never invoke. A
+    plugin-sourced candidate only counts when `enabledPlugins` says `true` for
+    its exact `plugin@marketplace` key; absent or `false` both exclude it. A
+    non-plugin (settings.json-level) command is unaffected: it needs no
+    enablement key to be real.
     """
-    found: list[tuple[str, Path | None]] = []
+    found: list[tuple[str, Path | None, str | None]] = []
     candidates = [home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"]
     cache = home / ".claude" / "plugins" / "cache"
     if cache.is_dir():
         candidates.extend(sorted(cache.glob("*/*/*/hooks/hooks.json")))
+    enabled = _enabled_plugins(home)
     for path in candidates:
         if not path.is_file():
             continue
@@ -171,6 +206,16 @@ def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
         groups = cast(dict[str, object], hooks).get("SessionEnd")
         if not isinstance(groups, list):
             continue
+        is_plugin = path.parent.name == "hooks"
+        source: str | None = None
+        if is_plugin:
+            # cache/<marketplace>/<plugin>/<version>/hooks/hooks.json
+            marketplace = path.parent.parent.parent.parent.name
+            plugin_name = path.parent.parent.parent.name
+            source = f"{plugin_name}@{marketplace}"
+            if not enabled.get(source, False):
+                continue
+        root = path.parent.parent if is_plugin else None
         for group in cast(list[object], groups):
             if not isinstance(group, dict):
                 continue
@@ -181,9 +226,7 @@ def _hook_commands(home: Path) -> list[tuple[str, Path | None]]:
                 if isinstance(hook, dict):
                     command = cast(dict[str, object], hook).get("command")
                     if isinstance(command, str):
-                        is_plugin = path.parent.name == "hooks"
-                        root = path.parent.parent if is_plugin else None
-                        found.append((command, root))
+                        found.append((command, root, source))
     return found
 
 
@@ -371,16 +414,21 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     )
 
-    commands = [c for c, root in _hook_commands(where) if _mentions_ccw(c, root)]
-    checks.append(
-        Check(
-            "hook",
-            bool(commands),
-            f"SessionEnd capture hook found: {commands[0]}"
-            if commands
-            else "NO capture hook is registered; sessions are not being captured",
+    matches = [
+        (c, hook_source)
+        for c, root, hook_source in _hook_commands(where)
+        if _mentions_ccw(c, root)
+    ]
+    if matches:
+        command, hook_source = matches[0]
+        detail = (
+            f"SessionEnd capture hook found via {hook_source}: {command}"
+            if hook_source
+            else f"SessionEnd capture hook found: {command}"
         )
-    )
+    else:
+        detail = "NO capture hook is registered; sessions are not being captured"
+    checks.append(Check("hook", bool(matches), detail))
 
     last = _last_capture(config.root)
     checks.append(

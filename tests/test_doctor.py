@@ -174,6 +174,7 @@ def test_a_plugin_hook_that_calls_a_WRAPPER_is_still_found(
         ),
         encoding="utf-8",
     )
+    _write_enabled_plugins(ccw_env, {"p@mp": True})
 
     result = run_ccw(["doctor"], ccw_env)
     hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
@@ -252,6 +253,101 @@ def test_an_unrelated_plugin_hook_is_not_claimed_as_ours(
     result = run_ccw(["doctor"], ccw_env)
 
     assert result.code != 0, "an unrelated plugin was counted as a capture hook"
+
+
+def _write_plugin_hook(env: dict[str, str], marketplace: str, plugin: str, version: str) -> None:
+    root = (
+        Path(env["HOME"]) / ".claude" / "plugins" / "cache" / marketplace / plugin / version
+    )
+    (root / "hooks").mkdir(parents=True)
+    (root / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "hooks" / "ccw-hook.py").write_text(
+        "import subprocess\nsubprocess.run(['ccw', 'hook'])\n", encoding="utf-8"
+    )
+
+
+def _write_enabled_plugins(env: dict[str, str], enabled: dict[str, bool]) -> None:
+    settings = Path(env["HOME"]) / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"enabledPlugins": enabled}), encoding="utf-8")
+
+
+def test_a_retired_plugins_leftover_cache_is_not_claimed_as_the_hook(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """THE REAL MISTAKE THIS PINS (found 2026-08-23): a plugin's cached
+    hooks.json can outlive its removal from Claude Code entirely. Ticket 28.19
+    moved capture from `claude-transcript-exporter@gz-claude-code-plugins`
+    into `cc-capture@cc-warehouse`; the old plugin's cache directory can stay
+    on disk with a perfectly valid ccw-calling hooks.json, byte-identical in
+    shape to a real one, while `~/.claude/settings.json`'s `enabledPlugins`
+    carries no entry for it at all - Claude Code will never invoke it. Before
+    this fix, `_hook_commands` globbed the cache blind to `enabledPlugins`
+    and would have reported this orphaned plugin as a working capture hook."""
+    configure(ccw_env, tmp_path / "archive")
+    _write_plugin_hook(ccw_env, "gz-claude-code-plugins", "claude-transcript-exporter", "old1")
+    _write_enabled_plugins(ccw_env, {})  # the retired plugin has NO entry at all
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "NO capture hook" in hook_line, (
+        f"an unenabled plugin's leftover cache was counted as the hook: {hook_line!r}"
+    )
+
+
+def test_an_explicitly_disabled_plugins_cache_is_not_claimed_as_the_hook(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The other half: an explicit `false`, not just an absent key."""
+    configure(ccw_env, tmp_path / "archive")
+    _write_plugin_hook(ccw_env, "mp", "old-capture", "v1")
+    _write_enabled_plugins(ccw_env, {"old-capture@mp": False})
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "NO capture hook" in hook_line, (
+        f"an explicitly disabled plugin's cache was counted as the hook: {hook_line!r}"
+    )
+
+
+def test_an_enabled_plugins_cache_is_still_claimed_as_the_hook(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The positive case, so the fix above cannot be satisfied by rejecting
+    every plugin-sourced hook: a real, currently-enabled plugin still counts."""
+    configure(ccw_env, tmp_path / "archive")
+    _write_plugin_hook(ccw_env, "cc-warehouse", "cc-capture", "abc123")
+    _write_enabled_plugins(ccw_env, {"cc-capture@cc-warehouse": True})
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "NO capture hook" not in hook_line, (
+        f"an enabled plugin's hook was not recognized: {hook_line!r}"
+    )
+    assert "cc-capture@cc-warehouse" in hook_line, (
+        f"doctor found the hook but did not name which plugin serves it: {hook_line!r}"
+    )
 
 
 def test_never_fired_is_distinct_from_fired_but_not_recently(
