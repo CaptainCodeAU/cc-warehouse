@@ -1568,6 +1568,37 @@ a clean re-run is not by itself proof an issue is fixed; this session
 confirmed it the slow way (naming the folder, walking the full archive)
 rather than trusting the green sample alone.
 
+**2026-08-23, ticket 32: the detached render child can fail with zero trace,
+and nothing repaired it.** A real live incident: a captured session (JSONL +
+catalog row both written, hook reported "ok") whose render child produced
+none of its five generated files, with no crash report, no OOM/jetsam event,
+no sleep/wake interruption, and no "error" line anywhere - the exception fired
+somewhere before `_render_session`'s own try/except (cli.py), in a stretch
+whose stdio is DEVNULL by SPEC section 5's locked "all stdio to DEVNULL, KEEP
+verbatim" decision. The first instinct (redirect the child's stdio to a log
+file) would have meant editing a LOCKED oracle test
+(`test_hook_spawns_detached_render_child`, SPEC 2.5/5 KEEP) to make new code
+pass - the "contract fences: narrow, never dodge" trap. Read SPEC.md section 5
+instead: DEVNULL is the actual locked decision, not incidental. Shipped two
+things that don't touch it: (1) `__main__.py` - used ONLY by the two detached
+children (render, notify), never by the `ccw` console script, which maps
+straight to `cli.main` - gained a catch-all that logs any otherwise-uncaught
+exception to the existing `logs/capture.jsonl` before re-raising unchanged;
+(2) `ccw repair`, a new verb, NOT a flag on `ccw doctor` - doctor's own module
+docstring says "READ-ONLY BY CONSTRUCTION... not a nicety" and its text output
+is `ccw-watch`'s external compatibility surface (ticket 28.22), so a write
+side effect there was ruled out even behind an opt-in flag. `repair` shares
+doctor's own bounded recency scan (`doctor.desync_detail`, promoted from
+private so both call one instrument, R9) and re-renders whatever it flags via
+the same `ccw render --session s:<key>` path a human would run by hand.
+Verified on real data: `ccw repair` against the live 22,000+ folder archive
+correctly reported "0 problems" and wrote nothing. Deliberately not done:
+wiring `repair` into any scheduled job (a system-level change outside this
+repo, left for the principal), and the original crash's exact trigger (kept
+unconfirmed, matching ticket 31.4's own "don't design a fix for an unproven
+cause" precedent - only the NEXT occurrence, if any, is now diagnosable).
+Full account: `harness/tickets/32-detached-render-child-visibility.md`.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

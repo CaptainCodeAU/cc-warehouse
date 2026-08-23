@@ -438,6 +438,19 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   board's new top recommendation, C12, is exactly this: one shared replace-if-larger
   primitive instead of three copies that can (and did) drift independently. Full account:
   `cc-warehouse-architecture/SOURCE.md`'s "2026-08-23 - FRESH REVIEW" change-log entry.
+- **Ticket 32 DONE 2026-08-23**: the detached render child (SPEC section 2.5/5) can fail
+  with ZERO trace - real live incident the same day, found via `ccw doctor`'s desync
+  check, fixed by hand (`ccw render --session s:<key>`), then closed for good. Shipped
+  (1) `__main__.py`, used only by the two detached children, now logs any otherwise-
+  uncaught exception to `logs/capture.jsonl` before re-raising, WITHOUT touching SPEC
+  section 5's locked "all stdio to DEVNULL" line (a first instinct that would have);
+  (2) a new verb `ccw repair`, deliberately NOT a flag on `ccw doctor` (which stays
+  read-only by construction and is `ccw-watch`'s external compatibility surface),
+  that shares doctor's own bounded recency scan (`doctor.desync_detail`, promoted
+  public) and re-renders whatever it flags. Verified on real data (0 problems, wrote
+  nothing). NOT wired into any scheduled job yet - a system-level change outside this
+  repo, left for the principal. Full account:
+  `harness/tickets/32-detached-render-child-visibility.md`.
 
 ## Standing lessons (full form in HARNESS section 8)
 
