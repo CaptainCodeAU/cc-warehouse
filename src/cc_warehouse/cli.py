@@ -1760,6 +1760,12 @@ def _run_share(args: Sequence[str]) -> int:
         )
         return 2
     out_path = Path(out)
+    if _out_under_warehouse(out):
+        print(
+            "Error: --out must not be inside the warehouse store or projections",
+            file=sys.stderr,
+        )
+        return 2
     if out_path.exists() and not out_path.is_dir():
         print(f"Error: --out {out_path} exists and is not a directory", file=sys.stderr)
         return 2

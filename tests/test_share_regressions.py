@@ -253,6 +253,22 @@ def test_share_refuses_populated_unrecognized_out(
     assert not out_texts(out), "wrote into an unrecognized populated dir"
 
 
+def test_share_out_cannot_be_pointed_inside_the_warehouse_store(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """F9: `ccw render <path> --out` already refuses a target inside the warehouse's
+    own objects/ or projections/ (`cli._out_under_warehouse`, used by `_render_adhoc`) -
+    `ccw share --out` never got the same guard, so it could write straight into the
+    store it is supposed to never touch (found by the 2026-08-23 architecture
+    re-review). `force=True` at both of share.py's `write_projection` call sites makes
+    this a real overwrite risk, not just an unwanted extra file."""
+    short = capture_and_short(ccw_env, basic_session())
+    target = warehouse_root(ccw_env) / "objects" / "shouldnt-write-here"
+    result = run_ccw(["share", short, "--out", str(target)], ccw_env)
+    assert result.code != 0, result.out + result.err
+    assert not target.exists(), "share wrote inside the warehouse store"
+
+
 def test_unreadable_object_reported_as_error_not_not_found(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
