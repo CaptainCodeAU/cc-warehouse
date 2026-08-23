@@ -67,6 +67,10 @@ console errors and the real `~/.cc-warehouse/stats/` files left untouched (the t
 Read the command file itself for the exact steps `/dashboard` follows. The rest of this section
 explains what it's building and why, for anyone running `dashboard.py` by hand instead.
 
+**Editing or adding a panel?** Read `PANEL-CONTRACT.md` first, plus one example panel in
+`dashboard_template.html` - not the whole 1,170-line file. It documents the shared data model,
+chart helpers, and house rules every panel follows.
+
 `dashboard.py` queries `sessions.sqlite` directly (not the pre-aggregated CSVs,
 which are already summed over one fixed window) and embeds a compact
 per-session dataset into `claude-code-dashboard-live.html`: every session's
