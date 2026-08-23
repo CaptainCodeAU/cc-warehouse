@@ -93,6 +93,18 @@ def test_kill_switch_skips_everything(ccw_env: dict[str, str]) -> None:
     assert session_count(ccw_env) == 0
 
 
+def test_kill_switch_reports_skipped_rather_than_silently(ccw_env: dict[str, str]) -> None:
+    """Ticket 24.7: a skipped hook must leave a trace. Before this fix, the kill
+    switch returned 0 with zero record anywhere, so a `CCW_SKIP_HOOK=1` left on
+    by accident was indistinguishable from a healthy silent capture."""
+    transcript = write_transcript(ccw_env, basic_session())
+    env = dict(ccw_env) | {"CCW_SKIP_HOOK": "1"}
+    run_ccw(["hook"], env, stdin=hook_payload(transcript))
+    log = warehouse_root(ccw_env) / "logs" / "capture.jsonl"
+    assert log.exists()
+    assert "skipped_disabled" in log.read_text()
+
+
 @pytest.mark.parametrize("payload", ["", "not json", '{"session_id": "x"}'])
 def test_invalid_payload_exits_clean_without_raising(
     ccw_env: dict[str, str], payload: str

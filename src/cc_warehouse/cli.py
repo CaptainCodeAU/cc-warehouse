@@ -541,6 +541,14 @@ def _run_hook() -> int:
     try:
         config = load_config()
         if config.skip_hook:
+            # Ticket 24.7: a silent no-op here is indistinguishable from a healthy
+            # capture with nothing to do. Report it (log-only, like
+            # skipped_unchanged) so an operator who left CCW_SKIP_HOOK=1 set can
+            # tell the difference from the audit trail.
+            notify.report(
+                config,
+                notify.NotifyEvent("skipped_disabled", None, None, "CCW_SKIP_HOOK=1", None),
+            )
             return 0
         payload = _read_payload()
         result = capture.capture_transcript(

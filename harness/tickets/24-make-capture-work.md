@@ -183,7 +183,7 @@ real sessions have ended and been captured since.
     24.4  fix the plugin README and SPEC           DONE
     24.5  schedule a daily `ccw sweep`             DONE
     24.6  decide the 16 legacy per-project hooks   DECIDED: deferred, now 28.2
-    24.7  session-start freshness signal           STILL OPEN
+    24.7  session-start freshness signal           DONE 2026-08-23
 
 **24.1 / 24.2.** The wrapper is `hooks/ccw-hook.py` in the plugin, and it resolves a
 REAL EXECUTABLE: `CCW_BIN` if set, then `shutil.which("ccw")`, then the uv-tool
@@ -237,13 +237,72 @@ failure mode this whole ticket was written about, one level up, and it is why
 Build it like the CI watch: in the existing attention path, ESCALATING rather
 than a static banner, and clearing only by fixing.
 
-## NOT DONE, and deliberately so
+## NOT DONE, and deliberately so (until 24.7 closed it - see below)
 
 The oracle tests this ticket names were not written. The work landed in the
 PLUGIN repository, which has no suite; the fences it asks for (assert the argv,
 reject the string `uv tool run` in any hook wrapper, assert the `CCW_*` env
 bijection) belong in this repo and do not exist. Recorded here rather than
 dropped: a rule enforced only by a comment is a rule until the next tidy-up.
+
+## 24.7 DONE 2026-08-23
+
+Two things shipped, one in each repo.
+
+**cc-warehouse (`src/cc_warehouse/cli.py`, `_run_hook`).** `CCW_SKIP_HOOK=1`
+used to return 0 with zero record anywhere - a silent skip indistinguishable
+from a healthy no-op capture. It now reports `skipped_disabled` through the
+same `notify.report` path `skipped_unchanged` already uses (log-only, does not
+speak - `notify.SPEAKING_STATUSES` is unchanged). Oracle test:
+`tests/test_capture.py::test_kill_switch_reports_skipped_rather_than_silently`,
+proved red against the pre-fix code, green after.
+
+**The plugin (`gz-claude-code-plugins`, a different repo).** A new
+`SessionStart` hook, `ccw-freshness-check.py`, registered in `hooks.json`
+alongside the existing `SessionEnd` capture hook.
+
+A real design correction, found by running the first draft against this
+machine's actual data rather than trusting the ticket's literal wording: "reads
+ticket 23's gap figure" reads naturally as "alarm on the Uncaptured: N count",
+and the first draft did exactly that with fixed thresholds. Run for real, it
+printed ALERT on a perfectly healthy install, because that count sits at
+250-350 here permanently (old sessions predating the archive, hidden/warmup
+sessions) - `doctor.py` itself marks that line "ok", never a blocking failure,
+and ticket 23's own file says the gap is "printed without being" [blocking].
+A threshold on that number would have meant a false ALERT every single
+session, forever - the opposite of "escalating, clearing only by fixing".
+
+Shipped instead: the alarm is driven by `ccw doctor`'s own PASS/FAIL verdict
+(its exit code - the same mechanism `ccw-watch`, ticket 28.22's external
+consumer, already relies on), escalating on how many CONSECUTIVE
+session-starts in a row that verdict has been broken, a streak persisted in
+`~/.claude/logs/ccw-freshness-state.json`. The raw Uncaptured figure still
+rides along in the message as context (so the ticket's "reads ticket 23's gap
+figure" is honoured, just not as the trigger). Verified against real data:
+298 chronic uncaptured sessions with a healthy doctor verdict prints nothing;
+a simulated 6-session-start outage (via `CCW_BIN` pointed at a fake `ccw`
+that fails) escalates mild -> WARNING (streak 2-4) -> ALERT (streak 5+), then
+goes silent and resets to streak 0 the moment the fake doctor reports healthy
+again.
+
+**The "belongs in this repo" note above did not hold.** The wrapper files
+physically live in `gz-claude-code-plugins`, a separate git repository on
+disk; hardcoding that repo's local path into a cc-warehouse test would break
+for anyone who clones this repo without that sibling checkout at that exact
+path, which is the same class of problem this project's own "no personal
+machine paths" rule exists to prevent. The oracle tests instead live in that
+other repo, as its own first test file
+(`gz-claude-code-plugins/tests/test_freshness_check.py`, stdlib `unittest`,
+14 tests, no dependency added), scanning that repo's own `hooks/` directory
+with relative paths. All 14 proved green; the `uv tool run` fence and the
+`CCW_*` bijection check both scan real files rather than trusting a comment.
+The `CCW_*` bijection is necessarily a hand-kept mirror of
+`cc_warehouse.config.ENV_VARS` rather than a live cross-repo import - there is
+no dependency between the two repos to make it otherwise - so it catches a
+wrapper-side typo but not a rename made only on the cc-warehouse side.
+
+Full suite re-confirmed green in cc-warehouse after the fix: 1,138 tests,
+ruff clean, pyright 0 errors.
 
 ## Why there is a `ticket-24` tag on a docs commit
 

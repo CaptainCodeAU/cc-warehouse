@@ -170,7 +170,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
 - **THE ACTIVE TRACK is tickets 22-27, defined 2026-08-03, in that order. 22 through 26
   are CLOSED; 27 is the only one left and it is UNBLOCKED.** 22 protect the unprotected
   (DONE 2026-08-03) -> 23 `ccw doctor` + sweep `--dry-run`/`--quiet` (DONE 2026-08-03) ->
-  24 make capture work (DONE 2026-08-04, 24.7 excepted, see below) -> 25 rescue the only
+  24 make capture work (DONE 2026-08-04; 24.7 DONE 2026-08-23, see below) -> 25 rescue the only
   copies (DONE 2026-08-04) -> 26 prove then back up (DONE 2026-08-04, including 26.4) ->
   27 collapse to one folder (CORRECTED 2026-08-20, was stale here: **27.1 DONE
   2026-08-05** (`ccw reindex` shipped) and **27.2 DONE**, verdict "catalog is
@@ -263,7 +263,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   repo.** `~/.local/bin/ccw-watch` (a different repo, `fifty-shades-of-dotfiles`) now runs
   at SessionStart on this machine and its own settings.json command string contains the
   substring `ccw`, so 24.7's stated freshness gap is at least partly closed by something
-  this repo does not own or control. **`ccw doctor`'s TEXT OUTPUT IS THEREFORE A PUBLIC
+  this repo does not own or control.
+  **24.7 IS NOW FULLY DONE, 2026-08-23, owned by this project rather than borrowed from
+  `ccw-watch`.** A new `SessionStart` hook, `ccw-freshness-check.py`, ships in the plugin
+  (`gz-claude-code-plugins`, registered in that repo's `hooks.json` beside the existing
+  `SessionEnd` capture hook) and reads `ccw doctor`'s own PASS/FAIL verdict, escalating on
+  how many consecutive session-starts in a row it has been broken, clearing the moment it
+  is fixed. Corrected from the ticket's own literal wording after running the first draft
+  against real data: it does NOT alarm on the raw `Uncaptured: N session(s)` figure, which
+  sits at 250-350 on this machine permanently and which `doctor.py` itself treats as
+  non-blocking - a threshold on that number alone printed ALERT every session on a
+  perfectly healthy install. Full account: `harness/tickets/24-make-capture-work.md`'s
+  "24.7 DONE 2026-08-23" section. **`ccw doctor`'s TEXT OUTPUT IS THEREFORE A PUBLIC
   COMPATIBILITY SURFACE, not an internal detail**: `ccw-watch` parses the `hook` line's
   wording and the `Uncaptured: N session(s)` figure with a regex. Changing that wording or
   dropping that figure breaks an external consumer silently. This dependency is also the

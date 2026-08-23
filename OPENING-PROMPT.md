@@ -1,20 +1,21 @@
-# Opening prompt for a fresh session, 2026-08-23 (tenth handoff: item 7's "incremental collect" leftover closed)
+# Opening prompt for a fresh session, 2026-08-23 (eleventh handoff: ticket 24.7 closed)
 
-## Next task: nothing in items 1-7, or in ticket 28.22 / ticket 30's flagged
-## defect, is open work any more. Items 1, 2, 2b are DONE. Item 3 (really just
-## ticket 27.8) got the decision it was blocked on and stays NOT DONE by that
-## decision, not by anything left to do. Tickets 28.22 and 30's equal-size
-## defect are both fixed. Ticket 28.13 (the architecture board) is re-derived
-## at a live commit, with two live bugs it surfaced also fixed. Item 7
-## (ccstats polish) is now FULLY DONE: its function-split and price-recheck
-## sub-items were already closed, and "incremental collect" (its one
-## remaining leftover) landed this session - see the correction inside item 7
-## below for the full account. See the corrections inside each numbered
-## section below for the full account of each.
+## Next task: nothing in items 1-7, ticket 28.22, ticket 30's flagged defect,
+## ticket 28.13, or ticket 24.7 is open work any more. Items 1, 2, 2b are
+## DONE. Item 3 (really just ticket 27.8) got the decision it was blocked on
+## and stays NOT DONE by that decision, not by anything left to do. Tickets
+## 28.22 and 30's equal-size defect are both fixed. Ticket 28.13 (the
+## architecture board) is re-derived at a live commit, with two live bugs it
+## surfaced also fixed. Item 7 (ccstats polish) is FULLY DONE. **Ticket 24.7
+## (session-start capture freshness) is now FULLY DONE too, 2026-08-23 - see
+## the eleventh-handoff entry at the end of this file for the full account,
+## including a real design correction found by testing against real data
+## before shipping.** See the corrections inside each numbered section below
+## for the full account of each.
 ## **Pick up from "Also on record, not scheduled" near the end of this file,
-## or from `CLAUDE.md`'s OPEN/next section**: ticket 24.7 (session-start
-## capture freshness, partly closed from outside this repo), or ticket 28's
-## remaining backlog items. Nothing else from items 1-7 is open.
+## or from `CLAUDE.md`'s OPEN/next section**: ticket 28's remaining backlog
+## items are the standing candidate. Nothing else from items 1-7, or from
+## tickets 24.7/28.13/28.22/30, is open.
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -752,8 +753,10 @@ like it should help. `README.md` documents the new file and flag.
 
 ## Also on record, not scheduled
 
-- **Ticket 24.7**, session-start capture freshness. Partly closed from outside
-  this repo by `ccw-watch`, which this repo does not own or control.
+- ~~**Ticket 24.7**, session-start capture freshness. Partly closed from
+  outside this repo by `ccw-watch`.~~ **DONE 2026-08-23**, and now owned by
+  this project's own plugin rather than borrowed - see the eleventh-handoff
+  entry at the end of this file.
 - **Ticket 28**, the backlog register. Still open in it: `--open` (28.1),
   optional secret redaction on personal projections (28.2), `--limit` on sweep
   (28.3), `render_html` costing 74x the payload (28.9), test gaps (28.10),
@@ -944,3 +947,48 @@ clean on both).
 candidates for a future session, unchanged from the ninth handoff: ticket 24.7 (session-start
 capture freshness, partly closed already from outside this repo) and the remaining items in ticket
 28's backlog register.
+
+---
+
+**Later the same day (eleventh handoff).** Given a straight choice between ticket 24.7
+(session-start capture freshness) and a ticket 28.9 performance fix, the operator picked 24.7,
+after first asking to confirm before the change touched a second, live repo (`gz-claude-code-plugins`)
+whose `hooks.json` controls what runs at every real SessionStart on this machine - confirmed
+before any edit there.
+
+Two fixes landed, one per repo. In cc-warehouse: `_run_hook`'s `CCW_SKIP_HOOK=1` path used to
+return 0 with zero record anywhere; it now reports `skipped_disabled` through the same
+`notify.report` path `skipped_unchanged` already uses, proved red-then-green
+(`tests/test_capture.py::test_kill_switch_reports_skipped_rather_than_silently`).
+
+In the plugin repo: a new `SessionStart` hook, `ccw-freshness-check.py`, registered in
+`hooks.json` beside the existing `SessionEnd` capture hook. **A real design correction was
+found and fixed before shipping, not after**: the ticket's own wording ("reads ticket 23's gap
+figure") reads as "alarm on the Uncaptured: N count", and the first draft did exactly that with
+fixed numeric thresholds. Run against this machine's real data, it printed ALERT on a perfectly
+healthy install, because that count sits at 250-350 here permanently (old sessions predating the
+archive, hidden/warmup sessions) and `doctor.py` itself marks it "ok", never blocking. Rebuilt to
+key the alarm on `ccw doctor`'s own PASS/FAIL exit code instead - the same signal `ccw-watch`
+already relies on - escalating on consecutive broken session-starts in a row (a streak persisted
+in `~/.claude/logs/ccw-freshness-state.json`), with the raw gap figure riding along as context
+rather than as the trigger. Verified against real data three ways: the real 298-uncaptured healthy
+machine now prints nothing; a simulated 6-session outage (`CCW_BIN` pointed at a fake failing
+`ccw`) escalated mild -> WARNING (streak 2-4) -> ALERT (streak 5+); a simulated recovery went
+silent and reset to streak 0 immediately.
+
+The plugin repo had no test suite at all before this. Its first test file,
+`tests/test_freshness_check.py` (stdlib `unittest`, no new dependency, 14 tests), covers the
+escalation tiers, the streak persistence, the `uv tool run` fence (matched narrowly against the
+argv-list shape so it does not flag the historical incident documentation already in `ccw-hook.py`'s
+own docstring), and a hand-kept mirror of cc-warehouse's `CCW_*` env var list (necessarily
+hand-kept, not a live cross-repo import - the two repos share no dependency). All 14 passed. Full
+account, including why the fences do not live in cc-warehouse itself (hardcoding a sibling repo's
+local path would violate this project's own "no personal machine paths" rule): the "24.7 DONE
+2026-08-23" section of `harness/tickets/24-make-capture-work.md`.
+
+Full cc-warehouse suite re-confirmed green after the fix: 1,138 tests, ruff clean, pyright 0
+errors.
+
+**What was NOT done:** nothing from items 1-7, or from tickets 24.7/28.13/28.22/30, remains open
+as of this eleventh handoff. The only standing candidate for a future session is ticket 28's
+backlog register (28.1, 28.2, 28.3, 28.9, 28.10, 28.11, 28.12, 28.14, 28.19).
