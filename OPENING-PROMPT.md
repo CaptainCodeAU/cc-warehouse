@@ -1,27 +1,35 @@
-# Opening prompt for a fresh session, 2026-08-24 (thirteenth handoff: ticket
-# 28.1 and 28.3 DONE; ticket 28.9 INVESTIGATED and IN PROGRESS - see below)
+# Opening prompt for a fresh session, 2026-08-24 (fourteenth handoff: ticket
+# 28.9 Fix A DONE and pushed; Fix B is the next task - see below)
 
-## Next task: **ticket 28.9 (render_html's memory cost) is the ACTIVE task,
-## mid-flight, with an operator-approved plan. Read "ACTIVE TASK: ticket 28.9"
-## immediately below this block before doing anything else - it has the full
-## investigation, the exact numbers, the two-phase plan, and the testing
-## requirement (Claude-in-Chrome, real browser, not just pytest).** Nothing in
-## items 1-7, ticket 28.22, ticket 30's flagged defect, ticket 28.13, ticket
-## 24.7, ticket 28.19, ticket 28.1, or ticket 28.3 is open work any more - see
-## the eleventh through thirteenth handoff entries at the end of this file for
-## those accounts. Once 28.9 is done, the standing next candidates are ticket
+## Next task: **ticket 28.9, Fix B (the copy-as-markdown base64 duplication),
+## is what the operator explicitly asked for next, in a NEW session. Fix A is
+## DONE, tested, and pushed (commit `fb85934`) - do not re-do it, do not re-run
+## its browser check, and do not re-read its investigation as if it were still
+## open.** Read "ACTIVE TASK: ticket 28.9" immediately below this block before
+## touching any code - it has Fix A's full account (for context on what
+## already landed) AND Fix B's plan: the two candidate shapes (server-side
+## reuse vs. client-side reconstruction), the locked contract guarantee Fix B
+## must not break (`test_copy_as_markdown_payloads_equal_transcript_fragments`),
+## and the same real-browser testing requirement Fix A was held to. **Picking
+## between the two Fix B shapes is a decision to make explicit (or ask), not
+## default silently** - see step 3 of the plan. Nothing in items 1-7, ticket
+## 28.22, ticket 30's flagged defect, ticket 28.13, ticket 24.7, ticket 28.19,
+## ticket 28.1, ticket 28.3, or ticket 28.9 Fix A is open work any more - see
+## the eleventh through fourteenth handoff entries at the end of this file for
+## those accounts. Once Fix B is done, the standing next candidates are ticket
 ## 28's other backlog items (28.2, 28.10, 28.11, 28.12, 28.14) and `ccw share
 ## --open` as a possible fast follow-up to 28.1 - see "Also on record, not
 ## scheduled" near the end of this file.
 
 ## ACTIVE TASK: ticket 28.9, cut `conversation.html`'s memory cost
 
-**Where this stands**: investigated end-to-end and the mechanism is confirmed with real,
-reproduced measurements (not guesses). NO PRODUCTION CODE HAS BEEN CHANGED YET. The operator
-explicitly asked for this to be BUILT and TESTED in a fresh session, in two separate steps
-(Fix A, then test it; Fix B, then test it), with the testing step done for real in a browser
-via the `claude-in-chrome` extension, not just `pytest`. Read this whole section before
-touching any code.
+**Where this stands, 2026-08-24 (updated)**: investigated end-to-end with real, reproduced
+measurements (not guesses), then Fix A was BUILT and TESTED, in a fresh session, exactly as
+planned - see "FIX A DONE 2026-08-24" below for the full account. **Fix B has NOT been built.**
+The operator's original ask was two separate steps done one at a time, each tested for real in a
+browser via `claude-in-chrome`, not just `pytest` - Fix A satisfied that bar; Fix B still needs
+to. Read this whole section, including the Fix A account, before touching any code: Fix B's plan
+(step 3 below) assumes the reader knows what Fix A already changed.
 
 **The ticket**: `harness/tickets/28-backlog.md`'s "28.9" entry. Original note (undated
 precisely, from the 2026-08-03/04 backlog investigation): "`render_html` costs 74x the payload
@@ -1365,3 +1373,72 @@ place.
 **What was NOT done:** nothing new opened this handoff. Standing candidates for a future session:
 ticket 28's remaining backlog items (28.2, 28.9, 28.10, 28.11, 28.12, 28.14), and `ccw share --open`
 as a possible fast follow-up to 28.1's work above.
+
+---
+
+**Fourteenth handoff, 2026-08-24 (new session).** Opened by reading this file (the thirteenth
+handoff, above), which pointed straight at ticket 28.9's "ACTIVE TASK" section and its
+operator-approved two-fix plan. Did Fix A only, exactly as that section specified: build it,
+test it for real (gates + re-profile + a real Chrome tab), stop before Fix B.
+
+**Fix A DONE.** `_render` and `_render_page` (`src/cc_warehouse/render.py`) now encode each
+fragment to UTF-8 bytes and join with `b"\n".join(...)` instead of joining `str` and encoding
+afterward - the fix scoped to exactly these two functions' final join, not the "dozens of call
+sites" the ticket's own plan predicted might be needed, because encoding at that one boundary
+per function was enough to stop the astral-plane 4x-inflation from reaching the whole document.
+`render_markdown`/`render_html`'s PUBLIC return type changed from `tuple[str, str]` to
+`tuple[bytes, bytes]` (both `build.py` call sites were encoding the result immediately anyway,
+so `build.py` simplified rather than grew). That public-type change reached ~40 call sites
+across 10 test files (`test_matrix.py`, `test_real_shapes.py`, `test_render_html.py`,
+`test_render_html_regressions.py`, `test_render_md.py`, `test_render_md_regressions.py`,
+`test_surrogates.py`, `test_thinking_withheld.py`, `test_truncation.py`, `test_chrome.py`) -
+each fixed by decoding to `str` once at the point of use (a shared helper where one already
+existed, e.g. `test_matrix.py`'s `_rendered`, otherwise a small local wrapper), with zero
+assertion logic changed anywhere. `test_surrogates.py` needed one real adaptation, not just a
+decode: two tests used to call `.encode("utf-8")` on the result to prove a lone surrogate didn't
+break rendering; that encode now happens INSIDE `render_markdown`/`render_html`, so calling the
+function at all (and it not raising) is now the assertion.
+
+**Verified, not assumed, at every step**: full suite 1,175 passed, ruff clean, pyright 0 errors
+(one pre-existing, unrelated pyright gap in `tests/test_render_open.py` was found and confirmed
+via `git stash` to predate this session - not touched, out of scope for this ticket). Output
+proved byte-identical before/after via `git stash`/`stash pop` around the production diff, on
+TWO independent payloads: the ticket's own synthetic repro (1.60 MiB in, 40 turns) and a real
+8.3 MB session pulled from this machine's own `~/.claude/projects` - all 5 projection files
+(`transcript.md`, `transcript.compact.md`, `conversation.html`, `conversation.compact.html`,
+`manifest.json`) matched with `cmp` both times. Peak memory on the synthetic repro dropped from
+61.16 MiB to 28.00 MiB (peak/input ratio 38.18x -> 17.48x) - beating the ticket's own ~26 MiB /
+~27x estimate, because the fix landed in both `_render` (markdown, called a second time inside
+`_render_page` for the whole-transcript copy payload) and `_render_page` (HTML) rather than only
+the HTML page's own join the estimate was based on.
+
+**The real-browser check ran twice** - the Chrome extension was not connected on the first
+attempt (a live occurrence of the same environment gap prior handoffs hit, not a new finding),
+and the operator was asked to reconnect it rather than the session skipping the check or
+declaring the fix done on `pytest` alone. On retry: the real 8.3 MB session's `conversation.html`
+served over `127.0.0.1:8917` and opened in an actual Chrome tab via `claude-in-chrome`. Zero
+console errors on load and after interaction. All four copy-button levels clicked with the
+clipboard read back programmatically (`navigator.clipboard.readText()`, comparing against
+`transcript.md` fetched from the same server): the whole-transcript button's output is
+CHARACTER-IDENTICAL to `transcript.md` (545,316 chars, `===` true), and the row/phase/turn
+buttons' output is each a substring of it - directly exercising
+`test_copy_as_markdown_payloads_equal_transcript_fragments`'s own guarantee outside pytest, not
+just trusting the test. Icons (including the astral-plane ones Fix A is about) rendered correctly
+and round-tripped through copy intact, e.g. a row-level copy came back as
+`"<details>\n<summary>🧩 session events</summary>..."` (a real 🧩 JIGSAW PUZZLE PIECE,
+un-mangled).
+
+One commit, pushed: `fb85934`, `fix: cut render_html/render_markdown peak memory 2x (ticket
+28.9, Fix A)`. `harness/tickets/28-backlog.md`'s 28.9 entry and this file's "ACTIVE TASK" section
+were both updated in place with the full account, matching every other closed step in this file.
+
+**The operator then said: do Fix B in a new session, stop here now.** Fix B (the four-level
+copy-as-markdown base64 duplication, Mechanism 2 in the ACTIVE TASK section above) was NOT
+started - no code read or written toward it beyond what the investigation already covered before
+this handoff. The two candidate shapes (server-side reuse vs. client-side reconstruction) are
+still an open pick for whichever session does Fix B; see step 3 of the plan above. This file's
+top "Next task" pointer and the ACTIVE TASK section's own status line were updated to send a
+fresh session straight at Fix B rather than back through Fix A's now-closed investigation.
+
+**What was NOT done:** Fix B, and everything downstream of it in the plan (step 4's browser
+test). Nothing else was touched this handoff.
