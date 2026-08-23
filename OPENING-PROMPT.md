@@ -1,12 +1,15 @@
-# Opening prompt for a fresh session, 2026-08-23 (sixth handoff: /dashboard shipped + tested, item 3 still not started)
+# Opening prompt for a fresh session, 2026-08-23 (seventh handoff: item 3's decision made, item 2's loose end written)
 
-## Next task: ticket 27.5-27.8 (item 3 below) - CORRECTED this session: only
-## 27.8 is actually still open. 27.5-27.7 were already closed 2026-08-22; this
-## file itself was stale on that until now (see the correction inside item 3).
-## Items 1 and 2 are DONE; item 2 gained a new `/dashboard` Claude Code
-## command this session (item 2b below) - built, fixed, and tested for real.
-## Read "One loose end inside item 2" just below before starting item 3 - it
-## has now been asked and deferred across THREE sessions running.
+## Next task: nothing in items 1-3 is open work any more. Items 1, 2, 2b are
+## DONE. Item 3 (really just ticket 27.8) got the decision it was blocked on
+## this session - see the correction inside item 3 - and stays NOT DONE by
+## that decision, not by anything left to do. The item-2 loose end (a short
+## guide for `dashboard_template.html`) was written this session too - see
+## the correction just below. **Pick up from "Also on record, not scheduled"
+## near the end of this file, or from `CLAUDE.md`'s OPEN/next section**:
+## ticket 30's equal-size payload defect, ticket 28.22 (fence `ccw doctor`'s
+## text output), ticket 28.13 (re-derive the architecture board), or ccstats
+## polish (item 7 below).
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -33,6 +36,14 @@ dashboard work landing on the exact file this would apply to. Nothing was
 written. Ask the operator before doing anything here; do not assume "yes"
 just because the file has since had six more rounds of hand-edits that a
 panel-rules doc would have made cheaper.
+
+**RESOLVED 2026-08-23: the operator said "write it now."** Written as
+`tools/ccstats/PANEL-CONTRACT.md` - the data model (`DATA`/`IDX`/`LK`/`FS`/
+`state`), every chart/format helper, the `CHART-BRIEF.md` house rules
+restated as a checklist, one fully annotated example panel (Daily), and a
+one-line pointer added from `tools/ccstats/README.md`'s "The live dashboard"
+section so it is actually findable. Nothing in `dashboard_template.html`
+itself changed. This loose end is CLOSED; do not re-ask it.
 
 ---
 
@@ -607,6 +618,15 @@ So **item 3's real remaining work is just 27.8**, and it starts with a decision,
 `harness/tickets/27-collapse-to-one-folder.md` for the full account - this file no longer
 duplicates it now that it's been reconciled once.
 
+**THAT DECISION WAS MADE 2026-08-23, SAME SESSION.** Explained to the operator in plain
+language first (verified from source: `config.py:162`, `capture.py:189-261`, the 7 named
+tests), then put as a straight fork: drop the vault and make `archive_root` mandatory
+everywhere, or keep both as the status quo. **The operator chose to keep both.** 27.8
+stays NOT DONE and `store.py` stays - this is the settled answer, not an open question,
+recorded in `CLAUDE.md`, `harness/tickets/27-collapse-to-one-folder.md`, and
+`contract/DESIGN.md` section 15 ("2026-08-23, ticket 27.8"). Item 3 has no remaining
+work. Do not re-ask this.
+
 **27.9 IS WITHDRAWN AND STAYS WITHDRAWN.** Nothing is ever deleted from
 `~/.claude`. A satisfied gate is not consent.
 
@@ -722,25 +742,31 @@ incremental collect (re-reads all 25k transcripts every run, ~25 s).
 
 ## What the previous session did
 
-**2026-08-23 session.** Opened by re-reading this file and confirming the operator wanted item 3
-(ticket 27.5-27.8) next. Instead, the operator asked two follow-up questions about the existing
-dashboard files (what's the difference between the template and the live output; how does the
-template-fill mechanism actually work) - both answered by reading the real code, not from memory.
-That led to a new, unplanned ask: build a way to trigger the dashboard build from inside this
-project. The whole rest of the session went into item 2b (see above) - designing, building, fixing
-a real gap (`CCSTATS_OUT` not honoured), testing it for real via a Herdr-driven separate Claude
-Code session plus a real Chrome tab, and documenting it in `tools/ccstats/README.md`. This file's
-own stale ticket-27 status (item 3, and the "Next task" line at the very top) was also corrected
-this session, sourced from `CLAUDE.md`'s already-current OPEN/next section.
+**2026-08-23 session (the one that produced this seventh handoff).** Opened by reading this file
+(the sixth handoff, above) and asking the operator, in plain language, what to do about the two
+threads it left open: the item-3 decision (ticket 27.8) and the item-2 loose end (the panel-contract
+doc). The operator first asked for a plain-language explanation of what `keep_objects`/`store.py`
+(the vault) vs `archive_root` (the archive folder) actually do before deciding anything on 27.8 -
+answered by a sub-agent verifying the real mechanism from source (`config.py:162`,
+`capture.py:189-261`, and the 7 specific tests named in the 2026-08-22 ticket-27.8 entry), not from
+memory or this file's own prior summary. Given that explanation, the operator chose to KEEP BOTH
+(the vault stays as a safety net) - see the correction inside item 3 above. That decision is now
+recorded in `CLAUDE.md`, `harness/tickets/27-collapse-to-one-folder.md`, and `contract/DESIGN.md`
+section 15; **item 3 has no remaining work and should not be re-opened without a new, explicit
+reason.**
 
-Three commits, all pushed: `ca83ce7` (the `/dashboard` command), `72e0b82` (the `CCSTATS_OUT` fix
-and its README documentation). A memory was saved: always give the operator a full path or link
-for anything to open.
+Separately, the operator said "write it now" for the panel-contract doc. Read
+`dashboard_template.html` and `dashboard.py` directly to write `tools/ccstats/PANEL-CONTRACT.md` -
+the data model, every chart/format helper, the house rules from `CHART-BRIEF.md`, and one fully
+annotated example panel (Daily) - plus a one-line pointer from `tools/ccstats/README.md`. See the
+correction inside the "One loose end" section above; that loose end is CLOSED.
 
-**What was NOT done, again:** item 3 (ticket 27.5-27.8, really just 27.8 now - see the correction
-above) was not started, for the second session running, both times because other work took
-priority. The item-2 loose end (write a short "panel contract" doc for `dashboard_template.html`?)
-was also not decided - offered again at the very start of this session, the operator picked
-"start item 3" over deciding it, and then item 3 itself never got reached either. It is now three
-sessions with no decision on that one; still small, still not blocking, but worth someone actually
-answering it rather than deferring a fourth time.
+One stale line noticed but NOT fixed, flagged instead: `tools/ccstats/README.md`'s "Scope, stated
+rather than hidden" paragraph still says "Top sessions shows the top 50... not 200," but this file's
+own item-2 "Fourth round" notes say that panel is 25, not 50, as of 2026-08-22. Out of scope for
+this session's actual task; worth a one-line fix next time that file is touched.
+
+**What was NOT done:** nothing from items 1-3 remains open. The next real work is whatever the
+operator picks from "Also on record, not scheduled" below or `CLAUDE.md`'s OPEN/next section -
+ticket 30's equal-size payload defect, ticket 28.22, ticket 28.13, or ccstats polish (item 7) are
+the standing candidates, none started this session.

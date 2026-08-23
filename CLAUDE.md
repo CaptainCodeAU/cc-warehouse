@@ -221,8 +221,12 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   safety net from every install that sets `archive_root` without explicitly
   opting into `keep_objects = false`, inverting R5 (today's default IS the
   conservative branch). Reverted cleanly; full suite re-confirmed green.
-  Retiring `store.py` for real needs a bigger, still-undecided call: dropping
-  `keep_objects` as a feature and making `archive_root` mandatory. See
+  Retiring `store.py` for real needed a bigger call: dropping `keep_objects` as
+  a feature and making `archive_root` mandatory. **THAT CALL WAS MADE
+  2026-08-23: the principal chose to keep both** (the vault stays as a
+  write-time safety net for any install that has not explicitly turned it
+  off). **27.8 stays NOT DONE, `store.py` stays, and this is not open for
+  re-litigation without a new explicit reason.** See
   `harness/tickets/27-collapse-to-one-folder.md` and `contract/DESIGN.md`
   section 15 ("2026-08-22, ticket 27.5/27.6" and "...27.8") for the full
   account, and `harness/tickets/29-which-copy-is-the-current-one.md` for the

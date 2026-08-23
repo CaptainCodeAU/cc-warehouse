@@ -1499,6 +1499,18 @@ remove `keep_objects` as a feature entirely (making `archive_root`
 mandatory and every install single-copy) - a materially bigger, still
 undecided change with its own blast radius, not attempted here.
 
+**2026-08-23, ticket 27.8: THE STILL-UNDECIDED CALL ABOVE WAS PUT TO THE
+PRINCIPAL DIRECTLY AND DECIDED - KEEP BOTH, `store.py` STAYS.** Explained
+in plain language, from source (`config.py:162`, `capture.py:189-261`, and
+the 7 tests named above), as a straight choice: drop `keep_objects` and make
+`archive_root` mandatory for every install (bigger change, a broken archive
+then always fails loud), or keep the vault as an optional per-install safety
+net (status quo, what today's shipped default already is). The principal
+chose to keep both. This is the decision the paragraph above was waiting on,
+not a deferral of it: **27.8 stays NOT DONE and `store.py` is not to be
+retired without a new, explicit reason to reopen this**, same standing as
+27.9. No code changed; this is a decision record only.
+
 **2026-08-23: THE `ccw-watch` RED FLAG FROM 2026-08-22 ("desync: 5
 problem(s)... missing transcript.md") INVESTIGATED - NOT A LIVE CAPTURE
 BUG.** `ccw-watch`'s check is `ccw doctor`'s `_desync` (ticket 31.5), which

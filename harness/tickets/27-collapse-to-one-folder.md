@@ -9,11 +9,12 @@ of running, not in advance.
 > every gate 27.9 was waiting on is now satisfied. That is NOT permission. Read
 > 27.9 before acting on any part of this ticket.
 
-## Status, 2026-08-22
+## Status, 2026-08-23
 
-**27.1-27.7 are all CLOSED. 27.8 was attempted and reverted - see its own
-section, it is NOT done and needs a bigger decision first. 27.9 is withdrawn
-and stays withdrawn.** The `objects/` delete HAS been run and re-verified; see
+**27.1-27.7 are all CLOSED. 27.8 was attempted and reverted, then the bigger
+decision it was blocked on was put to the principal and decided 2026-08-23:
+keep both, `store.py` stays - see its own section. 27.9 is withdrawn and
+stays withdrawn.** The `objects/` delete HAS been run and re-verified; see
 27.4, which said the opposite until 2026-08-21. 27.5-27.7 closed 2026-08-22
 (27.5 by a principal decision, 27.7 turned out to already be shipped).
 
@@ -413,6 +414,16 @@ Genuinely retiring `store.py` needs a bigger, still-undecided call: dropping
 `keep_objects` as a feature entirely and making `archive_root` mandatory. Not
 attempted here; a future session should not restart this without that decision
 first.
+
+**That decision was put to the principal directly 2026-08-23, plain-language, after
+verifying the actual mechanism from source (`config.py:162`, `capture.py:189-261`,
+the 7 named tests in `test_archive_durable.py` and others).** He chose to KEEP BOTH:
+the vault stays available as a write-time safety net (a broken `archive_root` fails
+silently instead of losing the session) for any install that has not explicitly set
+`keep_objects = false`. This is not a deferral - it is the decision 27.8 was blocked
+on, made in favour of the status quo. **27.8 stays NOT DONE, `store.py` stays, and no
+future session should re-ask this question or re-attempt the flip without a new,
+explicit reason to revisit it.**
 
 ### 27.9  WITHDRAWN 2026-08-04 BY THE PRINCIPAL. DO NOT DO THIS.
 
