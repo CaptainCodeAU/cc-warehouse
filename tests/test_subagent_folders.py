@@ -173,6 +173,31 @@ def test_a_larger_payload_replaces_and_a_smaller_is_refused(tmp_path: Path) -> N
     assert result.jsonl.read_bytes() == big
 
 
+def test_an_equal_size_content_mismatch_is_refused_not_silently_dropped(
+    tmp_path: Path,
+) -> None:
+    """The write_session_folder twin (ticket 30, closed 2026-08-23) had the same
+    bug: equal SIZE was treated as proof of equal CONTENT (F1), with neither
+    `replaced` nor `refused_smaller` set, so a genuinely different sub-agent
+    payload of the same length was silently discarded - no error, no flag, no
+    trace. Found by the 2026-08-23 architecture re-review (the fix that closed
+    ticket 30 was applied only to write_session_folder, not its two siblings)
+    and fixed here the same way: compare bytes, not just size, when they match."""
+    parent_folder(tmp_path)
+    archived = subagent_session(agent_id=AGENT, prompt="x" * 100)
+    offered = subagent_session(agent_id=AGENT, prompt="y" * 100)
+    assert len(offered) == len(archived), "fixture precondition: equal length"
+    assert offered != archived, "fixture precondition: different content"
+
+    archive.write_subagent(tmp_path, LABEL, archived, ZONE, meta=subagent_meta())
+    result = archive.write_subagent(tmp_path, LABEL, offered, ZONE, meta=subagent_meta())
+
+    assert result.refused_equal_size
+    assert not result.replaced
+    assert not result.refused_smaller
+    assert result.jsonl.read_bytes() == archived, "the archived payload must survive"
+
+
 def test_a_session_payload_is_refused_by_the_subagent_writer(tmp_path: Path) -> None:
     """The mirror of 21a's refusal, so neither writer can be handed the other's
     payload and quietly do something reasonable-looking with it."""

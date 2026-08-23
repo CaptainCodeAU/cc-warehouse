@@ -211,6 +211,9 @@ class SubagentResult:
     orphaned: bool = False
     replaced: bool = False
     refused_smaller: bool = False
+    # write_session_folder's ticket-30 twin: same size as archived is not the
+    # same thing as same bytes (F1). See write_subagent's docstring.
+    refused_equal_size: bool = False
 
 
 def write_subagent(
@@ -243,6 +246,13 @@ def write_subagent(
     When the parent's folder does not exist the transcript is NOT dropped and NOT
     silently attached to something else: it goes to `<label>/_orphaned-subagents/`
     with a note naming the parent it is waiting for.
+
+    Same replace-if-larger rule as write_session_folder (R1 as amended): a larger
+    payload replaces, a smaller one is refused, and EQUAL size is never assumed to
+    mean equal content (F1) - found live, closed 2026-08-23, the same defect
+    ticket 30 had already fixed in write_session_folder but not here. There is no
+    manifest.json for a sub-agent to record a refusal in; `SubagentResult.
+    refused_equal_size` is what F6 has to lean on here instead.
     """
     agent_id = agent_id_of(data)
     if agent_id is None:
@@ -265,18 +275,22 @@ def write_subagent(
     directory.mkdir(parents=True, exist_ok=True)
 
     jsonl = directory / f"{agent_id}{_JSONL_SUFFIX}"
-    replaced = refused = False
+    replaced = refused_smaller = refused_equal_size = False
     if not jsonl.exists():
         store.atomic_write(jsonl, data)
     else:
         # R1 as amended: size answers "which of two payloads KNOWN to differ is
         # larger", never "are these the same bytes".
-        existing = jsonl.stat().st_size
-        if len(data) > existing:
+        existing_bytes = jsonl.read_bytes()
+        if len(data) > len(existing_bytes):
             store.atomic_write(jsonl, data)
             replaced = True
-        elif len(data) < existing:
-            refused = True
+        elif len(data) < len(existing_bytes):
+            refused_smaller = True
+        elif data != existing_bytes:
+            # F1: equal size is not equal content. Same conservative branch as
+            # smaller (R5) - see the docstring above.
+            refused_equal_size = True
 
     if meta is not None:
         store.atomic_write(directory / _META, meta)
@@ -290,7 +304,10 @@ def write_subagent(
             directory / _ORPHAN_NOTE,
             json.dumps(note, sort_keys=True, indent=2).encode("utf-8") + b"\n",
         )
-    return SubagentResult(directory, jsonl, orphaned, replaced, refused)
+    return SubagentResult(
+        directory, jsonl, orphaned, replaced,
+        refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
+    )
 
 
 def _parent_folder(
@@ -416,10 +433,18 @@ def write_source(
     if not jsonl.exists():
         store.atomic_write(jsonl, data)
         return jsonl
-    # Same rule as write_session_folder: the LARGER payload wins, a smaller one
-    # is refused, an equal one is left alone so re-capture does not churn the
-    # mtime. Size here answers "which of two payloads known to differ is
-    # larger", never "are these the same bytes" (R1 as amended 2026-08-02).
+    # The LARGER-wins half of write_session_folder's rule: size answers "which
+    # of two payloads known to differ is larger", never "are these the same
+    # bytes" (R1 as amended 2026-08-02). An equal-or-smaller offer is left
+    # alone here - correctness does not depend on that being right, because
+    # this is only the hook's synchronous durability write; write_session_folder
+    # runs afterward on the SAME bytes and is the one that decides what
+    # actually renders (including, since 2026-08-23, an equal-size CONTENT
+    # mismatch), so this function's own equal-size behaviour is deliberately
+    # not held to that finer rule (STALE COMMENT FIXED 2026-08-23 - this used
+    # to claim it followed write_session_folder's rule "exactly", which
+    # stopped being true the moment that function's rule got finer than this
+    # one's).
     if len(data) > jsonl.stat().st_size:
         store.atomic_write(jsonl, data)
     return jsonl
