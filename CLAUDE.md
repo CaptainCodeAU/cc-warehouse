@@ -455,6 +455,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   guards are only as complete as whoever remembered to add them.
 
 `/refresh` (in `.claude/commands/`) is the currency sweep; `/architecture` owns the review
-board and is outside `/refresh`'s scope. Cross-project context lives in the
-claude-code-transcripts project memory (`cc-warehouse-and-cc-vantage`); sibling project:
-`../cc-vantage`.
+board and is outside `/refresh`'s scope; `/dashboard` builds and opens the live ccstats
+dashboard (`tools/ccstats/dashboard.py`), project-scoped, not part of either sweep. Cross-project
+context lives in the claude-code-transcripts project memory (`cc-warehouse-and-cc-vantage`);
+sibling project: `../cc-vantage`.
