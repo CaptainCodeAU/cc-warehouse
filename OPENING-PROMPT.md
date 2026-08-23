@@ -1,17 +1,18 @@
-# Opening prompt for a fresh session, 2026-08-23 (eighth handoff: ticket 28.22 and ticket 30's equal-size defect both closed)
+# Opening prompt for a fresh session, 2026-08-23 (ninth handoff: ticket 28.13 and ccstats polish both closed)
 
-## Next task: nothing in items 1-3, or in ticket 28.22 / ticket 30's flagged
-## defect (item 4/5 below), is open work any more. Items 1, 2, 2b are DONE.
-## Item 3 (really just ticket 27.8) got the decision it was blocked on this
-## session - see the correction inside item 3 - and stays NOT DONE by that
-## decision, not by anything left to do. The item-2 loose end (a short guide
-## for `dashboard_template.html`) was written this session too. Later the
-## same day, asked to pick between item 4 (ticket 30's equal-size defect) and
-## item 5 (ticket 28.22) and told to do both: did 28.22 first (recommended,
-## it was quick), then item 4 - see the corrections inside each section below.
+## Next task: nothing in items 1-7, or in ticket 28.22 / ticket 30's flagged
+## defect, is open work any more. Items 1, 2, 2b are DONE. Item 3 (really just
+## ticket 27.8) got the decision it was blocked on and stays NOT DONE by that
+## decision, not by anything left to do. Tickets 28.22 and 30's equal-size
+## defect are both fixed. Ticket 28.13 (the architecture board) is re-derived
+## at a live commit, with two live bugs it surfaced also fixed. Item 7
+## (ccstats polish) had its function-split and price-recheck sub-items done;
+## only "incremental collect" remains, not started. See the corrections inside
+## each numbered section below for the full account of each.
 ## **Pick up from "Also on record, not scheduled" near the end of this file,
-## or from `CLAUDE.md`'s OPEN/next section**: ticket 28.13 (re-derive the
-## architecture board), or ccstats polish (item 7 below).
+## or from `CLAUDE.md`'s OPEN/next section**: ticket 24.7 (session-start
+## capture freshness, partly closed from outside this repo), ticket 28's
+## remaining backlog items, or item 7's "incremental collect" leftover.
 
 ### One loose end inside item 2, not urgent, not blocking
 
@@ -701,10 +702,23 @@ fresh review at a live commit, via `/architecture`, never hand-patching refs.
 
 In rough value order: ~~`--until` (only `--since` exists...)~~ **DONE, landed
 as part of item 2 above (2026-08-21) - closed here instead of twice, as
-already noted.** Remaining: split the three long functions
-(`collect.scan_transcript` 330, `make_docs.main` 273, `facts.compute` 153) ·
-re-check model prices (pinned at 2026-06-24, every dollar figure drifts) ·
-incremental collect (re-reads all 25k transcripts every run, ~25 s).
+already noted.** ~~Split the three long functions (`collect.scan_transcript`
+330, `make_docs.main` 273, `facts.compute` 153)~~ **DONE 2026-08-23.** Each
+split into named helpers grouped by what they actually compute; verified
+byte-identical output against real data before/after (a frozen transcript set
+for `scan_transcript`, the same real `sessions.sqlite` for `facts.compute`,
+a real `DATA-GUIDE.md` regeneration for `make_docs.main` - the last one
+caught and fixed one real transcription slip before it shipped). ~~Re-check
+model prices (pinned at 2026-06-24, every dollar figure drifts)~~ **DONE
+2026-08-23.** Checked against the live pricing page: everything still
+matched except Claude Sonnet 5's active $2/$10 introductory rate (through
+2026-08-31) - operator chose to keep the post-intro $3/$15 rate rather than
+the temporary one, recorded in a comment so it does not read as a future
+oversight. `PRICES_READ_ON` bumped to 2026-08-23. Full account: the commit
+that landed all three (`dcac852`).
+
+**Remaining, not started:** incremental collect (re-reads all 25k transcripts
+every run, ~25 s).
 
 ---
 
@@ -834,3 +848,44 @@ re-confirmed green after every change (1,122 tests, ruff clean, pyright 0 errors
 **What was NOT done:** nothing from items 1-5 remains open as of this eighth handoff. Ticket 28.13
 (re-derive the architecture board) and ccstats polish (item 7) are the standing next candidates;
 neither started this session.
+
+---
+
+**Later the same day (ninth handoff).** Given the two remaining candidates, ticket 28.13 (the
+architecture board) and ccstats polish, and told to do both, one at a time.
+
+**Ticket 28.13.** The named review skill was not enabled in this session, so 5 parallel read-only
+agents substituted for it - the same lens split as the 2026-07-24 review, plus a new lens for
+`archive.py`, a 900+ line module that postdates that review entirely and had never been looked at
+by this board. Two of the agents' findings were consequential enough to verify first-hand rather
+than trust: both turned out to be real, LIVE bugs, not just architecture debt, and were fixed the
+same session with oracle tests written first, proved red-then-green against the pre-fix code -
+`write_subagent` silently dropping a same-size, content-different re-capture with no record
+anywhere (worse than the session-writer twin ticket 30 had just fixed, since sub-agents have no
+manifest to record a refusal in), and `ccw share --out` having no guard against writing inside the
+warehouse's own store (unlike its `ccw render --out` sibling). The whole board was then re-derived
+and re-ranked at HEAD, with the new top recommendation (C12) being exactly the lesson those two
+bugs taught: one shared "replace if larger" rule instead of three near-identical copies. Three
+commits, all pushed: `d9a2227` (the write_subagent fix), `4824098` (the share guard fix), `e067c8c`
+(the board itself).
+
+**ccstats polish.** Split all three flagged long functions (`collect.scan_transcript`,
+`facts.compute`, `make_docs.main`) into named helpers, verified byte-identical against real data
+before and after every split via `git stash` - a frozen transcript set, the same real
+`sessions.sqlite`, and a real `DATA-GUIDE.md` regeneration (which caught and let a real
+transcription slip get fixed before it shipped, rather than after). Also re-checked the pinned
+model prices against the live pricing page: everything matched except Claude Sonnet 5's active
+introductory rate, which the operator chose not to adopt (kept the post-intro steady-state price
+instead, recorded in a comment so a future session does not read it as a missed update). One
+commit, pushed (`dcac852`). "Incremental collect" (the third flagged ccstats item, a real feature
+rather than a cleanup) was left alone, as scoped from the start.
+
+Four commits this half of the session, all pushed: `d9a2227`, `4824098`, `e067c8c`, `dcac852`.
+Full suite re-confirmed green after every change (1,124 main-repo tests, 99 ccstats tests, ruff
+clean, pyright 0 errors on `src`/`tests`).
+
+**What was NOT done:** nothing from items 1-7, ticket 28.22, or ticket 30's flagged defect remains
+open as of this ninth handoff. Standing candidates for a future session: ticket 24.7 (session-start
+capture freshness - partly closed already from outside this repo), the remaining items in ticket
+28's backlog register, and ccstats' "incremental collect" (item 7's one leftover, a real feature,
+not a cleanup - re-reads all ~25k transcripts every run, roughly 25 seconds).
