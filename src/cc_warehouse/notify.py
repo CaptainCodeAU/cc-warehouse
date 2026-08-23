@@ -188,12 +188,14 @@ def speak(config: Config, message: str) -> None:
         return
 
 
-def open_folder(config: Config, path: str) -> None:
-    """Best-effort reveal of a folder in the platform file manager (opt-in).
+def _open_with_system_default(path: str) -> None:
+    """Hand PATH to the platform's default opener: `open` on macOS reveals a
+    FOLDER in Finder but opens a FILE with its registered app (a browser, for
+    `.html`); `xdg-open` does the same on Linux. One mechanism, two call sites
+    below with different names because they are different opt-ins (R9: share
+    the primitive, not the copies - see ticket 28.13's C12).
 
-    Fire-and-forget: the reveal never blocks and never raises into capture. Guarded by
-    the CCW_OPEN_FOLDER opt-in at the call site (config.open_folder)."""
-    _ = config
+    Fire-and-forget: never blocks and never raises."""
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     try:
         subprocess.Popen(
@@ -204,3 +206,21 @@ def open_folder(config: Config, path: str) -> None:
         )
     except Exception:
         return
+
+
+def open_folder(config: Config, path: str) -> None:
+    """Best-effort reveal of a folder in the platform file manager (opt-in).
+
+    Fire-and-forget: the reveal never blocks and never raises into capture. Guarded by
+    the CCW_OPEN_FOLDER opt-in at the call site (config.open_folder)."""
+    _ = config
+    _open_with_system_default(path)
+
+
+def open_page(path: str) -> None:
+    """Best-effort open of one rendered HTML page in the operator's browser:
+    the `--open` flag on `ccw render` (ticket 28.1). `open_folder` reveals the
+    FOLDER a capture landed in; nothing handed the operator their actual
+    transcript page until this. No config is needed here - the gate is the
+    CLI flag itself, decided at the call site, not a persistent setting."""
+    _open_with_system_default(path)

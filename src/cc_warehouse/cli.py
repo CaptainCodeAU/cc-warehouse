@@ -869,7 +869,31 @@ def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> N
         return
 
 
-def _render_session(session_key: str, rest: Sequence[str]) -> int:
+def _open_rendered_page(config: Config, directory: Path, short: str) -> None:
+    """Best-effort `--open`: hand this session's rendered HTML page to the
+    platform opener (ticket 28.1). Checks the archive folder first when one is
+    configured, mirroring `_reveal_target`'s "the archive is the deliverable"
+    precedent, then falls back to the personal projections copy. Needs the
+    literal FILE rather than `_reveal_target`'s own answer (a bare directory in
+    the no-archive case), so it checks existence itself rather than trusting a
+    folder computed for a different call site. With both retired there is
+    nothing to open, and this is silently a no-op like every other
+    fire-and-forget sink here (DESIGN section 12)."""
+    candidates: list[Path] = []
+    if config.archive_root is not None:
+        candidates.append(Path(_reveal_target(config, short)) / "conversation.html")
+    if config.keep_projections:
+        candidates.append(directory / "conversation.html")
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                notify.open_page(str(candidate))
+            except Exception:
+                pass
+            return
+
+
+def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = False) -> int:
     """`ccw render --session s:<key>`: (re)project one stored session, the hook's
     detached child (DESIGN section 4). Projects only a CURRENT head through the shared
     build helper (build.head_for_short, R9/F8): a short with no catalog row is the
@@ -926,6 +950,8 @@ def _render_session(session_key: str, rest: Sequence[str]) -> int:
             notify.open_folder(config, _reveal_target(config, head.short))
         except Exception:
             pass
+    if open_flag:
+        _open_rendered_page(config, directory, head.short)
     return 0
 
 
@@ -958,7 +984,9 @@ def _out_under_warehouse(out: str) -> bool:
     return False
 
 
-def _render_adhoc(source: str, out: str | None, rest: Sequence[str]) -> int:
+def _render_adhoc(
+    source: str, out: str | None, rest: Sequence[str], *, open_flag: bool = False
+) -> int:
     """`ccw render <path> [--out DIR]`: render a transcript outside the store to a
     directory, without touching the catalog (DESIGN section 7). With no --out the target
     is a fresh temp dir (outside projections) whose path is printed. A user --out is
@@ -980,6 +1008,11 @@ def _render_adhoc(source: str, out: str | None, rest: Sequence[str]) -> int:
     build.write_projection(directory, data, _render_options(rest), force=False)
     if out is None:
         print(str(directory))
+    if open_flag:
+        try:
+            notify.open_page(str(directory / "conversation.html"))
+        except Exception:
+            pass
     return 0
 
 
@@ -991,10 +1024,11 @@ def _run_render(args: Sequence[str]) -> int:
         print(f"Error: {problem}", file=sys.stderr)
         return 1
     session, out, source = _render_flags(rest)
+    open_flag = "--open" in rest
     if session is not None:
-        return _render_session(session, rest)
+        return _render_session(session, rest, open_flag=open_flag)
     if source is not None:
-        return _render_adhoc(source, out, rest)
+        return _render_adhoc(source, out, rest, open_flag=open_flag)
     print("Error: render requires --session s:<key> or a transcript path", file=sys.stderr)
     return 1
 
@@ -1916,6 +1950,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--session s:<key>", "(re)project one stored session"),
             ("<path>", "render a transcript outside the store"),
             ("--out DIR", "ad-hoc destination (default: a temp dir, path printed)"),
+            ("--open", "open the rendered page in your browser when done"),
         ),
         True,
     ),

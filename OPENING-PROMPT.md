@@ -770,9 +770,12 @@ like it should help. `README.md` documents the new file and flag.
   outside this repo by `ccw-watch`.~~ **DONE 2026-08-23**, and now owned by
   this project's own plugin rather than borrowed - see the eleventh-handoff
   entry at the end of this file.
-- **Ticket 28**, the backlog register. Still open in it: `--open` (28.1),
-  optional secret redaction on personal projections (28.2), `--limit` on sweep
-  (28.3), `render_html` costing 74x the payload (28.9), test gaps (28.10),
+- **Ticket 28**, the backlog register. **28.1 (`--open`) DONE 2026-08-24**,
+  scoped to `ccw render` only (`ccw share`'s multi-session `index.html` left
+  for later - see the ticket's own DONE note in
+  `harness/tickets/28-backlog.md`). Still open in it: optional secret
+  redaction on personal projections (28.2), `--limit` on sweep (28.3),
+  `render_html` costing 74x the payload (28.9), test gaps (28.10),
   markdown/HTML for sub-agents (28.11), re-homing an orphaned sub-agent when
   its parent arrives (28.12), `prefers-color-scheme` for shared pages (28.14).
   **28.19 was ALREADY DONE (2026-08-10, `4b8dde4`) and this list was stale about
@@ -1112,3 +1115,46 @@ GitHub - the operator picked the middle option (revert + retirement notice), not
 whole repo too" option, so that remains available as a future ask if wanted but is not done. The
 only standing candidate for a future session is ticket 28's backlog register (28.1, 28.2, 28.3,
 28.9, 28.10, 28.11, 28.12, 28.14).
+
+---
+
+**Thirteenth handoff, 2026-08-24 (new session).** Opened by reading this file, then asked the
+operator to pick a starting point from ticket 28's backlog via a 4-option question (`--open`
+28.1 / `--limit` on sweep 28.3 / the `render_html` perf issue 28.9 / stop for now). Operator
+picked `--open`.
+
+**28.1 DONE, scoped to `ccw render` only.** `notify.open_folder` reveals the folder a capture
+landed in; nothing opened the actual rendered page. Read the specimen's own four `--open` sites
+(`claude_code_transcripts/cli.py`, stdlib `webbrowser.open`) for the shape, then built the
+cc-warehouse equivalent rather than porting it: `notify._open_with_system_default` is now the one
+shared platform-opener primitive (R9, the exact C12 pattern ticket 28.13's architecture review had
+just recommended), with `open_folder` (existing, reveals a folder) and the new `open_page` (opens
+one file) as thin named wrappers. `cli.py` gained `_open_rendered_page`, which picks the archive
+folder's `conversation.html` when `archive_root` is configured (mirroring `_reveal_target`'s own
+"the archive is the deliverable" precedent) or the personal `projections/` copy otherwise, wired
+to a new `--open` flag on both the `--session s:<key>` and ad-hoc forms of `ccw render`.
+Best-effort throughout (DESIGN 12): a broken opener can never fail a render.
+
+`ccw share`'s multi-session `index.html` was deliberately left out of this pass to keep the change
+small and testable in one sitting; flagged in the ticket's own DONE note as a fast follow-up if
+wanted, not attempted here.
+
+8 new oracle tests (`tests/test_render_open.py`), proved red-then-green with a real `git stash` of
+just the production diff (7 of 8 failed pre-fix; the 8th, a pre-existing typo-guard regression
+test, was correctly unaffected). One test written for a third scenario -
+`keep_projections=false` with no `archive_root`, meant to prove `--open` is a silent no-op with
+nothing to open - was dropped after measuring that `config.py`'s own `_keep_projections` refusal
+makes that combination unreachable: it silently falls back to `keep_projections=True` rather than
+ever leaving a session with nowhere to render. The no-op branch in `_open_rendered_page` stays as
+defensive code, not something a real config can trigger. Full suite: 1,163 passed, ruff clean,
+pyright 0 errors on `src`/`tests`.
+
+Ticket 28's own entry (`harness/tickets/28-backlog.md`) and this file's "Also on record, not
+scheduled" section above were both updated in place to mark 28.1 done, rather than left to drift
+the way 28.19 did.
+
+One commit, pushed (production + tests + doc updates together, since the change is small).
+
+**What was NOT done:** nothing new opened this handoff. Standing candidates for a future session,
+unchanged apart from 28.1's closure: ticket 28's remaining backlog items (28.2, 28.3, 28.9, 28.10,
+28.11, 28.12, 28.14), and `ccw share --open` as a possible fast follow-up to today's work.

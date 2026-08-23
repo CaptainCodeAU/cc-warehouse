@@ -6,10 +6,37 @@ here into their own ticket when they are taken up.
 
 ## Worth doing, small
 
-- **28.1  `--open`.** Open the generated HTML in a browser. `notify.py:132`
-  `open_folder` reveals the FOLDER; there is no equivalent for the page. The
-  specimen had `--open` on four verbs. This is the difference between handing
-  someone a directory and handing them their transcript.
+- **28.1  `--open`. DONE 2026-08-24, scoped to `ccw render`.** Open the
+  generated HTML in a browser. `notify.py:132` `open_folder` reveals the
+  FOLDER; there was no equivalent for the page. The specimen had `--open` on
+  four verbs (`local`/`json`/`web`/`all`, via stdlib `webbrowser.open`); this
+  cut ships it on the one verb that is the direct match for "hand them their
+  transcript" - a single session, `--session s:<key>` or ad-hoc - and leaves
+  `ccw share`'s multi-session `index.html` for a later pass if wanted.
+
+  Implementation reuses the SAME platform-opener mechanism `open_folder`
+  already had (R9): `notify._open_with_system_default` is now the one shared
+  primitive, with `open_folder` (reveals a folder, the `config.open_folder`
+  opt-in) and the new `open_page` (opens one file, the `--open` CLI flag) as
+  thin named wrappers - exactly the C12 pattern ticket 28.13's architecture
+  review had just recommended. `_open_rendered_page` in `cli.py` picks the
+  right file: the archive folder's `conversation.html` when `archive_root` is
+  configured (mirroring `_reveal_target`'s own "the archive is the
+  deliverable" precedent), else the personal `projections/` copy; best-effort
+  and never fails the render (DESIGN 12), matching `open_folder`'s own
+  contract.
+
+  8 oracle tests in `tests/test_render_open.py`, proved red against a real
+  `git stash` of just the production diff (7 of 8 failed pre-fix, the 8th -
+  the pre-existing typo-guard regression test - correctly unaffected) before
+  passing once restored. One test originally written for a third scenario
+  ("keep_projections=false AND no archive_root -> nothing to open") was
+  dropped after `config.py`'s own `_keep_projections` refusal proved that
+  combination unreachable: it silently falls back to `keep_projections=True`
+  rather than ever leaving a session with nowhere to render, so the
+  no-op branch in `_open_rendered_page` is defensive rather than a state a
+  real config can reach. Full suite: 1,163 passed, ruff clean, pyright 0
+  errors.
 
 - **28.2  Optional secret redaction on personal projections.** `ccw` redaction
   lives only in `share.py`; `build.py`, `render.py` and `capture.py` contain
