@@ -21,7 +21,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import facts
-from common import BadOut, BadWindow, open_ro, resolve_out, resolve_window
+from common import BadOut, BadWindow, Window, open_ro, resolve_out, resolve_window
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
@@ -85,37 +85,10 @@ def schema(conn: sqlite3.Connection) -> list[tuple[str, str, list[tuple[str, str
     return out
 
 
-def main() -> int:
-    try:
-        out = resolve_out(sys.argv[1:])
-    except BadOut as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    if not out.xlsx.exists() or not out.db.exists():
-        print("run collect.py then build_workbook.py first", file=sys.stderr)
-        return 2
-    out.ensure()
-    try:
-        # inherit=True: with no --since, adopt the window the workbook was built
-        # with. Retyping it on three commands is how the two came to describe
-        # different datasets.
-        window = resolve_window(sys.argv[1:], out, inherit=True)
-    except BadWindow as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    sheets = sheet_info(out.xlsx)
-    conn = open_ro(out.db)
-    meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    report = json.loads(out.report.read_text()) if out.report.exists() else {}
-    f = facts.compute(conn, window)
-    since = window.since
-
-    undocumented = [n for n, _, _ in sheets if n not in PURPOSE]
-
+def _intro_section(f: dict[str, object], meta: dict[str, str], since: str, report: dict[str, object]) -> list[str]:
+    """Title, what-this-data-is, and the overview table."""
     L: list[str] = []
     add = L.append
-
     add("# Claude Code usage data: guide for whoever builds the charts")
     add("")
     add(f"Companion to **`claude-code-stats.xlsx`**. Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} from the same data, so this document cannot drift from the workbook.")
@@ -143,7 +116,13 @@ def main() -> int:
     add("")
     add("The workbook is **pre-aggregated on purpose**. The underlying per-session and per-turn exports are 28 MB and 53 MB, which no language model can read. Every sheet below is small enough to paste into a prompt.")
     add("")
+    return L
 
+
+def _hours_traps_section(f: dict[str, object], conn: sqlite3.Connection, window: Window) -> list[str]:
+    """Traps 1-2: a file is not a session, and the four different "hours"."""
+    L: list[str] = []
+    add = L.append
     add("## Ten things that will make your chart wrong")
     add("")
     add("Read these before writing any chart code. They are not style notes; each one changes a number.")
@@ -188,6 +167,13 @@ def main() -> int:
     add("")
     add(f"Intervals are now clipped to every day they touch. **{f['days_over_24h']} days now exceed 24 h**, the maximum is {f['max_elapsed']} h, and the corpus total fell from **7,621.7 h to {f['elapsed_h']:,} h**. If you hold an older copy of this workbook, discard its `elapsed_hours` and `concurrency` columns: they were wrong, not merely imprecise.")
     add("")
+    return L
+
+
+def _cost_token_traps_section(f: dict[str, object], meta: dict[str, str]) -> list[str]:
+    """Traps 3-5: cost is not money, cache reads dominate, thinking is a subset."""
+    L: list[str] = []
+    add = L.append
     add("### 3. `cost_usd` is not money spent")
     add("")
     add(f"It is what the usage **would** cost at Anthropic API list prices, read {meta.get('prices_read_on', '')}. This machine runs a Claude Code subscription, which is not billed per token.")
@@ -206,6 +192,14 @@ def main() -> int:
     add("")
     add(f"`tok_thinking` is a **subset** of `tok_output`, not an addition. Verified across all {f['turn_rows']:,} turns: thinking never exceeded output once. To show the split, stack `tok_thinking` against `tok_output - tok_thinking`. **But read trap 8 first: it only exists for part of the range.**")
     add("")
+    return L
+
+
+def _project_time_traps_section(f: dict[str, object], conn: sqlite3.Connection) -> list[str]:
+    """Traps 6-9: project label vs repo, partial months, thinking rollout,
+    per-day engaged hours over 24."""
+    L: list[str] = []
+    add = L.append
     add("### 6. Project counts differ depending on which key you use")
     add("")
     add(f"There are **{f['repos']} distinct repositories** but **{f['labels']} distinct project labels**. {f['multi_label_repos']} repositories carry {f['extra_labels']} extra labels between them, and only **{f['worktree_labels']} of those are git worktrees**. The rest are SUBDIRECTORIES worked in directly (a `docs/` folder, an `Outputs/` folder, a nested sub-project); Claude Code keys a project on the working directory, so each becomes its own label.")
@@ -228,13 +222,19 @@ def main() -> int:
     add("")
     add(f"Chart thinking only from {f['thinking_from']} onward, or as a share of output within that window. The `Monthly` sheet carries a **`thinking_recorded`** flag, and the `Data_Coverage` sheet lists every column with this problem.")
     add("")
-
     add("### 9. `engaged_hours` above 24 in one day is correct, not a bug")
     add("")
     add(f"`engaged_hours` is computed per session and then **summed**; `elapsed_hours` **merges** sessions. With up to **{f['peak_concurrent']} sessions running simultaneously**, a 24-hour day legitimately holds far more than 24 engaged hours. On {f['busiest_day']} it is **{f['busiest_engaged']} h of engaged work inside {f['busiest_elapsed']} h of clock time**.")
     add("")
     add("Do not cap it at 24. If you want person-time rather than session-time, divide by `max_concurrent`, or chart `elapsed_hours` and say which you used.")
     add("")
+    return L
+
+
+def _corrections_and_timezone_section(f: dict[str, object], meta: dict[str, str]) -> list[str]:
+    """Trap 10, plus the timezone section every page has to carry forward."""
+    L: list[str] = []
+    add = L.append
     add("### 10. Numbers changed after the first release")
     add("")
     add(f"If you were given an earlier copy, **three** things were wrong. (a) `elapsed_hours` and `concurrency`, per trap 2. (b) The `local_*` columns used a **fixed +10 offset** rather than a DST-aware zone, so the **{f['dst_sessions_all']} sessions** recorded while Melbourne was on AEDT (+11, up to 2026-04-04) sat an hour early; 45 of those landed on the wrong date and therefore the wrong weekday, affecting `Hour_Heatmap` and `By_Weekday`. (c) `active_hours` was mislabelled as compute time. All three are fixed here: the zone is now `Australia/Melbourne` with real DST history, and {f['dst_sessions_all']} sessions across the full record correctly carry `+1100`. The zone is now taken from the cc-warehouse config file rather than the machine clock.")
@@ -249,6 +249,13 @@ def main() -> int:
     add("")
     add("Raw `first_ts` and `last_ts` in `sessions-real.csv` stay in UTC, so you can re-render into any other zone if you need to.")
     add("")
+    return L
+
+
+def _sheets_section(sheets: list[tuple[str, int, list[str]]], undocumented: list[str]) -> list[str]:
+    """The per-sheet index table."""
+    L: list[str] = []
+    add = L.append
     add("## The sheets")
     add("")
     add("| # | Sheet | Rows | What it holds | Suggested chart |")
@@ -260,7 +267,13 @@ def main() -> int:
     if undocumented:
         add(f"> **Warning:** these sheets have no description: {', '.join(undocumented)}")
         add("")
+    return L
 
+
+def _columns_section(sheets: list[tuple[str, int, list[str]]]) -> list[str]:
+    """Every sheet's column list, then the shared column-meaning glossary."""
+    L: list[str] = []
+    add = L.append
     add("### Columns, sheet by sheet")
     add("")
     for name, rows, cols in sheets:
@@ -308,7 +321,13 @@ def main() -> int:
     ]:
         add(f"| {col} | {typ} | {mean} |")
     add("")
+    return L
 
+
+def _schema_section(conn: sqlite3.Connection) -> list[str]:
+    """The "go deeper than the workbook" pitch, plus the full SQLite schema."""
+    L: list[str] = []
+    add = L.append
     add("## Going deeper than the workbook")
     add("")
     add("`sessions.sqlite` sits beside the workbook and holds the full, unaggregated data: one row per session, one row per assistant turn, one row per tool call. Query it directly for any cut the workbook does not pre-compute.")
@@ -329,7 +348,14 @@ def main() -> int:
         add(", ".join(f"{c} {t}".strip() for c, t in cols))
         add("```")
         add("")
+    return L
 
+
+def _provenance_section() -> list[str]:
+    """Where the numbers came from, the checks that ran, and what is not
+    included - all static prose, no figures interpolated."""
+    L: list[str] = []
+    add = L.append
     add("## Where the numbers came from, and how they were checked")
     add("")
     add("Sources: `~/.claude/projects` (the live tree) and `~/cc-warehouse-archive` (which holds sessions already deleted from the live tree). Both were read, then deduplicated by keeping the largest payload per session, because a short capture of a session is a byte prefix of the long one.")
@@ -357,6 +383,47 @@ def main() -> int:
     add("")
     add("Absolute file paths and prompt text are excluded from the workbook. Project labels and session titles are included, because a chart without them cannot be read. Regenerate with `--no-titles` to drop the titles as well.")
     add("")
+    return L
+
+
+def main() -> int:
+    try:
+        out = resolve_out(sys.argv[1:])
+    except BadOut as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not out.xlsx.exists() or not out.db.exists():
+        print("run collect.py then build_workbook.py first", file=sys.stderr)
+        return 2
+    out.ensure()
+    try:
+        # inherit=True: with no --since, adopt the window the workbook was built
+        # with. Retyping it on three commands is how the two came to describe
+        # different datasets.
+        window = resolve_window(sys.argv[1:], out, inherit=True)
+    except BadWindow as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    sheets = sheet_info(out.xlsx)
+    conn = open_ro(out.db)
+    meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+    report = json.loads(out.report.read_text()) if out.report.exists() else {}
+    f = facts.compute(conn, window)
+    since = window.since
+
+    undocumented = [n for n, _, _ in sheets if n not in PURPOSE]
+
+    L: list[str] = []
+    L += _intro_section(f, meta, since, report)
+    L += _hours_traps_section(f, conn, window)
+    L += _cost_token_traps_section(f, meta)
+    L += _project_time_traps_section(f, conn)
+    L += _corrections_and_timezone_section(f, meta)
+    L += _sheets_section(sheets, undocumented)
+    L += _columns_section(sheets)
+    L += _schema_section(conn)
+    L += _provenance_section()
 
     out.doc.write_text("\n".join(L) + "\n", encoding="utf-8")
     conn.close()

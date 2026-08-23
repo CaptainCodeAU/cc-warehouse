@@ -255,8 +255,10 @@ roughly 2.7x.
 ### What the dollar column is not
 
 `cost_usd` is what this usage **would** have cost at Anthropic API list prices,
-read from the `claude-api` skill on 2026-06-24 and pinned in `PRICES` at the top
-of `collect.py`. It is a usage-weight number for comparing projects and periods.
+pinned in `PRICES` at the top of `collect.py` (re-checked 2026-08-23 against the
+live pricing page; `PRICES_READ_ON` in that file is the source of truth for the
+date, not this README). It is a usage-weight number for comparing projects and
+periods.
 
 **It is not a bill.** Claude Code subscription usage is not billed per token. Do
 not present this figure as money spent.

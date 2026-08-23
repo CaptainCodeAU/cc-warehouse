@@ -58,10 +58,12 @@ _IDLE_GAP_SECONDS = _IDLE_GAP
 
 # ------------------------------------------------------------------ pricing
 # USD per 1,000,000 tokens, first-party Anthropic API list prices.
-# Read from the `claude-api` skill's model table, cached 2026-06-24.
+# RE-CHECKED 2026-08-23 against the live pricing page (platform.claude.com/
+# docs/en/about-claude/models/overview) - every rate below still matches what
+# was cached 2026-06-24, with one deliberate exception (see claude-sonnet-5).
 # THIS IS NOT A BILL. See README.md "What the dollar column is not".
 
-PRICES_READ_ON = "2026-06-24"
+PRICES_READ_ON = "2026-08-23"
 
 PRICES: dict[str, tuple[float, float]] = {
     "claude-fable-5": (10.00, 50.00),
@@ -71,6 +73,12 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     "claude-opus-4-5": (5.00, 25.00),
+    # The live page currently shows $2.00/$10.00 - an introductory rate that
+    # runs through 2026-08-31 (checked 2026-08-23, still in effect). Kept at
+    # the post-intro steady-state rate deliberately (operator's choice): this
+    # is the rate that will actually apply for most of the model's deployed
+    # life. Re-check after 2026-08-31 to confirm the live page has settled on
+    # $3.00/$15.00 as expected, rather than assuming it.
     "claude-sonnet-5": (3.00, 15.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
@@ -456,6 +464,120 @@ class Scan:
         self.attrs: list[tuple[object, ...]] = []
 
 
+@dataclass(frozen=True)
+class AssistantTurnStats:
+    """Everything one assistant entry contributes, computed once so
+    `scan_transcript`'s loop only has to add it up. Same reason `Usage` is
+    pulled out above: the per-turn rules (thinking count, refusal category,
+    tool-use names, cost) can be read and asserted on their own."""
+
+    model: str | None
+    effort: str | None
+    usage: Usage
+    cost_input: float
+    cost_output: float
+    cost_cache_write: float
+    cost_cache_read: float
+    stop_reason: str | None
+    refusal_category: str | None
+    n_thinking_blocks: int
+    tool_use_names: list[str]
+
+
+def _scan_assistant_entry(
+    entry: dict[str, object], message: dict[str, object]
+) -> AssistantTurnStats:
+    """Derive every per-turn statistic from one assistant entry's message."""
+    model = as_str(message.get("model"))
+    usage = read_usage(message.get("usage"))
+    k_in, k_out, k_cw, k_cr = turn_cost(
+        model, usage.speed, usage.input, usage.output,
+        usage.cache_write_5m, usage.cache_write_1h, usage.cache_read,
+    )
+
+    stop = as_str(message.get("stop_reason"))
+    refusal_category = None
+    if stop == "refusal":
+        details = message.get("stop_details")
+        if isinstance(details, dict):
+            refusal_category = as_str(cast(dict[str, object], details).get("category"))
+
+    n_thinking = 0
+    tool_use_names: list[str] = []
+    content = message.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "thinking":
+                n_thinking += 1
+            elif btype == "tool_use":
+                tool_use_names.append(as_str(block.get("name")) or "(unnamed)")
+
+    return AssistantTurnStats(
+        model=model,
+        effort=as_str(entry.get("effort")),
+        usage=usage,
+        cost_input=k_in,
+        cost_output=k_out,
+        cost_cache_write=k_cw,
+        cost_cache_read=k_cr,
+        stop_reason=stop,
+        refusal_category=refusal_category,
+        n_thinking_blocks=n_thinking,
+        tool_use_names=tool_use_names,
+    )
+
+
+@dataclass(frozen=True)
+class UserTurnStats:
+    """Everything one user entry contributes, computed once. Same shape as
+    `AssistantTurnStats` above."""
+
+    text: str
+    has_text: bool
+    n_tool_results: int
+    error_tool_uses: int
+
+
+def _scan_user_entry(content: object) -> UserTurnStats:
+    """Derive per-entry statistics from one user entry's message content."""
+    if isinstance(content, str):
+        return UserTurnStats(text=content, has_text=True, n_tool_results=0, error_tool_uses=0)
+    text = ""
+    has_text = False
+    n_tool_results = 0
+    error_tool_uses = 0
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "text":
+                has_text = True
+                text += str(block.get("text") or "")
+            elif btype == "tool_result":
+                n_tool_results += 1
+                if block.get("is_error"):
+                    error_tool_uses += 1
+    return UserTurnStats(
+        text=text, has_text=has_text, n_tool_results=n_tool_results, error_tool_uses=error_tool_uses
+    )
+
+
+def _engaged_seconds(stamps: list[datetime]) -> float:
+    """Sum of gaps between consecutive timestamps no longer than the idle
+    threshold - active time, with long pauses excluded."""
+    ordered = sorted(stamps)
+    engaged = 0.0
+    for prev, nxt in zip(ordered, ordered[1:], strict=False):
+        gap = (nxt - prev).total_seconds()
+        if 0.0 <= gap <= _IDLE_GAP_SECONDS:
+            engaged += gap
+    return engaged
+
+
 def scan_transcript(
     path: Path,
     *,
@@ -589,42 +711,33 @@ def scan_transcript(
 
         if etype == "assistant":
             n_assistant += 1
-            model = as_str(message.get("model"))
-            if model:
-                models[model] += 1
-            u = read_usage(message.get("usage"))
-            tier, speed = u.service_tier, u.speed
-            if tier:
-                tiers[tier] += 1
-            if speed:
-                speeds[speed] += 1
-            u_in, u_out, u_cr = u.input, u.output, u.cache_read
-            u_cw5, u_cw1h, u_think = u.cache_write_5m, u.cache_write_1h, u.thinking
-            t_ws, t_wf = u.web_search, u.web_fetch
-            cw_declared += u.declared_cache_write
-            web_search += t_ws
-            web_fetch += t_wf
+            a = _scan_assistant_entry(entry, message)
+            if a.model:
+                models[a.model] += 1
+            if a.usage.service_tier:
+                tiers[a.usage.service_tier] += 1
+            if a.usage.speed:
+                speeds[a.usage.speed] += 1
+            cw_declared += a.usage.declared_cache_write
+            web_search += a.usage.web_search
+            web_fetch += a.usage.web_fetch
 
-            k_in, k_out, k_cw, k_cr = turn_cost(model, speed, u_in, u_out, u_cw5, u_cw1h, u_cr)
-            c_in += k_in
-            c_out += k_out
-            c_cw += k_cw
-            c_cr += k_cr
+            c_in += a.cost_input
+            c_out += a.cost_output
+            c_cw += a.cost_cache_write
+            c_cr += a.cost_cache_read
 
-            tok_in += u_in
-            tok_out += u_out
-            tok_cw5 += u_cw5
-            tok_cw1h += u_cw1h
-            tok_cr += u_cr
-            tok_think += u_think
+            tok_in += a.usage.input
+            tok_out += a.usage.output
+            tok_cw5 += a.usage.cache_write_5m
+            tok_cw1h += a.usage.cache_write_1h
+            tok_cr += a.usage.cache_read
+            tok_think += a.usage.thinking
 
-            stop = as_str(message.get("stop_reason"))
-            if stop == "refusal":
+            if a.stop_reason == "refusal":
                 n_refusal += 1
-                details_s = message.get("stop_details")
-                if isinstance(details_s, dict):
-                    if (cat := as_str(details_s.get("category"))) is not None:
-                        refusal_cats[cat] += 1
+                if a.refusal_category is not None:
+                    refusal_cats[a.refusal_category] += 1
 
             ordinal += 1
             out.turns.append(
@@ -632,60 +745,39 @@ def scan_transcript(
                     None,  # session key, filled by the caller
                     ordinal,
                     ts_raw,
-                    model,
-                    as_str(entry.get("effort")),
-                    tier,
-                    speed,
-                    stop,
-                    u_in,
-                    u_out,
-                    u_cw5,
-                    u_cw1h,
-                    u_cr,
-                    u_think,
-                    t_ws,
-                    t_wf,
-                    round(k_in + k_out + k_cw + k_cr, 8),
+                    a.model,
+                    a.effort,
+                    a.usage.service_tier,
+                    a.usage.speed,
+                    a.stop_reason,
+                    a.usage.input,
+                    a.usage.output,
+                    a.usage.cache_write_5m,
+                    a.usage.cache_write_1h,
+                    a.usage.cache_read,
+                    a.usage.thinking,
+                    a.usage.web_search,
+                    a.usage.web_fetch,
+                    round(a.cost_input + a.cost_output + a.cost_cache_write + a.cost_cache_read, 8),
                 )
             )
 
-            if isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    btype = block.get("type")
-                    if btype == "thinking":
-                        n_thinking += 1
-                    elif btype == "tool_use":
-                        n_tool_use += 1
-                        name = as_str(block.get("name")) or "(unnamed)"
-                        out.tools.append((None, ts_raw, name, 0))
+            n_thinking += a.n_thinking_blocks
+            for name in a.tool_use_names:
+                n_tool_use += 1
+                out.tools.append((None, ts_raw, name, 0))
 
         elif etype == "user":
-            has_text = False
-            if isinstance(content, str):
-                has_text = True
-                text = content
-            else:
-                text = ""
-                if isinstance(content, list):
-                    for block in content:
-                        if not isinstance(block, dict):
-                            continue
-                        btype = block.get("type")
-                        if btype == "text":
-                            has_text = True
-                            text += str(block.get("text") or "")
-                        elif btype == "tool_result":
-                            n_tool_result += 1
-                            if block.get("is_error"):
-                                out.tools.append((None, ts_raw, "(error-result)", 1))
-            if any(marker in text for marker in INTERRUPT_MARKERS):
+            u = _scan_user_entry(content)
+            n_tool_result += u.n_tool_results
+            for _ in range(u.error_tool_uses):
+                out.tools.append((None, ts_raw, "(error-result)", 1))
+            if any(marker in u.text for marker in INTERRUPT_MARKERS):
                 n_interrupt += 1
-            elif has_text and not entry.get("isMeta"):
+            elif u.has_text and not entry.get("isMeta"):
                 n_user_prompts += 1
-                if first_prompt is None and text.strip():
-                    first_prompt = text.strip()[:300]
+                if first_prompt is None and u.text.strip():
+                    first_prompt = u.text.strip()[:300]
 
     if n_lines == 0:
         return None
@@ -694,12 +786,7 @@ def scan_transcript(
     last_dt = parse_ts(last_ts_raw)
     wall = (last_dt - first_dt).total_seconds() if first_dt and last_dt else 0.0
 
-    stamps.sort()
-    engaged = 0.0
-    for prev, nxt in zip(stamps, stamps[1:], strict=False):
-        gap = (nxt - prev).total_seconds()
-        if 0.0 <= gap <= _IDLE_GAP_SECONDS:
-            engaged += gap
+    engaged = _engaged_seconds(stamps)
 
     l_date, l_hour, l_wday, l_off = local_parts(first_dt)
     label = derive_label(cwd) if cwd else None
