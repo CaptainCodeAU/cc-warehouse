@@ -62,6 +62,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("share", "build a sanitized static site for chosen sessions"),
     ("status", "recent captures, counts, store size, last errors"),
     ("doctor", "is capture working, and if not since when"),
+    ("repair", "re-render recent archive folders doctor's desync check flags"),
     ("verify", "re-hash objects and cross-check the catalog"),
     ("archive", "build (or --verify) the archive-first tree at --to DIR"),
     ("reindex", "rebuild catalog.sqlite from the archive tree alone"),
@@ -1362,6 +1363,69 @@ def _run_verify() -> int:
     return 1 if findings else 0
 
 
+def _run_repair(rest: Sequence[str]) -> int:
+    """`ccw repair`: re-render any of the same recent archive folders `ccw doctor`'s
+    desync check flags (ticket 32 -- a real 2026-08-23 incident: the hook's detached
+    render child never finished, leaving a folder's JSONL archived with none of its
+    five generated files, invisible until a human noticed doctor's RED banner and
+    fixed it by hand).
+
+    A separate, explicit, WRITING verb -- doctor stays read-only by construction (its
+    own module docstring), so this exists precisely so doctor's output, a public
+    compatibility surface an external tool (ccw-watch) parses, never gains a silent
+    write side effect.
+
+    Resolves each broken folder's session_uuid (from its own name, R12) to a catalog
+    short, then calls the SAME render path the hook's detached child uses (`ccw render
+    --session s:<key>`), synchronously -- repair is an explicit operator/scheduled
+    action, not a hook, so waiting on it is fine. Never touches a folder outside
+    doctor's own bounded recent sample (R9: one instrument, shared)."""
+    config = _load(rest)
+    folders, broken = doctor.desync_detail(config)
+    if not broken:
+        print(f"repair: 0 problems in the {len(folders)} most recently captured folder(s)")
+        return 0
+    conn = catalog.open_catalog(config.root)
+    try:
+        fixed = 0
+        still_broken: list[str] = []
+        for folder, _problems in broken:
+            session_uuid = folder.name.partition("_")[2]
+            row = conn.execute(
+                "SELECT short FROM session WHERE session_uuid = ? "
+                "ORDER BY captured_at DESC LIMIT 1",
+                (session_uuid,),
+            ).fetchone()
+            if row is None:
+                still_broken.append(f"{folder.name}: no catalog row for {session_uuid}")
+                continue
+            short = cast(str, row[0])
+            render = subprocess.run(
+                [sys.executable, "-m", "cc_warehouse", "render", "--session", f"s:{short}"],
+                capture_output=True,
+                text=True,
+            )
+            if render.returncode != 0:
+                detail = render.stderr.strip() or f"exit {render.returncode}"
+                still_broken.append(f"{folder.name}: render failed: {detail}")
+                continue
+            remaining = archive.verify_folder(folder, config.archive_timezone)
+            if remaining:
+                still_broken.append(f"{folder.name}: still broken: {remaining[0].problem}")
+                continue
+            fixed += 1
+    finally:
+        conn.close()
+    total_problems = sum(len(p) for _, p in broken)
+    print(
+        f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
+        f"{len(folders)} most recently captured: {fixed} fixed, {len(still_broken)} still broken"
+    )
+    for line in still_broken:
+        print(f"  {line}", file=sys.stderr)
+    return 0 if not still_broken else 1
+
+
 def _flag_value(args: Sequence[str], name: str) -> str | None:
     """The value following `--name`, or None. Exact equality, so `--to` never
     shadows a longer flag that happens to start with it."""
@@ -1885,6 +1949,10 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
     ),
     "status": ((("(no options)", "recent captures, counts, store size, last errors"),), False),
     "doctor": ((("(no options)", "is capture working, and if not since when"),), False),
+    "repair": (
+        (("(no options)", "re-render recent archive folders doctor's desync check flags"),),
+        False,
+    ),
     "verify": ((("(no options)", "re-hash objects and cross-check the catalog"),), False),
     "archive": (
         (
@@ -2048,6 +2116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_status()
     if verb == "doctor":
         return _run_doctor()
+    if verb == "repair":
+        return _run_repair(args[1:])
     if verb == "verify":
         return _run_verify()
     if verb == "archive":

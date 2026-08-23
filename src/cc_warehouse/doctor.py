@@ -266,6 +266,27 @@ def _recent_archive_folders(archive_root: Path, limit: int) -> list[Path]:
     return [folder for _, folder in dated[:limit]]
 
 
+def desync_detail(
+    config: Config,
+) -> tuple[list[Path], list[tuple[Path, list[archive.FolderProblem]]]]:
+    """The most recent `_DESYNC_SAMPLE` archive folders, and which of them
+    `archive.verify_folder` flags (ticket 31.5 / ticket 32). The one place the
+    recency scan actually runs; `_desync` (doctor's own summary) and `ccw
+    repair` (the write-side companion, cli.py `_run_repair`) both read this
+    rather than re-walking the archive a second time (R9). PUBLIC, deliberately
+    (unlike most of this module): it is the one thing outside doctor.py that
+    legitimately needs doctor's own recency scan rather than a second copy of it."""
+    if config.archive_root is None or not config.archive_root.is_dir():
+        return [], []
+    folders = _recent_archive_folders(config.archive_root, _DESYNC_SAMPLE)
+    broken = [
+        (folder, problems)
+        for folder in folders
+        if (problems := archive.verify_folder(folder, config.archive_timezone))
+    ]
+    return folders, broken
+
+
 def _desync(config: Config) -> tuple[int, int, str | None]:
     """Verify the most recently captured archive folders against their own manifests
     (ticket 31.5). Returns (checked, problems, first problem description or None).
@@ -274,18 +295,10 @@ def _desync(config: Config) -> tuple[int, int, str | None]:
     re-hashes each folder's JSONL, so a full pass over a 21,000+ folder tree is not
     SessionStart-cheap -- that cost is exactly what ticket 31 exists to remove elsewhere.
     """
-    if config.archive_root is None or not config.archive_root.is_dir():
-        return 0, 0, None
-    checked = 0
-    problems = 0
-    first: str | None = None
-    for folder in _recent_archive_folders(config.archive_root, _DESYNC_SAMPLE):
-        checked += 1
-        for problem in archive.verify_folder(folder, config.archive_timezone):
-            problems += 1
-            if first is None:
-                first = f"{folder.name}: {problem.problem}"
-    return checked, problems, first
+    folders, broken = desync_detail(config)
+    problems = sum(len(p) for _, p in broken)
+    first = f"{broken[0][0].name}: {broken[0][1][0].problem}" if broken else None
+    return len(folders), problems, first
 
 
 def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
