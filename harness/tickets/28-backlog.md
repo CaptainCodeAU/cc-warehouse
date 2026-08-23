@@ -207,6 +207,23 @@ here into their own ticket when they are taken up.
   has gained a module since, so its line refs have drifted. `/architecture`
   owns it.
 
+  **DONE 2026-08-23.** By the time this ran, `1517bba` was not just stale, it
+  no longer existed (destroyed by the 2026-08-10 repository rebuild, ticket
+  28.20). Re-derived the whole board at HEAD `4824098` (257 commits) using 5
+  parallel Explore agents in place of the named review skill
+  (`/mattpocock-skills:improve-codebase-architecture`, not enabled in this
+  session), plus a new lens for `archive.py` - a 900+ line module, unreviewed
+  until now, that came from the archive-first rewrite (tickets 19-30) which
+  landed entirely after the last review. Two agent-reported findings were
+  independently re-verified from source and turned out to be live bugs, not
+  architecture debt, and were fixed the same session rather than left as
+  board-only entries: `write_subagent` silently dropping a same-size,
+  content-different re-capture (no manifest to record it in, so genuinely
+  invisible - F6), and `ccw share --out` having no guard against writing
+  inside the warehouse store, unlike its `ccw render --out` sibling (F9). Full
+  board: `cc-warehouse-architecture/SOURCE.md`, rendered to `index.html`. See
+  its own "2026-08-23 - FRESH REVIEW" change-log entry for the full account.
+
 - **28.14  `prefers-color-scheme` for shared pages.** Named v1.1 candidate
   (DESIGN 15, 2026-07-24). Needs a light palette designed and the highlight.js
   token colours re-checked for contrast.

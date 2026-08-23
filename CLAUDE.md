@@ -419,16 +419,25 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   `prefers-color-scheme` for SHARED pages. Same reader-respect argument that decided
   `--hljs`; needs a light palette designed and the highlight.js token colours re-checked
   for contrast.
-- **Non-blocking**: the architecture review was HELD 2026-07-24 at `1517bba` (commit
-  18fa5be) and its decay banner was retired at the time. **BOTH OF THOSE COMMITS ARE
-  GONE, found 2026-08-21**: `git cat-file -t` cannot resolve `1517bba` or `18fa5be`,
-  because the repository was deleted and re-created on 2026-08-10 for the go-public
-  audit (ticket 28.20), which rewrote history. So the board's every `file:line` is
-  anchored to nothing, its drift cannot even be measured (`git rev-list 1517bba..HEAD`
-  does not run), and its retired decay banner was retired against an unreachable
-  commit. The card REASONING still stands; the refs do not. A fresh review at a live
-  commit is the only fix, which is ticket 28.13. A decay banner recording all of this
-  now sits at the top of `cc-warehouse-architecture/SOURCE.md`, which is canonical.
+- **Ticket 28.13 DONE 2026-08-23.** The architecture review held 2026-07-24 at `1517bba`
+  was found 2026-08-21 to be anchored to a commit that no longer existed (the repository
+  was deleted and re-created on 2026-08-10 for the go-public audit, ticket 28.20, which
+  rewrote history). A fresh review re-derived every card at HEAD `4824098` (257 commits),
+  using 5 parallel Explore agents in place of the named review skill
+  (`/mattpocock-skills:improve-codebase-architecture`, not enabled in this session), plus
+  a new lens for `archive.py` - a 900+ line module the archive-first rewrite (tickets
+  19-30) added entirely after the last review, never looked at by this board before.
+  Two agent-reported findings were independently re-verified from source and turned out
+  to be LIVE BUGS rather than architecture debt, and were fixed the same session:
+  `write_subagent` silently dropping a same-size, content-different re-capture with no
+  record anywhere (sub-agents have no manifest.json, so this was worse than the
+  session-writer twin ticket 30 had just fixed - genuinely invisible, F6), and
+  `ccw share --out` having no guard against writing inside the warehouse's own
+  `objects/`/`projections/` trees, unlike its `ccw render --out` sibling (F9; both
+  `share.py` write sites use `force=True`, so this was a real overwrite path). The
+  board's new top recommendation, C12, is exactly this: one shared replace-if-larger
+  primitive instead of three copies that can (and did) drift independently. Full account:
+  `cc-warehouse-architecture/SOURCE.md`'s "2026-08-23 - FRESH REVIEW" change-log entry.
 
 ## Standing lessons (full form in HARNESS section 8)
 
