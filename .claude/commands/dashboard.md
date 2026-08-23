@@ -21,10 +21,22 @@ the flags actually do and why the output must never be committed or uploaded.
 - **`edit-list`** - run Step 2 only (show/edit the saved exclude list), then stop. No build, no
   serve.
 
+## Step 0 - resolve the output root, once
+
+Every path below means **`$OUT`**, resolved the same way `common.py`'s `resolve_out` resolves it
+for every other ccstats command (see `tools/ccstats/README.md`, "Where it writes"): the
+`CCSTATS_OUT` environment variable if it is set, otherwise `~/.cc-warehouse/stats`. Do not
+hardcode `~/.cc-warehouse/stats` in any command below - read `$CCSTATS_OUT` first (e.g. with
+`echo "${CCSTATS_OUT:-$HOME/.cc-warehouse/stats}"`) and use that resolved path everywhere,
+including the Python one-liner in Step 2. This is what lets a test run point everything at a
+scratch folder (`CCSTATS_OUT=/some/temp/dir`) without touching the real one - `dashboard.py` and
+`collect.py` already honour that variable themselves; this command must agree with them rather
+than hardcoding its own copy of the default.
+
 ## Step 1 - refresh the underlying data?
 
-Check whether `~/.cc-warehouse/stats/sessions.sqlite` exists and how old it is (on macOS:
-`stat -f '%Sm' -t '%Y-%m-%d %H:%M' ~/.cc-warehouse/stats/sessions.sqlite`).
+Check whether `$OUT/sessions.sqlite` exists and how old it is (on macOS:
+`stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$OUT/sessions.sqlite"`).
 
 - **Does not exist yet:** say so, explain that `collect.py` (read-only, scans every transcript,
   about 22 seconds) has to run once before a dashboard can be built, and run it. Not optional the
@@ -37,7 +49,7 @@ Check whether `~/.cc-warehouse/stats/sessions.sqlite` exists and how old it is (
 
 ## Step 2 - the project-exclude list
 
-Saved at `~/.cc-warehouse/stats/dashboard-defaults.json`, shape:
+Saved at `$OUT/dashboard-defaults.json`, shape:
 `{"exclude": ["substring", ...], "include": ["substring", ...]}`. This file holds real project
 folder names. It already lives outside the repo and must never be committed or uploaded - same
 rule as the dashboard output itself.
@@ -52,9 +64,10 @@ rule as the dashboard output itself.
   pick real names instead of guessing:
   ```
   uv run python3 -c "
-  import sqlite3
+  import os, sqlite3
   from pathlib import Path
-  conn = sqlite3.connect(Path.home() / '.cc-warehouse' / 'stats' / 'sessions.sqlite')
+  out = Path(os.environ.get('CCSTATS_OUT') or (Path.home() / '.cc-warehouse' / 'stats')).expanduser()
+  conn = sqlite3.connect(out / 'sessions.sqlite')
   for (name,) in conn.execute('SELECT DISTINCT project_label FROM session ORDER BY 1'):
       print(name)
   conn.close()
@@ -62,8 +75,8 @@ rule as the dashboard output itself.
   ```
   Ask for the exclude list (and, only if wanted, an include allowlist). Write the JSON with this
   project's own write convention (R2): build the new content, write it to
-  `dashboard-defaults.json.tmp` in the same folder, then replace the target with it atomically -
-  never edit the live file in place.
+  `dashboard-defaults.json.tmp` in `$OUT`, then replace the target with it atomically - never edit
+  the live file in place.
 - **Mode is `edit-list`:** stop here once saved. Do not build or serve.
 
 ## Step 3 - build
@@ -87,7 +100,7 @@ window).
 The browser tool refuses `file://` URLs. Serve the output folder over loopback instead, with
 `--directory` so no `cd` is needed (this project's Bash rule: never start a command with `cd`):
 ```
-uv run python3 -m http.server 8721 --bind 127.0.0.1 --directory ~/.cc-warehouse/stats
+uv run python3 -m http.server 8721 --bind 127.0.0.1 --directory "$OUT"
 ```
 Run this with `run_in_background: true`. If port 8721 is already taken, try 8722, then 8723.
 
@@ -108,5 +121,6 @@ want to keep it open longer, wait and ask again rather than killing it under the
   README's own Safety section.
 - Never upload the built HTML or the defaults JSON via the Artifact tool or any other external
   host.
-- Never pass `--out` pointing inside this repo, `~/.claude`, the archive, or the warehouse data
-  root - `resolve_out` already refuses those; do not attempt to work around a refusal.
+- Never set `CCSTATS_OUT` (or otherwise resolve `$OUT`) to somewhere inside this repo, `~/.claude`,
+  the archive, or the warehouse data root - `resolve_out` already refuses those; do not attempt to
+  work around a refusal.

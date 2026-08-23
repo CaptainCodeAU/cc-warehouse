@@ -26,6 +26,9 @@ uv run python3 tools/ccstats/verify.py compare      # prove nothing changed
 Every command above accepts `--out DIR` to write somewhere other than the
 default (see **Where it writes**, below).
 
+Inside Claude Code, working in this repo, `/dashboard` does the last of those (`dashboard.py`)
+for you interactively - see **The live dashboard**, below.
+
 | Script | Does |
 |---|---|
 | `collect.py` | the one pass over every transcript; writes `sessions.sqlite` and 9 CSVs |
@@ -40,6 +43,29 @@ default (see **Where it writes**, below).
 | `tests/` | 99 tests, one per defect found (plus the `--until` coverage). `uv run pytest tools/ccstats/tests -q` |
 
 ## The live dashboard
+
+**Quickest way to build and open it:** inside Claude Code, working anywhere in this repo, type
+`/dashboard`. It's a project-local slash command (`.claude/commands/dashboard.md`, only usable in
+this project) that:
+
+1. Asks whether to refresh the underlying data first (skipped automatically on a first run, since
+   there is nothing to refresh yet).
+2. Asks which projects to hide first (or reuses your answer from last time - saved privately at
+   `dashboard-defaults.json` beside the dashboard itself, same folder, same "never commit, never
+   upload" rule).
+3. Runs the build below for you.
+4. Serves the result over a local link and hands it to you (a plain `file://` path is refused by
+   the browser tool, so this is needed even for a local file).
+5. Shuts that link down once you confirm you're done looking - the page keeps working in an
+   already-open tab either way, since everything is baked into the one file.
+
+Tested end to end 2026-08-23 via a separate Claude Code session (driven through Herdr) and a real
+Chrome tab: build, serve, live filter interaction, and shutdown all confirmed working, with zero
+console errors and the real `~/.cc-warehouse/stats/` files left untouched (the test used
+`CCSTATS_OUT` to point everywhere at a scratch folder instead - see Step 0 of the command file).
+
+Read the command file itself for the exact steps `/dashboard` follows. The rest of this section
+explains what it's building and why, for anyone running `dashboard.py` by hand instead.
 
 `dashboard.py` queries `sessions.sqlite` directly (not the pre-aggregated CSVs,
 which are already summed over one fixed window) and embeds a compact
