@@ -20,16 +20,28 @@ here into their own ticket when they are taken up.
 
 - **28.3  `--limit` on sweep.** Useful for exercising a slice of a large import.
 
-- **28.22  Fence `ccw doctor`'s text output.** Recorded 2026-08-18 (ticket 30's
-  Appendix, deployment facts from outside this repo). `~/.local/bin/ccw-watch`
-  (a different repo, `fifty-shades-of-dotfiles`) runs `ccw doctor` at every
-  Claude Code SessionStart on this machine and parses it with a regex: the
-  `hook` line's wording, and the `Uncaptured: N session(s)` figure. Nothing in
-  this repo's own suite protects that shape today, so a reformat would break
-  an external consumer with no test here going red to say so. An oracle test
-  pinning the exact substrings a known-external parser depends on (not the
-  whole output, which would over-constrain wording changes that do not touch
-  the parsed parts) turns that into a fence instead of a surprise.
+- **28.22  Fence `ccw doctor`'s text output. DONE 2026-08-23.** Recorded
+  2026-08-18 (ticket 30's Appendix, deployment facts from outside this repo).
+  `~/.local/bin/ccw-watch` (a different repo, `fifty-shades-of-dotfiles`) runs
+  `ccw doctor` at every Claude Code SessionStart on this machine and parses it
+  with shell regex. Read `ccw-watch`'s actual source
+  (`fifty-shades-of-dotfiles/home/.local/bin/ccw-watch`, confirmed
+  byte-identical to the installed `~/.local/bin/ccw-watch`) rather than trust
+  the earlier "hook line's wording" description above, which turned out to be
+  imprecise: ccw-watch never greps for the word "hook" at all. What it
+  actually depends on is narrower - `status -eq 0` (doctor's exit code) plus,
+  on the healthy path, `sed -n 's/.*Uncaptured: \([0-9]*\) session.*/\1/p'`
+  (needs `status.py:152`'s literal `"Uncaptured: <digits> session"`), and on
+  the broken path, `grep -E '^\s*FAIL'` (needs `doctor.py:440`'s literal
+  `"FAIL"` prefix on a failed blocking check's line).
+  `tests/test_doctor_external_contract.py` pins both by running those EXACT
+  sed/grep commands (not a Python re-implementation that could drift from
+  real shell regex semantics) against real `ccw doctor` output, healthy and
+  broken. Verified the fence actually fences: mutated `status.py`'s literal
+  string (`"Uncaptured:"` -> `"Not captured:"`), watched the sed-based test go
+  RED with the exact real-world symptom, reverted, watched it go green again.
+  Full suite re-confirmed green afterward (1,114 passed, ruff clean, pyright
+  0 errors). No production code changed - this is a protective test only.
 
 ## Recorded, low value, not planned
 
