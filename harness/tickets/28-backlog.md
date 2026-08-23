@@ -24,9 +24,9 @@ here into their own ticket when they are taken up.
   2026-08-18 (ticket 30's Appendix, deployment facts from outside this repo).
   `~/.local/bin/ccw-watch` (a different repo, `fifty-shades-of-dotfiles`) runs
   `ccw doctor` at every Claude Code SessionStart on this machine and parses it
-  with shell regex. Read `ccw-watch`'s actual source
-  (`fifty-shades-of-dotfiles/home/.local/bin/ccw-watch`, confirmed
-  byte-identical to the installed `~/.local/bin/ccw-watch`) rather than trust
+  with shell regex. Read `ccw-watch`'s actual source in the `fifty-shades-of-
+  dotfiles` repo (its tracked copy of the installed script, confirmed
+  byte-identical to the real `~/.local/bin/ccw-watch`) rather than trust
   the earlier "hook line's wording" description above, which turned out to be
   imprecise: ccw-watch never greps for the word "hook" at all. What it
   actually depends on is narrower - `status -eq 0` (doctor's exit code) plus,
