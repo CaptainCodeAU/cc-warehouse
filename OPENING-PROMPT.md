@@ -619,6 +619,19 @@ incremental collect (re-reads all 25k transcripts every run, ~25 s).
   search + `ccw import`/inbox), v1.2 (`ccw mcp`), ticket 19 leftovers (`share`
   19g, and `status`/`relocate`/`project` on archive labels), DESIGN 15 item 7
   (registry backup/export story).
+- **`ccw-watch`'s "capture is NOT working" RED banner from 2026-08-22
+  (`desync: 5 problem(s)... missing transcript.md`) was investigated
+  2026-08-23 and is CLEARED, not a live bug.** Full account: `contract/
+  DESIGN.md` section 15, "2026-08-23: THE `ccw-watch` RED FLAG...". Short
+  version: one session got rendered ~16h late by the daily sweep backstop
+  instead of the hook (now fixed on disk); a full 22,580-folder archive walk
+  (not just the 25-folder sample `ccw doctor` checks) found 0 other real
+  bugs - the other 505 "missing transcript.md" folders are hidden/warmup
+  sessions withheld from rendering BY DESIGN. Worth remembering: a green
+  `ccw doctor` re-run does not by itself prove an old desync is fixed, since
+  its sample window is only the 25 most recent captures and simply moves
+  forward - this session confirmed it the slow way instead of trusting the
+  green sample alone.
 
 ## Two environment facts that will bite
 

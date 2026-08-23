@@ -1499,6 +1499,63 @@ remove `keep_objects` as a feature entirely (making `archive_root`
 mandatory and every install single-copy) - a materially bigger, still
 undecided change with its own blast radius, not attempted here.
 
+**2026-08-23: THE `ccw-watch` RED FLAG FROM 2026-08-22 ("desync: 5
+problem(s)... missing transcript.md") INVESTIGATED - NOT A LIVE CAPTURE
+BUG.** `ccw-watch`'s check is `ccw doctor`'s `_desync` (ticket 31.5), which
+re-verifies only the 25 most recently captured archive folders each
+SessionStart - a deliberately bounded sample, by its own docstring, not a
+full-corpus check. Re-run cold this session: 0 problems, "capture is
+working". That alone does not prove the earlier RED was noise, since the
+sample window moves forward every session - an old, still-broken folder can
+simply age out of the 25 without ever being fixed. So the claim was checked
+the hard way instead of taken on the green re-run.
+
+**The one named example (`...a89234dc-...`, project `CaptainCodeAU-
+Tax_Bhencho`) was checked directly.** Its folder now holds a complete file
+set (`transcript.md` included, `ls -la` confirmed), dated 22 Aug 12:37 local
+- fixed, not still broken. Its catalog row explains the mechanism: the
+session ended at `last_ts` 2026-08-21T10:23:28Z (matching the archive
+JSONL's own mtime almost to the second, so the hook DID fire promptly and
+land the raw payload), but `captured_at` reads 2026-08-22T02:30:43Z - the
+catalog row and the rendered files (transcript.md etc.) did not land until
+~16 hours later, matching the daily `com.captaincodeau.ccw-sweep` job's
+schedule, not the hook's. No log line for either moment exists in
+`logs/capture.jsonl` for this session's hash, at the hook's real time or the
+sweep's - a genuine unexplained gap, but not one that changes the
+conclusion: the safety net (daily sweep re-adopting anything the hook missed
+or left incomplete) did its job, a day later than the hook would have. The
+mechanism is not conclusively proven (no log survives to say whether the
+hook attempted and failed, or never ran at all - a sleeping machine at
+session-end time is consistent with everything observed and was not
+disprovable either way), and is recorded as the LIKELY explanation, not a
+certainty.
+
+**Then the full archive was walked, not sampled - 22,580 session folders,
+every one with a JSONL checked for `transcript.md`.** 506 were missing it.
+Cross-referencing each against `catalog.session.hidden` (the same flag
+`archive.verify_folder` already checks at `archive.py:982-984`, "Archived
+without projections by design; only the name is checkable") found: 505 are
+hidden sessions (warmup/no-summary; today's example was a `ClaudeProbe`
+health-check session, 12 lines, <1s duration) - JSONL-only IS their correct,
+by-design shape, not a defect. The 1 remaining has no catalog row at all,
+but is not a session either: `wf_d5953815-844/undated_session/session.jsonl`
+is a workflow journal (no `sessionId`, ruling (a)), sitting directly at the
+archive root rather than under the `_not-sessions/journals/` home ticket
+25/27 gave the other 7 - an inconsistency worth a future session's look, but
+out of scope for "is capture broken" since a journal was never a session to
+begin with. **Real bugs found across the full corpus: 0.**
+
+**Verdict: capture is not broken.** The RED banner reflected a real,
+already-self-healed transient (one session rendered ~16h late by the sweep
+backstop instead of the hook), not an ongoing failure, and the full-corpus
+audit found nothing else wrong. No code changed; this was an investigation
+only. Worth carrying forward: `ccw-watch`'s RED state is described as
+"clears when fixed, not when seen" - which is true of the underlying
+`ccw doctor` output, but the check itself is a 25-folder rolling sample, so
+a clean re-run is not by itself proof an issue is fixed; this session
+confirmed it the slow way (naming the folder, walking the full archive)
+rather than trusting the green sample alone.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
