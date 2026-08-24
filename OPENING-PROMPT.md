@@ -1,25 +1,34 @@
-# Opening prompt for a fresh session, 2026-08-24 (fourteenth handoff: ticket
-# 28.9 Fix A DONE and pushed; Fix B is the next task - see below)
+# Opening prompt for a fresh session, 2026-08-24 (fifteenth handoff: an
+# unplanned capture-reliability arc landed and is DONE; ticket 28.9 Fix B is
+# still untouched and is still the standing next task - see below)
 
 ## Next task: **ticket 28.9, Fix B (the copy-as-markdown base64 duplication),
-## is what the operator explicitly asked for next, in a NEW session. Fix A is
-## DONE, tested, and pushed (commit `fb85934`) - do not re-do it, do not re-run
-## its browser check, and do not re-read its investigation as if it were still
-## open.** Read "ACTIVE TASK: ticket 28.9" immediately below this block before
-## touching any code - it has Fix A's full account (for context on what
-## already landed) AND Fix B's plan: the two candidate shapes (server-side
-## reuse vs. client-side reconstruction), the locked contract guarantee Fix B
-## must not break (`test_copy_as_markdown_payloads_equal_transcript_fragments`),
-## and the same real-browser testing requirement Fix A was held to. **Picking
-## between the two Fix B shapes is a decision to make explicit (or ask), not
-## default silently** - see step 3 of the plan. Nothing in items 1-7, ticket
-## 28.22, ticket 30's flagged defect, ticket 28.13, ticket 24.7, ticket 28.19,
-## ticket 28.1, ticket 28.3, or ticket 28.9 Fix A is open work any more - see
-## the eleventh through fourteenth handoff entries at the end of this file for
+## is STILL what the operator explicitly asked for next. It was NOT touched in
+## the fifteenth handoff** - that session got redirected mid-task (see below)
+## into an unrelated, real capture-reliability investigation and fix arc, now
+## fully DONE and pushed. Fix A is DONE, tested, and pushed (commit `fb85934`)
+## - do not re-do it, do not re-run its browser check, and do not re-read its
+## investigation as if it were still open.** Read "ACTIVE TASK: ticket 28.9"
+## immediately below this block before touching any code - it has Fix A's full
+## account (for context on what already landed) AND Fix B's plan: the two
+## candidate shapes (server-side reuse vs. client-side reconstruction), the
+## locked contract guarantee Fix B must not break
+## (`test_copy_as_markdown_payloads_equal_transcript_fragments`), and the same
+## real-browser testing requirement Fix A was held to. **Picking between the
+## two Fix B shapes is a decision to make explicit (or ask), not default
+## silently** - see step 3 of the plan. Nothing in items 1-7, ticket 28.22,
+## ticket 30's flagged defect, ticket 28.13, ticket 24.7, ticket 28.19, ticket
+## 28.1, ticket 28.3, or ticket 28.9 Fix A is open work any more - see the
+## eleventh through fourteenth handoff entries at the end of this file for
 ## those accounts. Once Fix B is done, the standing next candidates are ticket
 ## 28's other backlog items (28.2, 28.10, 28.11, 28.12, 28.14) and `ccw share
 ## --open` as a possible fast follow-up to 28.1 - see "Also on record, not
-## scheduled" near the end of this file.
+## scheduled" near the end of this file. **The fifteenth handoff's own account,
+## at the very end of this file, is worth reading too even though it is not
+## the next task** - it fixed two real, live production bugs in `archive.py`
+## and `sweep.py` that any future session touching capture, sweep, or archive
+## should know about before assuming those paths behave the way older parts of
+## this file describe.
 
 ## ACTIVE TASK: ticket 28.9, cut `conversation.html`'s memory cost
 
@@ -1442,3 +1451,116 @@ fresh session straight at Fix B rather than back through Fix A's now-closed inve
 
 **What was NOT done:** Fix B, and everything downstream of it in the plan (step 4's browser
 test). Nothing else was touched this handoff.
+
+---
+
+**Fifteenth handoff, 2026-08-24 (new session).** Opened by reading this file (the fourteenth
+handoff, above), which pointed straight at ticket 28.9 Fix B. Before touching that, the
+operator asked for the `claude-code-dashboard-live.html` file to be opened in a real browser
+(served over loopback, per the "Two environment facts" section - the browser tool refuses
+`file://`), which was done cleanly, then killed on request. The operator then set a standing
+preference, now recorded in memory (`give-full-paths-and-links.md`): use `~/...` in any path
+shown to them, never the literal `/Users/<name>/...` form (it leaks the machine's real
+username into anything that records the text), and do not spin up a local server by default
+for a plain file path - only when the browser tool itself needs one.
+
+Asked how deterministic `dashboard.py` is and how long the pipeline takes, and told to go
+measure it rather than guess. **A real mistake happened here**: checking `dashboard.py
+--help` (which the script does not support) actually ran `collect.py` for real against the
+LIVE `~/.cc-warehouse/stats/` data instead of a scratch copy - this session's own memory rule
+about testing with `CCSTATS_OUT` was not applied. Disclosed immediately, confirmed harmless
+(refreshed the real stats DB early, touched nothing session-related, no `.building` file left
+behind), and the operator approved rebuilding the live dashboard page to match. Measured
+result, real data: `dashboard.py` is deterministic except one timestamp field (byte-identical
+output twice, confirmed with `cmp` after normalising that one field); the full pipeline
+(`collect.py` + `dashboard.py`) takes under 10 seconds warm, ~30-45s cold (estimate from an
+earlier session's own measurement on a then-smaller corpus).
+
+**The operator then asked to check whether real sessions in `~/.claude` were going
+uncaptured**, suspecting the SessionEnd hook itself might not be firing. It was firing fine
+(307/307 real hook-log entries "ok", zero errors) - the real, live finding was a 37-session
+backlog from the prior ~2 hours, which `ccw sweep` cleared. **The operator explicitly rejected
+this as "just a temporary manual fix"** and asked for the actual mechanism and real, durable
+fixes, presented as options first. That investigation surfaced two independent, previously
+undiscovered real bugs, found by reading logs and code directly rather than guessing:
+
+1. **The weekly `ccw archive --to` job had been silently failing for two weeks** (612 real
+   items failing, 0 folders written on its last real run) - `archive.migrate`'s vault-gone
+   fallback path (a stale/missing archive folder falls back to reading the OLD vault store)
+   was never updated when `objects/` was retired (ticket 27.4, 2026-08-20), so it tried to
+   read a directory that no longer exists. Fixed same-session, oracle-tests-first, verified
+   on real production data (`ccw archive --to ~/cc-warehouse-archive`: 612 failed -> 8 failed
+   after the first fix, then 8 -> 0 after a second fix for the genuinely-permanent case
+   below). Commits `db03dd6` (the vault-fallback fix, landed BEFORE the plan-mode arc below)
+   and `24c9ea6` (the permanent-non-session case).
+2. **`sweep()` has no per-item exception boundary at all** (`capture_transcript`'s own
+   docstring already said so: "any deeper failure propagates to the caller's never-raise
+   boundary" - the HOOK path has one, `_run_hook`; sweep does not) - one contended catalog
+   write can silently abort the ENTIRE daily sweep batch mid-run, with nothing printed or
+   logged, and everything still queued in that run simply never attempted (picked up by the
+   next sweep, not lost, but invisible in between). This exact gap was already flagged, not
+   yet fixed, in `harness/tickets/31-sweep-full-corpus-cost.md` section 31.4 (2026-08-20,
+   "logging only... the retry loop stays unshipped... blocked on a confirmed exception").
+
+**Entered plan mode** (operator-approved, `Plans/majestic-floating-cray.md`) to design real
+fixes rather than another catch-up, after two Explore-agent codebase surveys both failed
+twice on a transient Anthropic API 529 (server overloaded) - rather than keep retrying, every
+file was read directly instead (`capture.py`, `catalog.py`, `store.py`, `sweep.py`, `cli.py`,
+`notify.py`, `doctor.py`, `contract/DESIGN.md`'s R14, the freshness-check plugin and its
+tests). The operator's own explanation of `win_go_app_test`'s rapid-fire session bursts
+(Herdr/subagent-driven automated testing, confirmed NORMAL, not a bug to chase) shaped the
+final plan: the real fix is tolerating that load, not investigating that project further.
+
+**Four pieces shipped, each oracle-tests-first (red confirmed against unfixed code, then
+green), each committed and pushed separately:**
+
+- **Retry-with-backoff on catalog writes** (`capture.py`, commit `5aef3d3`). The real answer
+  to "run captures without stepping on each other": SQLite's own reserved lock (`BEGIN
+  IMMEDIATE` + the existing 5s `busy_timeout`) already coordinates writers (R14) - the gap
+  was giving up after exactly one wait. `_capture_locked`'s two catalog calls now retry up to
+  3 times on `sqlite3.OperationalError` matching "locked"/"busy" only; any other exception
+  still raises immediately, unchanged.
+- **Sweep per-item safety net + a durable failure log** (`sweep.py`, commit `a19710a`),
+  directly answering both "stop one bad session from killing the batch" and "log bad sessions
+  for review". `_capture_item` now catches any exception (matching `_archive_subagent`'s own
+  existing pattern a few lines above it in the same file), logs it to the same
+  `logs/capture.jsonl` the hook path's stage-failure logging already uses, and lets the batch
+  continue. `BatchReport`/`ItemOutcome`'s shape is unchanged.
+- **Watch the 3 real launchd jobs for failures** (`plugins/cc-capture/hooks/ccw-freshness-
+  check.py`, commit `8d88cea`), directly answering "watch the daily/weekly jobs" - `ccw
+  doctor`'s own PASS/FAIL verdict never covered these at all, which is exactly why the
+  archive-job incident above sat unnoticed for two weeks. Shells out to `launchctl print
+  gui/<uid>/<label>` for `com.captaincodeau.ccw-sweep`/`-archive`/`-repair`, best-effort and
+  guarded (never blocks session start; a missing `launchctl`, e.g. non-macOS, reads as
+  unknown, not broken).
+- **Backlog growth-rate context on an already-escalating alert** (same file, commit
+  `e35b7b6`), answering "alarm on a fast-growing backlog, not just a broken job" - applying
+  this file's own hard-learned lesson (ticket 24.7's first draft alarmed on the raw
+  uncaptured count and fired every session on a healthy machine): the growth rate rides along
+  as context on a message the doctor-streak signal ALREADY decided to show, never as an
+  independent trigger, because this session's own real numbers (37 in ~2h from ordinary
+  multi-session usage, ~18/hr) are not reliably distinguishable from a real problem by rate
+  alone.
+
+**Verified against real production state at every step, not just pytest**: full suite grew
+from 1,175 to 1,197 passing tests across the arc; ruff and pyright stayed clean throughout
+(one pre-existing, unrelated pyright gap in `tests/test_render_open.py` predates this
+session, confirmed via `git stash`, not touched). The frozen `ccw` binary was reinstalled
+(`uv_tool_reinstall_current_project --no-extras`) after the code changes - this session
+independently re-discovered the "editing the repo does not change what runs" trap
+`CLAUDE.md`'s own hard rule already documents, the first time by forgetting it (an accidental
+real-data `collect.py` run, see above), the second time by verifying a fix against the OLD
+binary and getting confused before catching it. The real weekly `ccw archive --to` job was
+run for real (`517 folders written, 0 failed`, exit 0) and the real launchd job was
+kickstarted end-to-end (`launchctl kickstart`), confirmed via a background wait to finish
+with `last exit code = 0`, and the freshness-check script confirmed silent afterward. The
+plugin cache (a SEPARATE deployment surface from the `ccw` binary - Claude Code reads
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<commit-hash>/`, not this repo directly) was
+stale until the operator ran `/plugin marketplace update cc-warehouse` and `/reload-plugins`
+themselves at the end of the session; confirmed byte-identical to this repo's copy afterward
+(`diff`, exit 0) against the new cache directory `e35b7b6bb2bc`, matching this session's own
+final commit hash exactly.
+
+**What was NOT done:** ticket 28.9 Fix B (see "Next task" at the top of this file - entirely
+untouched this session, the redirect happened before it was ever started). No other open
+item from this file's own tracking was touched.
