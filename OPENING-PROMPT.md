@@ -1726,7 +1726,56 @@ real file it was written to fix, not just the synthetic one. Opened in a real Ch
 zero console errors. Both temporary HTTP servers (scratch on 8931, real on 8932) were killed and
 both tabs closed afterward; nothing was left running.
 
+**Three more operator follow-ups, same session, after seeing the toggle live, all DONE:**
+
+1. **"sub-agent runs" now defaults ON too** (`DEFAULT_KINDS` -> `{mine, subagent}`), only
+   "automated one-shots" still defaults off - a sub-agent is real work done on the operator's
+   behalf, same as watching a Task call run. `test_dashboard_headless.py`'s default-view test
+   rewritten for the new 7-row default population (was 5); a new test covers explicitly
+   dropping to mine-only, since that is now the thing a reader has to opt INTO, not the default.
+2. **The filterbar and panel-nav layout were tightened.** The filterbar wrapped onto three
+   lines once the toggle row landed, with the summary line stranded alone on its own row -
+   restructured into two explicit rows instead of one unconstrained wrapping flex row.
+   Fixing this surfaced a real, separate bug: the sticky panel-nav bar below it was pinned at
+   `top: 49px`, a hardcoded guess matching the OLD single-row filterbar height, already stale
+   the moment the toggle row was added - replaced with `setNavTop()`, which measures the
+   filterbar's real rendered height (re-measured on resize) instead of guessing. The panel-nav
+   links themselves were also restyled from plain inline text (read as one continuous run) into
+   bordered chips, with a permanent edge-fade (`mask-image`) on the scrolling strip as a visual
+   "there's more this way" cue. `dashboard_probe.js`'s DOM stub gained `document.querySelector`,
+   `document.documentElement`, and real `style.setProperty`/`getBoundingClientRect` stubs,
+   needed by the above - the harness needing extension for a UI-only change is by design (its
+   own header comment says so), not a gap.
+3. **The real, saved `~/.cc-warehouse/stats/dashboard-defaults.json` held the WRONG exclude
+   list**, discovered when the operator looked at the live "Projects" dropdown and it didn't
+   match what they remembered dictating. Confirmed by direct comparison: the file on disk (6
+   generic patterns - `.claude-worktrees-agent-`, `.worktree`, `private-tmp-`,
+   `private-var-folders-`, `scratchpad`, `orchestration-drill`, mtime 2026-08-24T01:25, before
+   this session started) does not match `CLAUDE.md`'s own "Fourth round" record of the
+   operator's real 23-pattern list from 2026-08-22. **This was not introduced by this
+   session** - the file was never written by anything in this session, only read, and its
+   mtime predates this session's start. Something earlier today (not identified, not this
+   session) replaced the operator's real list with a generic scratch/noise filter. Restored the
+   real 23-pattern list from `CLAUDE.md` verbatim (tmp-file + `os.replace`, R2's idiom, even
+   though this file lives outside the repo entirely). One value needed reconstruction:
+   `CLAUDE.md` redacts the operator's real local username as `<local-username>-` (this repo's
+   own privacy rule for anything git-tracked); the real machine account is `fonzarelli` -
+   confirmed, not assumed, by checking that real `project_label` values starting with
+   `fonzarelli-` actually exist in the corpus (`fonzarelli-.claude`, `fonzarelli-Temp`, etc. -
+   Claude config/library folders outside `~/CODE`, exactly what that pattern exists to catch)
+   before writing it. Dashboard rebuilt with the restored list: 58 raw names -> 57 canonical
+   exclusions (was 32 -> 20 under the stale list), "my sessions" 564 (was 668). Verified in a
+   real Chrome tab, zero console errors. **This file lives outside the repo
+   (`~/.cc-warehouse/stats/`, not tracked in git at all per this project's own DATA-vs-CODE
+   separation) - nothing to commit for this fix, it is a local-data correction only.**
+
+One commit, pushed (`c10c851`, items 1-2; item 3 has no git artifact by design - see above).
+132 ccstats tests passing, ruff clean.
+
 **What was NOT done:** ticket 28.9 Fix B, again untouched - this is now the SECOND handoff in a
 row where an operator-initiated redirect landed before Fix B was ever started (see "Next task"
 at the top of this file). Step 5 of the dashboard plan (client-side concurrency reimplementation)
-was explicitly deferred, not forgotten - see above.
+was explicitly deferred, not forgotten - see above. **Also unresolved and worth a future
+session's attention, not chased down here**: WHAT overwrote the real `dashboard-defaults.json`
+with a generic list sometime before 2026-08-24T01:25 - no session's own account in this file
+claims to have done it, and the mechanism is unknown.
