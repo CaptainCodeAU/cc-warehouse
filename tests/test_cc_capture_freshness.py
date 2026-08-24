@@ -24,6 +24,7 @@ it just does not drive the alarm.
 
 import importlib.util
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -176,6 +177,91 @@ def test_corrupt_state_file_reads_as_zero_not_a_crash(tmp_path: Path) -> None:
 
 def test_missing_state_file_reads_as_zero(tmp_path: Path) -> None:
     assert _freshness().read_streak(tmp_path / "does-not-exist.json") == 0
+
+
+def test_writing_the_streak_does_not_erase_other_state_fields(tmp_path: Path) -> None:
+    """The state file grows a second concern (backlog-growth tracking, below)
+    sharing the same file - write_streak must read-modify-write, not blindly
+    overwrite the whole file, or the two concerns would fight over it."""
+    freshness = _freshness()
+    state_path = tmp_path / "ccw-freshness-state.json"
+    freshness.write_backlog_snapshot(state_path, 42, "2026-08-24T00:00:00+00:00")
+    freshness.write_streak(state_path, 3)
+    assert freshness.read_streak(state_path) == 3
+    assert freshness.read_backlog_snapshot(state_path) == (42, "2026-08-24T00:00:00+00:00")
+
+
+# ---------------------------------------------------------------------------
+# Alarm on backlog GROWTH RATE, not just a raw count or a broken doctor streak
+# (operator-approved follow-up, 2026-08-24 -- see Plans/majestic-floating-cray.md).
+# Applying this file's own hard-learned lesson: a raw count/rate is context,
+# never the trigger by itself - this session's own real numbers (37 new
+# uncaptured sessions in ~2h during ordinary multi-session usage, ~18/hr) are
+# not reliably distinguishable from a real problem by rate alone.
+# ---------------------------------------------------------------------------
+
+def test_no_earlier_snapshot_means_no_rate() -> None:
+    freshness = _freshness()
+    now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+    assert freshness.backlog_growth(None, None, 50, now) is None
+
+
+def test_growth_rate_is_sessions_per_hour_since_the_last_check() -> None:
+    freshness = _freshness()
+    earlier = datetime(2026, 8, 24, 12, 0, tzinfo=UTC).isoformat()
+    now = datetime(2026, 8, 24, 14, 0, tzinfo=UTC)  # 2 hours later
+    # matches this session's own real incident: 4 -> 40, over 2 hours = 18/hr
+    assert freshness.backlog_growth(4, earlier, 40, now) == 18.0
+
+
+def test_a_shrinking_backlog_is_a_negative_rate_not_clamped() -> None:
+    """A sweep just ran and cleared most of the backlog - the rate should say
+    so plainly, not be forced to zero."""
+    freshness = _freshness()
+    earlier = datetime(2026, 8, 24, 12, 0, tzinfo=UTC).isoformat()
+    now = datetime(2026, 8, 24, 13, 0, tzinfo=UTC)
+    assert freshness.backlog_growth(500, earlier, 4, now) == -496.0
+
+
+def test_an_unparseable_earlier_timestamp_yields_no_rate_not_a_crash() -> None:
+    freshness = _freshness()
+    now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+    assert freshness.backlog_growth(4, "not a timestamp", 40, now) is None
+
+
+def test_a_healthy_streak_never_prints_growth_context_either() -> None:
+    """Mirrors test_healthy_streak_is_silent_no_matter_the_backlog exactly,
+    same false-alarm shape, new axis: growth context rides along on an
+    escalating message, it is never itself the reason to speak."""
+    freshness = _freshness()
+    assert freshness.growth_context(None) == ""
+    assert freshness.growth_context(0) == ""
+    assert freshness.growth_context(-5) == ""  # shrinking is good news, not context to flag
+
+
+def test_a_real_growth_rate_is_named_as_context() -> None:
+    context = _freshness().growth_context(18.0)
+    assert "18" in context
+    assert "hr" in context
+
+
+def test_backlog_snapshot_round_trips(tmp_path: Path) -> None:
+    freshness = _freshness()
+    state_path = tmp_path / "ccw-freshness-state.json"
+    assert freshness.read_backlog_snapshot(state_path) == (None, None)
+    freshness.write_backlog_snapshot(state_path, 12, "2026-08-24T01:00:00+00:00")
+    assert freshness.read_backlog_snapshot(state_path) == (12, "2026-08-24T01:00:00+00:00")
+
+
+def test_a_none_uncaptured_count_is_never_snapshotted(tmp_path: Path) -> None:
+    """`ccw doctor` can fail before it ever prints the Uncaptured line - there
+    is nothing meaningful to remember for the next comparison, and writing
+    None would corrupt the next rate calculation, not just skip it."""
+    freshness = _freshness()
+    state_path = tmp_path / "ccw-freshness-state.json"
+    freshness.write_backlog_snapshot(state_path, 12, "2026-08-24T01:00:00+00:00")
+    freshness.write_backlog_snapshot(state_path, None, "2026-08-24T02:00:00+00:00")
+    assert freshness.read_backlog_snapshot(state_path) == (12, "2026-08-24T01:00:00+00:00")
 
 
 # Ticket 24.7 oracle test: a fence rejects `uv tool run` in any hook wrapper's

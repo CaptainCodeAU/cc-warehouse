@@ -142,27 +142,99 @@ def extract_uncaptured(doctor_output: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def read_streak(path: Path) -> int:
-    """Consecutive broken doctor verdicts so far, or 0 if unknown, missing, or
-    unreadable - a corrupt state file must never crash the check."""
+def _read_state(path: Path) -> dict[str, object]:
+    """The full state dict, or {} if missing/corrupt/unreadable - a corrupt
+    state file must never crash the check (same posture as read_streak)."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        streak = data.get("consecutive_broken", 0)
-        return streak if isinstance(streak, int) and streak >= 0 else 0
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        return 0
+        return {}
 
 
-def write_streak(path: Path, streak: int) -> None:
-    """Best-effort, tmp-then-replace so a crash mid-write cannot corrupt the
-    file for the next session-start."""
+def _write_state(path: Path, updates: dict[str, object]) -> None:
+    """Merge `updates` into whatever state already exists and write the whole
+    thing back, tmp-then-replace so a crash mid-write cannot corrupt the file
+    for the next session-start. READ-modify-write, not a blind overwrite: the
+    streak and the backlog-growth snapshot share this one file, and a naive
+    overwrite would let writing one erase the other."""
     try:
+        state = _read_state(path)
+        state.update(updates)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"consecutive_broken": streak}), encoding="utf-8")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
         tmp.replace(path)
     except OSError:
         pass
+
+
+def read_streak(path: Path) -> int:
+    """Consecutive broken doctor verdicts so far, or 0 if unknown, missing, or
+    unreadable - a corrupt state file must never crash the check."""
+    streak = _read_state(path).get("consecutive_broken", 0)
+    return streak if isinstance(streak, int) and streak >= 0 else 0
+
+
+def write_streak(path: Path, streak: int) -> None:
+    _write_state(path, {"consecutive_broken": streak})
+
+
+def read_backlog_snapshot(path: Path) -> tuple[int | None, str | None]:
+    """(uncaptured count, ISO timestamp) from the LAST check that had a real
+    figure to record, or (None, None) if this is the first check ever, or the
+    state file is missing/corrupt."""
+    state = _read_state(path)
+    count = state.get("last_uncaptured")
+    at = state.get("last_checked_at")
+    return (
+        count if isinstance(count, int) else None,
+        at if isinstance(at, str) else None,
+    )
+
+
+def write_backlog_snapshot(path: Path, uncaptured: int | None, at: str) -> None:
+    """Remember this check's figure for the NEXT check's rate comparison.
+    Skipped entirely when `uncaptured` is None (doctor crashed before
+    printing the line) - writing None here would silently corrupt the next
+    rate calculation rather than just skip it, and the previous real snapshot
+    is still a better comparison point than nothing."""
+    if uncaptured is None:
+        return
+    _write_state(path, {"last_uncaptured": uncaptured, "last_checked_at": at})
+
+
+def backlog_growth(
+    prev_count: int | None, prev_at: str | None, current: int, now: datetime
+) -> float | None:
+    """Sessions-per-hour growth in the uncaptured backlog since the last
+    check, or None if there is nothing to compare against (first-ever check,
+    an unparseable earlier timestamp, or too little real time has passed for
+    a rate to mean anything rather than a divide-by-near-zero artifact)."""
+    if prev_count is None or prev_at is None:
+        return None
+    try:
+        earlier = datetime.fromisoformat(prev_at)
+    except ValueError:
+        return None
+    elapsed_hours = (now - earlier).total_seconds() / 3600
+    if elapsed_hours <= 0.01:  # under ~36s
+        return None
+    return (current - prev_count) / elapsed_hours
+
+
+def growth_context(rate: float | None) -> str:
+    """A short informational suffix naming the backlog's growth rate, or ''
+    when there is nothing worth adding (no earlier snapshot, flat, or
+    shrinking - good news is not context to flag). CONTEXT ONLY, appended to
+    an ALREADY-escalating message in main() - never itself the reason to
+    speak, for the exact false-alarm reason freshness_message's own docstring
+    gives for the raw uncaptured count: this session's own real numbers show
+    ordinary multi-session usage can produce a rate (37 in ~2h, ~18/hr) not
+    reliably distinguishable from a real problem by rate alone."""
+    if rate is None or rate <= 0:
+        return ""
+    return f", growing ~{rate:.0f}/hr since last check"
 
 
 def extract_last_exit(launchctl_output: str) -> int | None:
@@ -264,6 +336,10 @@ def main() -> int:
         return 0
 
     uncaptured = extract_uncaptured(result.stdout)
+    now = datetime.now(timezone.utc)
+    prev_count, prev_at = read_backlog_snapshot(STATE_PATH)
+    rate = backlog_growth(prev_count, prev_at, uncaptured, now) if uncaptured is not None else None
+
     if result.returncode == 0:
         write_streak(STATE_PATH, 0)
         report("ok", f"uncaptured={uncaptured}")
@@ -272,8 +348,11 @@ def main() -> int:
         write_streak(STATE_PATH, streak)
         message = freshness_message(streak, uncaptured)
         if message is not None:
+            message += growth_context(rate)
             report("warn" if streak < _ALERT_AT else "alert", message)
             print(message)
+
+    write_backlog_snapshot(STATE_PATH, uncaptured, now.isoformat())
 
     # Independent of the doctor-streak signal above (see job_health_message's
     # own docstring for why): `ccw doctor` does not check these jobs at all,
