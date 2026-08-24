@@ -841,6 +841,23 @@ def _migrate_locked(
             existing_jsonl = directory / f"{session_uuid or stem}{_JSONL_SUFFIX}"
             if existing_jsonl.exists():
                 data = existing_jsonl.read_bytes()
+            elif session_uuid is None:
+                # A catalog row with no session_uuid at all cannot be a real
+                # Claude Code session (is_session's own check, below, requires
+                # a sessionId the parse would have recorded as this column).
+                # Real population on this machine, confirmed 2026-08-24: the
+                # 7 workflow-journal vault objects imported without a
+                # sessionId (see CLAUDE.md's own account) - permanently
+                # vault-only, already backed up outside the warehouse, and
+                # with the vault retired there is genuinely nothing left to
+                # read. Counting these as `failed` forever would make this
+                # job's exit code permanently non-zero regardless of whether
+                # anything is actually wrong - exactly the chronic-false-
+                # alarm shape this project has already been burned by twice
+                # (ticket 24.7's own history). `skipped_not_a_session` is the
+                # existing, honest bucket for "not a session, nothing to do".
+                report.skipped_not_a_session.append(hash_)
+                continue
             else:
                 report.failed.append((hash_, f"unreadable: {exc}"))
                 continue

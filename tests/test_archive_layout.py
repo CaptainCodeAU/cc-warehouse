@@ -15,7 +15,7 @@ F6 (loss is never silent), F9 (sources are read-only).
 import json
 from pathlib import Path
 
-from cc_warehouse import archive, store
+from cc_warehouse import archive, catalog, store
 from cc_warehouse.render import RenderOptions
 from conftest import DEFAULT_UUID, basic_session, entry, jsonl, matrix_session, tree_snapshot
 
@@ -313,6 +313,61 @@ def test_migration_recovers_a_stale_folder_when_the_vault_is_gone(
 
     assert not report.failed, report.failed
     assert (folder / "manifest.json").exists()
+
+
+def test_migration_never_permanently_fails_a_row_with_no_session_identity(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Real shape found 2026-08-24: 8 catalog rows on the operator's own machine
+    (the workflow-journal vault objects `is_session`'s own docstring already
+    names as permanently excluded - no `sessionId`, so `session_uuid` is NULL)
+    have no vault blob left (`objects/` retired, ticket 27.4) and never had an
+    archive folder (they predate archive-first, or were catalog-only imports).
+    Reporting these as `failed` forever would make `ccw archive --to`'s exit
+    code permanently non-zero regardless of whether anything is actually wrong
+    - exactly the chronic-false-alarm shape ticket 24.7 already learned to
+    avoid once. A row with no session identity at all was never going to
+    become a real session folder either way; it belongs in the existing
+    `skipped_not_a_session` bucket, not `failed`."""
+    from conftest import warehouse_root
+
+    warehouse = warehouse_root(ccw_env)
+    conn = catalog.open_catalog(warehouse)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO project (label, created_at) VALUES (?, ?)",
+            ("_not-sessions", "2026-08-01T00:00:00Z"),
+        )
+        assert cursor.lastrowid is not None
+        project_id = cursor.lastrowid
+        meta = catalog.SessionMeta(
+            sha256="f" * 64,
+            source_kind="claude_code",
+            session_uuid=None,
+            slug=None,
+            git_branch=None,
+            cwd=None,
+            first_ts=None,
+            last_ts=None,
+            size_bytes=123,
+            line_count=1,
+            skipped_lines=0,
+            summary="",
+            hidden=False,
+            resolution_source="payload_cwd",
+        )
+        catalog.add_session(conn, meta, project_id, "2026-08-01T00:00:00Z")
+    finally:
+        conn.close()
+    # No vault object was ever written for this hash, and no archive folder
+    # exists either - exactly the real, permanent state on disk.
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+
+    report = archive.migrate(warehouse, archive_root, OPTS, ZONE)
+
+    assert not report.failed, report.failed
+    assert report.skipped_not_a_session == ["f" * 64]
 
 
 # ---------------------------------------------------------------------------
