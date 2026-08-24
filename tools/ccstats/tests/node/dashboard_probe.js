@@ -81,7 +81,12 @@ function makeEl(tag, attrs) {
     appendChild(child) { el._children = el._children || []; el._children.push(child); return child; },
     remove() {},
   };
-  el.style = {};
+  el.style = {
+    _props: {},
+    setProperty(k, v) { el.style._props[k] = v; },
+    getPropertyValue(k) { return el.style._props[k] || ""; },
+  };
+  el.getBoundingClientRect = () => ({ top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 });
   Object.defineProperty(el, "textContent", {
     get() { return el._text; }, set(v) { el._text = String(v); },
   });
@@ -123,11 +128,17 @@ function getOrMakeById(id) {
 }
 
 const panelsContainer = getOrMakeById("panels");
+const documentElementStub = makeEl("html");
 const documentStub = {
   getElementById: (id) => getOrMakeById(id),
   createElement: (tag) => makeEl(tag),
   addEventListener() {},
   body: makeEl("body"),
+  documentElement: documentElementStub,
+  // No real layout engine here, so nothing has a meaningful bounding box -
+  // the page's own setNavTop() already guards for exactly this (a null
+  // querySelector result, or an element with no real getBoundingClientRect).
+  querySelector() { return null; },
   querySelectorAll(sel) {
     if (sel === ".kind-item[data-kind]") return KIND_NAMES.map((n) => kindItems[n]);
     if (sel === ".panel") return [];

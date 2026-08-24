@@ -146,22 +146,37 @@ def test_the_page_loads_and_every_panel_renders_without_throwing(tmp_path: Path)
     assert len(result["panels"]) == 20, "a panel went missing from the page"
 
 
-def test_default_view_is_mine_only_and_matches_hand_computed_numbers(tmp_path: Path) -> None:
-    """5 "mine" sessions with engaged minutes 10/20/30/40/50 -> median 30,
-    total cost $15.00. The 2 sub-agent and 2 automated rows must NOT appear
-    in the default view - this is the population-blending bug (D2) this
-    toggle exists to fix."""
+def test_default_view_is_mine_plus_subagent_and_matches_hand_computed_numbers(
+    tmp_path: Path,
+) -> None:
+    """Default ticks "my sessions" (5 rows, engaged min 10/20/30/40/50) AND
+    "sub-agent runs" (2 rows, engaged min 1/1.5) - the operator's own
+    2026-08-24 follow-up ask, after seeing the toggle default to "mine" only.
+    Combined engaged minutes sorted: 1, 1.5, 10, 20, 30, 40, 50 -> median 20.
+    Cost: $15.00 (mine) + $1.20 (sub-agent) = $16.20 -> "US$ 16" (rounded).
+    The 2 automated rows must NOT appear - they still default off."""
     html_path = _build_html(tmp_path)
     result = _run_probe(html_path)
 
+    assert result["fsLength"] == 7
+    tiles = result["panels"]["overview"]["tiles"]
+    assert tiles["sessions with a reply"] == "7"
+    assert tiles["typical session length"] == "20.0 min"
+    assert tiles["API cost"] == "US$ 16"
+
+
+def test_unticking_subagent_leaves_mine_only(tmp_path: Path) -> None:
+    """The population-blending bug (D2) this toggle exists to fix: a reader
+    must still be able to see ONLY their own sessions, on demand."""
+    html_path = _build_html(tmp_path)
+    result = _run_probe(html_path, scenario={"kinds": ["mine"]})
     assert result["fsLength"] == 5
     tiles = result["panels"]["overview"]["tiles"]
-    assert tiles["sessions with a reply"] == "5"
     assert tiles["typical session length"] == "30.0 min"
     assert tiles["API cost"] == "US$ 15"
 
 
-def test_ticking_subagent_and_automated_adds_them_in(tmp_path: Path) -> None:
+def test_ticking_automated_too_adds_it_in(tmp_path: Path) -> None:
     html_path = _build_html(tmp_path)
     result = _run_probe(html_path, scenario={"kinds": ["mine", "subagent", "automated"]})
     assert result["fsLength"] == len(FIXTURE)

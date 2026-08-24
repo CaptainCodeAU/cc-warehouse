@@ -40,8 +40,13 @@ code{font-family:var(--mono);font-size:.88em;background:var(--code);padding:1px 
 /* ---------------------------------------------------------------- filters */
 .filterbar{position:sticky;top:0;z-index:30;background:var(--paper);
   border-bottom:2px solid var(--ink)}
-.filterbar .inner{max-width:1280px;margin:0 auto;padding:12px 28px;
-  display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+/* Two explicit rows, not one flex row left to wrap wherever it runs out of
+   space: with the "Count as a session" toggle added, an unconstrained wrap
+   put the summary line on a lonely third row by itself. Two fixed rows are
+   shorter and predictable at any width. */
+.filterbar .inner{max-width:1280px;margin:0 auto;padding:9px 28px;
+  display:flex;flex-direction:column;gap:7px}
+.f-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .f-group{display:flex;align-items:center;gap:8px}
 .f-label{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;
   font-size:11.5px;font-weight:700;color:var(--signal)}
@@ -86,13 +91,22 @@ input[type=date]{font-family:var(--mono);font-size:13px;background:var(--panel);
 .kind-item .kind-n{color:var(--ink2)}
 .kind-item.checked .kind-n b{color:var(--signal)}
 
-nav{position:sticky;top:49px;z-index:20;background:var(--paper);
+/* `top` is set from JS (setNavTop() below), measured off the filterbar's own
+   real height rather than a hardcoded number - the filterbar's height can
+   change (more/fewer excluded projects wrapping the toggle row, a narrower
+   viewport), and a stale fixed offset would let this bar overlap or hide
+   under the sticky filterbar above it while scrolling. The var() fallback
+   only covers the instant before that JS runs. */
+nav{position:sticky;top:var(--nav-top,54px);z-index:20;background:var(--paper);
   border-bottom:1px solid var(--rule)}
-nav .inner{max-width:1280px;margin:0 auto;padding:9px 28px;display:flex;gap:16px;
-  overflow-x:auto;scrollbar-width:thin}
+nav .inner{max-width:1280px;margin:0 auto;padding:10px 20px;display:flex;gap:10px;
+  overflow-x:auto;scrollbar-width:thin;
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 20px,#000 calc(100% - 20px),transparent);
+  mask-image:linear-gradient(to right,transparent,#000 20px,#000 calc(100% - 20px),transparent)}
 nav a{font-family:var(--mono);font-size:11px;color:var(--ink2);text-decoration:none;
-  white-space:nowrap;padding:3px 0;border-bottom:2px solid transparent}
-nav a:hover,nav a:focus-visible{color:var(--signal);border-bottom-color:var(--signal)}
+  white-space:nowrap;flex:0 0 auto;padding:6px 12px;border:1px solid var(--rule);
+  background:var(--panel)}
+nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
 
 .panel{background:var(--panel);border:1px solid var(--rule);border-top:2px solid var(--ink);
   padding:26px 26px 30px;margin:34px 0}
@@ -177,39 +191,43 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-bottom-color:var(--si
 
 <div class="filterbar">
   <div class="inner">
-    <div class="f-group">
-      <span class="f-label">From</span>
-      <input type="date" id="f-from">
-    </div>
-    <div class="f-group">
-      <span class="f-label">To</span>
-      <input type="date" id="f-to">
-    </div>
-    <div class="proj-wrap">
-      <button class="proj-toggle" id="proj-toggle" type="button">Projects: <b id="proj-count">all included</b> &#9662;</button>
-      <div class="proj-panel" id="proj-panel">
-        <input type="text" class="proj-search" id="proj-search" placeholder="filter project names&hellip;">
-        <div class="proj-actions">
-          <button class="btn" id="proj-clear" type="button">Include all</button>
-          <button class="btn" id="proj-none" type="button">Exclude all</button>
+    <div class="f-row">
+      <div class="f-group">
+        <span class="f-label">From</span>
+        <input type="date" id="f-from">
+      </div>
+      <div class="f-group">
+        <span class="f-label">To</span>
+        <input type="date" id="f-to">
+      </div>
+      <div class="proj-wrap">
+        <button class="proj-toggle" id="proj-toggle" type="button">Projects: <b id="proj-count">all included</b> &#9662;</button>
+        <div class="proj-panel" id="proj-panel">
+          <input type="text" class="proj-search" id="proj-search" placeholder="filter project names&hellip;">
+          <div class="proj-actions">
+            <button class="btn" id="proj-clear" type="button">Include all</button>
+            <button class="btn" id="proj-none" type="button">Exclude all</button>
+          </div>
+          <div class="proj-list" id="proj-list"></div>
         </div>
-        <div class="proj-list" id="proj-list"></div>
+      </div>
+      <button class="btn signal" id="f-reset" type="button">Reset</button>
+      <span class="f-summary" id="f-summary"></span>
+    </div>
+    <div class="f-row">
+      <div class="f-group kind-group" id="kind-group">
+        <span class="f-label">Count as a session</span>
+        <label class="kind-item" data-kind="mine">
+          <input type="checkbox" id="kind-mine">my sessions <span class="kind-n" id="kind-n-mine"></span>
+        </label>
+        <label class="kind-item" data-kind="subagent">
+          <input type="checkbox" id="kind-subagent">sub-agent runs <span class="kind-n" id="kind-n-subagent"></span>
+        </label>
+        <label class="kind-item" data-kind="automated">
+          <input type="checkbox" id="kind-automated">automated one-shots <span class="kind-n" id="kind-n-automated"></span>
+        </label>
       </div>
     </div>
-    <div class="f-group kind-group" id="kind-group">
-      <span class="f-label">Count as a session</span>
-      <label class="kind-item" data-kind="mine">
-        <input type="checkbox" id="kind-mine">my sessions <span class="kind-n" id="kind-n-mine"></span>
-      </label>
-      <label class="kind-item" data-kind="subagent">
-        <input type="checkbox" id="kind-subagent">sub-agent runs <span class="kind-n" id="kind-n-subagent"></span>
-      </label>
-      <label class="kind-item" data-kind="automated">
-        <input type="checkbox" id="kind-automated">automated one-shots <span class="kind-n" id="kind-n-automated"></span>
-      </label>
-    </div>
-    <button class="btn signal" id="f-reset" type="button">Reset</button>
-    <span class="f-summary" id="f-summary"></span>
   </div>
 </div>
 
@@ -523,13 +541,14 @@ function defaultExcludedNames() {
   });
   return out;
 }
-/* Default view: only the operator's own sessions. Sub-agent runs and
-   automated one-shots stay one click away in the filter bar - their cost is
-   real (measured: ~US$10,916 and ~US$89 on this machine's corpus) and hiding
-   them entirely would be worse than blending them into "my" numbers, which
-   is the bug this toggle replaces (see PANEL-CONTRACT.md and the 2026-08-24
-   dashboard investigation). */
-const DEFAULT_KINDS = new Set([KIND_IDX.mine]);
+/* Default view: the operator's own sessions PLUS the sub-agents they
+   launched (real work done on their behalf, same as a Task tool call they
+   watched run). Automated one-shots (hooks, titling - a few seconds, zero
+   tool calls) stay one click away in the filter bar: their cost is real too
+   (measured: ~US$89 on this machine's corpus) but they are not something a
+   reader chose to run, so they default off. Operator's explicit follow-up
+   ask, 2026-08-24, after seeing the toggle land. */
+const DEFAULT_KINDS = new Set([KIND_IDX.mine, KIND_IDX.subagent]);
 const state = {
   from: DEFAULT_FROM, to: DEFAULT_TO,
   excluded: defaultExcludedNames(),
@@ -1274,6 +1293,21 @@ document.getElementById("proj-none").addEventListener("click", () => { CANON_LIS
 
 document.getElementById("mast-kicker").textContent =
   `${DATA.timezone} · ${fmtInt(DATA.S.length)} session/agent/automated-call rows embedded · ${DATA.min_date} to ${DATA.max_date}`;
+
+/* The sticky panel-nav bar sits directly under the sticky filterbar, so it
+   must stick exactly `filterbar`'s own rendered height down from the
+   viewport top - not a guessed constant, since that height changes with the
+   viewport width (the filter controls wrap differently) and with content
+   (a longer "N excluded" string, more/fewer toggle rows). Re-measured on
+   resize, since a width change can change how many rows the filterbar wraps
+   onto. */
+const filterbarEl = document.querySelector(".filterbar");
+function setNavTop() {
+  if (!filterbarEl || !filterbarEl.getBoundingClientRect) return;
+  document.documentElement.style.setProperty("--nav-top", filterbarEl.getBoundingClientRect().height + "px");
+}
+setNavTop();
+if (typeof window !== "undefined") window.addEventListener("resize", setNavTop);
 
 buildProjList();
 renderAll();
