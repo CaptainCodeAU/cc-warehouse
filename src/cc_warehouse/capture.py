@@ -10,6 +10,7 @@ exactly one object, one row, and one `stored` event (F3/R14).
 
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,46 @@ _DUP_WINDOW = timedelta(seconds=10)
 # only guards against a wedged holder (R5: refuse rather than wait forever).
 _LOCK_WAIT_S = 30.0
 _LOCK_POLL_S = 0.02
+
+# Retry budget for a TRANSIENT catalog-write failure under contention (ticket 31.4's
+# own follow-up, operator-approved 2026-08-24). The per-hash lock above only
+# serializes two captures of the SAME session; a burst of DIFFERENT sessions (many
+# Claude Code sessions ending within seconds of each other) can still all reach
+# catalog.sqlite at once. `catalog.open_catalog_at` already sets a 5s busy_timeout
+# per attempt (R14: SQLite's own reserved lock, via BEGIN IMMEDIATE, is the
+# coordination primitive) -- the gap was giving up the moment that one attempt's
+# wait was exceeded. Public (not `_`-prefixed) so a caller/test can read the exact
+# attempt count without duplicating it.
+CATALOG_RETRY_ATTEMPTS = 3
+_CATALOG_RETRY_POLL_S = 0.05
+
+
+def _is_lock_contention(exc: BaseException) -> bool:
+    """True only for the transient shape this retry is licensed to paper over
+    (R5): a real bug must still fail on the first attempt, not get masked behind
+    several silent retries."""
+    return isinstance(exc, sqlite3.OperationalError) and (
+        "locked" in str(exc).lower() or "busy" in str(exc).lower()
+    )
+
+
+def _retry_on_lock_contention[T](fn: Callable[[], T]) -> T:
+    """Call `fn()`, retrying up to CATALOG_RETRY_ATTEMPTS times total if it raises
+    the transient "database is locked"/"database is busy" shape. Any other
+    exception -- or the last attempt of this one -- propagates unchanged, same as
+    before this retry existed."""
+    last: sqlite3.OperationalError | None = None
+    for attempt in range(CATALOG_RETRY_ATTEMPTS):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            if not _is_lock_contention(exc):
+                raise
+            last = exc
+            if attempt < CATALOG_RETRY_ATTEMPTS - 1:
+                time.sleep(_CATALOG_RETRY_POLL_S)
+    assert last is not None  # loop always executes at least once
+    raise last
 
 # v1 source (DESIGN section 5): the store accepts any blob; this slice captures JSONL.
 _SOURCE_KIND = "claude_code"
@@ -209,13 +250,17 @@ def _capture_locked(
         resolution_source=source,
     )
     try:
-        short = catalog.add_session(conn, meta, project_id, now_iso)
+        short = _retry_on_lock_contention(
+            lambda: catalog.add_session(conn, meta, project_id, now_iso)
+        )
     except Exception as exc:
         _log_stage_failure(config, digest, "add_session", exc)
         raise
     elapsed = _elapsed_ms(start)
     try:
-        catalog.record_event(conn, digest, "stored", elapsed, "", now_iso)
+        _retry_on_lock_contention(
+            lambda: catalog.record_event(conn, digest, "stored", elapsed, "", now_iso)
+        )
     except Exception as exc:
         _log_stage_failure(config, digest, "record_event", exc)
         raise
