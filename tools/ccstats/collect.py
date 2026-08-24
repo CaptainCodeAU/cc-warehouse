@@ -117,7 +117,7 @@ KNOWN_FREE = {"<synthetic>"}
 # cache invalidation; `PRICES_READ_ON` and the detected local timezone are the
 # automatic half (see `_cache_fingerprint` below) because those two change the
 # meaning of an old row WITHOUT anyone touching this function.
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 
 _UNPRICED: Counter[str] = Counter()
 _PRICE_CACHE: dict[tuple[str, str], tuple[float, float] | None] = {}
@@ -1362,7 +1362,19 @@ def main() -> int:
             continue
         size = stat.st_size
         if src.is_subagent:
-            key = f"agent:{src.path.stem}"
+            # The archive names a sub-agent transcript by its bare agent id
+            # (`<id>.jsonl`); the live tree keeps Claude Code's own filename,
+            # which carries an `agent-` prefix (`agent-<id>.jsonl`). Without
+            # normalising, the same sub-agent gets two different keys - one
+            # per tree - and is scanned and counted TWICE (measured on this
+            # machine's real corpus: 1,908 sub-agents, +US$5,750, +119
+            # engaged hours). Strip the prefix so both trees collapse to one
+            # identity, same as a top-level session's `<uuid>.jsonl` already
+            # does on both trees.
+            stem = src.path.stem
+            if stem.startswith("agent-"):
+                stem = stem[len("agent-") :]
+            key = f"agent:{stem}"
         else:
             key = src.path.stem
         prior = winners.get(key)
