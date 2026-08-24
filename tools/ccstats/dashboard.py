@@ -75,6 +75,39 @@ class BadFilterFlag(ValueError):
     """A `--exclude`/`--include` given with no substring to go with it."""
 
 
+# A `session` row with `is_real = 1` (Claude replied at least once) can still
+# be three very different things, and the dashboard used to blend all three
+# into every tile with no way to tell them apart -- measured 2026-08-24: 46.5%
+# of "sessions" in a typical range are Task sub-agent runs or one-shot
+# automated calls (hooks, titling), which drags "typical session length" down
+# by about 96x versus the operator's own interactive sessions. `KIND_MINE` is
+# the default a reader sees; the other two stay reachable via a toggle, since
+# their cost (measured: ~US$11,000 for sub-agents alone) is real and hiding it
+# would be worse than blending it.
+KIND_MINE = "mine"
+KIND_SUBAGENT = "subagent"
+KIND_AUTOMATED = "automated"
+KIND_NAMES = [KIND_MINE, KIND_SUBAGENT, KIND_AUTOMATED]
+
+
+def session_kind(is_subagent: int | None, entrypoint: str | None) -> str:
+    """Which of the three populations one `session` row belongs to.
+
+    `is_subagent` wins first: a Task sub-agent invocation is never "mine"
+    even if something upstream also set an `entrypoint`. Among the rest,
+    `entrypoint = 'sdk-cli'` is an automated one-shot call (hooks, titling --
+    measured: one prompt, zero tool calls, a few seconds). Everything else
+    (`cli`, `local-agent`, and NULL -- transcripts older than Claude Code
+    recording the field, verified 2026-02-14..2026-03-11, genuinely
+    interactive) is the operator's own session.
+    """
+    if is_subagent:
+        return KIND_SUBAGENT
+    if entrypoint == "sdk-cli":
+        return KIND_AUTOMATED
+    return KIND_MINE
+
+
 def parse_repeated(argv: list[str], flag: str) -> list[str]:
     """Every value for a repeatable `flag`, in the order given.
 
@@ -175,7 +208,8 @@ def build_payload(
                is_worktree, engaged_seconds, cost_usd,
                tok_input, tok_output, tok_cache_write, tok_cache_read, tok_thinking,
                cc_version, primary_model,
-               wall_seconds, active_seconds, n_user_prompts, n_tool_uses, n_assistant_turns
+               wall_seconds, active_seconds, n_user_prompts, n_tool_uses, n_assistant_turns,
+               is_subagent, entrypoint
         FROM session
         WHERE {window.session}
         ORDER BY local_date, local_hour
@@ -191,6 +225,7 @@ def build_payload(
             tok_input, tok_output, tok_cache_write, tok_cache_read, tok_thinking,
             cc_version, primary_model,
             wall_seconds, active_seconds, n_user_prompts, n_tool_uses, n_assistant_turns,
+            is_subagent, entrypoint,
         ) = row
         session_index[key] = len(S)
         S.append([
@@ -203,6 +238,7 @@ def build_payload(
             ccversions.get(cc_version), models.get(primary_model),
             round(wall_seconds or 0.0, 1), round(active_seconds or 0.0, 1),
             n_user_prompts or 0, n_tool_uses or 0, n_assistant_turns or 0,
+            KIND_NAMES.index(session_kind(is_subagent, entrypoint)),
         ])
 
     model_rows = _q(
@@ -285,12 +321,13 @@ def build_payload(
             "ccversions": ccversions.values,
             "tools": tools.values,
             "attrKinds": ATTR_KINDS,
+            "kinds": KIND_NAMES,
         },
         "cols": {
             "S": ["date", "hour", "weekday", "project", "repo", "worktree",
                   "engagedSec", "cost", "tokIn", "tokOut", "tokCacheWrite",
                   "tokCacheRead", "tokThinking", "ccVersion", "model",
-                  "wallSec", "activeSec", "prompts", "toolUses", "turns"],
+                  "wallSec", "activeSec", "prompts", "toolUses", "turns", "kind"],
             "M": ["session", "model", "cost", "tokIn", "tokOut", "tokCacheWrite",
                   "tokCacheRead", "tokThinking"],
             "T": ["session", "tool", "count", "errors"],
@@ -301,6 +338,37 @@ def build_payload(
         "S": S, "M": M, "T": T, "A": A, "O": overlap,
     }
     return payload, unmatched
+
+
+DEFAULTS_FILENAME = "dashboard-defaults.json"
+
+
+def load_default_filters(out_root: Path) -> tuple[list[str], list[str]]:
+    """The project include/exclude lists `/dashboard` saves at
+    `<out_root>/dashboard-defaults.json` (shape: `{"exclude": [...], "include": [...]}`).
+
+    A DIRECT run of this script used to silently ignore that file - only the
+    `/dashboard` command ever read it - so the page it built carried no
+    exclusions at all even when a real defaults file sat right beside the
+    database (measured 2026-08-24: the live page had `default_unticked_
+    projects: []` while `dashboard-defaults.json` listed six patterns).
+    Reading it here means a direct run and a `/dashboard` run agree.
+
+    Missing file, unreadable file, or malformed JSON all degrade to "no
+    defaults" (R5/R10) rather than failing the build - a build must never
+    depend on a file only the operator-facing command writes.
+    """
+    try:
+        data = json.loads((out_root / DEFAULTS_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], []
+    if not isinstance(data, dict):
+        return [], []
+    include = data.get("include") or []
+    exclude = data.get("exclude") or []
+    if not isinstance(include, list) or not isinstance(exclude, list):
+        return [], []
+    return [str(x) for x in include], [str(x) for x in exclude]
 
 
 def render(payload: dict[str, object]) -> str:
@@ -324,6 +392,12 @@ def main(argv: list[str]) -> int:
     if not out.db.exists():
         print(DB_NOT_FOUND.format(out=out.root), file=sys.stderr)
         return 1
+
+    # An explicit --include/--exclude on the command line always wins; only
+    # fall back to the saved defaults file when NEITHER was given, so a
+    # deliberate one-off flag is never silently merged with a stale saved list.
+    if not include and not exclude:
+        include, exclude = load_default_filters(out.root)
 
     conn = open_ro(out.db)
     try:

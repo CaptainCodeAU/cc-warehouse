@@ -78,6 +78,14 @@ input[type=date]{font-family:var(--mono);font-size:13px;background:var(--panel);
 .proj-item .n{flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--ink2);margin-left:auto}
 .proj-item.excluded label{text-decoration:line-through;color:var(--ink2)}
 
+.kind-group{gap:14px}
+.kind-item{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12.5px;
+  color:var(--ink2);cursor:pointer;white-space:nowrap}
+.kind-item input{accent-color:var(--signal)}
+.kind-item.checked{color:var(--ink)}
+.kind-item .kind-n{color:var(--ink2)}
+.kind-item.checked .kind-n b{color:var(--signal)}
+
 nav{position:sticky;top:49px;z-index:20;background:var(--paper);
   border-bottom:1px solid var(--rule)}
 nav .inner{max-width:1280px;margin:0 auto;padding:9px 28px;display:flex;gap:16px;
@@ -188,6 +196,18 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-bottom-color:var(--si
         <div class="proj-list" id="proj-list"></div>
       </div>
     </div>
+    <div class="f-group kind-group" id="kind-group">
+      <span class="f-label">Count as a session</span>
+      <label class="kind-item" data-kind="mine">
+        <input type="checkbox" id="kind-mine">my sessions <span class="kind-n" id="kind-n-mine"></span>
+      </label>
+      <label class="kind-item" data-kind="subagent">
+        <input type="checkbox" id="kind-subagent">sub-agent runs <span class="kind-n" id="kind-n-subagent"></span>
+      </label>
+      <label class="kind-item" data-kind="automated">
+        <input type="checkbox" id="kind-automated">automated one-shots <span class="kind-n" id="kind-n-automated"></span>
+      </label>
+    </div>
     <button class="btn signal" id="f-reset" type="button">Reset</button>
     <span class="f-summary" id="f-summary"></span>
   </div>
@@ -208,6 +228,13 @@ const COLS = DATA.cols;
 const IDX = {};
 for (const k of Object.keys(COLS)) { IDX[k] = {}; COLS[k].forEach((name, i) => IDX[k][name] = i); }
 const LK = DATA.lookups;
+/* A "session" row can be the operator's own interactive session, a Task
+   sub-agent run, or an automated one-shot API call (hooks, titling) - see
+   `session_kind()` in dashboard.py. Look the three names up by NAME rather
+   than hardcoding 0/1/2, so a reorder on the Python side cannot silently
+   relabel a kind here. */
+const KIND_IDX = {};
+LK.kinds.forEach((name, i) => { KIND_IDX[name] = i; });
 /* Claude Code's own background-agent tooling creates a throwaway folder per
    agent run (".claude/worktrees/agent-<random hex>"), and each one gets its
    own project_label -- Git treats it as a separate repo root, but it is the
@@ -219,6 +246,16 @@ function canonicalProjectName(label) {
   return (label || "").replace(/-\.claude-worktrees-agent-[0-9a-f]+$/i, "");
 }
 const CANON_PROJECT = LK.projects.map(canonicalProjectName);
+/* The deduped, sorted list of canonical names the checklist and the project
+   filter both key on. Keying the filter on the RAW project index used to
+   disagree with the Projects/Project x month panels, which group on the
+   CANONICAL name: unticking a parent project left its
+   "-.claude-worktrees-agent-<hex>" children ticked, and their hours
+   reappeared folded under the very name the reader had just excluded
+   (2026-08-24 dashboard investigation). Keying both sides on the same
+   canonical name fixes it, and also gives the checklist one row per real
+   project instead of one per throwaway agent-worktree folder. */
+const CANON_LIST = [...new Set(CANON_PROJECT)].sort((a,b) => a.localeCompare(b));
 /* Model FAMILY (opus/sonnet/haiku/fable), version numbers rolled together.
    Shared with the Overview KPI tile's own model-cost split so both use the
    exact same grouping. */
@@ -474,22 +511,53 @@ function todayLocal() {
 }
 const DEFAULT_TO = todayLocal() < DATA.max_date ? todayLocal() : DATA.max_date;
 /* Baked in at build time via `dashboard.py --include`/`--exclude` (substring,
-   repeatable) -- resolved to real project_labels there, so this side just
-   maps names to indices. A stale name with no matching project is silently
-   skipped here; dashboard.py itself already warns about that at build time. */
-function defaultExcludedIndices() {
-  const nameToIndex = new Map(LK.projects.map((name, i) => [name, i]));
+   repeatable) -- resolved to real project_labels there. Canonicalised here so
+   a default that happened to match one agent-worktree folder still excludes
+   its whole real project, not just that one throwaway folder. A stale name
+   with no matching project is silently skipped; dashboard.py itself already
+   warns about that at build time. */
+function defaultExcludedNames() {
   const out = new Set();
   (DATA.default_unticked_projects || []).forEach(name => {
-    if (nameToIndex.has(name)) out.add(nameToIndex.get(name));
+    if (LK.projects.includes(name)) out.add(canonicalProjectName(name));
   });
   return out;
 }
-const state = { from: DEFAULT_FROM, to: DEFAULT_TO, excluded: defaultExcludedIndices() };
+/* Default view: only the operator's own sessions. Sub-agent runs and
+   automated one-shots stay one click away in the filter bar - their cost is
+   real (measured: ~US$10,916 and ~US$89 on this machine's corpus) and hiding
+   them entirely would be worse than blending them into "my" numbers, which
+   is the bug this toggle replaces (see PANEL-CONTRACT.md and the 2026-08-24
+   dashboard investigation). */
+const DEFAULT_KINDS = new Set([KIND_IDX.mine]);
+const state = {
+  from: DEFAULT_FROM, to: DEFAULT_TO,
+  excluded: defaultExcludedNames(),
+  kinds: new Set(DEFAULT_KINDS),
+};
 
 function inRange(row) {
   const d = row[IDX.S.date];
-  return d >= state.from && d <= state.to && !state.excluded.has(row[IDX.S.project]);
+  return d >= state.from && d <= state.to
+    && !state.excluded.has(CANON_PROJECT[row[IDX.S.project]])
+    && state.kinds.has(row[IDX.S.kind]);
+}
+
+/* Counts/cost for each kind under the CURRENT date+project filter, ignoring
+   the kind toggle itself - this is what the toggle's own labels show, so a
+   reader can see what unticking "my sessions" would ADD before doing it,
+   not have the number disappear the moment they tick it off. */
+function kindCounts() {
+  const out = {};
+  LK.kinds.forEach(name => { out[name] = { n: 0, cost: 0 }; });
+  DATA.S.forEach(row => {
+    const d = row[IDX.S.date];
+    if (d < state.from || d > state.to) return;
+    if (state.excluded.has(CANON_PROJECT[row[IDX.S.project]])) return;
+    const name = LK.kinds[row[IDX.S.kind]];
+    out[name].n++; out[name].cost += row[IDX.S.cost];
+  });
+  return out;
 }
 
 /* Recomputed on every filter change. */
@@ -515,20 +583,25 @@ panel("overview", "Headline totals for your range", {}, () => {
 
   let engagedSec = 0, wallSec = 0, activeSec = 0, cost = 0;
   let tokIn = 0, tokOut = 0, tokThink = 0, tokCacheRead = 0, tokCacheWrite = 0, prompts = 0, toolUses = 0, turns = 0;
-  const wallMinutes = [];
+  // `engagedMinutes`, not wall-clock span: PANEL-CONTRACT.md's house rule is
+  // engaged time everywhere unless a panel says otherwise (this one now
+  // does, in its own note below). Wall span includes idle time and used to
+  // drag "typical session length" down to ~1 minute even for genuinely
+  // hours-long sessions - see the 2026-08-24 dashboard investigation.
+  const engagedMinutes = [];
   const projSet = new Set(), repoSet = new Set(), dateSet = new Set();
   FS.forEach(r => {
     engagedSec += r[IDX.S.engagedSec]; wallSec += r[IDX.S.wallSec]; activeSec += r[IDX.S.activeSec];
     cost += r[IDX.S.cost]; tokIn += r[IDX.S.tokIn]; tokOut += r[IDX.S.tokOut]; tokThink += r[IDX.S.tokThinking];
     tokCacheRead += r[IDX.S.tokCacheRead]; tokCacheWrite += r[IDX.S.tokCacheWrite]; prompts += r[IDX.S.prompts];
     toolUses += r[IDX.S.toolUses]; turns += r[IDX.S.turns];
-    wallMinutes.push(r[IDX.S.wallSec] / 60);
+    engagedMinutes.push(r[IDX.S.engagedSec] / 60);
     projSet.add(r[IDX.S.project]); repoSet.add(r[IDX.S.repo]); dateSet.add(r[IDX.S.date]);
   });
-  wallMinutes.sort((a,b) => a-b);
-  const mid = wallMinutes.length >> 1;
-  const median = wallMinutes.length % 2 ? wallMinutes[mid] : (wallMinutes[mid-1]+wallMinutes[mid])/2;
-  const mean = wallMinutes.reduce((s,v) => s+v, 0) / wallMinutes.length;
+  engagedMinutes.sort((a,b) => a-b);
+  const mid = engagedMinutes.length >> 1;
+  const median = engagedMinutes.length % 2 ? engagedMinutes[mid] : (engagedMinutes[mid-1]+engagedMinutes[mid])/2;
+  const mean = engagedMinutes.reduce((s,v) => s+v, 0) / engagedMinutes.length;
 
   const spanDays = epochDay(state.to) - epochDay(state.from) + 1;
   const activeDays = dateSet.size;
@@ -587,11 +660,11 @@ panel("overview", "Headline totals for your range", {}, () => {
     { v: fmtHoursPrecise(perWeek), l: "average hours per week",
       n: `Spread across every day in range, including days off. On a day you actually worked, it's closer to ${perActiveDay.toFixed(1)} h.` },
     { v: fmtHoursPrecise(elapsedH), l: "time with a session open",
-      n: "Clock time with at least one session open." },
+      n: "Clock time with at least one session open. Whole corpus: only the date range narrows this, not the project filter or the \"count as a session\" toggle above (same as the Concurrency panel below)." },
     { v: fmtHoursPrecise(activeH), l: "time waiting on replies",
       n: "Includes idle waiting, so it's not a work number -- just here for reference. No chart uses this one." },
     { v: median.toFixed(1) + " min", l: "typical session length",
-      n: `Half your sessions are shorter than this. A handful of very long ones drag the average way up. (Plain average, no adjustment: ${mean.toFixed(1)} min.)` },
+      n: `Measures active back-and-forth time (engaged minutes, breaks over 5 minutes cut out), over whichever kinds are ticked in "Count as a session" above. Half are shorter than this; a handful of very long ones drag the average up. (Plain average: ${mean.toFixed(1)} min.)` },
     { v: fmtInt(turns), l: "claude's replies", n: "Every reply Claude sent back, counted once each." },
     { v: fmtInt(toolUses), l: "tool calls",
       n: `Every time Claude used a tool -- search, file edit, and so on. Averages ${toolsPerPrompt} per message you sent. Full breakdown in the Tools chart below.` },
@@ -603,7 +676,8 @@ panel("overview", "Headline totals for your range", {}, () => {
     { v: fmtUSDFull(cost), l: "API cost",
       n: `By model: ${modelSplit}.` },
     { v: String(peakC), l: "most sessions running at once",
-      n: peakDay ? `Your busiest moment: ${peakC} sessions running at the same time, on ${peakDay}.` : "No overlap data in this date range." },
+      n: (peakDay ? `Your busiest moment: ${peakC} sessions running at the same time, on ${peakDay}.` : "No overlap data in this date range.")
+        + " Whole corpus: only the date range narrows this, not the project filter or the \"count as a session\" toggle above." },
   ];
 
   return { eyebrow: `<span class="num">${fmtInt(FS.length)}</span> sessions in range`,
@@ -686,7 +760,7 @@ panel("monthly", "Months in your range, partial ones marked", {}, () => {
 
 /* ---- 05 Concurrency (whole corpus by design, date-only) ---- */
 panel("concurrency", "How much time overlapped, whole corpus", {
-  lede: "From overlap_day, precomputed across every project (it needs real interval overlap math, not a per-session sum) &mdash; the project filter above does not narrow this panel, only the date range does. One bar per ISO week: this data has no project dimension to group by, it is a day-by-day whole-corpus total, so a wide date range means a lot of days -- weekly keeps it readable.",
+  lede: "From overlap_day, precomputed across every project and every kind of session (it needs real interval overlap math, not a per-session sum) &mdash; neither the project filter nor the \"count as a session\" toggle above narrows this panel, only the date range does. One bar per ISO week: this data has no project or kind dimension to group by, it is a day-by-day whole-corpus total, so a wide date range means a lot of days -- weekly keeps it readable.",
 }, () => {
   const rows = DATA.O.filter(r => r[IDX.O.date] >= state.from && r[IDX.O.date] <= state.to);
   if (!rows.length) return { eyebrow: "0 days", body: emptyNote() };
@@ -1092,12 +1166,37 @@ function renderAll() {
   revealPanels(container);
 }
 
+const KIND_LABEL = { mine: "my sessions", subagent: "sub-agent runs", automated: "automated one-shots" };
+
 function updateSummary() {
+  const counted = LK.kinds.filter(name => state.kinds.has(KIND_IDX[name])).map(name => KIND_LABEL[name]);
   document.getElementById("f-summary").innerHTML =
-    `<b>${fmtInt(FS.length)}</b> of ${fmtInt(DATA.S.length)} sessions shown`;
+    `<b>${fmtInt(FS.length)}</b> of ${fmtInt(DATA.S.length)} rows shown`
+    + (counted.length ? ` (${counted.join(" + ")})` : " (nothing ticked above)");
   const excludedCount = state.excluded.size;
   document.getElementById("proj-count").textContent =
     excludedCount === 0 ? "all included" : excludedCount + " excluded";
+  updateKindUI();
+}
+
+/* Sync the three "count as a session" checkboxes to `state.kinds` and refresh
+   their live counts (date + project filtered, kind-toggle-independent -- see
+   kindCounts() above), so a reader can see what ticking a box would ADD. */
+function updateKindUI() {
+  const counts = kindCounts();
+  document.querySelectorAll(".kind-item[data-kind]").forEach(el => {
+    const name = el.dataset.kind;
+    const idx = KIND_IDX[name];
+    const checked = state.kinds.has(idx);
+    el.classList.toggle("checked", checked);
+    const box = el.querySelector("input[type=checkbox]");
+    if (box.checked !== checked) box.checked = checked;
+    const c = counts[name] || { n: 0, cost: 0 };
+    const span = document.getElementById("kind-n-" + name);
+    span.innerHTML = name === "mine"
+      ? `<b>${fmtInt(c.n)}</b>`
+      : `<b>${fmtInt(c.n)}</b> &middot; ${fmtUSDFull(c.cost)}`;
+  });
 }
 
 /* ------------------------------------------------------------- controls */
@@ -1121,9 +1220,19 @@ fromInput.addEventListener("change", () => { state.from = fromInput.value || DAT
 toInput.addEventListener("change", () => { state.to = toInput.value || DATA.max_date; scheduleRedraw(); });
 
 document.getElementById("f-reset").addEventListener("click", () => {
-  state.from = DEFAULT_FROM; state.to = DEFAULT_TO; state.excluded = defaultExcludedIndices();
+  state.from = DEFAULT_FROM; state.to = DEFAULT_TO; state.excluded = defaultExcludedNames();
+  state.kinds = new Set(DEFAULT_KINDS);
   fromInput.value = state.from; toInput.value = state.to;
   buildProjList(); renderAll();
+});
+
+/* "Count as a session" toggle. */
+document.getElementById("kind-group").addEventListener("change", e => {
+  const item = e.target.closest(".kind-item[data-kind]");
+  if (!item) return;
+  const idx = KIND_IDX[item.dataset.kind];
+  if (e.target.checked) state.kinds.add(idx); else state.kinds.delete(idx);
+  scheduleRedraw();
 });
 
 /* Project checklist */
@@ -1132,25 +1241,26 @@ const projToggle = document.getElementById("proj-toggle");
 const projList = document.getElementById("proj-list");
 const projSearch = document.getElementById("proj-search");
 
-const projOrder = LK.projects.map((name, i) => i).sort((a,b) => LK.projects[a].localeCompare(LK.projects[b]));
-
+/* One checklist row per CANONICAL name, not per raw project_label -- an
+   auto-generated agent-worktree folder no longer gets its own row, since
+   ticking/unticking it separately from its real project is exactly the
+   mismatch that used to let excluded hours reappear (see CANON_LIST above). */
 function buildProjList(filterText) {
   const q = (filterText || "").toLowerCase();
   let html = "";
-  projOrder.forEach(i => {
-    const name = LK.projects[i];
+  CANON_LIST.forEach(name => {
     if (q && !name.toLowerCase().includes(q)) return;
-    const excluded = state.excluded.has(i);
-    html += `<div class="proj-item${excluded ? " excluded" : ""}" data-i="${i}">`
+    const excluded = state.excluded.has(name);
+    html += `<div class="proj-item${excluded ? " excluded" : ""}" data-name="${esc(name)}">`
       + `<input type="checkbox" ${excluded ? "" : "checked"}><label title="${esc(name || "(none)")}">${esc(name || "(none)")}</label></div>`;
   });
   projList.innerHTML = html || `<div class="proj-item"><label>no match</label></div>`;
 }
 projList.addEventListener("click", e => {
-  const item = e.target.closest(".proj-item[data-i]");
+  const item = e.target.closest(".proj-item[data-name]");
   if (!item) return;
-  const i = Number(item.dataset.i);
-  if (state.excluded.has(i)) state.excluded.delete(i); else state.excluded.add(i);
+  const name = item.dataset.name;
+  if (state.excluded.has(name)) state.excluded.delete(name); else state.excluded.add(name);
   buildProjList(projSearch.value);
   scheduleRedraw();
 });
@@ -1160,10 +1270,10 @@ document.addEventListener("click", e => {
   if (!e.target.closest(".proj-wrap")) projPanel.classList.remove("open");
 });
 document.getElementById("proj-clear").addEventListener("click", () => { state.excluded.clear(); buildProjList(projSearch.value); scheduleRedraw(); });
-document.getElementById("proj-none").addEventListener("click", () => { LK.projects.forEach((_,i) => state.excluded.add(i)); buildProjList(projSearch.value); scheduleRedraw(); });
+document.getElementById("proj-none").addEventListener("click", () => { CANON_LIST.forEach(name => state.excluded.add(name)); buildProjList(projSearch.value); scheduleRedraw(); });
 
 document.getElementById("mast-kicker").textContent =
-  `${DATA.timezone} · ${fmtInt(DATA.S.length)} sessions embedded · ${DATA.min_date} to ${DATA.max_date}`;
+  `${DATA.timezone} · ${fmtInt(DATA.S.length)} session/agent/automated-call rows embedded · ${DATA.min_date} to ${DATA.max_date}`;
 
 buildProjList();
 renderAll();
