@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import capture, catalog, parser, registry, store
+from cc_warehouse import capture, catalog, notify, parser, registry, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -231,12 +231,44 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
     return ItemOutcome(path.name, action, str(result.directory))
 
 
+def _log_item_failure(config: Config, path: Path, exc: Exception) -> None:
+    """Best-effort diagnostic line for a sweep item that failed capture, reviewable
+    later next to the hook path's own stage-failure lines (notify.append_log,
+    DESIGN R2's sanctioned exception; the SAME log, `logs/capture.jsonl`, not a new
+    write path -- see capture.py's `_log_stage_failure`, the twin this mirrors)."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "error",
+                "session": None,
+                "project": None,
+                "message": f"sweep item {path.name} failed: {type(exc).__name__}: {exc}",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
 def _capture_item(config: Config, path: Path) -> ItemOutcome:
     """Hand one path to the shared capture routine (R9) and record its outcome.
 
-    capture_transcript never raises on an unreadable item; it returns an `error` result,
-    so the batch reports the item by name and continues (R5/R10/F7)."""
-    result = capture.capture_transcript(config, path, session_id=None, cwd=None)
+    capture_transcript itself only guarantees a graceful `error` result for one
+    case (an unreadable file) -- its own docstring says any DEEPER failure (e.g.
+    transient catalog lock contention that exhausts its retry budget) propagates
+    to the caller's never-raise boundary. The hook path (`_run_hook`) has one;
+    this loop did not (ticket 31.4's other flagged gap, 2026-08-24): one such
+    failure used to abort the ENTIRE sweep batch mid-run, silently, with every
+    session still queued simply never attempted. Wrapping it here, matching
+    `_archive_subagent`'s own error handling a few lines above, closes that: name
+    the item, log it for later review, and let the batch continue (R5/R10/F6)."""
+    try:
+        result = capture.capture_transcript(config, path, session_id=None, cwd=None)
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        _log_item_failure(config, path, exc)
+        return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
     return ItemOutcome(path.name, result.action, result.detail)
 
 
