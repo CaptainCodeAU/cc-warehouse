@@ -69,6 +69,24 @@ _UNCAPTURED = re.compile(r"Uncaptured:\s*(\d+)\s*session")
 _WARN_AT = 2
 _ALERT_AT = 5
 
+# Watch the 3 real launchd background jobs `ccw doctor` never looks at at all
+# (operator-approved follow-up, 2026-08-24). Real incident THIS closes: the
+# weekly ccw-archive job silently failed every real session it touched for two
+# weeks after a dependency it read was retired -- `ccw doctor`'s PASS/FAIL
+# verdict never moved, because archive.migrate isn't part of what doctor
+# checks. Nothing above this point in the file would ever have caught it.
+_WATCHED_JOBS = (
+    "com.captaincodeau.ccw-sweep",
+    "com.captaincodeau.ccw-archive",
+    "com.captaincodeau.ccw-repair",
+)
+
+# `launchctl print gui/<uid>/<label>`'s own wording, tab-indented, lowercase,
+# unquoted (verified against real output on the operator's own machine
+# 2026-08-24) -- a DIFFERENT format from `launchctl list`'s plist-style
+# "LastExitStatus" = N; that an earlier draft of this file wrongly assumed.
+_LAST_EXIT = re.compile(r"last exit code = (-?\d+)")
+
 
 def report(status: str, detail: str) -> None:
     """Same idiom as ccw-hook.py's report(): log durably, speak only on trouble."""
@@ -147,6 +165,60 @@ def write_streak(path: Path, streak: int) -> None:
         pass
 
 
+def extract_last_exit(launchctl_output: str) -> int | None:
+    """The job's own last-exit-code, from a real `launchctl print` report, or
+    None if the line was never printed (the job has never run yet, or
+    launchctl's own output format changed under us) -- unknown is not the
+    same as healthy, callers must not treat it as 0."""
+    match = _LAST_EXIT.search(launchctl_output)
+    return int(match.group(1)) if match else None
+
+
+def _job_last_exit(label: str) -> int | None:
+    """Ask launchctl about one job, best-effort. None on ANY failure to check
+    at all (launchctl missing -- e.g. not macOS, the job not loaded, a hung
+    call) -- this must never block or fail session start, same posture as the
+    `ccw doctor` subprocess call below."""
+    try:
+        result = subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return extract_last_exit(result.stdout)
+
+
+def broken_jobs() -> list[tuple[str, int]]:
+    """Every watched job whose last known run did NOT exit 0. A job that has
+    never run yet, or that launchctl could not be asked about, is not
+    reported broken -- absence of evidence is not evidence of failure here,
+    the same conservative posture `ccw doctor` already takes on its own
+    uncaptured-count line."""
+    broken: list[tuple[str, int]] = []
+    for label in _WATCHED_JOBS:
+        code = _job_last_exit(label)
+        if code is not None and code != 0:
+            broken.append((label, code))
+    return broken
+
+
+def job_health_message(broken: list[tuple[str, int]]) -> str | None:
+    """The line to print/report for broken scheduled jobs, or None if none are
+    broken. Unlike the doctor-streak message, this never needs a streak of its
+    own: a nonzero exit code is ALWAYS a real problem (there is no chronic,
+    expected-nonzero case the way the raw uncaptured count has one), so firing
+    plainly every session-start until it is fixed IS the correct escalating-
+    then-clearing behaviour, not a false-alarm risk."""
+    if not broken:
+        return None
+    named = ", ".join(f"{label} (exit {code})" for label, code in broken)
+    return f"cc-warehouse: scheduled job failing: {named}. Check its log under ~/.claude/logs/."
+
+
 def freshness_message(streak: int, uncaptured: int | None) -> str | None:
     """The escalating line to print, or None to stay quiet.
 
@@ -195,14 +267,26 @@ def main() -> int:
     if result.returncode == 0:
         write_streak(STATE_PATH, 0)
         report("ok", f"uncaptured={uncaptured}")
-        return 0
+    else:
+        streak = read_streak(STATE_PATH) + 1
+        write_streak(STATE_PATH, streak)
+        message = freshness_message(streak, uncaptured)
+        if message is not None:
+            report("warn" if streak < _ALERT_AT else "alert", message)
+            print(message)
 
-    streak = read_streak(STATE_PATH) + 1
-    write_streak(STATE_PATH, streak)
-    message = freshness_message(streak, uncaptured)
-    if message is not None:
-        report("warn" if streak < _ALERT_AT else "alert", message)
-        print(message)
+    # Independent of the doctor-streak signal above (see job_health_message's
+    # own docstring for why): `ccw doctor` does not check these jobs at all,
+    # so this is the only place that would ever have caught the real archive-
+    # job incident this exists to close. Best-effort, guarded the same way as
+    # everything above: must never block or fail session start.
+    try:
+        job_message = job_health_message(broken_jobs())
+    except Exception:  # noqa: BLE001 - see main()'s own top-level guard below
+        job_message = None
+    if job_message is not None:
+        report("error", job_message)
+        print(job_message)
     return 0
 
 

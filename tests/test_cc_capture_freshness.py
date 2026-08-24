@@ -104,6 +104,58 @@ def test_unknown_gap_figure_still_escalates_on_streak_alone() -> None:
     assert _freshness().freshness_message(2, None) is not None
 
 
+# ---------------------------------------------------------------------------
+# Watch the 3 scheduled launchd jobs (operator-approved follow-up, 2026-08-24 --
+# see Plans/majestic-floating-cray.md). Real incident THIS check would have
+# caught in 1 day instead of 2 weeks: the weekly `ccw-archive` job silently
+# failed 591 (later 612) real sessions every run after a dependency it read was
+# retired, with `ccw doctor`'s own PASS/FAIL verdict never affected (the
+# archive job is not part of what doctor checks at all) - nothing above this
+# point in the file would ever have noticed.
+# ---------------------------------------------------------------------------
+
+
+def test_reads_the_real_launchctl_print_wording() -> None:
+    """Real `launchctl print gui/<uid>/<label>` output, captured on the
+    operator's own machine 2026-08-24 (tab-indented, lowercase, no quotes -
+    a DIFFERENT format from `launchctl list`'s plist-style output)."""
+    text = "\tminimum runtime = 10\n\texit timeout = 5\n\truns = 2\n\tlast exit code = 1\n\n"
+    assert _freshness().extract_last_exit(text) == 1
+
+
+def test_a_healthy_job_reads_as_zero_not_a_miss() -> None:
+    assert _freshness().extract_last_exit("\truns = 6\n\tlast exit code = 0\n") == 0
+
+
+def test_missing_exit_line_is_none() -> None:
+    """A job that has never run yet (or launchctl's own output format
+    changed) prints no such line at all - must read as unknown, not 0 or a
+    crash."""
+    assert _freshness().extract_last_exit("\tstate = not running\n") is None
+
+
+def test_no_broken_jobs_is_a_silent_empty_message() -> None:
+    assert _freshness().job_health_message([]) is None
+
+
+def test_one_broken_job_is_named_with_its_exit_code() -> None:
+    message = _freshness().job_health_message(
+        [("com.captaincodeau.ccw-archive", 1)]
+    )
+    assert message is not None
+    assert "ccw-archive" in message
+    assert "1" in message
+
+
+def test_multiple_broken_jobs_are_all_named() -> None:
+    message = _freshness().job_health_message(
+        [("com.captaincodeau.ccw-archive", 1), ("com.captaincodeau.ccw-sweep", 2)]
+    )
+    assert message is not None
+    assert "ccw-archive" in message
+    assert "ccw-sweep" in message
+
+
 def test_streak_increments_and_resets(tmp_path: Path) -> None:
     freshness = _freshness()
     state_path = tmp_path / "ccw-freshness-state.json"
