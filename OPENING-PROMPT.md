@@ -1711,15 +1711,22 @@ rule. Server killed and tab closed afterward.
 
 Two commits, both pushed: `cf71d3c` (the collect.py dedup fix + its tests) and `4898c5f` (the
 dashboard classifier, toggle, tile fix, exclusion fixes, the new Node harness, and their tests).
-Neither `~/.cc-warehouse/stats` nor any file under it was touched by this session - every
-verification ran against a session-scratchpad copy. **The real live dashboard on disk still has
-the old numbers and still needs a real rebuild** (`uv run python3 tools/ccstats/collect.py &&
-uv run python3 tools/ccstats/dashboard.py` from the repo root, or `/dashboard`) - this was
-deliberately left for the operator to run themselves rather than done silently, since it touches
-the one machine-specific, gitignored, real-data directory this whole investigation was about.
+Every fix was verified against a session-scratchpad copy FIRST, before touching real data.
+
+**The real `~/.cc-warehouse/stats` was then rebuilt for real, with the operator's explicit
+go-ahead (asked via a 2-option question).** `collect.py`: `real_sessions` 10,128 -> 8,265 (the
+D1 dedup fix landing on the real corpus, matching the scratch-run's proportional drop almost
+exactly). `dashboard.py`: the real, already-existing `dashboard-defaults.json` (32 raw project
+names, six patterns, saved by a prior session's `/dashboard` run) was picked up automatically
+via `load_default_filters()` with NO flags passed - confirmed by decoding the rebuilt page's own
+embedded payload (`default_unticked_projects`: 32 entries, was `[]`) - proving the D4 fix on the
+real file it was written to fix, not just the synthetic one. Opened in a real Chrome tab
+(loopback, `127.0.0.1:8932`): default view **488 sessions, 53.2 min typical session length**
+(was 1.2 min), "Projects: 20 excluded" (32 raw names folded to 20 canonical, the D4b fix),
+zero console errors. Both temporary HTTP servers (scratch on 8931, real on 8932) were killed and
+both tabs closed afterward; nothing was left running.
 
 **What was NOT done:** ticket 28.9 Fix B, again untouched - this is now the SECOND handoff in a
 row where an operator-initiated redirect landed before Fix B was ever started (see "Next task"
 at the top of this file). Step 5 of the dashboard plan (client-side concurrency reimplementation)
-was explicitly deferred, not forgotten - see above. The real `~/.cc-warehouse/stats` rebuild is
-the operator's to run.
+was explicitly deferred, not forgotten - see above.
