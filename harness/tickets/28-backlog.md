@@ -314,6 +314,93 @@ here into their own ticket when they are taken up.
   directly, and per the operator-approved plan needs its own build-then-test
   pass, not bundled into this one.
 
+  **Fix B DONE 2026-08-24. Shape chosen: server-side reuse (operator's
+  explicit pick over client-side reconstruction, given a 2-option table -
+  lower risk, smaller diff, no JS change).** Root cause was not the four
+  base64 encode CALLS themselves but that each level (row, phase, turn,
+  whole-transcript) independently re-DERIVED its own markdown fragment from
+  the underlying blocks via a fresh pass over `_render_block`/`_phase_md`/
+  `_turn_body` - so a block already rendered once at row level got rendered
+  again, from scratch, up to three more times as its content was folded into
+  each larger fragment (a FIFTH redundant pass, not previously counted, was
+  found the same way: `_claude_turn_count` - used by the header's "N you / M
+  Claude" split - called `_claude_md` per turn just to test truthiness).
+
+  Fix: a plain `dict[(id(block), policy) -> list[str]]` cache (`_BlockCache`,
+  `render.py`), created once per `_render_page`/one per `render_markdown`
+  call and threaded as a REQUIRED parameter (no default) through every
+  function between it and `_render_block` - 13 call sites in
+  `_claude_turn_count`/`_lean_rows`/`_detail_rows`/`_header`/`_header_html`/
+  `_phase_md`/`_turn_body`/`_claude_md`/`_synthetic_md`/`_render_turn`/
+  `_render`/`_block_html`/`_phase_html`/`_claude_inner`/`_turn_html`/
+  `_render_page`. `_render_block` itself becomes a thin cache-check wrapper;
+  the old body moved verbatim to `_render_block_uncached`, so the actual
+  rendering logic is byte-for-byte unchanged - only WHEN it runs changed.
+  Required (not optional/defaulted) on purpose: a missed call site is then a
+  pyright error, not a silent loss of the caching (and a real one WAS
+  caught this way, `_claude_turn_count`, before it could ship half-fixed).
+  `render_markdown`'s own two calls (`_render` for full/compact) pass a
+  cache too even though a single `_render()` pass has no internal
+  redundancy to remove (each block is only ever visited once inside it) -
+  kept for signature uniformity, not because it does anything there.
+
+  Verified, not assumed: full suite is 1,198 passed, up from 1,197 on
+  `master` at the start of this session (the 1,175 Fix A recorded above is
+  stale - 22 tests landed from unrelated work, mostly ccstats, between Fix
+  A and this session; confirmed by collecting tests on `master` via `git
+  stash` before touching anything). This session's own diff adds exactly
+  ONE new test. ruff clean, pyright 0 project errors (the pre-existing 15
+  in `test_render_open.py` are unrelated and were confirmed to already
+  exist on `master` before this change, via the same `git stash` check).
+  Output proved BYTE-IDENTICAL before/after on a
+  real 9.7 MB session from this machine (`cmp` on all four projection
+  files - `conversation.html`, `conversation.compact.html`, `transcript.md`,
+  `transcript.compact.md` - each way, via `git stash`/`stash pop`).
+  Wall time on the ticket's own synthetic repro dropped ~31%, isolated to
+  Fix B alone (0.511s on `master` with Fix A only, via `git stash`, vs.
+  0.350s on this session's tree with Fix A + Fix B, same script, same
+  payload); PEAK MEMORY stayed flat (28.00 -> 28.03 MiB, noise-level),
+  exactly as the operator-approved plan
+  predicted for this shape ("page weight is roughly unchanged, only the
+  redundant intermediate work is cut") - server-side reuse trades CPU/
+  allocation churn for correctness-safety, not page weight; only
+  client-side reconstruction (the unchosen, riskier option) would have cut
+  the page itself.
+
+  A NEW test, `test_render_block_is_memoized_across_copy_levels`
+  (`tests/test_render_html.py`), pins the cache's own invariant rather than
+  only the byte-equality the existing locked test already covers: it
+  monkeypatches `_render_block_uncached` with a counting wrapper (reached
+  via `getattr`/`setattr`, not attribute access, since the function is
+  module-private - `# noqa: B009` on the deliberate `getattr`) and asserts
+  no `(block, policy)` pair is ever computed twice. Confirmed the test
+  actually catches a regression, not just documents intent: manually
+  bypassing the cache in a throwaway script reproduced up to 10 calls for a
+  single block (row + phase + turn + whole + the `_claude_turn_count`
+  header pass, across both policy variants) - the same test would have
+  failed loudly against that state.
+
+  Real-browser check done per the operator's explicit requirement (not
+  pytest alone, and stronger than Fix A's own check): the real 9.7 MB
+  session's `conversation.html` served over `127.0.0.1` and opened in a
+  real Chrome tab via `claude-in-chrome`. Zero console errors on load and
+  after every interaction. Rather than reading the system clipboard (which
+  triggered an OS permission prompt that froze one `javascript_tool` call -
+  worked around by not retrying it, per this project's dialog-avoidance
+  rule), verification read the DOM directly: EVERY `[data-copy-src]`
+  element on the real rendered page - 2,013 of them, covering all four
+  levels (1,477 row/block, 509 phase, 24 turn, 1 whole-transcript) plus the
+  header meta and files index (1 each) - was base64-decoded and confirmed to be a
+  substring of the real `transcript.md` fetched from the same server, 2,013
+  of 2,013 passing. This is the same guarantee
+  `test_copy_as_markdown_payloads_equal_transcript_fragments` checks, now
+  proven against a live browser-rendered page rather than only the pytest
+  process. Real clicks on the whole-transcript, row-level and phase-level
+  copy buttons produced zero console errors.
+
+  28.9 is now fully DONE - both mechanisms fixed, both tested per the
+  operator's real-browser bar, nothing left open on this ticket.
+
 - **28.10  Test gaps still open:** symlinked archive root; folder-name
   collision; ENOSPC mid-write; cross-tree reconciliation as a TEST rather than
   a hand-check; rename-then-rebuild for `project.json`.

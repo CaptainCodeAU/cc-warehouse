@@ -1,34 +1,32 @@
-# Opening prompt for a fresh session, 2026-08-24 (sixteenth handoff: a SECOND
-# unplanned redirect landed and is DONE - the ccstats live dashboard had four
-# real data-correctness bugs, all fixed and pushed; ticket 28.9 Fix B is STILL
-# untouched and is STILL the standing next task - see below)
+# Opening prompt for a fresh session, 2026-08-24 (seventeenth handoff: ticket
+# 28.9 Fix B is DONE - the whole ticket is now closed, both mechanisms fixed
+# and both tested per the operator's real-browser bar. Full account: "FIX B
+# DONE 2026-08-24" inside "ACTIVE TASK: ticket 28.9" below, and
+# harness/tickets/28-backlog.md's 28.9 entry. NOT YET COMMITTED as of writing
+# this - see the end of the Fix B account for exactly what is staged.)
 
-## Next task: **ticket 28.9, Fix B (the copy-as-markdown base64 duplication),
-## is STILL what the operator explicitly asked for next. It has now been
-## redirected past TWICE without being touched** - the fifteenth handoff got
-## pulled into a capture-reliability arc (DONE, see that entry below), and the
-## sixteenth handoff (this one) got pulled into an operator-initiated dashboard
-## bug investigation (DONE, see "Sixteenth handoff" at the end of this file)
-## before Fix B was ever started. Fix A is DONE, tested, and pushed (commit
-## `fb85934`) - do not re-do it, do not re-run its browser check, and do not
-## re-read its investigation as if it were still open.** Read "ACTIVE TASK:
-## ticket 28.9" immediately below this block before touching any code - it has
-## Fix A's full account (for context on what already landed) AND Fix B's plan:
-## the two candidate shapes (server-side reuse vs. client-side
-## reconstruction), the locked contract guarantee Fix B must not break
-## (`test_copy_as_markdown_payloads_equal_transcript_fragments`), and the same
-## real-browser testing requirement Fix A was held to. **Picking between the
-## two Fix B shapes is a decision to make explicit (or ask), not default
-## silently** - see step 3 of the plan. Nothing in items 1-7, ticket 28.22,
+## Next task: **ticket 28.9 is now FULLY DONE (both Fix A and Fix B, each
+## built and tested per the operator's real-browser bar) - it is no longer
+## the next task.** The operator picked server-side reuse for Fix B (over
+## client-side reconstruction) via a 2-option table; the change eliminates a
+## real duplicate-computation bug (a block's markdown was independently
+## re-derived up to five times across row/phase/turn/whole-transcript/header
+## passes) with a plain id-keyed memoization cache, proved byte-identical
+## before/after on a real 9.7 MB session and proved correct in a real Chrome
+## tab (2,013 of 2,013 copy-payload DOM elements matched their transcript.md
+## fragment). Read "ACTIVE TASK: ticket 28.9" below for the full account
+## before assuming anything about `render.py`'s copy-payload machinery -
+## `_render_block` is no longer the whole story, `_render_block_uncached` is.
+## **The standing next candidates, none picked yet, are ticket 28's other
+## backlog items (28.2, 28.10, 28.11, 28.12, 28.14) and `ccw share --open` as
+## a possible fast follow-up to 28.1** - see "Also on record, not scheduled"
+## near the end of this file. Ask the operator which to pick up, or whether
+## something else has come up since. Nothing in items 1-7, ticket 28.22,
 ## ticket 30's flagged defect, ticket 28.13, ticket 24.7, ticket 28.19, ticket
-## 28.1, ticket 28.3, or ticket 28.9 Fix A is open work any more - see the
-## eleventh through fourteenth handoff entries at the end of this file for
-## those accounts. Once Fix B is done, the standing next candidates are ticket
-## 28's other backlog items (28.2, 28.10, 28.11, 28.12, 28.14) and `ccw share
-## --open` as a possible fast follow-up to 28.1 - see "Also on record, not
-## scheduled" near the end of this file. **Both the fifteenth AND sixteenth
-## handoffs' own accounts, at the very end of this file, are worth reading
-## even though neither is the next task** - the fifteenth fixed two real, live
+## 28.1, or ticket 28.3 is open work either - see the eleventh through
+## fourteenth handoff entries at the end of this file for those accounts.
+## **The fifteenth and sixteenth handoffs' own accounts, at the very end of
+## this file, are also worth reading** - the fifteenth fixed two real, live
 ## production bugs in `archive.py` and `sweep.py`; the sixteenth fixed four
 ## real data-correctness bugs in `tools/ccstats` (a sub-agent double count and
 ## three others) that made the live dashboard's numbers wrong by anywhere from
@@ -223,14 +221,52 @@ character-identical to `transcript.md` (545,316 chars), the finer levels are eac
 it, matching the locked `test_copy_as_markdown_payloads_equal_transcript_fragments` guarantee.
 Full account and exact numbers: `harness/tickets/28-backlog.md`'s 28.9 entry.
 
-Fix B is unstarted and is its own separate build-then-test pass, per the plan above - it is
-the riskier half and touches the DESIGN section 6 contract guarantee directly. Do not start it
-without the operator's go-ahead in a given session, since picking between the two Fix B shapes
-(server-side reuse vs. client-side reconstruction) is itself a decision this file says to make
-explicit, not default silently.
+**FIX B DONE 2026-08-24.** The operator picked server-side reuse (over client-side
+reconstruction) via a 2-option table when asked directly. Root cause turned out to be broader
+than the ticket's own four-level framing: each level (row, phase, turn, whole-transcript) - plus
+a FIFTH pass this investigation found, `_claude_turn_count` (the header's "N you / M Claude"
+split, which called `_claude_md` per turn just to test truthiness) - independently re-derived
+its own markdown fragment from scratch via a fresh call chain into `_render_block`, so a block
+already rendered once at row level got rendered again up to four more times. Fix: a plain
+`dict[(id(block), policy) -> list[str]]` cache (`_BlockCache`), created once per `_render_page`
+call and threaded as a REQUIRED parameter (no default, so a missed call site is a pyright error,
+not a silent loss of caching - this caught the fifth pass, `_claude_turn_count`, before it
+shipped half-fixed) through 13 functions between it and `_render_block`. `_render_block` itself
+is now a thin cache-check wrapper; the old body moved verbatim to `_render_block_uncached`, so
+the rendering LOGIC is byte-for-byte unchanged, only WHEN it runs changed.
 
-Update `harness/tickets/28-backlog.md`'s 28.9 entry and this section once each fix lands,
-the same way every other closed ticket in this file has been annotated in place.
+Verified, not assumed: full suite 1,198 passed (up from 1,197 on `master` at session start - the
+"1,175" Fix A recorded is stale, 22 unrelated tests landed since, confirmed via `git stash`),
+ruff clean, pyright 0 project errors. Output proved BYTE-IDENTICAL before/after on a real 9.7 MB
+session (`cmp` on all four projection files, `git stash`/`stash pop`). Isolated to Fix B alone
+(holding Fix A constant via `git stash`), wall time on the ticket's synthetic repro dropped ~31%
+(0.511s -> 0.350s); peak memory stayed flat (28.00 -> 28.03 MiB, noise-level) - exactly as
+predicted for this shape, since server-side reuse cuts redundant CPU/allocation work, not the
+final page weight (only the unchosen client-side-reconstruction shape would have done that). A
+new test, `test_render_block_is_memoized_across_copy_levels`
+(`tests/test_render_html.py`), pins the cache's own invariant (no `(block, policy)` pair computed
+twice) rather than only the byte-equality the existing locked test already covers; confirmed it
+actually catches a regression by manually bypassing the cache in a throwaway script, which
+reproduced up to 10 calls for a single block.
+
+Real-browser check done per the operator's explicit requirement, and went further than Fix A's
+own check: the real session's `conversation.html` served over loopback and opened in a real
+Chrome tab via `claude-in-chrome` - zero console errors on load and after every interaction.
+Reading the system clipboard triggered an OS permission prompt that froze one `javascript_tool`
+call (worked around by not retrying it, per the dialog-avoidance rule in this file's own
+system prompt); verification instead read the DOM directly, which the operator-approved plan's
+own step 4 explicitly allows as an alternative to a literal clipboard read. EVERY
+`[data-copy-src]` element on the real rendered page - 2,013 of them, covering all four levels
+(1,477 row/block, 509 phase, 24 turn, 1 whole-transcript) plus the header meta and files index -
+was base64-decoded and confirmed to be a substring of the real `transcript.md` fetched from the
+same server: 2,013 of 2,013 passing, the same guarantee
+`test_copy_as_markdown_payloads_equal_transcript_fragments` checks, now proven against a live
+browser-rendered page. Real clicks on the whole-transcript, row-level and phase-level copy
+buttons produced zero console errors.
+
+**Not yet committed as of writing this paragraph** - `src/cc_warehouse/render.py`,
+`tests/test_render_html.py`, `harness/tickets/28-backlog.md`, and this file are all modified in
+the working tree. Full account and exact numbers: `harness/tickets/28-backlog.md`'s 28.9 entry.
 
 ### One loose end inside item 2, not urgent, not blocking
 

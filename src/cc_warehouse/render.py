@@ -125,6 +125,14 @@ class _Policy:
     thinking_withheld: str
 
 
+# _render_block is pure in (block, policy). Within one HTML page render (ticket
+# 28.9, Fix B) the SAME block is independently needed at row, phase, turn and
+# whole-transcript granularity, so this cache -- created once per render_html()
+# variant and threaded through every level -- lets the first computation win
+# and the other three reuse it instead of re-deriving the same markdown.
+_BlockCache = dict[tuple[int, _Policy], list[str]]
+
+
 # The compact variant describes ITSELF in two places, and both sentences are
 # derived rather than fixed. The word "compact" is load-bearing in each (oracle
 # test test_compact_carries_a_variant_note). Once the per-variant matrix can put
@@ -548,7 +556,17 @@ def _render_machinery(block: Block, *, details_tag: str) -> list[str]:
     return ["", f"> [{labels.get(block.kind, block.kind)}] {block.text}"]
 
 
-def _render_block(block: Block, policy: _Policy) -> list[str]:
+def _render_block(block: Block, policy: _Policy, cache: _BlockCache) -> list[str]:
+    key = (id(block), policy)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    result = _render_block_uncached(block, policy)
+    cache[key] = result
+    return result
+
+
+def _render_block_uncached(block: Block, policy: _Policy) -> list[str]:
     kind = block.kind
     if kind == "assistant_text":
         return ["", _harden(block.text)]
@@ -820,15 +838,17 @@ def _title(meta: ParsedSession) -> str:
     return "session"
 
 
-def _claude_turn_count(conv: Conversation, policy: _Policy) -> int:
+def _claude_turn_count(conv: Conversation, policy: _Policy, cache: _BlockCache) -> int:
     """How many `## Claude` sections this variant emits: the turns whose Claude
     half survives the policy. Equals the number of Claude sections on the page,
     which is what makes the header's split honest."""
-    return sum(1 for t in conv.turns if not t.synthetic and _claude_md(t, policy))
+    return sum(
+        1 for t in conv.turns if not t.synthetic and _claude_md(t, policy, cache)
+    )
 
 
 def _lean_rows(
-    meta: ParsedSession, conv: Conversation, policy: _Policy, source_hash: str
+    meta: ParsedSession, conv: Conversation, policy: _Policy, source_hash: str, cache: _BlockCache
 ) -> list[str]:
     """The header card's always-visible identity lines (exporter's lean header).
 
@@ -844,7 +864,7 @@ def _lean_rows(
     # Claude TURNS, not assistant blocks: this is the count of "## Claude"
     # sections the file actually contains, so the split matches what is on the
     # page. Counting blocks reported 153 Claude against 13 you.
-    replies = _claude_turn_count(conv, policy)
+    replies = _claude_turn_count(conv, policy, cache)
     rows = [
         f"> **Source:** s-{source_hash[:12]}{dot}sha256 `{source_hash}`",
         f"> **Project:** {meta.cwd or ''}",
@@ -886,11 +906,13 @@ def _unrecognised_rows(conv: Conversation) -> list[str]:
     ]
 
 
-def _detail_rows(meta: ParsedSession, conv: Conversation, policy: _Policy) -> list[str]:
+def _detail_rows(
+    meta: ParsedSession, conv: Conversation, policy: _Policy, cache: _BlockCache
+) -> list[str]:
     """The collapsed "More details" grid. Counts are computed from the model, so
     they describe THIS render rather than restating the source."""
     dot = " \N{MIDDLE DOT} "
-    replies = _claude_turn_count(conv, policy)
+    replies = _claude_turn_count(conv, policy, cache)
     thinking = sum(1 for t in conv.turns for b in t.blocks if b.kind == "thinking")
     words = sum(len(t.prompt.split()) for t in conv.turns)
     words += sum(len(b.text.split()) for t in conv.turns for b in t.blocks)
@@ -922,10 +944,11 @@ def _header(
     policy: _Policy,
     conv: Conversation,
     source_hash: str,
+    cache: _BlockCache,
 ) -> list[str]:
     suffix = " (compact)" if policy.variant_note else ""
     lines = [f"# Transcript{suffix}: {_title(meta)}", ""]
-    lines.extend(_lean_rows(meta, conv, policy, source_hash))
+    lines.extend(_lean_rows(meta, conv, policy, source_hash, cache))
     if policy.header_details:
         lines.extend(
             [
@@ -935,7 +958,7 @@ def _header(
                 "",
                 "> \N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} More details",
                 "",
-                *_detail_rows(meta, conv, policy),
+                *_detail_rows(meta, conv, policy, cache),
                 "",
                 "</details>",
             ]
@@ -955,7 +978,7 @@ def _withheld_only(blocks: tuple[Block, ...], policy: _Policy) -> bool:
     return any(b.kind == "thinking_withheld" for b in blocks)
 
 
-def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
+def _phase_md(segment: Segment, policy: _Policy, cache: _BlockCache) -> list[str]:
     """One phase as markdown: a collapsible section whose summary is the caption
     line, with a blockquote breadcrumb repeating it inside.
 
@@ -967,7 +990,7 @@ def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
     meta = _phase_meta(segment.blocks, policy)
     inner: list[str] = []
     for block in segment.blocks:
-        inner.extend(_render_block(block, policy))
+        inner.extend(_render_block(block, policy, cache))
     inner = _strip_separators(inner)
     if not inner:
         # A phase whose every block renders nothing is normally suppressed. The
@@ -996,15 +1019,15 @@ def _phase_md(segment: Segment, policy: _Policy) -> list[str]:
     ]
 
 
-def _turn_body(turn: Turn, policy: _Policy) -> list[str]:
+def _turn_body(turn: Turn, policy: _Policy, cache: _BlockCache) -> list[str]:
     """Everything under a turn's `## Claude` heading: phases and replies, in
     source order. Shared by the markdown file and the HTML copy payloads."""
     lines: list[str] = []
     for segment in group_segments(turn):
         if segment.is_phase:
-            lines.extend(_phase_md(segment, policy))
+            lines.extend(_phase_md(segment, policy, cache))
             continue
-        lines.extend(_render_block(segment.blocks[0], policy))
+        lines.extend(_render_block(segment.blocks[0], policy, cache))
     # Segment boundaries each contribute their own blank line; collapse the
     # doubles so the file reads as one document rather than a concatenation.
     collapsed: list[str] = []
@@ -1036,11 +1059,11 @@ def _user_md(turn: Turn, total: int, policy: _Policy, elapsed: str | None) -> li
     return _strip_separators(lines)
 
 
-def _claude_md(turn: Turn, policy: _Policy) -> list[str]:
+def _claude_md(turn: Turn, policy: _Policy, cache: _BlockCache) -> list[str]:
     """The `## Claude` half: every phase and reply that followed the prompt.
     Empty when the policy strips all of it (the compact variant of a turn whose
     only content was thinking and tools)."""
-    body = _strip_separators(_turn_body(turn, policy))
+    body = _strip_separators(_turn_body(turn, policy, cache))
     if not body:
         return []
     stamp = turn.last_ts or ""
@@ -1050,15 +1073,15 @@ def _claude_md(turn: Turn, policy: _Policy) -> list[str]:
     return [head, "", *body]
 
 
-def _synthetic_md(turn: Turn, policy: _Policy) -> list[str]:
-    body = _strip_separators(_turn_body(turn, policy))
+def _synthetic_md(turn: Turn, policy: _Policy, cache: _BlockCache) -> list[str]:
+    body = _strip_separators(_turn_body(turn, policy, cache))
     if not body:
         return []
     return ["## \N{ELECTRIC PLUG} Pre-conversation entries", "", *body]
 
 
 def _render_turn(
-    turn: Turn, total: int, policy: _Policy, elapsed: str | None = None
+    turn: Turn, total: int, policy: _Policy, cache: _BlockCache, elapsed: str | None = None
 ) -> list[str]:
     """One turn as markdown: the user half, then the Claude half, each preceded
     by the Quick-Look-safe rule. The exporter gives every ROLE turn its own
@@ -1067,10 +1090,10 @@ def _render_turn(
     if turn.synthetic:
         if not policy.include_machinery:
             return []
-        synthetic = _synthetic_md(turn, policy)
+        synthetic = _synthetic_md(turn, policy, cache)
         return ["***", "", *synthetic, ""] if synthetic else []
     lines = ["***", "", *_user_md(turn, total, policy, elapsed), ""]
-    claude = _claude_md(turn, policy)
+    claude = _claude_md(turn, policy, cache)
     if claude:
         lines.extend(["***", "", *claude, ""])
     return lines
@@ -1102,12 +1125,16 @@ def _elapsed_labels(conv: Conversation) -> list[str | None]:
 
 
 def _render(
-    conv: Conversation, meta: ParsedSession, policy: _Policy, source_hash: str
+    conv: Conversation,
+    meta: ParsedSession,
+    policy: _Policy,
+    source_hash: str,
+    cache: _BlockCache,
 ) -> bytes:
-    lines = _header(meta, policy, conv, source_hash)
+    lines = _header(meta, policy, conv, source_hash, cache)
     labels = _elapsed_labels(conv)
     for turn, elapsed in zip(conv.turns, labels, strict=True):
-        lines.extend(_render_turn(turn, conv.prompt_count, policy, elapsed))
+        lines.extend(_render_turn(turn, conv.prompt_count, policy, cache, elapsed))
     lines.extend(_files_index_md(conv))
     # Encode each fragment before joining (ticket 28.9, Fix A): CPython stores
     # an entire joined str at 4 bytes/char the moment ANY piece contains one
@@ -1205,8 +1232,8 @@ def render_markdown(data: bytes, options: RenderOptions) -> tuple[bytes, bytes]:
     conv = build_conversation(data)
     meta = parse_session(data)
     source_hash = sha256_hex(data)
-    full = _render(conv, meta, _full_policy(options), source_hash)
-    compact = _render(conv, meta, _compact_policy(options), source_hash)
+    full = _render(conv, meta, _full_policy(options), source_hash, {})
+    compact = _render(conv, meta, _compact_policy(options), source_hash, {})
     return full, compact
 
 
@@ -1825,9 +1852,14 @@ def _linkify_commits(body: str, text: str, repo: str) -> str:
 
 
 def _block_html(
-    block: Block, policy: _Policy, repo: str | None, ordinal: int, anchors: _AnchorAllocator
+    block: Block,
+    policy: _Policy,
+    repo: str | None,
+    ordinal: int,
+    anchors: _AnchorAllocator,
+    cache: _BlockCache,
 ) -> str | None:
-    lines = _strip_separators(_render_block(block, policy))
+    lines = _strip_separators(_render_block(block, policy, cache))
     if not lines:
         return None
     fragment = "\n".join(lines)
@@ -1912,7 +1944,12 @@ def _row_icon(block: Block) -> str:
 
 
 def _phase_html(
-    segment: Segment, policy: _Policy, repo: str | None, ordinal: int, anchors: _AnchorAllocator
+    segment: Segment,
+    policy: _Policy,
+    repo: str | None,
+    ordinal: int,
+    anchors: _AnchorAllocator,
+    cache: _BlockCache,
 ) -> str | None:
     """One phase as a collapsible section of rows.
 
@@ -1923,7 +1960,7 @@ def _phase_html(
     meta = _phase_meta(segment.blocks, policy)
     rows: list[str] = []
     for block in segment.blocks:
-        lines = _strip_separators(_render_block(block, policy))
+        lines = _strip_separators(_render_block(block, policy, cache))
         if not lines:
             continue
         fragment = "\n".join(lines)
@@ -1950,7 +1987,7 @@ def _phase_html(
         if policy.breadcrumbs or _withheld_only(segment.blocks, policy):
             return f'<div class="phase-line">{head}</div>'
         return None
-    fragment = "\n".join(_strip_separators(_phase_md(segment, policy)))
+    fragment = "\n".join(_strip_separators(_phase_md(segment, policy, cache)))
     anchor = anchors.allocate(ordinal, f"phase:{fragment}")
     payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
     return (
@@ -1993,16 +2030,18 @@ def _section_html(
 
 
 def _claude_inner(
-    turn: Turn, policy: _Policy, repo: str | None, anchors: _AnchorAllocator
+    turn: Turn, policy: _Policy, repo: str | None, anchors: _AnchorAllocator, cache: _BlockCache
 ) -> list[str]:
     inner: list[str] = []
     for segment in group_segments(turn):
         if segment.is_phase:
-            phase = _phase_html(segment, policy, repo, turn.ordinal, anchors)
+            phase = _phase_html(segment, policy, repo, turn.ordinal, anchors, cache)
             if phase is not None:
                 inner.append(phase)
             continue
-        block_html = _block_html(segment.blocks[0], policy, repo, turn.ordinal, anchors)
+        block_html = _block_html(
+            segment.blocks[0], policy, repo, turn.ordinal, anchors, cache
+        )
         if block_html is not None:
             inner.append(block_html)
     return inner
@@ -2015,6 +2054,7 @@ def _turn_html(
     anchors: _AnchorAllocator,
     total: int,
     elapsed: str | None,
+    cache: _BlockCache,
 ) -> list[str]:
     """A turn as the SAME two role sections the markdown emits: one user section
     carrying the prompt and its reminders, one Claude section carrying the
@@ -2031,8 +2071,8 @@ def _turn_html(
             label="\N{ELECTRIC PLUG} Pre-conversation",
             stamp=turn.first_ts or "",
             elapsed=None,
-            fragment="\n".join(_synthetic_md(turn, policy)),
-            inner=_claude_inner(turn, policy, repo, anchors),
+            fragment="\n".join(_synthetic_md(turn, policy, cache)),
+            inner=_claude_inner(turn, policy, repo, anchors, cache),
             ordinal=turn.ordinal,
             anchors=anchors,
         )
@@ -2064,7 +2104,7 @@ def _turn_html(
         ordinal=turn.ordinal,
         anchors=anchors,
     )
-    claude_md = _claude_md(turn, policy)
+    claude_md = _claude_md(turn, policy, cache)
     if claude_md:
         out.extend(
             _section_html(
@@ -2074,7 +2114,7 @@ def _turn_html(
                 stamp=turn.last_ts or "",
                 elapsed=None,
                 fragment="\n".join(claude_md),
-                inner=_claude_inner(turn, policy, repo, anchors),
+                inner=_claude_inner(turn, policy, repo, anchors, cache),
                 ordinal=turn.ordinal,
                 anchors=anchors,
             )
@@ -2088,15 +2128,18 @@ def _header_html(
     policy: _Policy,
     anchors: _AnchorAllocator,
     source_hash: str,
+    cache: _BlockCache,
 ) -> str:
     """The header card: lean identity rows always visible, everything else in a
     collapsed More-details grid, with a copy button carrying the header's
     transcript.md markdown."""
-    fragment = "\n".join(_strip_separators(_header(meta, policy, conv, source_hash)))
+    fragment = "\n".join(
+        _strip_separators(_header(meta, policy, conv, source_hash, cache))
+    )
     payload = base64.b64encode(fragment.encode("utf-8")).decode("ascii")
     anchors.allocate(0, f"header:{fragment}")
     lean: list[str] = []
-    for row in _lean_rows(meta, conv, policy, source_hash):
+    for row in _lean_rows(meta, conv, policy, source_hash, cache):
         label, _, value = row[2:].partition(":** ")
         key = _escape(label.replace("**", ""))
         css = "m-warn" if "\N{WARNING SIGN}" in row else "m-key"
@@ -2124,7 +2167,7 @@ def _header_html(
     if policy.variant_note:
         lean.append(_compact_meta_note(policy))
     grid: list[str] = []
-    for row in _detail_rows(meta, conv, policy):
+    for row in _detail_rows(meta, conv, policy, cache):
         label, _, value = row[2:].partition(":** ")
         key = _escape(label.replace("**", ""))
         if key == "Summary":
@@ -2168,19 +2211,20 @@ def _render_page(
     options: RenderOptions,
 ) -> bytes:
     anchors = _AnchorAllocator()
-    whole = _render(conv, meta, policy, source_hash)
+    cache: _BlockCache = {}
+    whole = _render(conv, meta, policy, source_hash, cache)
     whole_payload = base64.b64encode(whole).decode("ascii")
     parts = _document_head(_title(meta), options)
     parts.append(f'<div id="whole-transcript" hidden data-copy-src="{whole_payload}"></div>')
     variant = ' <span class="badges">(compact)</span>' if policy.variant_note else ""
     parts.append(f"<h1>{_escape(_title(meta))}{variant}</h1>")
-    parts.append(_header_html(meta, conv, policy, anchors, source_hash))
+    parts.append(_header_html(meta, conv, policy, anchors, source_hash, cache))
     parts.append(_TOOLBAR)
     parts.append('<main class="transcript">')
     labels = _elapsed_labels(conv)
     for turn, elapsed in zip(conv.turns, labels, strict=True):
         parts.extend(
-            _turn_html(turn, policy, repo, anchors, conv.prompt_count, elapsed)
+            _turn_html(turn, policy, repo, anchors, conv.prompt_count, elapsed, cache)
         )
     index = _files_index_html(conv, anchors)
     if index is not None:

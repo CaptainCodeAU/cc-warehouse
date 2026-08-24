@@ -8,8 +8,11 @@ commit cards, markdown hardening).
 
 import base64
 import hashlib
+import importlib
 import re
-from typing import cast
+from typing import Any, cast
+
+import pytest
 
 from cc_warehouse.render import RenderOptions, build_manifest, render_html, render_markdown
 from conftest import entry, jsonl, rich_session
@@ -52,6 +55,34 @@ def test_copy_as_markdown_payloads_equal_transcript_fragments() -> None:
     for encoded in payloads:
         fragment = base64.b64decode(encoded).decode("utf-8")
         assert fragment in full_md
+
+
+def test_render_block_is_memoized_across_copy_levels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ticket 28.9 Fix B: the same (block, policy) pair is independently needed
+    at row, phase, turn and whole-transcript copy-payload granularity. A
+    regression here would silently reintroduce the quadruple recomputation Fix
+    B removed, so this pins the cache's own invariant rather than only the
+    byte-equality it must preserve (that's the test above). Reached by name
+    (getattr/setattr) rather than attribute access: the function is
+    module-private, and this test only needs to observe how often it runs."""
+    render_mod = importlib.import_module("cc_warehouse.render")
+    # getattr, not attribute access: the function is module-private, so pyright's
+    # reportPrivateUsage would otherwise flag a direct `render_mod._render_block_
+    # uncached` from this test module.
+    original: Any = getattr(render_mod, "_render_block_uncached")  # noqa: B009
+
+    calls: dict[tuple[int, object], int] = {}
+
+    def counting(block: object, policy: object) -> object:
+        key = (id(block), policy)
+        calls[key] = calls.get(key, 0) + 1
+        return original(block, policy)
+
+    monkeypatch.setattr(render_mod, "_render_block_uncached", counting)
+    render_html(rich_session(), RenderOptions())
+    assert calls, "no blocks were rendered"
+    repeats = {k: v for k, v in calls.items() if v > 1}
+    assert not repeats, f"a (block, policy) pair was rendered more than once: {repeats}"
 
 
 def test_tool_typed_rendering_semantics() -> None:
