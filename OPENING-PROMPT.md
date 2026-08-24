@@ -1,18 +1,21 @@
-# Opening prompt for a fresh session, 2026-08-24 (fifteenth handoff: an
-# unplanned capture-reliability arc landed and is DONE; ticket 28.9 Fix B is
-# still untouched and is still the standing next task - see below)
+# Opening prompt for a fresh session, 2026-08-24 (sixteenth handoff: a SECOND
+# unplanned redirect landed and is DONE - the ccstats live dashboard had four
+# real data-correctness bugs, all fixed and pushed; ticket 28.9 Fix B is STILL
+# untouched and is STILL the standing next task - see below)
 
 ## Next task: **ticket 28.9, Fix B (the copy-as-markdown base64 duplication),
-## is STILL what the operator explicitly asked for next. It was NOT touched in
-## the fifteenth handoff** - that session got redirected mid-task (see below)
-## into an unrelated, real capture-reliability investigation and fix arc, now
-## fully DONE and pushed. Fix A is DONE, tested, and pushed (commit `fb85934`)
-## - do not re-do it, do not re-run its browser check, and do not re-read its
-## investigation as if it were still open.** Read "ACTIVE TASK: ticket 28.9"
-## immediately below this block before touching any code - it has Fix A's full
-## account (for context on what already landed) AND Fix B's plan: the two
-## candidate shapes (server-side reuse vs. client-side reconstruction), the
-## locked contract guarantee Fix B must not break
+## is STILL what the operator explicitly asked for next. It has now been
+## redirected past TWICE without being touched** - the fifteenth handoff got
+## pulled into a capture-reliability arc (DONE, see that entry below), and the
+## sixteenth handoff (this one) got pulled into an operator-initiated dashboard
+## bug investigation (DONE, see "Sixteenth handoff" at the end of this file)
+## before Fix B was ever started. Fix A is DONE, tested, and pushed (commit
+## `fb85934`) - do not re-do it, do not re-run its browser check, and do not
+## re-read its investigation as if it were still open.** Read "ACTIVE TASK:
+## ticket 28.9" immediately below this block before touching any code - it has
+## Fix A's full account (for context on what already landed) AND Fix B's plan:
+## the two candidate shapes (server-side reuse vs. client-side
+## reconstruction), the locked contract guarantee Fix B must not break
 ## (`test_copy_as_markdown_payloads_equal_transcript_fragments`), and the same
 ## real-browser testing requirement Fix A was held to. **Picking between the
 ## two Fix B shapes is a decision to make explicit (or ask), not default
@@ -23,12 +26,15 @@
 ## those accounts. Once Fix B is done, the standing next candidates are ticket
 ## 28's other backlog items (28.2, 28.10, 28.11, 28.12, 28.14) and `ccw share
 ## --open` as a possible fast follow-up to 28.1 - see "Also on record, not
-## scheduled" near the end of this file. **The fifteenth handoff's own account,
-## at the very end of this file, is worth reading too even though it is not
-## the next task** - it fixed two real, live production bugs in `archive.py`
-## and `sweep.py` that any future session touching capture, sweep, or archive
-## should know about before assuming those paths behave the way older parts of
-## this file describe.
+## scheduled" near the end of this file. **Both the fifteenth AND sixteenth
+## handoffs' own accounts, at the very end of this file, are worth reading
+## even though neither is the next task** - the fifteenth fixed two real, live
+## production bugs in `archive.py` and `sweep.py`; the sixteenth fixed four
+## real data-correctness bugs in `tools/ccstats` (a sub-agent double count and
+## three others) that made the live dashboard's numbers wrong by anywhere from
+## 20% to 96x. Any future session touching capture, sweep, archive, or ccstats
+## should know about both before assuming those paths behave the way older
+## parts of this file describe.
 
 ## ACTIVE TASK: ticket 28.9, cut `conversation.html`'s memory cost
 
@@ -1564,3 +1570,156 @@ final commit hash exactly.
 **What was NOT done:** ticket 28.9 Fix B (see "Next task" at the top of this file - entirely
 untouched this session, the redirect happened before it was ever started). No other open
 item from this file's own tracking was touched.
+
+---
+
+**Sixteenth handoff, 2026-08-24 (new session).** Opened by reading this file (the fifteenth
+handoff, above), which pointed straight at ticket 28.9 Fix B. Before touching it, the operator
+asked to look at a specific number on the live dashboard - `~/.cc-warehouse/stats/claude-code-
+dashboard-live.html`'s "1.2 min / typical session length" tile looked wrong - and asked for a
+thorough, wide-blast-radius investigation into whether the dashboard's numbers were correct at
+all: double-counted, missing, or stale values were all named as suspects. Fix B was NOT started
+this session either.
+
+**Investigation, not guesswork.** Three parallel Explore agents each read one full source file
+(`dashboard.py`, `dashboard_template.html`, `collect.py`) and reported every SQL query, every
+JS computation, and every column derivation verbatim with file:line refs. Every consequential
+finding was then independently re-verified first-hand: real `sqlite3` queries against
+`~/.cc-warehouse/stats/sessions.sqlite` (read-only), a real `find` census of both source trees'
+sub-agent filenames, and a decode of the actual bytes in the shipped HTML file. Four real,
+distinct defects were found and confirmed, none of them guesses:
+
+1. **A sub-agent transcript existing in BOTH the archive and the live tree was stored TWICE.**
+   `collect.py:1364-1367` keyed a scanned transcript by its raw filename stem; the archive names
+   a sub-agent `<id>.jsonl`, the live tree keeps Claude Code's own `agent-<id>.jsonl` - different
+   stems, different dedup keys, so the "duplicate payloads collapsed" pass never paired them.
+   Measured: 1,908 pairs, all with IDENTICAL size/cost/engaged-time (1,908 of 1,908), inflating
+   every summed figure corpus-wide by +US$5,750, +119 engaged hours, +69,518 turn rows.
+2. **`is_real = 1` blended three unrelated populations into one "session" count**: the
+   operator's own interactive sessions (`entrypoint` `cli`/`local-agent`/NULL, the last being
+   138 real sessions that predate Claude Code recording the field at all, 2026-02-14..03-11),
+   automated one-shot API calls (`entrypoint='sdk-cli'` - one prompt, a few seconds, zero tool
+   calls: hooks, titling), and Task sub-agent runs (`is_subagent=1`). Measured: 46.5% of
+   "sessions" in the default range were the latter two. This, not arithmetic, is why the tile
+   read 1.2 min - the median was correct for the 6,443-row set the page was actually counting;
+   that row set was never "your sessions".
+3. **The tile itself measured `wall_seconds` (raw file span, includes idle), not
+   `engaged_seconds`**, contradicting `PANEL-CONTRACT.md`'s own house rule and the tile's own
+   label, with no disclosure either way.
+4. **The shipped page carried NO project exclusions at all** (`default_unticked_projects: []`,
+   verified by decoding the real HTML's embedded payload) even though
+   `~/.cc-warehouse/stats/dashboard-defaults.json` listed six real patterns - `dashboard.py`
+   never read that file, only `.claude/commands/dashboard.md`'s own flag-passing did, so a
+   direct run (which is what built the page currently on disk) silently dropped them.
+
+Full measured comparison (default range): page showed 6,443 "sessions" / 1.2 min typical /
+US$65,310; the operator's true 666-673 interactive sessions measured 55-116 min typical (wall
+vs. engaged) / US$54,229-54,524 - sessions +867%, tool calls +65%, replies +62%, cost +20%,
+typical length 96x too low.
+
+**Plan approved via ExitPlanMode, then a 2-option question on the one real design fork**: keep
+all three populations but split them behind a toggle (recommended - sub-agent cost is real
+money, hiding it is worse than blending it), vs. hard-filter to interactive sessions only and
+drop the other two from the page entirely. **Operator chose the toggle**, with the exact default
+tick-state specified in the question's own preview.
+
+**Four fixes shipped, in dependency order, each proved red-then-green against a real `git
+stash` of just its own production diff:**
+
+1. **The double-count (D1)** - `collect.py:1364-1367` strips a leading `agent-` from a
+   sub-agent's key before building its cache/dedupe identity; `CACHE_SCHEMA_VERSION` bumped
+   1->2 so the one already-populated `scan-cache.sqlite` (97.9% of the corpus, all from a prior
+   run) can't serve a stale per-tree row back out under the OLD key. Verified against real data:
+   `is_real=1` row count dropped from 10,128 to 8,264 on rebuild, sub-agent files ~halved (3,821
+   -> ~1,930), matching the measured 1,908-pair defect almost exactly (small residual is normal
+   corpus growth between the two measurements, this machine captures continuously).
+2. **The population split (D2)** - new `dashboard.py` classifier `session_kind()` (`is_subagent`
+   wins first -> `subagent`; `entrypoint='sdk-cli'` -> `automated`; everything else, including
+   the pre-field-recording NULL rows -> `mine`), a new `kind` column in the embedded payload
+   (`lookups.kinds` + one int per `S` row, looked up by NAME client-side via `KIND_IDX`, never a
+   hardcoded 0/1/2), and a new "Count as a session" control in the page's existing top filter
+   bar - `[x] my sessions N  [ ] sub-agent runs N · US$c  [ ] automated one-shots N · US$c` -
+   defaulting to `mine` only, each label live-updating via a new `kindCounts()` (date+project
+   filtered, kind-toggle-independent on purpose, so a reader sees what TICKING a box would add
+   rather than watching a number vanish the moment they tick it).
+3. **The tile (D3)** - `dashboard_template.html`'s Overview panel now sorts/medians
+   `IDX.S.engagedSec`, not `wallSec`; the note now says which column and which populations
+   ("whichever kinds are ticked above").
+4. **The exclusions (D4), two parts.** `dashboard.py` gained `load_default_filters()`, reading
+   `<out_root>/dashboard-defaults.json` directly as a fallback when no `--include`/`--exclude`
+   flag is given, so a direct run and a `/dashboard` run can no longer disagree. Separately, a
+   real correctness bug found alongside it: `state.excluded` was keyed on the RAW project index
+   while the Projects/Project-month panels grouped by the CANONICAL name (auto agent-worktree
+   folders folded onto their parent, `CANON_PROJECT`) - un-ticking a parent left its worktree
+   children ticked, and their hours reappeared folded under the very name just excluded. Fixed
+   by keying BOTH sides on the canonical name (`CANON_LIST`, `defaultExcludedNames()`); the
+   project checklist now also shows one row per real project instead of one per throwaway
+   agent-worktree folder, a side benefit of the same fix.
+
+**Step 5 of the approved plan (make the Concurrency panel and its two Overview tiles obey the
+new project/kind filters too, via a client-side interval sweep over per-session start/end
+timestamps) was explicitly named as the one deferrable piece in the plan itself, and was
+deferred** - real timezone-aware calendar-day clipping (`build_overlap` in `collect.py`) is
+genuinely complex to reimplement correctly client-side, the panel was never the operator's
+actual complaint, and a wrong reimplementation would be worse than an honestly-labelled
+limitation. Took the plan's own documented fallback instead: the D1 fix already cleans
+`overlap_day`'s numbers (it's built from the same, now-deduplicated `session` table), and the
+two Overview tiles' notes now say "whole corpus" on the tile itself, closing a real disclosure
+gap `PANEL-CONTRACT.md` had claimed was already closed but wasn't.
+
+**A new headless test harness, `tools/ccstats/tests/node/dashboard_probe.js`, is the other
+lasting change.** Before this session `dashboard_template.html`'s client-side JS had ZERO test
+coverage - nothing had ever executed it - which is how all four defects above shipped with a
+fully green `pytest` suite. The harness runs the REAL generated `<script>` block (not a copy)
+under Node's `vm` module against a minimal hand-built DOM stub (real enough for this page's
+exact usage: id lookups, classList, dataset, one delegated `querySelectorAll` target; a broader
+page rewrite would need it extended, which is intentional - it forces a human to look rather
+than silently degrading). One non-obvious mechanic worth remembering: `vm.Script.runInContext`
+does NOT attach top-level `let`/`const` bindings as properties of the context object (only `var`
+would), so reading `context.FS` after the script runs returns `undefined` even though the
+script ran fine - the fix is appending a small epilogue INSIDE the same script text
+(`;globalThis.__probe = { state, ... };`) so it shares the real lexical scope, and using
+closures/accessor functions (`getFS: () => FS`) for anything the page later REASSIGNS (`FS =
+[]` inside `recomputeFilteredSessions`), since a captured snapshot goes stale the moment a
+scenario re-triggers `renderAll()`. `test_dashboard_headless.py` (new) builds a tiny synthetic
+`sessions.sqlite` with hand-computed expected numbers - 5 "mine" rows with engaged minutes
+10/20/30/40/50 (median 30, cost $15.00 exactly), 2 sub-agent and 2 automated rows, one project
+and its auto-worktree-suffixed child - and asserts the ACTUAL rendered tile text and `FS.length`
+against those hand-computed numbers, never against `dashboard.py`'s own aggregation code, so a
+bug in either the Python payload builder or the page's own JS is equally able to fail it. Also
+confirms the canonical-exclusion fix directly: excluding the parent's name removes the worktree
+child's session too.
+
+**Verified for real, at every layer, matching this project's own "test the code, don't just
+read the output" lesson**: 6 new headless tests + 7 new `session_kind()` tests + 8 new sub-agent
+dedup tests, all proved red-then-green against real `git stash`ed production diffs; full
+ccstats suite grew 110 -> 131 passing; main repo's 1,197-test oracle suite and pyright stayed
+untouched and green (one pre-existing, unrelated pyright gap in `tests/test_render_open.py`,
+confirmed via `git status` to predate this session, not touched); ruff clean repo-wide. A
+scratch rebuild (`CCSTATS_OUT` pointed at a session-scratchpad dir, never
+`~/.cc-warehouse/stats`) was run through the real `collect.py` + `dashboard.py` pipeline on this
+machine's REAL corpus and opened in an actual Chrome tab via `claude-in-chrome` (loopback-served
+on `127.0.0.1:8931`, `file://` is refused by the browser tool - see "Two environment facts"
+below): zero console errors on load and after interaction; the default view read exactly "668
+sessions with a reply" / "55.6 min typical session length" / "US$ 54,506 API cost", matching the
+headless probe's own numbers to the byte; ticking "sub-agent runs" live-recomputed every tile
+with no reload (668 -> 2,184 sessions, "typical session length" 55.6 -> 4.6 min - directly
+demonstrating the exact mechanism that produced the original 1.2 min bug - and API cost US$
+54,506 -> 60,053, matching 54,506+5,547 exactly); the project checklist showed one row per real
+project, named worktrees (e.g. `-.worktrees-ui-first`) correctly left un-folded per the existing
+rule. Server killed and tab closed afterward.
+
+Two commits, both pushed: `cf71d3c` (the collect.py dedup fix + its tests) and `4898c5f` (the
+dashboard classifier, toggle, tile fix, exclusion fixes, the new Node harness, and their tests).
+Neither `~/.cc-warehouse/stats` nor any file under it was touched by this session - every
+verification ran against a session-scratchpad copy. **The real live dashboard on disk still has
+the old numbers and still needs a real rebuild** (`uv run python3 tools/ccstats/collect.py &&
+uv run python3 tools/ccstats/dashboard.py` from the repo root, or `/dashboard`) - this was
+deliberately left for the operator to run themselves rather than done silently, since it touches
+the one machine-specific, gitignored, real-data directory this whole investigation was about.
+
+**What was NOT done:** ticket 28.9 Fix B, again untouched - this is now the SECOND handoff in a
+row where an operator-initiated redirect landed before Fix B was ever started (see "Next task"
+at the top of this file). Step 5 of the dashboard plan (client-side concurrency reimplementation)
+was explicitly deferred, not forgotten - see above. The real `~/.cc-warehouse/stats` rebuild is
+the operator's to run.
