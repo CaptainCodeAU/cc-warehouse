@@ -800,6 +800,12 @@ def _migrate_locked(
         conn.close()
 
     for index, (hash_, label, stem, first_ts, session_uuid) in enumerate(rows, start=1):
+        # Named unconditionally (cheap: a path join, no I/O) so the vault-gone
+        # fallback below can find this session's own JSONL even when
+        # `rebuild=True` skips the `folder_is_current` fast path.
+        directory = build.archive_dir(
+            archive_root, label, first_ts, session_uuid, timezone, fallback_stem=stem
+        )
         if not rebuild:
             # THE BIG WIN (ticket 30): name the folder from the catalog row
             # alone, with the SAME naming call write_session_folder makes
@@ -816,9 +822,6 @@ def _migrate_locked(
             # there, folder_is_current returns False, and this falls through
             # to the exact path below. Safe by construction: this can only
             # ever cause an unnecessary rebuild, never a wrongful skip.
-            directory = build.archive_dir(
-                archive_root, label, first_ts, session_uuid, timezone, fallback_stem=stem
-            )
             if folder_is_current(directory, hash_, options):
                 report.skipped_current += 1
                 if progress and index % progress == 0:
@@ -830,8 +833,17 @@ def _migrate_locked(
             # items rather than as a crash on the first session.
             data = store.get(warehouse_root, hash_)
         except OSError as exc:
-            report.failed.append((hash_, f"unreadable: {exc}"))
-            continue
+            # The vault can be retired entirely (keep_objects=false, ticket
+            # 27.4). A session that already has a real archive folder does not
+            # need the vault to refresh it -- its own JSONL, already safely on
+            # disk, IS the payload. Only a row with no archive folder at all
+            # (never archived) genuinely has nothing left here to recover.
+            existing_jsonl = directory / f"{session_uuid or stem}{_JSONL_SUFFIX}"
+            if existing_jsonl.exists():
+                data = existing_jsonl.read_bytes()
+            else:
+                report.failed.append((hash_, f"unreadable: {exc}"))
+                continue
         if not is_session(data):
             report.skipped_not_a_session.append(hash_)
             continue

@@ -282,6 +282,39 @@ def test_migration_reports_a_failed_item_by_name_and_carries_on(tmp_path: Path) 
     assert "9 folders written" in report.summary()
 
 
+def test_migration_recovers_a_stale_folder_when_the_vault_is_gone(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The vault (`objects/`) can be retired entirely once `keep_objects=false`
+    (ticket 27.4). A session that already has a real archive folder must not need
+    the vault to REFRESH that folder when it goes stale (a renderer-version bump,
+    say) - its own JSONL, already safely on disk, is the payload. Only a catalog
+    row with no archive folder at all genuinely has nothing left to recover.
+    Real case, 2026-08-24: the weekly `ccw archive --to` job failed 591
+    already-archived sessions this way once `objects/` was gone."""
+    from conftest import warehouse_root
+
+    captured(ccw_env, session_with(UUID_A))
+    warehouse = warehouse_root(ccw_env)
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+
+    first = archive.migrate(warehouse, archive_root, OPTS, ZONE)
+    assert first.written == 1, first.summary()
+    folder = next(archive_root.glob(f"*/*_{UUID_A}"))
+
+    # Go stale (folder_is_current reads manifest.json; ANY doubt returns
+    # False, so a missing manifest is enough) and lose the vault.
+    (folder / "manifest.json").unlink()
+    for obj in (warehouse / "objects").rglob("*.jsonl"):
+        obj.unlink()
+
+    report = archive.migrate(warehouse, archive_root, OPTS, ZONE)
+
+    assert not report.failed, report.failed
+    assert (folder / "manifest.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # 19e: verify becomes archive integrity
 # ---------------------------------------------------------------------------
