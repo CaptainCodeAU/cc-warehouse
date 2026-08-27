@@ -239,12 +239,30 @@ here into their own ticket when they are taken up.
   a dict holding five payloads was wrong, streaming recovered 0.4 GB of 8.2.
   Documented today only in a test comment. Needs its own ticket.
 
-  **INVESTIGATED 2026-08-24, NOT YET IMPLEMENTED - full plan in
-  `OPENING-PROMPT.md`'s "ACTIVE TASK: ticket 28.9" section, read that before
-  touching this.** The 100 MB/7.26 GiB historical figures were NOT
+  **INVESTIGATED 2026-08-24, then fully implemented across two sessions the
+  same week (see "Fix A DONE" and "Fix B DONE" below - both mechanisms are
+  now fixed and tested).** The 100 MB/7.26 GiB historical figures were NOT
   re-verified at that scale; a smaller synthetic case (1.60 MiB in, 40 turns)
   WAS measured twice independently and reproduced 38.18x peak/input (61.16
-  MiB peak). Two distinct, independent mechanisms found, to be fixed and
+  MiB peak):
+
+  | metric | value |
+  |---|---|
+  | input payload | 1,679,860 B (1.60 MiB) |
+  | `conversation.html` (full) output | 5,391,271 B (5.14 MiB) |
+  | `conversation.compact.html` output | 76,601 B (0.07 MiB) |
+  | wall time for `render_html()` | ~0.54 s |
+  | traced peak (tracemalloc) | 61.16 MiB |
+  | **peak / input ratio** | **38.18x** |
+
+  Stage-isolated peaks (same payload, each stage measured alone): `build_conversation` 6.62 MiB
+  (parser overhead, transient, not the problem); `_render` (plain markdown) peak 6.51 MiB for a
+  0.80 MiB output (~8x, same underlying cause as below); `_render_page` FULL variant: peak
+  59.51 MiB to produce a 5.14 MiB string - effectively the entire run's peak; `_render_page`
+  COMPACT variant: peak only 0.77 MiB (compact strips tool output by default, so it has far less
+  content to duplicate at each copy-button level - itself confirming evidence for the mechanism).
+
+  Two distinct, independent mechanisms found, to be fixed and
   TESTED (pytest + `claude-in-chrome` in a real browser) SEPARATELY, in a
   fresh session, per the operator's explicit instruction:
   - Mechanism 1 (Fix A, low risk, zero visible/functional change): 15 of the
@@ -274,8 +292,49 @@ here into their own ticket when they are taken up.
     must keep that guarantee intact and PROVE it in a real browser (click
     every copy-button level, check the copied text), not just keep pytest
     green.
-  Reproduction scripts saved at `temp/ticket-28.9-render-perf/` (gitignored,
-  reusable across sessions).
+  Reproduction scripts saved at `temp/ticket-28.9-render-perf/` (this repo, gitignored,
+  reusable across sessions): `profile_render.py` (whole `render_html`, tracemalloc + timing, the
+  numbers above), `profile_render_stages.py` (isolates `build_conversation` / `_render` /
+  `_render_page` full vs compact), `profile_render_dup.py` (confirms the duplication mechanism
+  with a base64 substring probe). Run with `uv run python3
+  temp/ticket-28.9-render-perf/profile_render.py` from the repo root; each edits `sys.path`
+  itself and needs no other setup.
+
+  **The operator-approved plan that was followed, in this exact order, across two sessions:**
+
+  1. **Fix A**: stop the astral-plane emoji from inflating the WHOLE final HTML string. The
+     clean shape: `render_html` and `render_markdown` returned `str`, and BOTH of `build.py`'s
+     call sites immediately did `.encode("utf-8")` on the result anyway. Building the `parts`
+     list (and the equivalent in `_render`/`render_markdown`) as UTF-8 BYTES per-fragment and
+     joining with `b"\n".join(...)` avoids ever materializing one giant wide-char Python `str`
+     - each small fragment stays cheap even if it individually contains an emoji, because the 4x
+     penalty only applies to the ONE STRING that touches the emoji, not to everything
+     concatenated with it later once it's already bytes. Zero visible/functional change was the
+     whole point: same emoji, same HTML, same bytes on disk - only HOW the bytes get built
+     changes.
+  2. **Test Fix A for real**: `pytest`/`ruff`/`pyright` green, re-run
+     `temp/ticket-28.9-render-perf/profile_render.py` and confirm the peak actually dropped, AND
+     a REAL browser tab (`claude-in-chrome`) on a REAL generated `conversation.html` - `file://`
+     is refused by the navigate tool, so served over loopback first. Check: zero console errors,
+     visually identical to a pre-fix render, every copy button still works.
+  3. **Only after Fix A is confirmed working, move to Fix B**: reduce the actual N-level base64
+     duplication from Mechanism 2 - the riskier half, since it touches the DESIGN section 6
+     contract guarantee. Two shapes existed, genuinely different risk: **server-side reuse**
+     (build the phase/turn/whole-transcript fragments by concatenating the SAME already-built
+     row-level fragments instead of re-deriving them - cuts duplicate computation, page weight
+     roughly unchanged) vs. **client-side reconstruction** (ship only row-level payloads
+     server-side, have the copy buttons' JS walk the DOM at click time - bigger win on page
+     weight, more invasive, needs the locked byte-equality test to keep passing unchanged).
+     Either shape: the output a reader sees and can copy must remain byte-identical to today.
+  4. **Test Fix B for real**, same three-part bar as step 2, PLUS: click every level of copy
+     button in the real browser tab and confirm the copied content still matches the
+     corresponding `transcript.md` fragment byte for byte - the step that actually proves the
+     contract guarantee survived, not just that pytest still passes.
+
+  **Do not skip straight to Fix B, and do not consider either fix "done" on `pytest` alone** -
+  both were the operator's explicit instructions, given after asking "what does the fix change,
+  does it change functionality" and being told Fix A is a pure invisible optimization while Fix B
+  touches a locked guarantee and needs real proof.
 
   **Fix A DONE 2026-08-24 (Fix B not started, separate, riskier).** `_render`
   and `_render_page` (`render.py`) now encode each fragment to UTF-8 bytes
