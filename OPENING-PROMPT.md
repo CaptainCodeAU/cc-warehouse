@@ -1908,3 +1908,23 @@ were picked - still open, still the operator's to choose. Step 5 of the sixteent
 dashboard plan (client-side concurrency reimplementation) remains deferred, not touched here
 either. The unresolved `dashboard-defaults.json` overwrite mystery from the sixteenth handoff is
 still unresolved - not chased down this session.
+
+**Same session, after the two fixes above shipped: a NEW idea was raised, NOT started.** The
+operator looked at an unrelated artifact ("Estate Orbit" - a 3D WebGL force-graph visualization
+built for a completely different project, a personal decision-log system) and liked its visual/
+interaction quality (drag-rotate/pan/zoom, click-to-spotlight, a live filter panel), not its
+data model. Ask: a companion 3D/WebGL page for the ccstats corpus itself, alongside the existing
+2D `claude-code-dashboard-live.html` - explicitly NOT a copy of Estate Orbit's node/link scheme
+(planets/hubs/moons was one example, not a spec), designed ground-up for what ccstats data
+actually is. The operator wants this PLANNED in a fresh session before any code is written, and
+asked for an opening prompt to paste there - one was written and handed over (not saved to a
+file in this repo, since it was meant to be pasted directly), covering: what already exists to
+read first (`dashboard.py`, `dashboard_template.html`, README, PANEL-CONTRACT.md), the Estate
+Orbit URL with an explicit "style only, not content" scope note, real measured corpus numbers as
+of today (8,682 real sessions, 140 project labels, 105 repo roots, 88 tools, 9 model version
+strings/~4 families, attribution: 10 agents/5 mcp_servers/31 mcp_tools/3 plugins/53 skills,
+2026-02-14 to 2026-08-27), and this project's own house rules (self-contained HTML, no CDN,
+never commit/upload the output, put every real fork to the operator as a table + a direct
+question). **Nothing has been designed or built yet - if the next session opening this file is
+NOT the planning session the operator described, ask before assuming any shape for this feature;
+none has been chosen.**
