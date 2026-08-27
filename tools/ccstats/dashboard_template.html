@@ -90,6 +90,7 @@ input[type=date]{font-family:var(--mono);font-size:13px;background:var(--panel);
 .kind-item.checked{color:var(--ink)}
 .kind-item .kind-n{color:var(--ink2)}
 .kind-item.checked .kind-n b{color:var(--signal)}
+.f-note{font-family:var(--mono);font-size:11.5px;color:var(--ink2);max-width:900px}
 
 /* `top` is set from JS (setNavTop() below), measured off the filterbar's own
    real height rather than a hardcoded number - the filterbar's height can
@@ -216,16 +217,14 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
     </div>
     <div class="f-row">
       <div class="f-group kind-group" id="kind-group">
-        <span class="f-label">Count as a session</span>
+        <span class="f-label">Include</span>
         <label class="kind-item" data-kind="mine">
           <input type="checkbox" id="kind-mine">my sessions <span class="kind-n" id="kind-n-mine"></span>
-        </label>
-        <label class="kind-item" data-kind="subagent">
-          <input type="checkbox" id="kind-subagent">sub-agent runs <span class="kind-n" id="kind-n-subagent"></span>
         </label>
         <label class="kind-item" data-kind="automated">
           <input type="checkbox" id="kind-automated">automated one-shots <span class="kind-n" id="kind-n-automated"></span>
         </label>
+        <span class="f-note">Sub-agent runs are handled automatically per chart: cost/token/tool panels always include them, hours/session panels never do &mdash; a sub-agent's time is spent inside its parent session's own clock time, so counting it separately would double-count the same minutes.</span>
       </div>
     </div>
   </div>
@@ -541,25 +540,46 @@ function defaultExcludedNames() {
   });
   return out;
 }
-/* Default view: the operator's own sessions PLUS the sub-agents they
-   launched (real work done on their behalf, same as a Task tool call they
-   watched run). Automated one-shots (hooks, titling - a few seconds, zero
-   tool calls) stay one click away in the filter bar: their cost is real too
-   (measured: ~US$89 on this machine's corpus) but they are not something a
-   reader chose to run, so they default off. Operator's explicit follow-up
-   ask, 2026-08-24, after seeing the toggle land. */
-const DEFAULT_KINDS = new Set([KIND_IDX.mine, KIND_IDX.subagent]);
+/* Default view: the operator's own sessions. Automated one-shots (hooks,
+   titling - a few seconds, zero tool calls) stay one click away in the
+   filter bar: their cost is real too (measured: ~US$89 on this machine's
+   corpus) but they are not something a reader chose to run, so they default
+   off. Sub-agent runs are NOT part of this toggle at all any more (see
+   inRangeInteractive/inRangeWorkload below) - measured 2026-08-27: a single
+   "count as a session" switch applied to every panel alike forced one
+   answer onto two different questions ("how much did this cost" vs "how
+   long did I personally work"), and a sub-agent's own time is spent INSIDE
+   its parent session's clock time, so folding it into an hours/session-count
+   panel double-counts minutes rather than adding new ones. Cost/token/tool
+   panels count sub-agent runs unconditionally; hours/session panels never
+   do. Operator's explicit ask, 2026-08-27. */
+const DEFAULT_KINDS = new Set([KIND_IDX.mine]);
 const state = {
   from: DEFAULT_FROM, to: DEFAULT_TO,
   excluded: defaultExcludedNames(),
   kinds: new Set(DEFAULT_KINDS),
 };
 
-function inRange(row) {
+function inRangeBase(row) {
   const d = row[IDX.S.date];
   return d >= state.from && d <= state.to
-    && !state.excluded.has(CANON_PROJECT[row[IDX.S.project]])
-    && state.kinds.has(row[IDX.S.kind]);
+    && !state.excluded.has(CANON_PROJECT[row[IDX.S.project]]);
+}
+/* "My own work" population: hours, session counts, session lists. A
+   sub-agent run is never counted here, whatever the toggle above says -
+   see the DEFAULT_KINDS comment for why. */
+function inRangeInteractive(row) {
+  const k = row[IDX.S.kind];
+  if (k === KIND_IDX.subagent) return false;
+  return inRangeBase(row) && state.kinds.has(k);
+}
+/* "Real work done" population: cost, tokens, tool calls, skills & agents.
+   A sub-agent run always counts here - it is genuine extra API spend, not
+   time nested inside something already counted elsewhere. */
+function inRangeWorkload(row) {
+  const k = row[IDX.S.kind];
+  if (k === KIND_IDX.subagent) return inRangeBase(row);
+  return inRangeBase(row) && state.kinds.has(k);
 }
 
 /* Counts/cost for each kind under the CURRENT date+project filter, ignoring
@@ -579,13 +599,18 @@ function kindCounts() {
   return out;
 }
 
-/* Recomputed on every filter change. */
-let FS = [], FS_set = null;
+/* Recomputed on every filter change. FS = "my own work" (hours/session
+   panels), FSW = "real work done" (cost/token/tool panels) - see
+   inRangeInteractive/inRangeWorkload above. */
+let FS = [], FS_set = null, FSW = [], FSW_set = null;
 
 function recomputeFilteredSessions() {
-  FS = [];
-  FS_set = new Set();
-  DATA.S.forEach((row, i) => { if (inRange(row)) { FS.push(row); FS_set.add(i); } });
+  FS = []; FS_set = new Set();
+  FSW = []; FSW_set = new Set();
+  DATA.S.forEach((row, i) => {
+    if (inRangeInteractive(row)) { FS.push(row); FS_set.add(i); }
+    if (inRangeWorkload(row)) { FSW.push(row); FSW_set.add(i); }
+  });
 }
 
 /* ==================================================================== */
@@ -600,8 +625,14 @@ function panel(id, title, opt, render) {
 panel("overview", "Headline totals for your range", {}, () => {
   if (!FS.length) return { eyebrow: "0 sessions", body: emptyNote() };
 
-  let engagedSec = 0, wallSec = 0, activeSec = 0, cost = 0;
-  let tokIn = 0, tokOut = 0, tokThink = 0, tokCacheRead = 0, tokCacheWrite = 0, prompts = 0, toolUses = 0, turns = 0;
+  // Two separate passes on purpose (2026-08-27): hours/session-count tiles
+  // read FS (my own work, sub-agent runs never counted); cost/token/tool
+  // tiles read FSW (real work done, sub-agent runs always counted) - see
+  // inRangeInteractive/inRangeWorkload above. Folding both into one FS pass
+  // would either hide real sub-agent spend or double-count sub-agent time
+  // that already sits inside its parent session's own clock time.
+  let engagedSec = 0, wallSec = 0, activeSec = 0, prompts = 0, turns = 0;
+  let cost = 0, tokIn = 0, tokOut = 0, tokThink = 0, tokCacheRead = 0, tokCacheWrite = 0, toolUses = 0;
   // `engagedMinutes`, not wall-clock span: PANEL-CONTRACT.md's house rule is
   // engaged time everywhere unless a panel says otherwise (this one now
   // does, in its own note below). Wall span includes idle time and used to
@@ -611,11 +642,14 @@ panel("overview", "Headline totals for your range", {}, () => {
   const projSet = new Set(), repoSet = new Set(), dateSet = new Set();
   FS.forEach(r => {
     engagedSec += r[IDX.S.engagedSec]; wallSec += r[IDX.S.wallSec]; activeSec += r[IDX.S.activeSec];
-    cost += r[IDX.S.cost]; tokIn += r[IDX.S.tokIn]; tokOut += r[IDX.S.tokOut]; tokThink += r[IDX.S.tokThinking];
-    tokCacheRead += r[IDX.S.tokCacheRead]; tokCacheWrite += r[IDX.S.tokCacheWrite]; prompts += r[IDX.S.prompts];
-    toolUses += r[IDX.S.toolUses]; turns += r[IDX.S.turns];
+    prompts += r[IDX.S.prompts]; turns += r[IDX.S.turns];
     engagedMinutes.push(r[IDX.S.engagedSec] / 60);
-    projSet.add(r[IDX.S.project]); repoSet.add(r[IDX.S.repo]); dateSet.add(r[IDX.S.date]);
+    dateSet.add(r[IDX.S.date]);
+  });
+  FSW.forEach(r => {
+    cost += r[IDX.S.cost]; tokIn += r[IDX.S.tokIn]; tokOut += r[IDX.S.tokOut]; tokThink += r[IDX.S.tokThinking];
+    tokCacheRead += r[IDX.S.tokCacheRead]; tokCacheWrite += r[IDX.S.tokCacheWrite]; toolUses += r[IDX.S.toolUses];
+    projSet.add(r[IDX.S.project]); repoSet.add(r[IDX.S.repo]);
   });
   engagedMinutes.sort((a,b) => a-b);
   const mid = engagedMinutes.length >> 1;
@@ -654,7 +688,7 @@ panel("overview", "Headline totals for your range", {}, () => {
   // top-N/"other" bucketing is needed the way a per-version split would.
   const modelCost = new Map();
   DATA.M.forEach(row => {
-    if (!FS_set.has(row[IDX.M.session])) return;
+    if (!FSW_set.has(row[IDX.M.session])) return;
     const rawName = LK.models[row[IDX.M.model]];
     // <synthetic> is a $0 placeholder Claude Code writes for an interrupted
     // reply, not a real priced model.
@@ -679,24 +713,24 @@ panel("overview", "Headline totals for your range", {}, () => {
     { v: fmtHoursPrecise(perWeek), l: "average hours per week",
       n: `Spread across every day in range, including days off. On a day you actually worked, it's closer to ${perActiveDay.toFixed(1)} h.` },
     { v: fmtHoursPrecise(elapsedH), l: "time with a session open",
-      n: "Clock time with at least one session open. Whole corpus: only the date range narrows this, not the project filter or the \"count as a session\" toggle above (same as the Concurrency panel below)." },
+      n: "Clock time with at least one session open. Whole corpus: only the date range narrows this, not the project filter or the \"Include\" toggle above (same as the Concurrency panel below)." },
     { v: fmtHoursPrecise(activeH), l: "time waiting on replies",
       n: "Includes idle waiting, so it's not a work number -- just here for reference. No chart uses this one." },
     { v: median.toFixed(1) + " min", l: "typical session length",
-      n: `Measures active back-and-forth time (engaged minutes, breaks over 5 minutes cut out), over whichever kinds are ticked in "Count as a session" above. Half are shorter than this; a handful of very long ones drag the average up. (Plain average: ${mean.toFixed(1)} min.)` },
-    { v: fmtInt(turns), l: "claude's replies", n: "Every reply Claude sent back, counted once each." },
+      n: `Measures active back-and-forth time (engaged minutes, breaks over 5 minutes cut out), over your own sessions only -- sub-agent runs are never counted as "a session" here. Half are shorter than this; a handful of very long ones drag the average up. (Plain average: ${mean.toFixed(1)} min.)` },
+    { v: fmtInt(turns), l: "claude's replies", n: "Every reply Claude sent back to you, counted once each. Sub-agent replies aren't counted here -- see the Skills &amp; agents chart for those." },
     { v: fmtInt(toolUses), l: "tool calls",
-      n: `Every time Claude used a tool -- search, file edit, and so on. Averages ${toolsPerPrompt} per message you sent. Full breakdown in the Tools chart below.` },
+      n: `Every time Claude used a tool -- search, file edit, and so on, including tools a sub-agent used on your behalf. Averages ${toolsPerPrompt} per message you sent. Full breakdown in the Tools chart below.` },
     { v: fmtInt(prompts), l: "messages you sent", n: "Only messages with real text in them -- blank ones don't count." },
     { v: fmtTok(tokIn+tokOut+tokCacheRead+tokCacheWrite), l: "total tokens, all types",
-      n: `Everything added up -- what you sent, what Claude wrote back, and both kinds of cache traffic. Full split in the Tokens chart below. (You've touched ${repoSet.size} repos / ${projSet.size} projects in this range.)` },
+      n: `Everything added up -- what you sent, what Claude wrote back, and both kinds of cache traffic, including sub-agent runs. Full split in the Tokens chart below. (You've touched ${repoSet.size} repos / ${projSet.size} projects in this range.)` },
     { v: fmtTok(tokOut), l: "tokens claude wrote", n: `${fmtTok(tokThink)} of these were Claude "thinking" before it answered -- already counted inside this number, not extra.` },
     { v: fmtTok(tokCacheRead), l: "cache reads", n: `For every token Claude wrote, it pulled about ${crRatio} from cache. Cache reads are cheap -- a tenth the price of a normal token.` },
     { v: fmtUSDFull(cost), l: "API cost",
-      n: `By model: ${modelSplit}.` },
+      n: `Includes sub-agent runs -- their spend is real. By model: ${modelSplit}.` },
     { v: String(peakC), l: "most sessions running at once",
       n: (peakDay ? `Your busiest moment: ${peakC} sessions running at the same time, on ${peakDay}.` : "No overlap data in this date range.")
-        + " Whole corpus: only the date range narrows this, not the project filter or the \"count as a session\" toggle above." },
+        + " Whole corpus: only the date range narrows this, not the project filter or the \"Include\" toggle above." },
   ];
 
   return { eyebrow: `<span class="num">${fmtInt(FS.length)}</span> sessions in range`,
@@ -845,7 +879,7 @@ panel("projects", "Top 15 by cost, keyed on project_label", {
   lede: "Auto-generated background-agent worktree folders are folded into their parent project here (see CANON_PROJECT above); named worktrees and separate sub-repos are not -- they are real, distinct work.",
 }, () => {
   const by = new Map();
-  FS.forEach(r => {
+  FSW.forEach(r => {
     const name = CANON_PROJECT[r[IDX.S.project]];
     const e = by.get(name) || { hours: 0, cost: 0, n: 0 };
     e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.n += 1;
@@ -864,7 +898,7 @@ panel("projects", "Top 15 by cost, keyed on project_label", {
 /* ---- 08 Repositories ---- */
 panel("repos", "The same work, keyed on repo_root", { lede: "Subdirectories fold into their parent repo here; project_label above does not." }, () => {
   const by = new Map();
-  FS.forEach(r => {
+  FSW.forEach(r => {
     const p = r[IDX.S.repo];
     const e = by.get(p) || { hours: 0, cost: 0, n: 0 };
     e.hours += r[IDX.S.engagedSec] / 3600; e.cost += r[IDX.S.cost]; e.n += 1;
@@ -883,15 +917,15 @@ panel("repos", "The same work, keyed on repo_root", { lede: "Subdirectories fold
 /* ---- 09 Project x month ---- */
 panel("proj-month", "Where the work moved, month by month", { lede: "Top 10 projects by cost in range; cell shade is engaged hours that project-month. Auto-generated background-agent worktree folders are folded into their parent project here, same as the cost panel above." }, () => {
   const totalByProj = new Map();
-  FS.forEach(r => {
+  FSW.forEach(r => {
     const name = CANON_PROJECT[r[IDX.S.project]];
     totalByProj.set(name, (totalByProj.get(name)||0) + r[IDX.S.cost]);
   });
   const topProj = [...totalByProj.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(e=>e[0]);
-  const months = [...new Set(FS.map(r => monthKey(r[IDX.S.date])))].sort();
+  const months = [...new Set(FSW.map(r => monthKey(r[IDX.S.date])))].sort();
   if (!topProj.length || !months.length) return { eyebrow: "0 projects", body: emptyNote() };
   const matrix = topProj.map(() => months.map(() => 0));
-  FS.forEach(r => {
+  FSW.forEach(r => {
     const name = CANON_PROJECT[r[IDX.S.project]];
     const pi = topProj.indexOf(name);
     if (pi < 0) return;
@@ -909,7 +943,7 @@ panel("models", "Models by cost in range", {
 }, () => {
   const by = new Map();
   DATA.M.forEach(row => {
-    if (!FS_set.has(row[IDX.M.session])) return;
+    if (!FSW_set.has(row[IDX.M.session])) return;
     const rawName = LK.models[row[IDX.M.model]];
     // <synthetic> is a $0 placeholder Claude Code writes for an interrupted
     // reply, not a real priced model.
@@ -931,10 +965,10 @@ panel("models", "Models by cost in range", {
 
 /* ---- 11 Model x month ---- */
 panel("model-month", "Model mix as a share of each month's cost", {}, () => {
-  const months = [...new Set(FS.map(r => monthKey(r[IDX.S.date])))].sort();
+  const months = [...new Set(FSW.map(r => monthKey(r[IDX.S.date])))].sort();
   const modelTotals = new Map();
   DATA.M.forEach(row => {
-    if (!FS_set.has(row[IDX.M.session])) return;
+    if (!FSW_set.has(row[IDX.M.session])) return;
     modelTotals.set(row[IDX.M.model], (modelTotals.get(row[IDX.M.model])||0) + row[IDX.M.cost]);
   });
   const topModels = [...modelTotals.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6).map(e=>e[0]);
@@ -945,7 +979,7 @@ panel("model-month", "Model mix as a share of each month's cost", {}, () => {
     values: months.map(() => 0),
   }));
   DATA.M.forEach(row => {
-    if (!FS_set.has(row[IDX.M.session])) return;
+    if (!FSW_set.has(row[IDX.M.session])) return;
     const mi = topModels.indexOf(row[IDX.M.model]);
     if (mi < 0) return;
     const srow = DATA.S[row[IDX.M.session]];
@@ -961,7 +995,7 @@ panel("model-month", "Model mix as a share of each month's cost", {}, () => {
 /* ---- 12 Tokens ---- */
 panel("tokens", "Four token classes, log axis", {}, () => {
   const sums = { in: 0, out: 0, cw: 0, cr: 0 };
-  FS.forEach(r => {
+  FSW.forEach(r => {
     sums.in += r[IDX.S.tokIn]; sums.out += r[IDX.S.tokOut];
     sums.cw += r[IDX.S.tokCacheWrite]; sums.cr += r[IDX.S.tokCacheRead];
   });
@@ -980,7 +1014,7 @@ panel("thinking", "Thinking as a slice of output tokens", {
   lede: "Recorded only from 2026-08-12 (Claude Code 2.1.228) onward. Zero before that date means not recorded, not \"no thinking happened.\"",
 }, () => {
   const validFrom = "2026-08-12";
-  const validRows = FS.filter(r => r[IDX.S.date] >= validFrom);
+  const validRows = FSW.filter(r => r[IDX.S.date] >= validFrom);
   const think = validRows.reduce((s,r) => s + r[IDX.S.tokThinking], 0);
   const out = validRows.reduce((s,r) => s + r[IDX.S.tokOut], 0);
   const pct = out > 0 ? (think / out * 100) : 0;
@@ -1019,7 +1053,7 @@ panel("weekday", "Engaged hours per weekday", {}, () => {
 panel("tools", "Top 20 tools by call count", {}, () => {
   const by = new Map();
   DATA.T.forEach(row => {
-    if (!FS_set.has(row[IDX.T.session])) return;
+    if (!FSW_set.has(row[IDX.T.session])) return;
     const t = row[IDX.T.tool];
     const e = by.get(t) || { n: 0, err: 0 };
     e.n += row[IDX.T.count]; e.err += row[IDX.T.errors];
@@ -1040,7 +1074,7 @@ panel("skills", "Top 8 in each kind", {}, () => {
   const kinds = LK.attrKinds;
   const byKind = kinds.map(() => new Map());
   DATA.A.forEach(row => {
-    if (!FS_set.has(row[IDX.A.session])) return;
+    if (!FSW_set.has(row[IDX.A.session])) return;
     const ki = row[IDX.A.kind];
     if (ki < 0) return;
     const m = byKind[ki];
@@ -1198,9 +1232,11 @@ function updateSummary() {
   updateKindUI();
 }
 
-/* Sync the three "count as a session" checkboxes to `state.kinds` and refresh
-   their live counts (date + project filtered, kind-toggle-independent -- see
-   kindCounts() above), so a reader can see what ticking a box would ADD. */
+/* Sync the "Include" checkboxes (my sessions / automated one-shots -- see the
+   f-note beside them for why sub-agent runs aren't a checkbox any more) to
+   `state.kinds` and refresh their live counts (date + project filtered,
+   kind-toggle-independent -- see kindCounts() above), so a reader can see
+   what ticking a box would ADD. */
 function updateKindUI() {
   const counts = kindCounts();
   document.querySelectorAll(".kind-item[data-kind]").forEach(el => {

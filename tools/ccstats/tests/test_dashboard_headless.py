@@ -146,40 +146,56 @@ def test_the_page_loads_and_every_panel_renders_without_throwing(tmp_path: Path)
     assert len(result["panels"]) == 20, "a panel went missing from the page"
 
 
-def test_default_view_is_mine_plus_subagent_and_matches_hand_computed_numbers(
+def test_default_view_splits_interactive_and_workload_populations(
     tmp_path: Path,
 ) -> None:
-    """Default ticks "my sessions" (5 rows, engaged min 10/20/30/40/50) AND
-    "sub-agent runs" (2 rows, engaged min 1/1.5) - the operator's own
-    2026-08-24 follow-up ask, after seeing the toggle default to "mine" only.
-    Combined engaged minutes sorted: 1, 1.5, 10, 20, 30, 40, 50 -> median 20.
-    Cost: $15.00 (mine) + $1.20 (sub-agent) = $16.20 -> "US$ 16" (rounded).
-    The 2 automated rows must NOT appear - they still default off."""
+    """2026-08-27: a single "count as a session" toggle used to apply to
+    every panel alike, which forced one answer onto two different questions
+    (money spent vs. my own working time). Sub-agent runs are no longer a
+    toggle at all: FS ("my own work" - hours/session-count panels) NEVER
+    includes them; FSW ("real work done" - cost/token/tool panels) ALWAYS
+    does, regardless of what is ticked.
+
+    Default view ticks only "my sessions" (5 rows, engaged min
+    10/20/30/40/50 -> median 30). FSW additionally includes the 2 sub-agent
+    rows (engaged min 1/1.5), which is why "API cost" (an FSW-driven tile)
+    is $15.00 (mine) + $1.20 (sub-agent) = $16.20 -> "US$ 16" (rounded), even
+    though "sessions with a reply" (an FS-driven tile) stays 5. The 2
+    automated rows must NOT appear anywhere - they still default off."""
     html_path = _build_html(tmp_path)
     result = _run_probe(html_path)
 
-    assert result["fsLength"] == 7
+    assert result["fsLength"] == 5
+    assert result["fswLength"] == 7
     tiles = result["panels"]["overview"]["tiles"]
-    assert tiles["sessions with a reply"] == "7"
-    assert tiles["typical session length"] == "20.0 min"
+    assert tiles["sessions with a reply"] == "5"
+    assert tiles["typical session length"] == "30.0 min"
     assert tiles["API cost"] == "US$ 16"
 
 
-def test_unticking_subagent_leaves_mine_only(tmp_path: Path) -> None:
-    """The population-blending bug (D2) this toggle exists to fix: a reader
-    must still be able to see ONLY their own sessions, on demand."""
+def test_subagent_is_no_longer_a_toggle_and_scenario_kinds_cannot_revive_it(
+    tmp_path: Path,
+) -> None:
+    """Regression guard for the exact bug this change fixes: even a scenario
+    that still names "subagent" in `kinds` (as the old checkbox used to)
+    must have ZERO effect. FS/FSW must come out identical to the untouched
+    default view above."""
     html_path = _build_html(tmp_path)
-    result = _run_probe(html_path, scenario={"kinds": ["mine"]})
+    result = _run_probe(html_path, scenario={"kinds": ["mine", "subagent"]})
     assert result["fsLength"] == 5
-    tiles = result["panels"]["overview"]["tiles"]
-    assert tiles["typical session length"] == "30.0 min"
-    assert tiles["API cost"] == "US$ 15"
+    assert result["fswLength"] == 7
 
 
-def test_ticking_automated_too_adds_it_in(tmp_path: Path) -> None:
+def test_ticking_automated_adds_it_to_both_populations_subagent_still_always_in(
+    tmp_path: Path,
+) -> None:
+    """Ticking "automated" still works as a real toggle and affects BOTH
+    populations (2 more rows each: FS 5->7, FSW 7->9). Sub-agent rows are
+    unaffected either way - they were already in FSW and never enter FS."""
     html_path = _build_html(tmp_path)
-    result = _run_probe(html_path, scenario={"kinds": ["mine", "subagent", "automated"]})
-    assert result["fsLength"] == len(FIXTURE)
+    result = _run_probe(html_path, scenario={"kinds": ["mine", "automated"]})
+    assert result["fsLength"] == 7
+    assert result["fswLength"] == len(FIXTURE)
 
 
 def test_excluding_the_canonical_parent_also_excludes_its_worktree_child(tmp_path: Path) -> None:

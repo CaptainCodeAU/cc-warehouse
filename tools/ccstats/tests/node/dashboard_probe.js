@@ -107,9 +107,11 @@ function makeEl(tag, attrs) {
   return el;
 }
 
-// The three "count as a session" checkboxes/labels the page's own JS queries
-// by `.kind-item[data-kind]` and by id (`kind-mine` etc, `kind-n-mine` etc).
-const KIND_NAMES = ["mine", "subagent", "automated"];
+// The two "Include" checkboxes/labels the page's own JS queries by
+// `.kind-item[data-kind]` and by id (`kind-mine` etc, `kind-n-mine` etc).
+// Sub-agent runs are no longer a checkbox (2026-08-27) - matches the real
+// generated HTML, which only has "mine" and "automated" `.kind-item` labels.
+const KIND_NAMES = ["mine", "automated"];
 const kindItems = {};
 const idRegistry = {};
 KIND_NAMES.forEach((name) => {
@@ -163,14 +165,15 @@ const context = vm.createContext({
 // can reference them by name directly, and assigning to `globalThis` (which
 // a sloppy-mode vm script sees as the context object) makes the values
 // visible to this file afterward.
-// FS/FS_set are REASSIGNED by recomputeFilteredSessions() (FS = [] etc), so
-// capturing them by value here would go stale the moment renderAll() runs
-// again for a scenario - expose accessor functions instead, which close
-// over the live binding rather than a one-time snapshot of it.
+// FS/FS_set/FSW/FSW_set are REASSIGNED by recomputeFilteredSessions() (FS =
+// [] etc), so capturing them by value here would go stale the moment
+// renderAll() runs again for a scenario - expose accessor functions instead,
+// which close over the live binding rather than a one-time snapshot of it.
 const probeEpilogue = `
 ;globalThis.__probe = { state, KIND_IDX, PANELS, kindCounts, LK, IDX,
   CANON_PROJECT, CANON_LIST, renderAll, recomputeFilteredSessions, DATA,
-  getFS: () => FS, getFS_set: () => FS_set };
+  getFS: () => FS, getFS_set: () => FS_set,
+  getFSW: () => FSW, getFSW_set: () => FSW_set };
 `;
 
 let runError = null;
@@ -208,6 +211,7 @@ if (!runError) {
   }
   result.filterSummary = documentStub.getElementById("f-summary").innerHTML;
   result.fsLength = probe.getFS().length;
+  result.fswLength = probe.getFSW().length;
   result.stateKinds = [...probe.state.kinds];
   result.stateExcluded = [...probe.state.excluded];
 

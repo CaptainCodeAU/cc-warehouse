@@ -80,10 +80,14 @@ class BadFilterFlag(ValueError):
 # into every tile with no way to tell them apart -- measured 2026-08-24: 46.5%
 # of "sessions" in a typical range are Task sub-agent runs or one-shot
 # automated calls (hooks, titling), which drags "typical session length" down
-# by about 96x versus the operator's own interactive sessions. `KIND_MINE` is
-# the default a reader sees; the other two stay reachable via a toggle, since
-# their cost (measured: ~US$11,000 for sub-agents alone) is real and hiding it
-# would be worse than blending it.
+# by about 96x versus the operator's own interactive sessions. The client-side
+# template (dashboard_template.html) is what actually acts on this label:
+# `KIND_MINE` is always counted; `KIND_AUTOMATED` stays a reader-toggle
+# (default off); `KIND_SUBAGENT` is no longer a toggle at all as of
+# 2026-08-27 -- it is hardcoded IN for cost/token/tool panels (real extra
+# spend, ~US$11,000 measured) and hardcoded OUT of hours/session-count panels
+# (a sub-agent's time sits inside its parent session's own clock time, so
+# counting it there would double-count minutes, not add new ones).
 KIND_MINE = "mine"
 KIND_SUBAGENT = "subagent"
 KIND_AUTOMATED = "automated"
