@@ -19,6 +19,7 @@ uv run python3 tools/ccstats/build_workbook.py --since 2026-06-08   # the .xlsx
 uv run python3 tools/ccstats/make_docs.py            # inherits the window
 uv run python3 tools/ccstats/check_consistency.py   # inherits the window
 uv run python3 tools/ccstats/dashboard.py            # the LIVE interactive dashboard
+uv run python3 tools/ccstats/daywall.py              # the 3D companion page (WebGL2)
 uv run pytest tools/ccstats/tests -q                # 99 tests
 uv run python3 tools/ccstats/verify.py compare      # prove nothing changed
 ```
@@ -26,8 +27,9 @@ uv run python3 tools/ccstats/verify.py compare      # prove nothing changed
 Every command above accepts `--out DIR` to write somewhere other than the
 default (see **Where it writes**, below).
 
-Inside Claude Code, working in this repo, `/dashboard` does the last of those (`dashboard.py`)
-for you interactively - see **The live dashboard**, below.
+Inside Claude Code, working in this repo, `/dashboard` does the `dashboard.py` step for you
+interactively - see **The live dashboard**, below. `/daywall` does the same for `daywall.py`,
+the 3D companion page - see **The 3D companion page**, below.
 
 | Script | Does |
 |---|---|
@@ -35,6 +37,7 @@ for you interactively - see **The live dashboard**, below.
 | `build_workbook.py` | 20 pre-aggregated sheets as `claude-code-stats.xlsx` (`--no-titles` to strip session titles) |
 | `make_docs.py` | `DATA-GUIDE.md`, generated from the workbook so it cannot drift |
 | `dashboard.py` | `claude-code-dashboard-live.html`: one file, live date-range + project-exclude controls, no re-run needed to change them (see below) |
+| `daywall.py` | `claude-code-daywall.html`: the 3D companion page - one box per session, positioned by day and hour, hand-rolled WebGL2, no library (see below) |
 | `xlsx.py` | a dependency-free .xlsx writer (the project is stdlib-only) |
 | `facts.py` | the numbers quoted in prose, computed once so the two artefacts cannot disagree |
 | `check_consistency.py` | fence: asserts the workbook and the guide state the same figures |
@@ -141,6 +144,37 @@ date range, not the project-exclude filter, which the panel itself says.
 shows the top 50 by cost in range, not 200. Every other panel is fully live on
 both filters.
 
+## The 3D companion page
+
+**Quickest way to build and open it:** `/daywall`, the same shape as `/dashboard` (build, serve
+over loopback, hand over the link, stop on request) - see `.claude/commands/daywall.md`.
+
+`daywall.py` builds `claude-code-daywall.html`: one box per session, positioned by calendar day
+(Z, one slab per day, fly along it to watch the corpus get busier over time) and hour of day (X);
+Y stacks sessions that overlap on the same day into concurrency lanes, packed fresh on every
+filter change so excluding a project closes the gap it leaves rather than leaving a hole. Box
+glow is engaged time as a share of wall time; colour is `mine`/`subagent`/`automated`, the same
+three populations `dashboard_template.html` classifies with `session_kind()`. Thin gold beads
+connect a sub-agent to its parent session where `session.parent_session_uuid` resolves one
+(396 parents, 2,008 children, measured 2026-08-27 - the only real session-to-session edge this
+dataset has; everything else is hierarchy or a time series, not a graph).
+
+Hand-rolled WebGL2, deliberately no library (matches the 2D page's own no-chart-library rule):
+instanced boxes, a hand-rolled orbit camera (drag to rotate, right/middle-drag to pan, scroll to
+zoom, WASD/arrows to fly and orbit, R for home, Escape to clear), and click-to-pick via an
+offscreen framebuffer pass that encodes each instance's id as a colour. A browser with no WebGL2
+gets a plain-HTML notice naming this page's 2D sibling instead of a blank canvas.
+
+The page's script is split in two, on purpose: pure data functions (`clipToDays`, `packLanes`,
+`recomputeFiltered` - splitting a session's interval at day boundaries, greedy lane packing, the
+whole state-to-drawable-list pipeline) carry no DOM or WebGL calls at all, which is what makes
+them runnable headlessly under Node (`tests/node/daywall_probe.js`) the same way
+`dashboard_probe.js` already exercises `dashboard_template.html`'s client-side JS. The WebGL half
+itself has no headless coverage - it was verified in a real Chrome tab instead (rotate/pan/zoom,
+click-to-spotlight populating real session detail, every filter control, zero console errors),
+per this project's own bar (ticket 28.9: `pytest` alone is not evidence a UI change actually
+works).
+
 ## Where it writes
 
 Everything lands in **`~/.cc-warehouse/stats/`** by default: outside this repo
@@ -162,6 +196,7 @@ refuses an unpadded date: loudly, before any write happens.
 | `collect-report.json` | what was scanned, the totals, and the self-check results |
 | `scan-cache.sqlite` | `collect.py`'s own incremental cache (see below) - safe to delete, `--no-cache` ignores it |
 | `claude-code-dashboard-live.html` | the interactive dashboard (see **The live dashboard**, below) |
+| `claude-code-daywall.html` | the 3D companion page (see **The 3D companion page**, below) |
 
 ## Verify it
 

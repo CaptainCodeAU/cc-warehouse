@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Claude Code, in 3D</title>
+<style>
+:root{
+  /* Same palette as claude-code-dashboard-live.html, so the two companion
+     pages read as one suite. WebGL cannot read a CSS custom property into a
+     vertex buffer, so RGB_* below duplicates these as plain numbers -- see
+     the comment beside RGB_MINE. */
+  --paper:#161713;--panel:#1F211C;--ink:#E8E6DC;--ink2:#9BA294;--rule:#33362E;
+  --signal:#DD7565;--ghost:#D6BD8C;--teal:#5EA6AA;--gold:#CBA043;
+  --void:#0A0B09;--dim:#868D7A;--code:#272924;
+  color-scheme:dark;
+  --display:"Arial Narrow","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;width:100%;height:100%;background:var(--void);color:var(--ink);
+  font-family:var(--mono);overflow:hidden}
+body{font-size:13px;line-height:1.45}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+
+/* inset:0 alone does NOT stretch a replaced element (canvas/img/video) the
+   way it stretches a div -- CSS falls back to the intrinsic 300x150 canvas
+   default and absorbs the rest as implied margins. Explicit width/height
+   is required; measured live (2026-08-27) with getBoundingClientRect(). */
+#wall{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;display:block}
+#vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(ellipse at center, transparent 45%, rgba(10,11,9,.6) 100%)}
+
+.floater{position:fixed;background:rgba(31,33,28,.88);border:1px solid var(--rule);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10;
+  box-shadow:0 10px 28px rgba(0,0,0,.4);transition:transform .2s ease,opacity .2s ease}
+.ui-hidden{opacity:0!important;pointer-events:none!important}
+#panel.ui-hidden{transform:translateX(-300px)}
+#legend.ui-hidden{transform:translateX(280px)}
+#hint.ui-hidden{transform:translateY(60px)}
+
+#panel{top:14px;left:14px;width:270px;max-height:calc(100vh - 28px);overflow-y:auto;padding:14px 14px 12px}
+#panel::-webkit-scrollbar{width:6px}
+#panel::-webkit-scrollbar-thumb{background:var(--rule)}
+.eyebrow{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink2);margin:0 0 4px}
+#panel h1{font-family:var(--display);font-size:17px;font-weight:700;margin:0 0 6px;
+  text-transform:uppercase;letter-spacing:-.01em}
+#panel .sub{font-size:11px;color:var(--ink2);margin:0 0 4px}
+#panel .sub.live{color:var(--signal);margin-bottom:12px}
+h2.section{font-family:var(--display);font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink2);font-weight:700;margin:14px 0 6px;border-top:1px solid var(--rule);padding-top:10px}
+h2.section:first-of-type{border-top:none;padding-top:0;margin-top:2px}
+.row{display:flex;align-items:center;gap:8px;padding:3px 2px;cursor:pointer;user-select:none}
+.row:hover{background:rgba(232,230,220,.05)}
+.row input{accent-color:var(--signal);flex-shrink:0}
+.row .label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .n{color:var(--ink2);font-size:11px;flex-shrink:0}
+input[type=date]{font-family:var(--mono);font-size:12px;background:var(--code);
+  border:1px solid var(--rule);padding:4px 6px;color:var(--ink);width:100%}
+.date-row{display:flex;gap:6px;margin-bottom:8px}
+.date-row label{font-size:10px;color:var(--ink2);display:block;margin-bottom:2px}
+.btn{font-family:var(--display);text-transform:uppercase;letter-spacing:.05em;font-size:11px;
+  font-weight:700;color:var(--ink);background:var(--code);border:1px solid var(--rule);
+  padding:5px 10px;cursor:pointer}
+.btn:hover{background:var(--ink);color:var(--paper)}
+.btn.signal{color:var(--signal);border-color:var(--signal)}
+.btn-row{display:flex;gap:6px;margin-bottom:8px}
+.search{width:100%;font-family:var(--mono);font-size:12px;background:var(--code);
+  border:1px solid var(--rule);color:var(--ink);padding:5px 7px;margin-bottom:6px}
+.proj-list{max-height:180px;overflow-y:auto}
+#f-summary{font-size:11px;color:var(--ink2);margin-top:10px;padding-top:10px;border-top:1px solid var(--rule)}
+#f-summary b{color:var(--signal)}
+
+#legend{top:14px;right:14px;width:200px;padding:12px 14px}
+#legend .cap{font-size:10.5px;color:var(--ink2);margin-bottom:8px}
+#legend .item{display:flex;align-items:center;gap:7px;font-size:12px;padding:3px 0}
+#legend .sw{width:11px;height:11px;flex-shrink:0}
+
+#hint{bottom:14px;left:50%;transform:translateX(-50%);padding:7px 16px;font-size:11px;
+  color:var(--ink2);white-space:nowrap}
+#hint b{color:var(--ink)}
+#hint.ui-hidden{transform:translateX(-50%) translateY(60px)}
+
+#toggle{position:fixed;bottom:14px;right:14px;z-index:11;display:none}
+#toggle.show{display:block}
+
+#detail{top:14px;left:300px;width:260px;padding:14px;display:none}
+#detail.show{display:block}
+#detail .close{float:right;cursor:pointer;color:var(--ink2);font-size:14px}
+#detail h2{font-family:var(--display);font-size:14px;margin:0 0 8px;color:var(--signal);
+  text-transform:uppercase}
+#detail dl{margin:0;font-size:12px}
+#detail dt{color:var(--ink2);margin-top:6px}
+#detail dd{margin:0;color:var(--ink)}
+
+#fallback{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:var(--paper);color:var(--ink);font-family:var(--mono);text-align:center;padding:40px}
+#fallback .inner{max-width:52ch}
+#fallback h1{font-family:var(--display);text-transform:uppercase;color:var(--signal)}
+#fallback code{background:var(--code);padding:2px 5px}
+</style>
+</head>
+<body>
+
+<canvas id="wall"></canvas>
+<div id="vignette"></div>
+
+<div id="panel" class="floater">
+  <p class="eyebrow">cc-warehouse / ccstats</p>
+  <h1>Day Wall</h1>
+  <p class="sub" id="p-window"></p>
+  <p class="sub live" id="p-cost"></p>
+
+  <h2 class="section">Range</h2>
+  <div class="date-row">
+    <div><label for="f-from">From</label><input type="date" id="f-from"></div>
+    <div><label for="f-to">To</label><input type="date" id="f-to"></div>
+  </div>
+
+  <h2 class="section">Kind</h2>
+  <div id="kinds"></div>
+
+  <h2 class="section">Sub-agent threads</h2>
+  <label class="row"><input type="checkbox" id="f-threads" checked><span class="label">show parent&#8594;child links</span></label>
+
+  <h2 class="section">Projects</h2>
+  <input type="text" class="search" id="proj-search" placeholder="search projects&#8230;">
+  <div class="btn-row">
+    <button class="btn" id="proj-all">All</button>
+    <button class="btn" id="proj-none">None</button>
+  </div>
+  <div class="proj-list" id="projects"></div>
+
+  <div class="btn-row" style="margin-top:12px">
+    <button class="btn signal" id="reset">Reset view</button>
+  </div>
+
+  <p id="f-summary"></p>
+</div>
+
+<div id="legend" class="floater">
+  <p class="cap">Colour = kind &middot; glow = engaged share of wall time</p>
+  <div id="legend-items"></div>
+</div>
+
+<div id="hint" class="floater">
+  <b>drag</b> rotate &middot; <b>right/mid-drag</b> pan &middot; <b>scroll</b> zoom &middot;
+  <b>W/S</b> fly days &middot; <b>A/D</b> orbit &middot; <b>shift</b> 3&times; &middot;
+  <b>R</b> home &middot; <b>click</b> a box &middot; <b>esc</b> clear
+</div>
+
+<button id="toggle" class="btn">Show panels</button>
+
+<div id="detail" class="floater">
+  <span class="close" id="detail-close">&times;</span>
+  <h2 id="d-title"></h2>
+  <dl id="d-body"></dl>
+</div>
+
+<script>
+/* ==================================================================== */
+/* Data: embedded once. Same IDX-from-cols convention as                */
+/* dashboard_template.html, so a column reorder on the Python side is a */
+/* loud KeyError here rather than a silent relabel.                     */
+/* ==================================================================== */
+const DATA = /*__CCSTATS_DATA_JSON__*/;
+
+const COLS = DATA.cols;
+const IDX = {};
+for (const k of Object.keys(COLS)) { IDX[k] = {}; COLS[k].forEach((name, i) => IDX[k][name] = i); }
+const LK = DATA.lookups;
+const KIND_IDX = {};
+LK.kinds.forEach((name, i) => { KIND_IDX[name] = i; });
+
+/* Same fold as dashboard_template.html's canonicalProjectName(): a
+   background-agent's throwaway ".claude/worktrees/agent-<hex>" folder is
+   the same real project, not distinct work. */
+function canonicalProjectName(label) {
+  return (label || "").replace(/-\.claude-worktrees-agent-[0-9a-f]+$/i, "");
+}
+const CANON_PROJECT = LK.projects.map(canonicalProjectName);
+const CANON_LIST = [...new Set(CANON_PROJECT)].sort((a, b) => a.localeCompare(b));
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtHours(h) { return (h >= 1000 ? (h/1000).toFixed(1)+"k" : h.toFixed(h < 10 ? 1 : 0)) + "h"; }
+function fmtUSD(v) {
+  if (v >= 1000) return "US$ " + (v/1000).toFixed(1) + "k";
+  return "US$ " + v.toFixed(v < 10 ? 2 : 0);
+}
+function fmtInt(v) { return v.toLocaleString("en-US"); }
+function fmtClock(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+}
+function fmtDur(sec) {
+  if (sec < 60) return Math.round(sec) + "s";
+  if (sec < 3600) return Math.round(sec/60) + "m";
+  const h = sec / 3600;
+  return h.toFixed(h < 10 ? 1 : 0) + "h";
+}
+
+/* ==================================================================== */
+/* Pure data functions -- no DOM, no WebGL. Exercised directly by        */
+/* tests/node/daywall_probe.js.                                         */
+/* ==================================================================== */
+const DAY_SECONDS = 86400;
+
+/* Split one session's [startSec, startSec+durSec) into per-day segments.
+   `dayIdx + 1` means the NEXT REAL CALENDAR DAY -- daywall.py's `days`
+   array has no gaps (every date from min to max gets a slot, even one with
+   zero sessions), which is exactly what makes that assumption safe here.
+   A zero-duration session still yields one 1-second segment so it stays
+   visible as a thin marker rather than vanishing. MAX_SEGMENTS is a safety
+   net, not a real limit -- the longest real session measured is 33.5 days
+   (34 segments); 400 gives headroom without letting a corrupt payload spin
+   forever. */
+function clipToDays(dayIdx, startSec, durSec) {
+  const segments = [];
+  let remaining = Math.max(durSec, 0);
+  let day = dayIdx, start = startSec;
+  const MAX_SEGMENTS = 400;
+  while (remaining > 0 && segments.length < MAX_SEGMENTS) {
+    const capacity = DAY_SECONDS - start;
+    const chunk = Math.min(remaining, capacity);
+    segments.push({ dayIdx: day, startSec: start, endSec: start + chunk });
+    remaining -= chunk;
+    day += 1;
+    start = 0;
+  }
+  if (!segments.length) {
+    segments.push({ dayIdx, startSec, endSec: Math.min(startSec + 1, DAY_SECONDS) });
+  }
+  return segments;
+}
+
+/* Greedy interval-graph colouring: sort by start, give each segment the
+   lowest-numbered lane whose previous occupant has already ended. Segments
+   are assumed to already belong to the SAME day -- concurrency lanes reset
+   every day, matching the picture ("Y = how many at once, per day"), not a
+   whole-corpus stacking order. Mutates and returns the input array with a
+   `.lane` added on each; also returns how many lanes that day needed. */
+function packLanes(segments) {
+  const sorted = [...segments].sort((a, b) => a.startSec - b.startSec);
+  const laneEnds = [];
+  sorted.forEach(seg => {
+    let lane = laneEnds.findIndex(end => end <= seg.startSec);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(seg.endSec); }
+    else { laneEnds[lane] = seg.endSec; }
+    seg.lane = lane;
+  });
+  return { segments: sorted, laneCount: laneEnds.length };
+}
+
+/* The FS equivalent: state -> the flat list of drawable segments, packed
+   into lanes fresh every call, so excluding a project (or a kind) closes
+   the gap it leaves behind rather than leaving a hole where it used to be. */
+function recomputeFiltered() {
+  const fromIdx = DATA.days.indexOf(state.from);
+  const toIdx = DATA.days.indexOf(state.to);
+  const rowIdxs = [];
+  DATA.S.forEach((row, i) => {
+    if (!state.kinds.has(row[IDX.S.kind])) return;
+    if (state.excluded.has(CANON_PROJECT[row[IDX.S.project]])) return;
+    const d = row[IDX.S.dayIdx];
+    if (d < fromIdx || d > toIdx) return;
+    rowIdxs.push(i);
+  });
+
+  const byDay = new Map();
+  rowIdxs.forEach(rowIdx => {
+    const row = DATA.S[rowIdx];
+    clipToDays(row[IDX.S.dayIdx], row[IDX.S.startSec], row[IDX.S.durSec]).forEach(seg => {
+      if (seg.dayIdx < fromIdx || seg.dayIdx > toIdx) return;
+      if (!byDay.has(seg.dayIdx)) byDay.set(seg.dayIdx, []);
+      byDay.get(seg.dayIdx).push({ rowIdx, startSec: seg.startSec, endSec: seg.endSec });
+    });
+  });
+
+  const draw = [];
+  let maxLanes = 0;
+  byDay.forEach((segs, dayIdx) => {
+    const { segments, laneCount } = packLanes(segs);
+    maxLanes = Math.max(maxLanes, laneCount);
+    segments.forEach(s => draw.push({ dayIdx, startSec: s.startSec, endSec: s.endSec, lane: s.lane, rowIdx: s.rowIdx }));
+  });
+
+  const rowIdxSet = new Set(rowIdxs);
+  const drawByRow = new Map();
+  draw.forEach(d => { if (!drawByRow.has(d.rowIdx)) drawByRow.set(d.rowIdx, []); drawByRow.get(d.rowIdx).push(d); });
+  const threads = [];
+  if (state.threads) {
+    DATA.P.forEach(([childRow, parentRow]) => {
+      if (!rowIdxSet.has(childRow) || !rowIdxSet.has(parentRow)) return;
+      const childSegs = drawByRow.get(childRow), parentSegs = drawByRow.get(parentRow);
+      if (!childSegs || !parentSegs) return;
+      // anchor on each side's FIRST visible segment -- a thread is a visual
+      // hint, not a precise time-accurate link, so the first day either
+      // one appears on is good enough.
+      threads.push({ child: childSegs[0], parent: parentSegs[0] });
+    });
+  }
+
+  return { draw, threads, sessionCount: rowIdxs.length, maxLanes, dayCount: byDay.size };
+}
+
+/* ==================================================================== */
+/* Filter state and panel wiring (DOM, no WebGL).                        */
+/* ==================================================================== */
+function defaultExcludedNames() {
+  const out = new Set();
+  (DATA.default_unticked_projects || []).forEach(name => {
+    if (LK.projects.includes(name)) out.add(canonicalProjectName(name));
+  });
+  return out;
+}
+const state = {
+  from: DATA.min_date, to: DATA.max_date,
+  kinds: new Set([KIND_IDX.mine, KIND_IDX.subagent, KIND_IDX.automated]),
+  excluded: defaultExcludedNames(),
+  threads: true,
+};
+
+function buildKindRows() {
+  const box = document.getElementById("kinds");
+  const kindColor = { mine: RGB_HEX.mine, subagent: RGB_HEX.subagent, automated: RGB_HEX.automated };
+  LK.kinds.forEach(name => {
+    const n = DATA.S.filter(r => LK.kinds[r[IDX.S.kind]] === name).length;
+    const row = document.createElement("label");
+    row.className = "row";
+    row.innerHTML = `<input type="checkbox" checked data-kind="${name}"/>`
+      + `<span class="label" style="color:${kindColor[name]}">${esc(name)}</span>`
+      + `<span class="n">${fmtInt(n)}</span>`;
+    row.querySelector("input").addEventListener("change", e => {
+      e.target.checked ? state.kinds.add(KIND_IDX[name]) : state.kinds.delete(KIND_IDX[name]);
+      onFilterChange();
+    });
+    box.appendChild(row);
+  });
+}
+
+function buildProjectRows(filterText) {
+  const box = document.getElementById("projects");
+  box.innerHTML = "";
+  const q = (filterText || "").toLowerCase();
+  CANON_LIST.filter(p => p.toLowerCase().includes(q)).forEach(name => {
+    const n = DATA.S.filter(r => CANON_PROJECT[r[IDX.S.project]] === name).length;
+    const row = document.createElement("label");
+    row.className = "row";
+    row.innerHTML = `<input type="checkbox" ${state.excluded.has(name) ? "" : "checked"}/>`
+      + `<span class="label">${esc(name)}</span><span class="n">${fmtInt(n)}</span>`;
+    row.querySelector("input").addEventListener("change", e => {
+      e.target.checked ? state.excluded.delete(name) : state.excluded.add(name);
+      onFilterChange();
+    });
+    box.appendChild(row);
+  });
+}
+
+function updateSummary() {
+  const r = lastFiltered || recomputeFiltered();
+  document.getElementById("f-summary").innerHTML =
+    `showing <b>${fmtInt(r.sessionCount)}</b> sessions &middot; up to <b>${r.maxLanes}</b> at once &middot; ${r.dayCount} day(s) drawn`;
+}
+
+let lastFiltered = null;
+function onFilterChange() {
+  lastFiltered = recomputeFiltered();
+  updateSummary();
+  // gl is only set once boot() has confirmed WebGL2 and run initGL() -- the
+  // probe (and a no-WebGL browser) calls recomputeFiltered() by exercising
+  // this same path with gl still null, and must not touch instBuf/program.
+  if (gl) rebuildInstances(lastFiltered);
+}
+
+function wirePanel() {
+  document.getElementById("p-window").textContent = DATA.window_desc + " -- built " + DATA.generated_at;
+  document.getElementById("p-cost").textContent = DATA.cost_note;
+
+  const fromEl = document.getElementById("f-from"), toEl = document.getElementById("f-to");
+  fromEl.min = DATA.min_date; fromEl.max = DATA.max_date; fromEl.value = state.from;
+  toEl.min = DATA.min_date; toEl.max = DATA.max_date; toEl.value = state.to;
+  fromEl.addEventListener("change", e => { state.from = e.target.value; onFilterChange(); });
+  toEl.addEventListener("change", e => { state.to = e.target.value; onFilterChange(); });
+
+  buildKindRows();
+  document.getElementById("f-threads").addEventListener("change", e => {
+    state.threads = e.target.checked; onFilterChange();
+  });
+
+  buildProjectRows("");
+  document.getElementById("proj-search").addEventListener("input", e => buildProjectRows(e.target.value));
+  document.getElementById("proj-all").addEventListener("click", () => {
+    state.excluded = new Set(); buildProjectRows(document.getElementById("proj-search").value); onFilterChange();
+  });
+  document.getElementById("proj-none").addEventListener("click", () => {
+    state.excluded = new Set(CANON_LIST); buildProjectRows(document.getElementById("proj-search").value); onFilterChange();
+  });
+
+  document.getElementById("reset").addEventListener("click", () => {
+    state.from = DATA.min_date; state.to = DATA.max_date;
+    state.kinds = new Set([KIND_IDX.mine, KIND_IDX.subagent, KIND_IDX.automated]);
+    state.excluded = defaultExcludedNames(); state.threads = true;
+    fromEl.value = state.from; toEl.value = state.to;
+    document.querySelectorAll('#kinds input').forEach(cb => cb.checked = true);
+    document.getElementById("f-threads").checked = true;
+    buildProjectRows(""); onFilterChange();
+    goHome();
+  });
+
+  const legend = document.getElementById("legend-items");
+  LK.kinds.forEach(name => {
+    legend.innerHTML += `<div class="item"><span class="sw" style="background:${RGB_HEX[name]}"></span>${esc(name)}</div>`;
+  });
+
+  const floaters = [document.getElementById("panel"), document.getElementById("hint"), document.getElementById("legend")];
+  document.getElementById("toggle").addEventListener("click", () => {
+    const hiding = !floaters[0].classList.contains("ui-hidden");
+    floaters.forEach(el => el.classList.toggle("ui-hidden", hiding));
+    document.getElementById("toggle").textContent = hiding ? "Show panels" : "Hide panels";
+  });
+  document.getElementById("detail-close").addEventListener("click", () => clearSpotlight());
+
+  onFilterChange();
+}
+
+/* ==================================================================== */
+/* WebGL2 rendering. Guarded: if getContext("webgl2") returns null, the  */
+/* canvas is replaced with a plain-HTML fallback and none of this runs.  */
+/* Colours below MUST match the CSS custom properties above -- a vertex  */
+/* buffer cannot read var(), so they are restated as plain numbers here. */
+/* ==================================================================== */
+const RGB_HEX = { mine: "#DD7565", subagent: "#5EA6AA", automated: "#868D7A" };
+const RGB = {
+  mine: [0.867, 0.459, 0.396],
+  subagent: [0.369, 0.651, 0.667],
+  automated: [0.525, 0.553, 0.478],
+};
+const THREAD_RGB = [0.796, 0.627, 0.263]; // --gold
+
+const HOUR_UNITS = 1.0;      // 1 world unit per hour -> a day is 24 wide
+const LANE_STEP = 1.15;      // vertical spacing between concurrency lanes
+const BOX_Y = 0.85;
+const DAY_DEPTH = 3.0;       // spacing between day slabs along Z
+const BOX_Z = DAY_DEPTH * 0.7;
+
+let gl, glCanvas;
+let program; // one program, one uPickMode uniform branch -- no separate pick program
+let vao, instBuf;
+let instanceCount = 0;
+let rowOfInstance = []; // instance index -> DATA.S row index (for picking)
+let pickFbo, pickTex, pickDepth;
+let spotlightId = -1;
+
+function mat4Perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return new Float32Array([
+    f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0,
+  ]);
+}
+function mat4LookAt(eye, target, up) {
+  const z = normalize(sub(eye, target));
+  const x = normalize(cross(up, z));
+  const y = cross(z, x);
+  return new Float32Array([
+    x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+    -dot(x,eye),-dot(y,eye),-dot(z,eye),1,
+  ]);
+}
+function mat4Multiply(a, b) {
+  const out = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    out[c*4+r] = a[0*4+r]*b[c*4+0] + a[1*4+r]*b[c*4+1] + a[2*4+r]*b[c*4+2] + a[3*4+r]*b[c*4+3];
+  }
+  return out;
+}
+function sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function normalize(a){ const l = Math.hypot(a[0],a[1],a[2]) || 1; return [a[0]/l,a[1]/l,a[2]/l]; }
+
+/* One unit cube, 36 verts (position xyz + a baked per-face shade so blocks
+   read as 3D without real lighting math -- top brighter, sides darker,
+   bottom darkest). */
+function cubeVertexData() {
+  const faces = [
+    // nx, ny, nz, shade, 4 corners (x,y,z) forming 2 triangles (CCW)
+    { n:[0,1,0], shade:1.00, verts:[[-.5,.5,-.5],[-.5,.5,.5],[.5,.5,.5],[-.5,.5,-.5],[.5,.5,.5],[.5,.5,-.5]] },
+    { n:[0,-1,0], shade:0.45, verts:[[-.5,-.5,.5],[-.5,-.5,-.5],[.5,-.5,-.5],[-.5,-.5,.5],[.5,-.5,-.5],[.5,-.5,.5]] },
+    { n:[1,0,0], shade:0.80, verts:[[.5,-.5,-.5],[.5,.5,-.5],[.5,.5,.5],[.5,-.5,-.5],[.5,.5,.5],[.5,-.5,.5]] },
+    { n:[-1,0,0], shade:0.65, verts:[[-.5,-.5,.5],[-.5,.5,.5],[-.5,.5,-.5],[-.5,-.5,.5],[-.5,.5,-.5],[-.5,-.5,-.5]] },
+    { n:[0,0,1], shade:0.90, verts:[[-.5,-.5,.5],[.5,-.5,.5],[.5,.5,.5],[-.5,-.5,.5],[.5,.5,.5],[-.5,.5,.5]] },
+    { n:[0,0,-1], shade:0.55, verts:[[.5,-.5,-.5],[-.5,-.5,-.5],[-.5,.5,-.5],[.5,-.5,-.5],[-.5,.5,-.5],[.5,.5,-.5]] },
+  ];
+  const out = [];
+  faces.forEach(f => f.verts.forEach(v => out.push(v[0], v[1], v[2], f.shade)));
+  return new Float32Array(out);
+}
+
+const VS_SRC = `#version 300 es
+layout(location=0) in vec4 aPosShade;
+layout(location=1) in vec3 iOffset;
+layout(location=2) in vec3 iScale;
+layout(location=3) in vec3 iColor;
+layout(location=4) in float iId;
+uniform mat4 uViewProj;
+uniform float uPickMode;
+uniform float uSelected;
+uniform float uHasSelection;
+out vec3 vColor;
+void main() {
+  vec3 world = aPosShade.xyz * iScale + iOffset;
+  gl_Position = uViewProj * vec4(world, 1.0);
+  if (uPickMode > 0.5) {
+    float id = iId + 1.0; // reserve 0 for "no instance"
+    float r = mod(id, 256.0);
+    float g = mod(floor(id/256.0), 256.0);
+    float b = mod(floor(id/65536.0), 256.0);
+    vColor = vec3(r,g,b) / 255.0;
+  } else {
+    vec3 c = iColor * aPosShade.w;
+    if (uHasSelection > 0.5) {
+      c = (abs(iId - uSelected) < 0.5) ? min(c * 1.4, vec3(1.0)) : c * 0.18;
+    }
+    vColor = c;
+  }
+}`;
+const FS_SRC = `#version 300 es
+precision mediump float;
+in vec3 vColor;
+out vec4 outColor;
+void main() { outColor = vec4(vColor, 1.0); }`;
+
+function compileShader(gl, type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(s);
+    gl.deleteShader(s);
+    throw new Error("shader compile failed: " + log);
+  }
+  return s;
+}
+function linkProgram(gl, vsSrc, fsSrc) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compileShader(gl, gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(p, compileShader(gl, gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    throw new Error("program link failed: " + gl.getProgramInfoLog(p));
+  }
+  return p;
+}
+
+let cubeBuf, cubeVertCount;
+function initGL() {
+  program = linkProgram(gl, VS_SRC, FS_SRC);
+
+  const cubeData = cubeVertexData();
+  cubeVertCount = cubeData.length / 4;
+  cubeBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, cubeBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, cubeData, gl.STATIC_DRAW);
+
+  vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, cubeBuf);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
+
+  instBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+  const stride = 10 * 4; // offset(3) scale(3) color(3) id(1)
+  for (let loc = 1; loc <= 4; loc++) {
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribDivisor(loc, 1);
+  }
+  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 0);
+  gl.vertexAttribPointer(2, 3, gl.FLOAT, false, stride, 12);
+  gl.vertexAttribPointer(3, 3, gl.FLOAT, false, stride, 24);
+  gl.vertexAttribPointer(4, 1, gl.FLOAT, false, stride, 36);
+  gl.bindVertexArray(null);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.039, 0.043, 0.035, 1.0); // --void
+
+  pickTex = gl.createTexture();
+  pickDepth = gl.createRenderbuffer();
+  pickFbo = gl.createFramebuffer();
+  resizePickTarget();
+}
+
+function resizePickTarget() {
+  const w = glCanvas.width, h = glCanvas.height;
+  gl.bindTexture(gl.TEXTURE_2D, pickTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, pickDepth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickTex, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, pickDepth);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+/* dayIdx/startSec/lane -> world-space box center + size. Shared by
+   rebuildInstances (boxes) and the thread beads below, so a box and the
+   thread that touches it can never disagree about where it actually is. */
+function segCenter(seg) {
+  const midSec = (seg.startSec + seg.endSec) / 2;
+  return [
+    (midSec / 3600) * HOUR_UNITS,
+    BOX_Y/2 + seg.lane * LANE_STEP,
+    seg.dayIdx * DAY_DEPTH,
+  ];
+}
+function segScale(seg) {
+  const durHours = Math.max((seg.endSec - seg.startSec) / 3600, 0.02);
+  return [durHours * HOUR_UNITS, BOX_Y, BOX_Z];
+}
+
+let sceneCenter = [12, 2, 0], sceneRadius = 40;
+
+function rebuildInstances(filtered) {
+  const perInst = 10;
+  const nBoxes = filtered.draw.length;
+  const nBeads = filtered.threads.length * 5;
+  const total = nBoxes + nBeads;
+  const data = new Float32Array(total * perInst);
+  rowOfInstance = new Array(total).fill(-1);
+
+  let cursor = 0;
+  filtered.draw.forEach((seg, i) => {
+    const c = segCenter(seg), s = segScale(seg);
+    const row = DATA.S[seg.rowIdx];
+    const kindName = LK.kinds[row[IDX.S.kind]];
+    const wall = Math.max(seg.endSec - seg.startSec, 1);
+    const engagedShare = Math.max(0, Math.min(1, (row[IDX.S.engagedSec] || 0) / (row[IDX.S.durSec] || wall)));
+    const brightness = 0.42 + 0.58 * engagedShare;
+    const base = RGB[kindName] || RGB.automated;
+    const o = cursor * perInst;
+    data[o+0]=c[0]; data[o+1]=c[1]; data[o+2]=c[2];
+    data[o+3]=s[0]; data[o+4]=s[1]; data[o+5]=s[2];
+    data[o+6]=base[0]*brightness; data[o+7]=base[1]*brightness; data[o+8]=base[2]*brightness;
+    data[o+9]=i;
+    rowOfInstance[cursor] = seg.rowIdx;
+    cursor++;
+  });
+
+  let beadId = nBoxes; // beads are not individually pickable; share one id space past the last real box
+  filtered.threads.forEach(t => {
+    const p0 = segCenter(t.parent), p1 = segCenter(t.child);
+    for (let k = 0; k < 5; k++) {
+      const f = k / 4;
+      const c = [p0[0]+(p1[0]-p0[0])*f, p0[1]+(p1[1]-p0[1])*f, p0[2]+(p1[2]-p0[2])*f];
+      const o = cursor * perInst;
+      data[o+0]=c[0]; data[o+1]=c[1]; data[o+2]=c[2];
+      data[o+3]=0.12; data[o+4]=0.12; data[o+5]=0.12;
+      data[o+6]=THREAD_RGB[0]; data[o+7]=THREAD_RGB[1]; data[o+8]=THREAD_RGB[2];
+      data[o+9]=beadId; // shares an id with no real box -- clicking a bead never spotlights anything, which is correct: a thread is a hint, not a session
+      rowOfInstance[cursor] = -1;
+      cursor++;
+    }
+  });
+
+  instanceCount = total;
+  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+
+  if (nBoxes) {
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
+    filtered.draw.forEach(seg => {
+      const c = segCenter(seg);
+      minX=Math.min(minX,c[0]); maxX=Math.max(maxX,c[0]);
+      minY=Math.min(minY,c[1]); maxY=Math.max(maxY,c[1]);
+      minZ=Math.min(minZ,c[2]); maxZ=Math.max(maxZ,c[2]);
+    });
+    sceneCenter = [(minX+maxX)/2, (minY+maxY)/2, (minZ+maxZ)/2];
+    sceneRadius = Math.max(Math.hypot(maxX-minX, maxY-minY, maxZ-minZ) / 2, 8);
+  }
+}
+
+/* ------------------------------------------------------------- camera */
+let camTarget, camYaw = 0.6, camPitch = 0.42, camDist;
+let homeCam = null;
+
+function initCamera() {
+  camTarget = [...sceneCenter];
+  camDist = sceneRadius * 1.8 + 6;
+  homeCam = { target: [...camTarget], yaw: camYaw, pitch: camPitch, dist: camDist };
+}
+function goHome() {
+  if (!homeCam) return;
+  camTarget = [...homeCam.target]; camYaw = homeCam.yaw; camPitch = homeCam.pitch; camDist = homeCam.dist;
+}
+function computeViewProj(aspect) {
+  const pitch = Math.max(-1.5, Math.min(1.5, camPitch));
+  const eye = [
+    camTarget[0] + camDist * Math.cos(pitch) * Math.sin(camYaw),
+    camTarget[1] + camDist * Math.sin(pitch),
+    camTarget[2] + camDist * Math.cos(pitch) * Math.cos(camYaw),
+  ];
+  const view = mat4LookAt(eye, camTarget, [0,1,0]);
+  const proj = mat4Perspective(50 * Math.PI/180, aspect, 0.5, camDist*4 + sceneRadius*4 + 200);
+  return mat4Multiply(proj, view);
+}
+
+/* ------------------------------------------------------------- input */
+let dragging = null, fastHeld = false, spaceHeld = false;
+let dragStartX = 0, dragStartY = 0;
+function wireInput() {
+  glCanvas.addEventListener("contextmenu", e => e.preventDefault());
+  glCanvas.addEventListener("pointerdown", e => {
+    glCanvas.setPointerCapture(e.pointerId);
+    dragStartX = e.clientX; dragStartY = e.clientY;
+    dragging = { mode: (e.button === 0 && !spaceHeld) ? "rotate" : "pan", x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
+    dragging.x = e.clientX; dragging.y = e.clientY;
+    if (dragging.mode === "rotate") {
+      camYaw -= dx * 0.006; camPitch += dy * 0.006;
+    } else {
+      const s = camDist * 0.0018;
+      camTarget[0] -= Math.cos(camYaw) * dx * s;
+      camTarget[2] += Math.sin(camYaw) * dx * s;
+      camTarget[1] += dy * s;
+    }
+  });
+  window.addEventListener("pointerup", e => {
+    if (dragging) {
+      const moved = Math.abs(e.clientX - dragStartX) + Math.abs(e.clientY - dragStartY);
+      if (dragging.mode === "rotate" && moved < 4) pickAt(e.clientX, e.clientY);
+    }
+    dragging = null;
+  });
+  glCanvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    camDist *= Math.pow(1.0015, e.deltaY);
+    camDist = Math.max(2, Math.min(camDist, sceneRadius*20 + 500));
+  }, { passive: false });
+
+  window.addEventListener("keydown", e => {
+    if (e.repeat && (e.code === "Space" || e.code === "ShiftLeft" || e.code === "ShiftRight")) return;
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") fastHeld = true;
+    if (e.code === "Space") { spaceHeld = true; return; }
+    const speed = (fastHeld ? 3 : 1);
+    if (e.key === "Escape") { clearSpotlight(); return; }
+    if (e.key.toLowerCase() === "w" || e.key === "ArrowUp") camTarget[2] -= DAY_DEPTH * speed;
+    if (e.key.toLowerCase() === "s" || e.key === "ArrowDown") camTarget[2] += DAY_DEPTH * speed;
+    if (e.key.toLowerCase() === "a" || e.key === "ArrowLeft") camYaw -= 0.08 * speed;
+    if (e.key.toLowerCase() === "d" || e.key === "ArrowRight") camYaw += 0.08 * speed;
+    if (e.key === "+" || e.key === "=") camDist *= 0.9;
+    if (e.key === "-" || e.key === "_") camDist *= 1.1;
+    if (e.key.toLowerCase() === "r") goHome();
+  });
+  window.addEventListener("keyup", e => {
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") fastHeld = false;
+    if (e.code === "Space") spaceHeld = false;
+  });
+  window.addEventListener("blur", () => { fastHeld = false; });
+}
+
+/* -------------------------------------------------------------- picking */
+function pickAt(clientX, clientY) {
+  if (!instanceCount) return;
+  const rect = glCanvas.getBoundingClientRect();
+  const x = Math.round((clientX - rect.left) * (glCanvas.width / rect.width));
+  const y = Math.round((clientY - rect.top) * (glCanvas.height / rect.height));
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
+  gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+  gl.clearColor(0,0,0,1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  drawScene(true);
+  const pixel = new Uint8Array(4);
+  gl.readPixels(x, glCanvas.height - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  const id = pixel[0] + pixel[1]*256 + pixel[2]*65536 - 1;
+  if (id < 0 || id >= rowOfInstance.length || rowOfInstance[id] === -1) { clearSpotlight(); return; }
+  spotlightRow(rowOfInstance[id], id);
+}
+
+function spotlightRow(rowIdx, instId) {
+  spotlightId = instId;
+  const row = DATA.S[rowIdx];
+  const project = LK.projects[row[IDX.S.project]];
+  const kind = LK.kinds[row[IDX.S.kind]];
+  const model = LK.models[row[IDX.S.model]] || "(unknown)";
+  const date = DATA.days[row[IDX.S.dayIdx]];
+  document.getElementById("d-title").textContent = canonicalProjectName(project) || project;
+  document.getElementById("d-body").innerHTML =
+    `<dt>Kind</dt><dd>${esc(kind)}</dd>` +
+    `<dt>Started</dt><dd>${esc(date)} ${fmtClock(row[IDX.S.startSec])} local</dd>` +
+    `<dt>Wall time</dt><dd>${fmtDur(row[IDX.S.durSec])}</dd>` +
+    `<dt>Engaged</dt><dd>${fmtDur(row[IDX.S.engagedSec])}</dd>` +
+    `<dt>Cost</dt><dd>${fmtUSD(row[IDX.S.costMilli] / 1000)}</dd>` +
+    `<dt>Model</dt><dd>${esc(model)}</dd>`;
+  document.getElementById("detail").classList.add("show");
+  // fly the camera target toward the selected box without resetting zoom/angle
+  const seg = { dayIdx: row[IDX.S.dayIdx], startSec: row[IDX.S.startSec], endSec: row[IDX.S.startSec] + Math.min(row[IDX.S.durSec], DAY_SECONDS) };
+  camTarget = segCenter(seg);
+}
+function clearSpotlight() {
+  spotlightId = -1;
+  document.getElementById("detail").classList.remove("show");
+}
+
+/* -------------------------------------------------------------- draw */
+function drawScene(pickMode) {
+  gl.useProgram(program);
+  gl.bindVertexArray(vao);
+  const vp = computeViewProj(glCanvas.width / glCanvas.height);
+  gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProj"), false, vp);
+  gl.uniform1f(gl.getUniformLocation(program, "uPickMode"), pickMode ? 1 : 0);
+  gl.uniform1f(gl.getUniformLocation(program, "uSelected"), spotlightId);
+  gl.uniform1f(gl.getUniformLocation(program, "uHasSelection"), spotlightId >= 0 ? 1 : 0);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, cubeVertCount, instanceCount);
+  gl.bindVertexArray(null);
+}
+
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(glCanvas.clientWidth * dpr), h = Math.round(glCanvas.clientHeight * dpr);
+  if (glCanvas.width !== w || glCanvas.height !== h) {
+    glCanvas.width = w; glCanvas.height = h;
+    if (gl) resizePickTarget();
+  }
+}
+
+function frame() {
+  resizeCanvas();
+  gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  if (instanceCount) drawScene(false);
+  requestAnimationFrame(frame);
+}
+
+function showFallback() {
+  const notice = document.createElement("div");
+  notice.id = "fallback";
+  notice.innerHTML = `<div class="inner"><h1>3D isn&#39;t available here</h1>` +
+    `<p>This browser (or this headless run) has no WebGL2 context.</p>` +
+    `<p>Try <code>claude-code-dashboard-live.html</code>, the 2D companion built alongside this file.</p></div>`;
+  glCanvas.replaceWith(notice);
+}
+
+function boot() {
+  glCanvas = document.getElementById("wall");
+  gl = glCanvas.getContext ? glCanvas.getContext("webgl2") : null;
+  if (!gl) { showFallback(); return; }
+  // initGL() must run BEFORE wirePanel(): wiring the panel fires the first
+  // onFilterChange(), which calls rebuildInstances() -- that needs instBuf
+  // and program to already exist.
+  initGL();
+  wirePanel();
+  resizeCanvas();
+  initCamera();
+  wireInput();
+  requestAnimationFrame(frame);
+}
+
+// A boot() failure (an unsupported WebGL2 extension, a stubbed test DOM
+// missing a method) must never leave a blank page with a silent console
+// error -- fall back to the plain-HTML notice either way.
+try {
+  boot();
+} catch (err) {
+  console.error("daywall boot() failed: " + err);
+  try { showFallback(); } catch (_e2) { /* even the fallback DOM is unavailable -- give up quietly */ }
+}
+</script>
+</body></html>
