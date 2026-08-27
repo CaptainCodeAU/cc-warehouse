@@ -26,6 +26,12 @@ html{scroll-behavior:smooth}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
   font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
 .wrap{max-width:1280px;margin:0 auto;padding:0 28px 96px}
+/* The header used to share `.wrap`, whose 96px bottom padding exists for the
+   PANELS wrap at the very bottom of the page - reused on the header it just
+   opened a dead gap above the filter bar. Same max-width/centering/side
+   padding, zero bottom padding of its own (`.mast` already has the 28px it
+   needs via its own padding). */
+.mast-wrap{max-width:1280px;margin:0 auto;padding:0 28px}
 b{font-weight:700;color:var(--ink)}
 code{font-family:var(--mono);font-size:.88em;background:var(--code);padding:1px 4px}
 
@@ -90,7 +96,11 @@ input[type=date]{font-family:var(--mono);font-size:13px;background:var(--panel);
 .kind-item.checked{color:var(--ink)}
 .kind-item .kind-n{color:var(--ink2)}
 .kind-item.checked .kind-n b{color:var(--signal)}
-.f-note{font-family:var(--mono);font-size:11.5px;color:var(--ink2);max-width:900px}
+.info-tip{display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;border-radius:50%;border:1px solid var(--ink2);
+  color:var(--ink2);font-family:var(--mono);font-size:10px;line-height:1;
+  cursor:help;flex-shrink:0}
+.info-tip:hover{color:var(--ink);border-color:var(--ink)}
 
 /* `top` is set from JS (setNavTop() below), measured off the filterbar's own
    real height rather than a hardcoded number - the filterbar's height can
@@ -180,7 +190,7 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="mast-wrap">
 <header class="mast">
   <p class="kicker" id="mast-kicker">Claude Code usage &middot; live, filterable</p>
   <h1>.cc-warehouse<br><em>/ stats</em></h1>
@@ -218,13 +228,13 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
     <div class="f-row">
       <div class="f-group kind-group" id="kind-group">
         <span class="f-label">Include</span>
+        <span class="info-tip" data-tip="Sub-agent runs aren't a checkbox: cost/token/tool panels always include them, hours/session panels never do (a sub-agent's time sits inside its parent session's own clock, so counting it again would double-count minutes).">i</span>
         <label class="kind-item" data-kind="mine">
           <input type="checkbox" id="kind-mine">my sessions <span class="kind-n" id="kind-n-mine"></span>
         </label>
-        <label class="kind-item" data-kind="automated">
+        <label class="kind-item" data-kind="automated" data-tip="Hook and auto-titling calls Claude Code fires by itself, not something you ran (a few seconds each, zero tool calls). Off by default; the number shown is what ticking this would add.">
           <input type="checkbox" id="kind-automated">automated one-shots <span class="kind-n" id="kind-n-automated"></span>
         </label>
-        <span class="f-note">Sub-agent runs are handled automatically per chart: cost/token/tool panels always include them, hours/session panels never do &mdash; a sub-agent's time is spent inside its parent session's own clock time, so counting it separately would double-count the same minutes.</span>
       </div>
     </div>
   </div>
