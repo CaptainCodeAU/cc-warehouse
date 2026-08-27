@@ -14,18 +14,16 @@ tested per the operator's real-browser bar (not `pytest` alone). Full account:
 runs through a per-page block cache (`_BlockCache`) - `_render_block` is a thin
 cache-check wrapper, `_render_block_uncached` holds the real logic.
 
-**A second thing is also on the table, raised 2026-08-27 but explicitly NOT started -
-the operator wants it PLANNED in a fresh session before any code is written:** a
-companion 3D/WebGL page for the ccstats corpus, alongside the existing 2D
-`claude-code-dashboard-live.html`. Inspiration was a different project's 3D artifact
-("Estate Orbit") - the operator liked its visual/interaction quality (drag-rotate/pan/
-zoom, click-to-spotlight, a live filter panel), explicitly NOT its node/link data model
-(planets/hubs/moons was one example, not a spec). Wants this designed ground-up for what
-ccstats data actually is, with outside-the-box thinking welcome. Before planning, read
-`tools/ccstats/README.md`, `tools/ccstats/PANEL-CONTRACT.md`, and
-`tools/ccstats/dashboard_template.html` for what already exists; keep this project's own
-house rules (self-contained HTML, no CDN, never commit/upload the output, put every real
-fork to the operator as a table + a direct question).
+**The 3D/WebGL ccstats companion page (raised 2026-08-27) is DONE, 2026-08-28.**
+`tools/ccstats/daywall.py` + `daywall_template.html` build `claude-code-daywall.html`: one
+box per session on a hand-rolled WebGL2 canvas (no library, matching the 2D page's own
+rule), positioned by calendar day and hour, stacked into concurrency lanes, with gold
+thread-beads for the 2,008 real sub-agent-to-parent edges. `/daywall` builds and serves it
+(mirrors `/dashboard`, shares its `dashboard-defaults.json`). Verified against the real
+corpus (8,682 sessions) in a real Chrome tab - rotate/pan/zoom, click-to-spotlight, every
+filter, zero console errors - and against a headless Node probe (9 tests) for the page's
+pure-data half. Full account: `harness/HANDOFFS.md`'s twentieth handoff, and
+`tools/ccstats/README.md`'s "The 3D companion page" section.
 
 **Standing backlog candidates, none picked yet** (ticket 28's other open items):
 secret redaction on personal projections (28.2), test gaps (28.10), markdown/HTML for

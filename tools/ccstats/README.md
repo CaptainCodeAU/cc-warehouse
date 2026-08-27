@@ -156,7 +156,7 @@ filter change so excluding a project closes the gap it leaves rather than leavin
 glow is engaged time as a share of wall time; colour is `mine`/`subagent`/`automated`, the same
 three populations `dashboard_template.html` classifies with `session_kind()`. Thin gold beads
 connect a sub-agent to its parent session where `session.parent_session_uuid` resolves one
-(396 parents, 2,008 children, measured 2026-08-27 - the only real session-to-session edge this
+(396 parents, 2,008 children, measured 2026-08-28 - the only real session-to-session edge this
 dataset has; everything else is hierarchy or a time series, not a graph).
 
 Hand-rolled WebGL2, deliberately no library (matches the 2D page's own no-chart-library rule):

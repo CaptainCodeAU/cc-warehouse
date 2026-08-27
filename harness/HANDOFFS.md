@@ -21,6 +21,66 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twentieth handoff, 2026-08-28 (new session)
+
+Opened by reading `OPENING-PROMPT.md`, then asked the operator which standing candidate to
+pick up. Chose the 3D/WebGL ccstats companion page (raised 2026-08-27, explicitly not
+started - the operator wanted it PLANNED first). Entered Plan Mode rather than starting
+straight into code, per that instruction.
+
+**Research before designing.** Two Explore agents in parallel read `collect.py`,
+`dashboard.py`, `common.py` for the exact schema and reusable machinery; measured the
+REAL corpus read-only (`~/.cc-warehouse/stats/sessions.sqlite`) rather than trusting the
+README's prose: 26,403 sessions (4,042 mine / 20,353 automated / 2,008 sub-agent), 163
+days, peak 28 concurrent sessions, longest session 33.5 days. Read the "Estate Orbit"
+artifact the operator named as inspiration (a governance-graph 3D page using the bundled
+`ForceGraph3D` library, TrackballControls, WASD/space-pan camera conventions) for its
+INTERACTION quality, explicitly not its node/link data model - confirmed via
+`parent_session_uuid` that ccstats has exactly one real session-to-session edge (396
+parents, 2,008 sub-agent children) and is otherwise a time-interval population, not a
+graph. Put two forks to the operator with an ASCII preview each (shape: Day Wall vs.
+Project City vs. Swarm; renderer: hand-rolled WebGL2 vs. vendoring three.js) - Day Wall +
+hand-rolled won both, matching the 2D page's own no-chart-library rule.
+
+**Plan written to `Plans/spicy-spinning-pancake.md`** (gitignored, per this repo's own
+`.gitignore` for `Plans/`), approved, then built test-first: `tests/test_daywall.py` (19
+oracle tests) written BEFORE `daywall.py` existed, per this project's own rule. While
+designing the payload found and fixed a real bug before it shipped: a `Lookup` over
+`local_date` in first-seen order would silently SKIP a calendar day with zero sessions,
+which would misalign every later day of a multi-day session once the browser-side
+`dayIdx + 1` arithmetic crossed the gap - `days[]` is now a full contiguous date range,
+not just the populated ones, with its own oracle test.
+
+**Built:** `tools/ccstats/daywall.py` (its own slim 8-column payload, not an extension of
+`dashboard.build_payload`; the `session_uuid` join is scoped to `is_subagent = 0` on the
+parent side, since a sub-agent row carries its PARENT's uuid, not its own - the naive
+join was measured to produce 35,471 spurious pairs), `daywall_template.html` (one box per
+session on a WebGL2 canvas, positioned by day/hour, stacked into concurrency lanes
+re-packed fresh on every filter change, hand-rolled camera + offscreen-framebuffer
+picking, no library), `tests/node/daywall_probe.js` + `tests/test_daywall_headless.py` (9
+tests exercising the page's real generated `<script>` block's pure-data half under Node,
+mirroring `dashboard_probe.js`'s existing pattern), and `.claude/commands/daywall.md`
+(mirrors `/dashboard`'s shape, shares its `dashboard-defaults.json` read-only rather than
+duplicating the edit flow).
+
+**Verified against the real corpus in a real Chrome tab**, not just `pytest` (this
+project's own bar, ticket 28.9): built to a scratch `CCSTATS_OUT` first, served over
+loopback, and found ONE real bug that no test had caught - `#wall{position:fixed;inset:0}`
+does NOT stretch a `<canvas>` (a replaced element) the way it stretches a `<div>`; the
+canvas stayed at its intrinsic 300x150 default and every box rendered off in the
+literally-zero-sized viewport. Diagnosed via `getBoundingClientRect()` and
+`getComputedStyle()` through `javascript_tool`, fixed with an explicit `width:100vw;
+height:100vh`. After the fix: rotate/pan/zoom, click-to-spotlight (populated a real
+session's project/kind/timestamps/cost/model correctly), every kind/project filter
+checkbox, Reset, and Escape all confirmed working against all 8,682 real sessions, zero
+console errors throughout. The scratch corpus copy (141 MB, real private data) was
+deleted afterward; the real `~/.cc-warehouse/stats/` was never touched.
+
+Committed and pushed (`0d41d3d`) after a targeted personal-data check on the 7 new/changed
+files (clean). Full suite re-confirmed green after (161 ccstats tests, repo-wide ruff, the
+1,198-test repo oracle suite). `OPENING-PROMPT.md`'s "Next task" section updated to close
+this out and point at `/daywall`.
+
 ### Nineteenth handoff, 2026-08-27 (new session)
 
 Opened by reading this file (the eighteenth handoff, below), then asked the operator

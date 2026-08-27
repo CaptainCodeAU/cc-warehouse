@@ -70,7 +70,7 @@ DATA_MARKER = "/*__CCSTATS_DATA_JSON__*/"
 
 def _tz_offset_minutes(tz_offset: str | None) -> int:
     """`+1000` -> 600, `-0530` -> -330. Malformed or absent -> 0 (UTC): real
-    corpus fact (verified 2026-08-27), 0 of 8,682 real sessions have a null
+    corpus fact (verified 2026-08-28), 0 of 8,682 real sessions have a null
     tz_offset, so this fallback is a safety net, not a live path."""
     if not tz_offset or len(tz_offset) < 5:
         return 0
@@ -173,7 +173,7 @@ def build_daywall_payload(
     # row carries its PARENT's session_uuid, not its own (real corpus fact,
     # 2,007 of 2,008 rows), so matching on session_uuid alone pairs every
     # sub-agent against every other sub-agent sharing that uuid too --
-    # measured 2026-08-27, 35,471 spurious pairs on the real corpus. Matching
+    # measured 2026-08-28, 35,471 spurious pairs on the real corpus. Matching
     # `parent_session_uuid` against the PARENT ROW's own `session_uuid`
     # (built only from is_subagent = 0 rows, above) avoids it entirely.
     P: list[list[int]] = [

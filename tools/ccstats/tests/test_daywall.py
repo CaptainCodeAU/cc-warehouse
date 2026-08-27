@@ -230,7 +230,7 @@ def test_the_naive_join_bug_does_not_reappear() -> None:
     session_uuid, not its own. A join on session_uuid alone (without also
     requiring is_subagent = 0 on the parent side) matches every sub-agent
     against every OTHER sub-agent sharing that uuid too. Real corpus measured
-    2026-08-27: the naive join produced 35,471 spurious pairs. Three
+    2026-08-28: the naive join produced 35,471 spurious pairs. Three
     sub-agents sharing one parent must yield exactly 3 edges, never 3x3."""
     conn = _make_db()
     _insert(
