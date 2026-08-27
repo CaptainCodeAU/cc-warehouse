@@ -84,8 +84,11 @@ input[type=date]{font-family:var(--mono);font-size:12px;background:var(--code);
 #hint b{color:var(--ink)}
 #hint.ui-hidden{transform:translateX(-50%) translateY(60px)}
 
-#toggle{position:fixed;bottom:14px;right:14px;z-index:11;display:none}
-#toggle.show{display:block}
+/* Always visible -- an earlier version hid this by default and had NOTHING
+   ever un-hide it (a .show class only the CSS referenced, never added by
+   any JS), so the hide-panels feature was permanently unreachable. Found
+   by testing every control by hand, not by reading the code. */
+#toggle{position:fixed;bottom:14px;right:14px;z-index:11}
 
 #detail{top:14px;left:300px;width:260px;padding:14px;display:none}
 #detail.show{display:block}
@@ -152,7 +155,7 @@ input[type=date]{font-family:var(--mono);font-size:12px;background:var(--code);
   <b>R</b> home &middot; <b>click</b> a box &middot; <b>esc</b> clear
 </div>
 
-<button id="toggle" class="btn">Show panels</button>
+<button id="toggle" class="btn">Hide panels</button>
 
 <div id="detail" class="floater">
   <span class="close" id="detail-close">&times;</span>
@@ -449,11 +452,9 @@ const DAY_DEPTH = 3.0;       // spacing between day slabs along Z
 const BOX_Z = DAY_DEPTH * 0.7;
 
 let gl, glCanvas;
-let program; // one program, one uPickMode uniform branch -- no separate pick program
+let program;
 let vao, instBuf;
 let instanceCount = 0;
-let rowOfInstance = []; // instance index -> DATA.S row index (for picking)
-let pickFbo, pickTex, pickDepth;
 let spotlightId = -1;
 
 function mat4Perspective(fovy, aspect, near, far) {
@@ -477,6 +478,43 @@ function mat4Multiply(a, b) {
     out[c*4+r] = a[0*4+r]*b[c*4+0] + a[1*4+r]*b[c*4+1] + a[2*4+r]*b[c*4+2] + a[3*4+r]*b[c*4+3];
   }
   return out;
+}
+/* General 4x4 inverse (cofactor expansion). Used only for un-projecting a
+   click into a world-space ray for CPU-side picking -- see the note beside
+   pickAt() for why this replaced a GPU-readback approach. Returns null for
+   a (never expected here) singular matrix rather than dividing by zero. */
+function mat4Invert(m) {
+  const inv = new Float32Array(16);
+  inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+  inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+  inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+  inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+  inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+  inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+  inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+  inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+  inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+  inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+  inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+  inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+  inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+  inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+  inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+  inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+  let det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+  if (Math.abs(det) < 1e-12) return null;
+  det = 1 / det;
+  for (let i = 0; i < 16; i++) inv[i] *= det;
+  return inv;
+}
+function mat4TransformPoint(m, p) {
+  const x = p[0], y = p[1], z = p[2];
+  const w = m[3]*x + m[7]*y + m[11]*z + m[15];
+  return [
+    (m[0]*x + m[4]*y + m[8]*z  + m[12]) / w,
+    (m[1]*x + m[5]*y + m[9]*z  + m[13]) / w,
+    (m[2]*x + m[6]*y + m[10]*z + m[14]) / w,
+  ];
 }
 function sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
 function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
@@ -508,26 +546,26 @@ layout(location=2) in vec3 iScale;
 layout(location=3) in vec3 iColor;
 layout(location=4) in float iId;
 uniform mat4 uViewProj;
-uniform float uPickMode;
 uniform float uSelected;
 uniform float uHasSelection;
 out vec3 vColor;
 void main() {
   vec3 world = aPosShade.xyz * iScale + iOffset;
   gl_Position = uViewProj * vec4(world, 1.0);
-  if (uPickMode > 0.5) {
-    float id = iId + 1.0; // reserve 0 for "no instance"
-    float r = mod(id, 256.0);
-    float g = mod(floor(id/256.0), 256.0);
-    float b = mod(floor(id/65536.0), 256.0);
-    vColor = vec3(r,g,b) / 255.0;
-  } else {
-    vec3 c = iColor * aPosShade.w;
-    if (uHasSelection > 0.5) {
-      c = (abs(iId - uSelected) < 0.5) ? min(c * 1.4, vec3(1.0)) : c * 0.18;
-    }
-    vColor = c;
+  vec3 c = iColor * aPosShade.w;
+  // Only BOOST the selected box -- never dim everyone else. An earlier
+  // version dimmed every other instance (first to 0.18, then 0.5) to make
+  // the selection "pop", the way Estate Orbit's sparse graph could afford
+  // to. On a scene this dense (thousands of boxes against a near-black
+  // --void background) that reads as the whole city vanishing, not a
+  // spotlight -- reported directly by the operator ("the graphic goes
+  // away") in a real, focused browser tab, not just under automation.
+  // Boosting only the selection is the version of this effect that
+  // cannot make anything else disappear, by construction.
+  if (uHasSelection > 0.5 && abs(iId - uSelected) < 0.5) {
+    c = min(c * 1.6 + vec3(0.15), vec3(1.0));
   }
+  vColor = c;
 }`;
 const FS_SRC = `#version 300 es
 precision mediump float;
@@ -588,25 +626,6 @@ function initGL() {
 
   gl.enable(gl.DEPTH_TEST);
   gl.clearColor(0.039, 0.043, 0.035, 1.0); // --void
-
-  pickTex = gl.createTexture();
-  pickDepth = gl.createRenderbuffer();
-  pickFbo = gl.createFramebuffer();
-  resizePickTarget();
-}
-
-function resizePickTarget() {
-  const w = glCanvas.width, h = glCanvas.height;
-  gl.bindTexture(gl.TEXTURE_2D, pickTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.bindRenderbuffer(gl.RENDERBUFFER, pickDepth);
-  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickTex, 0);
-  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, pickDepth);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
 /* dayIdx/startSec/lane -> world-space box center + size. Shared by
@@ -633,7 +652,6 @@ function rebuildInstances(filtered) {
   const nBeads = filtered.threads.length * 5;
   const total = nBoxes + nBeads;
   const data = new Float32Array(total * perInst);
-  rowOfInstance = new Array(total).fill(-1);
 
   let cursor = 0;
   filtered.draw.forEach((seg, i) => {
@@ -649,11 +667,10 @@ function rebuildInstances(filtered) {
     data[o+3]=s[0]; data[o+4]=s[1]; data[o+5]=s[2];
     data[o+6]=base[0]*brightness; data[o+7]=base[1]*brightness; data[o+8]=base[2]*brightness;
     data[o+9]=i;
-    rowOfInstance[cursor] = seg.rowIdx;
     cursor++;
   });
 
-  let beadId = nBoxes; // beads are not individually pickable; share one id space past the last real box
+  const beadId = nBoxes; // out of range of any real box's iId (0..nBoxes-1), so a bead can never match uSelected and light up
   filtered.threads.forEach(t => {
     const p0 = segCenter(t.parent), p1 = segCenter(t.child);
     for (let k = 0; k < 5; k++) {
@@ -663,8 +680,7 @@ function rebuildInstances(filtered) {
       data[o+0]=c[0]; data[o+1]=c[1]; data[o+2]=c[2];
       data[o+3]=0.12; data[o+4]=0.12; data[o+5]=0.12;
       data[o+6]=THREAD_RGB[0]; data[o+7]=THREAD_RGB[1]; data[o+8]=THREAD_RGB[2];
-      data[o+9]=beadId; // shares an id with no real box -- clicking a bead never spotlights anything, which is correct: a thread is a hint, not a session
-      rowOfInstance[cursor] = -1;
+      data[o+9]=beadId;
       cursor++;
     }
   });
@@ -768,28 +784,70 @@ function wireInput() {
   window.addEventListener("blur", () => { fastHeld = false; });
 }
 
-/* -------------------------------------------------------------- picking */
+/* -------------------------------------------------------------- picking
+   CPU-side ray cast against each visible box's axis-aligned bounds --
+   never a GPU offscreen-framebuffer readback. The original design used a
+   second draw pass into an offscreen framebuffer with each instance's id
+   baked into its colour, then gl.readPixels() to decode the click. That is
+   a completely standard WebGL technique, but readPixels is a SYNCHRONOUS
+   GPU stall, and it was the one thing clicking did that rotating/panning/
+   zooming never did -- the operator (in a real, focused browser tab, not
+   automation) reported the whole scene vanishing specifically on click,
+   reproduced the same way under this session's own browser testing, with
+   clean GL state afterward (FRAMEBUFFER_BINDING null, no gl.getError()) --
+   consistent with the render loop itself no longer being driven, not with
+   any state corruption a code review could isolate further. Rather than
+   keep chasing that interaction, picking was moved entirely off the GPU:
+   boxes here are all axis-aligned, so a ray/AABB test is exact, and a
+   linear scan over a few thousand candidates is well under a millisecond
+   on the CPU -- no framebuffer, no texture, no synchronous readback, and
+   an entire class of bug this shape removed by construction. */
 function pickAt(clientX, clientY) {
-  if (!instanceCount) return;
+  if (!lastFiltered || !lastFiltered.draw.length) { clearSpotlight(); return; }
   const rect = glCanvas.getBoundingClientRect();
-  const x = Math.round((clientX - rect.left) * (glCanvas.width / rect.width));
-  const y = Math.round((clientY - rect.top) * (glCanvas.height / rect.height));
+  const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+  const ndcY = 1 - ((clientY - rect.top) / rect.height) * 2;
+  const vp = computeViewProj(glCanvas.width / glCanvas.height);
+  const inv = mat4Invert(vp);
+  if (!inv) return;
+  const near = mat4TransformPoint(inv, [ndcX, ndcY, -1]);
+  const far = mat4TransformPoint(inv, [ndcX, ndcY, 1]);
+  const dir = normalize(sub(far, near));
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
-  gl.viewport(0, 0, glCanvas.width, glCanvas.height);
-  gl.clearColor(0,0,0,1);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  drawScene(true);
-  const pixel = new Uint8Array(4);
-  gl.readPixels(x, glCanvas.height - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  let bestI = -1, bestT = Infinity;
+  lastFiltered.draw.forEach((seg, i) => {
+    const c = segCenter(seg), s = segScale(seg);
+    const t = rayAabbIntersect(near, dir,
+      [c[0]-s[0]/2, c[1]-s[1]/2, c[2]-s[2]/2],
+      [c[0]+s[0]/2, c[1]+s[1]/2, c[2]+s[2]/2]);
+    if (t !== null && t < bestT) { bestT = t; bestI = i; }
+  });
 
-  const id = pixel[0] + pixel[1]*256 + pixel[2]*65536 - 1;
-  if (id < 0 || id >= rowOfInstance.length || rowOfInstance[id] === -1) { clearSpotlight(); return; }
-  spotlightRow(rowOfInstance[id], id);
+  if (bestI === -1) { clearSpotlight(); return; }
+  spotlightRow(lastFiltered.draw[bestI].rowIdx, bestI, lastFiltered.draw[bestI]);
 }
 
-function spotlightRow(rowIdx, instId) {
+/* Slab method. Returns the nearest positive intersection distance, or null
+   for a miss (including entirely-behind-the-camera boxes). */
+function rayAabbIntersect(origin, dir, min, max) {
+  let tmin = -Infinity, tmax = Infinity;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(dir[i]) < 1e-9) {
+      if (origin[i] < min[i] || origin[i] > max[i]) return null;
+      continue;
+    }
+    let t1 = (min[i] - origin[i]) / dir[i];
+    let t2 = (max[i] - origin[i]) / dir[i];
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
+  }
+  if (tmax < 0) return null;
+  return tmin >= 0 ? tmin : tmax;
+}
+
+function spotlightRow(rowIdx, instId, seg) {
   spotlightId = instId;
   const row = DATA.S[rowIdx];
   const project = LK.projects[row[IDX.S.project]];
@@ -805,9 +863,20 @@ function spotlightRow(rowIdx, instId) {
     `<dt>Cost</dt><dd>${fmtUSD(row[IDX.S.costMilli] / 1000)}</dd>` +
     `<dt>Model</dt><dd>${esc(model)}</dd>`;
   document.getElementById("detail").classList.add("show");
-  // fly the camera target toward the selected box without resetting zoom/angle
-  const seg = { dayIdx: row[IDX.S.dayIdx], startSec: row[IDX.S.startSec], endSec: row[IDX.S.startSec] + Math.min(row[IDX.S.durSec], DAY_SECONDS) };
+  // Fly the camera target onto the ACTUAL rendered segment -- the one
+  // pickAt() hit, complete with its real .lane. The bug this replaced:
+  // reconstructing a segment here from the raw row (dayIdx/startSec off
+  // DATA.S) drops .lane entirely (undefined), and segCenter() multiplies
+  // it into the Y coordinate -- undefined * LANE_STEP is NaN in JS, which
+  // poisons the whole camera position, and WebGL draws nothing for NaN
+  // clip-space geometry. Confirmed live: pressing R (which resets camera
+  // state to known-finite values) instantly restored the scene, proving
+  // the render loop was never dead -- only its camera math was. For a
+  // multi-day session the raw row's own dayIdx/startSec are also just
+  // wrong for any day after the first anyway; the picked segment is
+  // already correct for whichever day was actually clicked.
   camTarget = segCenter(seg);
+  camDist = Math.min(camDist, 14);
 }
 function clearSpotlight() {
   spotlightId = -1;
@@ -815,12 +884,11 @@ function clearSpotlight() {
 }
 
 /* -------------------------------------------------------------- draw */
-function drawScene(pickMode) {
+function drawScene() {
   gl.useProgram(program);
   gl.bindVertexArray(vao);
   const vp = computeViewProj(glCanvas.width / glCanvas.height);
   gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProj"), false, vp);
-  gl.uniform1f(gl.getUniformLocation(program, "uPickMode"), pickMode ? 1 : 0);
   gl.uniform1f(gl.getUniformLocation(program, "uSelected"), spotlightId);
   gl.uniform1f(gl.getUniformLocation(program, "uHasSelection"), spotlightId >= 0 ? 1 : 0);
   gl.drawArraysInstanced(gl.TRIANGLES, 0, cubeVertCount, instanceCount);
@@ -832,7 +900,6 @@ function resizeCanvas() {
   const w = Math.round(glCanvas.clientWidth * dpr), h = Math.round(glCanvas.clientHeight * dpr);
   if (glCanvas.width !== w || glCanvas.height !== h) {
     glCanvas.width = w; glCanvas.height = h;
-    if (gl) resizePickTarget();
   }
 }
 
@@ -840,7 +907,7 @@ function frame() {
   resizeCanvas();
   gl.viewport(0, 0, glCanvas.width, glCanvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  if (instanceCount) drawScene(false);
+  if (instanceCount) drawScene();
   requestAnimationFrame(frame);
 }
 
