@@ -1,6 +1,7 @@
 """Fence: the exact substrings `ccw-watch` (a DIFFERENT repo) depends on.
 
-Contract: `CLAUDE.md` ticket 28.22 / `OPENING-PROMPT.md` item 5. `~/.local/bin/
+Contract: `CLAUDE.md` ticket 28.22 / `harness/tickets/28-backlog.md`'s 28.22 entry.
+`~/.local/bin/
 ccw-watch` (fifty-shades-of-dotfiles, not this repo) runs `ccw doctor` at every
 Claude Code SessionStart and parses its text with shell regex. Nothing else in
 this suite protects that shape: a reformat of doctor's wording can break that
