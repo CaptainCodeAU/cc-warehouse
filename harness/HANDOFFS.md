@@ -21,6 +21,71 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Nineteenth handoff, 2026-08-27 (new session)
+
+Opened by reading this file (the eighteenth handoff, below), then asked the operator
+which of the standing backlog candidates to pick up. The operator instead asked to check
+the previous session's last few messages for context - a 3D/WebGL ccstats dashboard idea,
+raised but not started (see "Next task" in `OPENING-PROMPT.md`). Retrieved it by reading
+the previous session's own transcript directly (`~/.claude/projects/.../*.jsonl`), not
+guessed. Having seen that, the operator immediately flagged a more pressing problem:
+`OPENING-PROMPT.md` itself had grown to 1,930 lines, mixing a chronological log of past
+sessions with what a fresh session actually needs, and asked for a restructure plan
+before any of it ran.
+
+**This whole file is the result.** Mapped the original file's structure with a forked
+sub-agent first (found 94% of it was closed-ticket writeups and past-session narrative,
+only ~6% live/actionable). Two design forks were put to the operator directly: handoff-log
+order (newest-first, chosen) and where to put the closed ccstats/dashboard writeups that
+had no ticket file to live in (a new file next to the code, `tools/ccstats/HISTORY.md`,
+chosen). The full plan was then confirmed with the operator before any file changed.
+
+Shipped, verified line-for-line against the original before anything was deleted:
+- **`harness/HANDOFFS.md`** (this file) - the session log, newest first, with real `###`
+  headers. Also reconstructed the "seventeenth handoff", which had never had a dated
+  entry of its own - it only existed as a status block inside the old ACTIVE TASK section.
+- **`harness/GOTCHAS.md`** - the 5 recurring environment gotchas (was mislabeled "two
+  environment facts" while actually holding five).
+- **`tools/ccstats/HISTORY.md`** - the closed ccstats/dashboard build history.
+- **`harness/tickets/28-backlog.md`**'s 28.9 entry gained the unique investigation detail
+  that only lived in `OPENING-PROMPT.md` (the measurement table, stage-isolated peaks,
+  the three repro-script names, the operator-approved 4-step test plan) and had a real
+  self-contradiction fixed - the entry said "NOT YET IMPLEMENTED" a few paragraphs above
+  its own "fully DONE" closing line.
+- **`tests/test_doctor_external_contract.py`**'s docstring, which cited an
+  `OPENING-PROMPT.md` section number that was about to move, repointed at the ticket file.
+- **`OPENING-PROMPT.md`** itself cut from 1,930 to about 100 lines, keeping only current
+  status, the open backlog, and a "Where else to look" index. A "Keep it this way" section
+  was added specifically because explaining what moved isn't enough on its own - without
+  an explicit instruction, the natural next move is writing a new narrative paragraph
+  straight back into it, recreating the exact bloat this session fixed.
+
+Verified, not assumed: every extracted block was diffed byte-for-byte against the
+original `OPENING-PROMPT.md` content before it was deleted from there (all matched except
+two intentional pointer-text edits, both fixing dangling references to the old "Two
+environment facts" section name). Full suite green after every change (1,197 main-repo
+tests + 132 ccstats tests passed, ruff clean); a repo-wide census (not grep - the
+project's own `census.py`, control-verified) confirmed only 3 harmless historical
+mentions of "OPENING-PROMPT" remained repo-wide, and the two real inbound pointers
+(`harness/tickets/28-backlog.md`, `tests/test_doctor_external_contract.py`) were both
+fixed. Five commits, all pushed: `003f6fb` (new files), `6e209ab` (ticket 28.9 merge),
+`ad5bdd5` (test docstring fix), `a2502f7` (slim `OPENING-PROMPT.md`), `e9cd551` ("Keep it
+this way" section).
+
+**Also updated, outside this repo: this session's own persistent memory** (the project's
+Claude-memory directory). Two existing memory files cited "OPENING-PROMPT.md environment
+notes" by name - fixed to point at `harness/GOTCHAS.md` instead. Saved a new memory,
+`opening-prompt-is-an-index-not-a-log.md`, recording the new convention so a future
+session doesn't recreate this same bloat out of habit rather than by reading the file
+carefully every time.
+
+**What was NOT done:** the 3D/WebGL ccstats dashboard idea (see "Next task" in
+`OPENING-PROMPT.md`) - explicitly deferred to a new session, per the operator's own
+request, both before and after this restructure. Nothing from ticket 28's remaining
+backlog (28.2/28.10/28.11/28.12/28.14) or `ccw share --open` was touched.
+
+---
+
 ### Eighteenth handoff, 2026-08-27
 
 **Eighteenth handoff, 2026-08-27 (new session).** Opened by reading this file, then the operator
