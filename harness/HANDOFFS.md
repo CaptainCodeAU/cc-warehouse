@@ -84,6 +84,49 @@ carefully every time.
 request, both before and after this restructure. Nothing from ticket 28's remaining
 backlog (28.2/28.10/28.11/28.12/28.14) or `ccw share --open` was touched.
 
+**Same session, continued afterward: the restructure above was proved with a real Herdr
+test, not just trusted.** The operator asked for a genuinely fresh Claude Code session,
+launched in a sibling Herdr pane with no context from this conversation, to be driven
+with the real opening command ("Read OPENING-PROMPT.md and follow instructions") and
+watched for gaps. None were found: it correctly read the new ~100-line file, said nothing
+was active, listed both the 3D-dashboard idea and the backlog, recommended the former
+(matching the file's own framing), and - when told to actually start - read the right
+background files (`tools/ccstats/README.md`, `PANEL-CONTRACT.md`) before entering Plan
+Mode on its own, exactly matching this project's convention. Stopped there on purpose;
+letting a full planning run happen unsupervised was out of scope for a structure test.
+
+**A second, unrelated thing came out of that test: real gaps in how to drive Herdr
+itself**, found by hitting them firsthand while running the test (not from docs). Three
+real errors, each with a genuine root cause, not flukes:
+- `agent_pane_busy` right after `pane split` - a freshly split pane runs its own shell
+  startup/onboarding script first and is not yet "available"; guessing a sleep duration
+  is the wrong fix.
+- `agent_prompt_stalled` on `agent prompt --wait` - Herdr's own 5-second "did it start
+  working" grace period is shorter than this environment's real per-turn overhead
+  (session hooks, skill loading, a custom status line), so a healthy prompt can still
+  trip the check.
+- `herdr pane close --pane <id>` is a syntax error - `pane close` is the one `pane`
+  subcommand that wants a bare positional ID, unlike most siblings that accept `--pane`.
+
+All three, plus the general "wait via Herdr's own event system, never poll" pattern
+(proved with a real 8-second measured block through a background Monitor task, not
+assumed), were written up and folded into the actual places a reader already looks -
+**`~/.claude/skills/herdr/SKILL.md`** (global, loads automatically whenever Herdr is
+used, any project) and a short pointer added to **`~/.claude/PAI/USER/AISTEERINGRULES.md`**
+(global, loads every session). Neither file lives in this repo; noted here only because
+the work happened in this session and because a future cc-warehouse session driving
+Herdr benefits from knowing it's already fixed upstream, not because cc-warehouse owns
+either file. A stronger rule was added after discussion: never close a pane on
+`agent_status: idle` alone, since a false-early idle (a known, still-unfixed Herdr
+nested-TUI quirk) plus an immediate close would silently and unrecoverably kill real,
+still-running work.
+
+**Verified twice, not once.** The same nested Herdr test (a fresh agent launching its
+OWN fresh agent and waiting on it correctly) was re-run after the skill-file fix: zero
+errors the second time, including on the exact three traps above, on a brand-new agent
+that had only the two updated files to go on - not this conversation's context. Every
+test pane was closed afterward; nothing was left running.
+
 ---
 
 ### Eighteenth handoff, 2026-08-27
