@@ -58,6 +58,8 @@ h2.section:first-of-type{border-top:none;padding-top:0;margin-top:2px}
 .row input{accent-color:var(--signal);flex-shrink:0}
 .row .label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .n{color:var(--ink2);font-size:11px;flex-shrink:0}
+.row .swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.row .glyph{color:var(--ink2);width:12px;text-align:center;flex-shrink:0;font-size:12px}
 input[type=date]{font-family:var(--mono);font-size:12px;background:var(--code);
   border:1px solid var(--rule);padding:4px 6px;color:var(--ink);width:100%}
 .date-row{display:flex;gap:6px;margin-bottom:8px}
@@ -145,7 +147,7 @@ input[type=date]{font-family:var(--mono);font-size:12px;background:var(--code);
 </div>
 
 <div id="legend" class="floater">
-  <p class="cap">Colour = kind &middot; glow = engaged share of wall time</p>
+  <p class="cap">Colour = project (own swatch per project, see the list) &middot; shape = kind &middot; glow = engaged share of wall time</p>
   <div id="legend-items"></div>
 </div>
 
@@ -186,6 +188,39 @@ function canonicalProjectName(label) {
 }
 const CANON_PROJECT = LK.projects.map(canonicalProjectName);
 const CANON_LIST = [...new Set(CANON_PROJECT)].sort((a, b) => a.localeCompare(b));
+
+/* One colour per CANONICAL project name -- keyed the same way the filter
+   checklist is, so a ".claude-worktrees-agent-<hex>" folder always gets
+   its parent project's colour, never its own. Hues are spread with the
+   golden angle (~137.5deg) rather than evenly dividing 360 by the project
+   count: an even split puts hue N right next to hue N+1 for adjacent
+   CANON_LIST entries (alphabetically adjacent project names, which are
+   often visually adjacent in the project list too), while the golden
+   angle keeps successive projects far apart in hue regardless of list
+   length or position. Fixed saturation/lightness keep every swatch
+   readably bright against the near-black --void background. */
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  const c = (1 - Math.abs(2*l - 1)) * s;
+  const x = c * (1 - Math.abs((h*6) % 2 - 1));
+  const m = l - c/2;
+  let r, g, b;
+  if (h < 1/6) [r,g,b] = [c,x,0];
+  else if (h < 2/6) [r,g,b] = [x,c,0];
+  else if (h < 3/6) [r,g,b] = [0,c,x];
+  else if (h < 4/6) [r,g,b] = [0,x,c];
+  else if (h < 5/6) [r,g,b] = [x,0,c];
+  else [r,g,b] = [c,0,x];
+  return [r+m, g+m, b+m];
+}
+const GOLDEN_ANGLE = 137.50776;
+const PROJECT_RGB = {}, PROJECT_HEX = {};
+CANON_LIST.forEach((name, i) => {
+  const [r,g,b] = hslToRgb(i * GOLDEN_ANGLE, 0.55, 0.58);
+  PROJECT_RGB[name] = [r, g, b];
+  const hex = v => Math.round(v*255).toString(16).padStart(2, "0");
+  PROJECT_HEX[name] = "#" + hex(r) + hex(g) + hex(b);
+});
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -328,15 +363,19 @@ const state = {
   threads: true,
 };
 
+/* Colour now belongs to project, not kind (see PROJECT_HEX above) -- kind
+   is shown by SHAPE on the wall (cube/pyramid/diamond), so its checklist
+   rows get a matching glyph instead of a colour swatch. */
+const KIND_GLYPH = { mine: "■", subagent: "▲", automated: "◆" }; // cube square, pyramid triangle, diamond
 function buildKindRows() {
   const box = document.getElementById("kinds");
-  const kindColor = { mine: RGB_HEX.mine, subagent: RGB_HEX.subagent, automated: RGB_HEX.automated };
   LK.kinds.forEach(name => {
     const n = DATA.S.filter(r => LK.kinds[r[IDX.S.kind]] === name).length;
     const row = document.createElement("label");
     row.className = "row";
     row.innerHTML = `<input type="checkbox" checked data-kind="${name}"/>`
-      + `<span class="label" style="color:${kindColor[name]}">${esc(name)}</span>`
+      + `<span class="glyph">${KIND_GLYPH[name] || ""}</span>`
+      + `<span class="label">${esc(name)}</span>`
       + `<span class="n">${fmtInt(n)}</span>`;
     row.querySelector("input").addEventListener("change", e => {
       e.target.checked ? state.kinds.add(KIND_IDX[name]) : state.kinds.delete(KIND_IDX[name]);
@@ -355,6 +394,7 @@ function buildProjectRows(filterText) {
     const row = document.createElement("label");
     row.className = "row";
     row.innerHTML = `<input type="checkbox" ${state.excluded.has(name) ? "" : "checked"}/>`
+      + `<span class="swatch" style="background:${PROJECT_HEX[name]}"></span>`
       + `<span class="label">${esc(name)}</span><span class="n">${fmtInt(n)}</span>`;
     row.querySelector("input").addEventListener("change", e => {
       e.target.checked ? state.excluded.delete(name) : state.excluded.add(name);
@@ -417,7 +457,7 @@ function wirePanel() {
 
   const legend = document.getElementById("legend-items");
   LK.kinds.forEach(name => {
-    legend.innerHTML += `<div class="item"><span class="sw" style="background:${RGB_HEX[name]}"></span>${esc(name)}</div>`;
+    legend.innerHTML += `<div class="item"><span class="sw" style="background:transparent;color:var(--ink);text-align:center;font-size:12px">${KIND_GLYPH[name] || ""}</span>${esc(name)}</div>`;
   });
 
   const floaters = [document.getElementById("panel"), document.getElementById("hint"), document.getElementById("legend")];
@@ -434,15 +474,12 @@ function wirePanel() {
 /* ==================================================================== */
 /* WebGL2 rendering. Guarded: if getContext("webgl2") returns null, the  */
 /* canvas is replaced with a plain-HTML fallback and none of this runs.  */
-/* Colours below MUST match the CSS custom properties above -- a vertex  */
-/* buffer cannot read var(), so they are restated as plain numbers here. */
+/* Box colour is per-project (PROJECT_RGB, generated above from          */
+/* CANON_LIST); kind is shown by SHAPE instead (see the *VertexData()    */
+/* functions below) -- so there is no per-kind colour table here anymore.*/
+/* THREAD_RGB below MUST match --gold -- a vertex buffer cannot read     */
+/* var(), so it is restated as a plain number here.                     */
 /* ==================================================================== */
-const RGB_HEX = { mine: "#DD7565", subagent: "#5EA6AA", automated: "#868D7A" };
-const RGB = {
-  mine: [0.867, 0.459, 0.396],
-  subagent: [0.369, 0.651, 0.667],
-  automated: [0.525, 0.553, 0.478],
-};
 const THREAD_RGB = [0.796, 0.627, 0.263]; // --gold
 
 const HOUR_UNITS = 1.0;      // 1 world unit per hour -> a day is 24 wide
@@ -453,9 +490,12 @@ const BOX_Z = DAY_DEPTH * 0.7;
 
 let gl, glCanvas;
 let program;
-let vao, instBuf;
-let instanceCount = 0;
 let spotlightId = -1;
+// One VAO + instance buffer PER SHAPE (mine/subagent/automated/beads), not
+// one shared buffer -- each kind draws its own geometry in its own
+// instanced draw call, since a single instanced draw can only rasterize
+// one mesh. See createShape()/initGL() below.
+const SHAPES = {};
 
 function mat4Perspective(fovy, aspect, near, far) {
   const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
@@ -521,22 +561,49 @@ function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]
 function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
 function normalize(a){ const l = Math.hypot(a[0],a[1],a[2]) || 1; return [a[0]/l,a[1]/l,a[2]/l]; }
 
-/* One unit cube, 36 verts (position xyz + a baked per-face shade so blocks
-   read as 3D without real lighting math -- top brighter, sides darker,
-   bottom darkest). */
-function cubeVertexData() {
-  const faces = [
-    // nx, ny, nz, shade, 4 corners (x,y,z) forming 2 triangles (CCW)
-    { n:[0,1,0], shade:1.00, verts:[[-.5,.5,-.5],[-.5,.5,.5],[.5,.5,.5],[-.5,.5,-.5],[.5,.5,.5],[.5,.5,-.5]] },
-    { n:[0,-1,0], shade:0.45, verts:[[-.5,-.5,.5],[-.5,-.5,-.5],[.5,-.5,-.5],[-.5,-.5,.5],[.5,-.5,-.5],[.5,-.5,.5]] },
-    { n:[1,0,0], shade:0.80, verts:[[.5,-.5,-.5],[.5,.5,-.5],[.5,.5,.5],[.5,-.5,-.5],[.5,.5,.5],[.5,-.5,.5]] },
-    { n:[-1,0,0], shade:0.65, verts:[[-.5,-.5,.5],[-.5,.5,.5],[-.5,.5,-.5],[-.5,-.5,.5],[-.5,.5,-.5],[-.5,-.5,-.5]] },
-    { n:[0,0,1], shade:0.90, verts:[[-.5,-.5,.5],[.5,-.5,.5],[.5,.5,.5],[-.5,-.5,.5],[.5,.5,.5],[-.5,.5,.5]] },
-    { n:[0,0,-1], shade:0.55, verts:[[.5,-.5,-.5],[-.5,-.5,-.5],[-.5,.5,-.5],[.5,-.5,-.5],[-.5,.5,-.5],[.5,.5,-.5]] },
-  ];
+/* One vertex-data helper per KIND, so mine/subagent/automated read apart by
+   silhouette (colour is project's, not kind's -- see PROJECT_HEX above).
+   All three fit the same -0.5..0.5 box, so segCenter/segScale and the AABB
+   ray-pick treat them identically; only the visible shape differs. Each
+   face carries a baked "shade" (its 4th vertex component) so blocks read
+   as 3D without real lighting math -- top brighter, sides darker, bottom
+   darkest, no normals or lights needed. */
+function faceListToVerts(faces) {
   const out = [];
   faces.forEach(f => f.verts.forEach(v => out.push(v[0], v[1], v[2], f.shade)));
   return new Float32Array(out);
+}
+function cubeVertexData() { // mine: 6 square faces, 36 verts
+  const FL=[-.5,-.5,.5], FR=[.5,-.5,.5], BR=[.5,-.5,-.5], BL=[-.5,-.5,-.5];
+  const TL=[-.5,.5,.5], TR=[.5,.5,.5], TBR=[.5,.5,-.5], TBL=[-.5,.5,-.5];
+  return faceListToVerts([
+    { shade:1.00, verts:[TBL,TL,TR, TBL,TR,TBR] },  // top
+    { shade:0.45, verts:[FR,BL,BR, FR,FL,BL] },     // bottom
+    { shade:0.80, verts:[BR,TBR,TR, BR,TR,FR] },    // +x
+    { shade:0.65, verts:[FL,TL,TBL, FL,TBL,BL] },   // -x
+    { shade:0.90, verts:[FL,FR,TR, FL,TR,TL] },     // +z
+    { shade:0.55, verts:[BR,BL,TBL, BR,TBL,TBR] },  // -z
+  ]);
+}
+function pyramidVertexData() { // subagent: square base, single apex
+  const A=[0,.5,0], FL=[-.5,-.5,.5], FR=[.5,-.5,.5], BR=[.5,-.5,-.5], BL=[-.5,-.5,-.5];
+  return faceListToVerts([
+    { shade:0.90, verts:[A,FL,FR] },
+    { shade:0.80, verts:[A,FR,BR] },
+    { shade:0.55, verts:[A,BR,BL] },
+    { shade:0.65, verts:[A,BL,FL] },
+    { shade:0.45, verts:[FL,BL,BR] },
+    { shade:0.45, verts:[FL,BR,FR] },
+  ]);
+}
+function diamondVertexData() { // automated: octahedron, apex top and bottom
+  const T=[0,.5,0], Bm=[0,-.5,0], N=[0,0,-.5], E=[.5,0,0], S=[0,0,.5], W=[-.5,0,0];
+  return faceListToVerts([
+    { shade:0.95, verts:[T,N,E] }, { shade:0.85, verts:[T,E,S] },
+    { shade:0.70, verts:[T,S,W] }, { shade:0.60, verts:[T,W,N] },
+    { shade:0.50, verts:[Bm,E,N] }, { shade:0.40, verts:[Bm,S,E] },
+    { shade:0.35, verts:[Bm,W,S] }, { shade:0.45, verts:[Bm,N,W] },
+  ]);
 }
 
 const VS_SRC = `#version 300 es
@@ -595,23 +662,22 @@ function linkProgram(gl, vsSrc, fsSrc) {
   return p;
 }
 
-let cubeBuf, cubeVertCount;
-function initGL() {
-  program = linkProgram(gl, VS_SRC, FS_SRC);
+/* One geometry buffer (STATIC, uploaded once) + its own instance buffer
+   (DYNAMIC, rebuilt on every filter change) + a VAO wiring both together,
+   exactly the cube/instBuf/vao trio this used to be a single copy of. */
+function createShape(vertexDataFn) {
+  const data = vertexDataFn();
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
 
-  const cubeData = cubeVertexData();
-  cubeVertCount = cubeData.length / 4;
-  cubeBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, cubeBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, cubeData, gl.STATIC_DRAW);
-
-  vao = gl.createVertexArray();
+  const instBuf = gl.createBuffer();
+  const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, cubeBuf);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
 
-  instBuf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
   const stride = 10 * 4; // offset(3) scale(3) color(3) id(1)
   for (let loc = 1; loc <= 4; loc++) {
@@ -623,6 +689,16 @@ function initGL() {
   gl.vertexAttribPointer(3, 3, gl.FLOAT, false, stride, 24);
   gl.vertexAttribPointer(4, 1, gl.FLOAT, false, stride, 36);
   gl.bindVertexArray(null);
+
+  return { vao, instBuf, vertCount: data.length / 4, count: 0 };
+}
+
+function initGL() {
+  program = linkProgram(gl, VS_SRC, FS_SRC);
+  SHAPES.mine = createShape(cubeVertexData);
+  SHAPES.subagent = createShape(pyramidVertexData);
+  SHAPES.automated = createShape(diamondVertexData);
+  SHAPES.beads = createShape(cubeVertexData); // sub-agent thread links: tiny cubes, shape doesn't matter at that scale
 
   gl.enable(gl.DEPTH_TEST);
   gl.clearColor(0.039, 0.043, 0.035, 1.0); // --void
@@ -646,14 +722,17 @@ function segScale(seg) {
 
 let sceneCenter = [12, 2, 0], sceneRadius = 40;
 
+/* Splits filtered.draw by KIND (mine/subagent/automated -- each its own
+   shape and its own instance buffer, see createShape()) rather than
+   uploading one mixed buffer, since one instanced draw call can only
+   rasterize one geometry. `id` on every item is the GLOBAL index into
+   filtered.draw (not a position within its kind bucket) -- pickAt()'s ray
+   cast also walks filtered.draw directly and reports that same global
+   index, so uSelected keeps meaning the same thing regardless of which
+   shape the selected box turned out to be. */
 function rebuildInstances(filtered) {
   const perInst = 10;
-  const nBoxes = filtered.draw.length;
-  const nBeads = filtered.threads.length * 5;
-  const total = nBoxes + nBeads;
-  const data = new Float32Array(total * perInst);
-
-  let cursor = 0;
+  const buckets = { mine: [], subagent: [], automated: [] };
   filtered.draw.forEach((seg, i) => {
     const c = segCenter(seg), s = segScale(seg);
     const row = DATA.S[seg.rowIdx];
@@ -661,33 +740,48 @@ function rebuildInstances(filtered) {
     const wall = Math.max(seg.endSec - seg.startSec, 1);
     const engagedShare = Math.max(0, Math.min(1, (row[IDX.S.engagedSec] || 0) / (row[IDX.S.durSec] || wall)));
     const brightness = 0.42 + 0.58 * engagedShare;
-    const base = RGB[kindName] || RGB.automated;
-    const o = cursor * perInst;
-    data[o+0]=c[0]; data[o+1]=c[1]; data[o+2]=c[2];
-    data[o+3]=s[0]; data[o+4]=s[1]; data[o+5]=s[2];
-    data[o+6]=base[0]*brightness; data[o+7]=base[1]*brightness; data[o+8]=base[2]*brightness;
-    data[o+9]=i;
-    cursor++;
+    const base = PROJECT_RGB[CANON_PROJECT[row[IDX.S.project]]] || [0.6, 0.6, 0.6];
+    const bucket = buckets[kindName] || buckets.automated;
+    bucket.push({ c, s, color: [base[0]*brightness, base[1]*brightness, base[2]*brightness], id: i });
   });
 
-  const beadId = nBoxes; // out of range of any real box's iId (0..nBoxes-1), so a bead can never match uSelected and light up
+  ["mine", "subagent", "automated"].forEach(kindName => {
+    const items = buckets[kindName];
+    const data = new Float32Array(items.length * perInst);
+    items.forEach((it, idx) => {
+      const o = idx * perInst;
+      data[o+0]=it.c[0]; data[o+1]=it.c[1]; data[o+2]=it.c[2];
+      data[o+3]=it.s[0]; data[o+4]=it.s[1]; data[o+5]=it.s[2];
+      data[o+6]=it.color[0]; data[o+7]=it.color[1]; data[o+8]=it.color[2];
+      data[o+9]=it.id;
+    });
+    const shape = SHAPES[kindName];
+    shape.count = items.length;
+    gl.bindBuffer(gl.ARRAY_BUFFER, shape.instBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  });
+
+  const nBoxes = filtered.draw.length;
+  const beadId = nBoxes; // out of range of any real box's global index, so a bead can never match uSelected and light up
+  const beadItems = [];
   filtered.threads.forEach(t => {
     const p0 = segCenter(t.parent), p1 = segCenter(t.child);
     for (let k = 0; k < 5; k++) {
       const f = k / 4;
-      const c = [p0[0]+(p1[0]-p0[0])*f, p0[1]+(p1[1]-p0[1])*f, p0[2]+(p1[2]-p0[2])*f];
-      const o = cursor * perInst;
-      data[o+0]=c[0]; data[o+1]=c[1]; data[o+2]=c[2];
-      data[o+3]=0.12; data[o+4]=0.12; data[o+5]=0.12;
-      data[o+6]=THREAD_RGB[0]; data[o+7]=THREAD_RGB[1]; data[o+8]=THREAD_RGB[2];
-      data[o+9]=beadId;
-      cursor++;
+      beadItems.push([p0[0]+(p1[0]-p0[0])*f, p0[1]+(p1[1]-p0[1])*f, p0[2]+(p1[2]-p0[2])*f]);
     }
   });
-
-  instanceCount = total;
-  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  const beadData = new Float32Array(beadItems.length * perInst);
+  beadItems.forEach((c, idx) => {
+    const o = idx * perInst;
+    beadData[o+0]=c[0]; beadData[o+1]=c[1]; beadData[o+2]=c[2];
+    beadData[o+3]=0.12; beadData[o+4]=0.12; beadData[o+5]=0.12;
+    beadData[o+6]=THREAD_RGB[0]; beadData[o+7]=THREAD_RGB[1]; beadData[o+8]=THREAD_RGB[2];
+    beadData[o+9]=beadId;
+  });
+  SHAPES.beads.count = beadItems.length;
+  gl.bindBuffer(gl.ARRAY_BUFFER, SHAPES.beads.instBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, beadData, gl.DYNAMIC_DRAW);
 
   if (nBoxes) {
     let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
@@ -886,12 +980,16 @@ function clearSpotlight() {
 /* -------------------------------------------------------------- draw */
 function drawScene() {
   gl.useProgram(program);
-  gl.bindVertexArray(vao);
   const vp = computeViewProj(glCanvas.width / glCanvas.height);
   gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProj"), false, vp);
   gl.uniform1f(gl.getUniformLocation(program, "uSelected"), spotlightId);
   gl.uniform1f(gl.getUniformLocation(program, "uHasSelection"), spotlightId >= 0 ? 1 : 0);
-  gl.drawArraysInstanced(gl.TRIANGLES, 0, cubeVertCount, instanceCount);
+  ["mine", "subagent", "automated", "beads"].forEach(key => {
+    const shape = SHAPES[key];
+    if (!shape.count) return;
+    gl.bindVertexArray(shape.vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, shape.vertCount, shape.count);
+  });
   gl.bindVertexArray(null);
 }
 
@@ -907,7 +1005,7 @@ function frame() {
   resizeCanvas();
   gl.viewport(0, 0, glCanvas.width, glCanvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  if (instanceCount) drawScene();
+  drawScene(); // each shape's own draw call is skipped internally when its count is 0
   requestAnimationFrame(frame);
 }
 
