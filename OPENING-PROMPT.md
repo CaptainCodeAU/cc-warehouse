@@ -80,6 +80,18 @@ what kind of information it is:
 - **`cc-warehouse-architecture/SOURCE.md`** - the architecture review board, owned by
   `/architecture`.
 
+## Keep it this way
+
+**When this session ends, do not write a new narrative paragraph into this file.** That
+habit is exactly how this file grew to 1,930 lines before 2026-08-27. Instead:
+- If today's work is worth a dated record, add a new entry to the TOP of
+  `harness/HANDOFFS.md` (newest-first).
+- If a genuinely new, task-independent environment gotcha showed up, add it to
+  `harness/GOTCHAS.md`.
+- Only touch THIS file's "Next task" / backlog sections above if the live status
+  actually changed - what's active now, what's still open, what's newly closed. Keep it
+  short; a one-line pointer to the ticket file or handoff entry beats a paragraph here.
+
 ## About this file
 
 Restructured 2026-08-27: this file had grown to 1,930 lines, of which about 94% was
