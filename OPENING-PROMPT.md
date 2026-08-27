@@ -2,8 +2,10 @@
 # 28.9 Fix B is DONE - the whole ticket is now closed, both mechanisms fixed
 # and both tested per the operator's real-browser bar. Full account: "FIX B
 # DONE 2026-08-24" inside "ACTIVE TASK: ticket 28.9" below, and
-# harness/tickets/28-backlog.md's 28.9 entry. NOT YET COMMITTED as of writing
-# this - see the end of the Fix B account for exactly what is staged.)
+# harness/tickets/28-backlog.md's 28.9 entry. **CORRECTED 2026-08-27: this
+# line used to say "NOT YET COMMITTED" - false by the time an eighteenth-
+# handoff session checked `git log` for an unrelated reason. It was already
+# committed as `7842549` before that session even started.)
 
 ## Next task: **ticket 28.9 is now FULLY DONE (both Fix A and Fix B, each
 ## built and tested per the operator's real-browser bar) - it is no longer
@@ -25,14 +27,18 @@
 ## ticket 30's flagged defect, ticket 28.13, ticket 24.7, ticket 28.19, ticket
 ## 28.1, or ticket 28.3 is open work either - see the eleventh through
 ## fourteenth handoff entries at the end of this file for those accounts.
-## **The fifteenth and sixteenth handoffs' own accounts, at the very end of
-## this file, are also worth reading** - the fifteenth fixed two real, live
-## production bugs in `archive.py` and `sweep.py`; the sixteenth fixed four
-## real data-correctness bugs in `tools/ccstats` (a sub-agent double count and
-## three others) that made the live dashboard's numbers wrong by anywhere from
-## 20% to 96x. Any future session touching capture, sweep, archive, or ccstats
-## should know about both before assuming those paths behave the way older
-## parts of this file describe.
+## **The fifteenth, sixteenth and eighteenth handoffs' own accounts, at the
+## very end of this file, are also worth reading** - the fifteenth fixed two
+## real, live production bugs in `archive.py` and `sweep.py`; the sixteenth
+## fixed four real data-correctness bugs in `tools/ccstats` (a sub-agent
+## double count and three others) that made the live dashboard's numbers
+## wrong by anywhere from 20% to 96x; the eighteenth (2026-08-27) split the
+## live dashboard's sub-agent handling from one page-wide toggle into a
+## per-panel rule (cost/token/tool panels always count sub-agent runs, hours/
+## session panels never do) and fixed a layout gap + an always-visible note
+## in the filter bar. Any future session touching capture, sweep, archive, or
+## ccstats should know about all three before assuming those paths behave the
+## way older parts of this file describe.
 
 ## ACTIVE TASK: ticket 28.9, cut `conversation.html`'s memory cost
 
@@ -1815,3 +1821,90 @@ was explicitly deferred, not forgotten - see above. **Also unresolved and worth 
 session's attention, not chased down here**: WHAT overwrote the real `dashboard-defaults.json`
 with a generic list sometime before 2026-08-24T01:25 - no session's own account in this file
 claims to have done it, and the mechanism is unknown.
+
+---
+
+**Eighteenth handoff, 2026-08-27 (new session).** Opened by reading this file, then the operator
+ran `/dashboard` directly (a fresh build + real-Chrome look, nothing else) rather than picking up
+ticket 28.9's own backlog candidates (28.2/28.10/28.11/28.12/28.14, `ccw share --open` - none of
+these were chosen or touched this session). Two follow-up asks landed after that, both about the
+live dashboard's UI, not its data pipeline.
+
+**1. Sub-agent population split.** The operator's own framing: sub-agent runs get counted as "a
+session" today, which is right for some stats and wrong for others - asked for the two groups
+worked out with reasoning, not guessed. The mechanism: every `session` row already carried a
+`kind` (`mine`/`subagent`/`automated`, from the sixteenth handoff's own `session_kind()`), but
+ONE page-wide toggle applied that classification to every panel identically - `inRange()` fed a
+single `FS` array to all 20 panels. Split into two populations instead: `FS` ("my own work" -
+sub-agent NEVER counted, because a sub-agent's engaged time sits INSIDE its parent session's own
+clock time, so counting it again double-counts minutes) and `FSW` ("real work done" - sub-agent
+ALWAYS counted, because its cost/tokens/tool-calls are genuine extra spend, not nested time).
+`inRangeInteractive`/`inRangeWorkload` replace the old single `inRange`; `DEFAULT_KINDS` dropped
+to `{mine}` alone (was `{mine, subagent}`); the "sub-agent runs" checkbox was removed from the
+filter bar entirely (`.claude` reader can no longer toggle it - the rule is now fixed per panel,
+by design, since a single toggle literally cannot serve two contradictory questions at once).
+9 of 20 panels (Projects, Repositories, Project x month, Models, Model x month, Tokens, Thinking,
+Tools, Skills & agents) now read `FSW`; the rest (Daily/Weekly/Monthly, Session sizes, Hour
+heatmap, By weekday, Worktrees, Top/Longest sessions, and most of Overview's 15 KPI tiles) stayed
+on `FS`. Two genuine judgment calls were put to the operator as a 2-option `AskUserQuestion`
+rather than decided alone: **Tools panel now counts sub-agent tool calls** (real work, delegated
+or not); **the "25 most expensive sessions" leaderboard excludes sub-agent runs** (it is a
+leaderboard of the operator's OWN sessions, not a cost bucket). Overview's KPI accumulation loop
+was split into two passes (one over `FS`, one over `FSW`) since it mixes both kinds of tile in one
+panel - `session_kind()`'s own Python-side docstring in `dashboard.py` was updated to match, since
+it used to claim sub-agent was "reachable via a toggle", which is no longer true.
+
+Verified: `tools/ccstats/tests/test_dashboard_headless.py`'s three toggle-behaviour tests were
+REWRITTEN, not just made pass again - they tested the OLD one-toggle behaviour on purpose, so a
+green run against the new code would have meant the fix was reverted, not confirmed. The rewrite
+adds an explicit regression guard that a scenario still naming `"subagent"` in `kinds` (mimicking
+the removed checkbox) has ZERO effect on either population. Full suite: 132 passed (was 129
+before this session even started, unrelated to this change), ruff clean, pyright unchanged (82
+pre-existing errors, all in `tools/` which is outside strict `src/` by design, confirmed via
+`git stash` that the count is identical before/after). The REAL `~/.cc-warehouse/stats` dashboard
+was rebuilt from live data and headless-probed against the actual generated HTML (not a test
+fixture): `fsLength` 661, `fswLength` 1950, "API cost" tile `US$ 53,747` - all three independently
+cross-checked against a fresh direct SQL query (`is_real=1`, the same date window, the operator's
+real 23-pattern exclude list applied) and matched exactly. Opened in a real Chrome tab over
+loopback: 0 console errors, "sessions with a reply" 661 / "typical session length" 45.8 min (both
+`FS`-driven, sub-agent excluded) alongside "API cost" `US$ 53,747` / "tool calls" 119,546 (both
+`FSW`-driven, sub-agent included) rendered correctly side by side on the same page. Commit
+`ee5d65a`, pushed.
+
+**2. Layout gap + always-visible note, both operator-reported after looking at the rebuilt
+page.** The note ("Sub-agent runs are handled automatically per chart...") read as too prominent
+sitting permanently in the filter bar. Converted to a small `data-tip`-driven hover icon (an "i"
+in a circle, reusing the page's own existing chart-tooltip mechanism, `.cc-tooltip` /
+`document.addEventListener("mouseover", ...)` - no new JS infrastructure needed). The same
+mechanism was used to answer the operator's own on-the-spot question ("what is this
+`2,414 · US$ 66`?" - the live count/cost of "automated one-shots", off by default) by attaching a
+second tooltip directly to that checkbox, so the answer now lives on the page itself, not just in
+chat. Separately, a real ~100px dead gap above the date filters: `<header class="mast">` was
+wrapped in the generic `.wrap` class, whose `padding: 0 28px 96px` exists for the PANELS wrap at
+the very bottom of the page - reused on the header, its 96px bottom padding just opened a gap
+nothing needed. Split into a new `.mast-wrap` (same max-width/centering/side-padding, zero bottom
+padding of its own) confirmed via `grep` to be the only two places `.wrap` was used before
+touching either.
+
+Verified: 132 tests still green (no test covers pixel layout or tooltip visibility - this was a
+real-browser-only check, matching this project's own "the only guard against a UI regression here
+is a human looking" note from the sixteenth handoff). Rebuilt the real dashboard again, opened in
+a real Chrome tab: 0 console errors before and after the change; a before/after screenshot pair
+confirmed the gap closed and the filter bar visibly tightened; hovering the new "i" icon and the
+"automated one-shots" label both showed their correct tooltip text and stayed hidden otherwise.
+Commit `8f3b4ab`, pushed.
+
+**The operator asked whether `.claude/commands/dashboard.md` also needed updating. Checked, not
+guessed: it does not.** Read the whole command file - every step (resolve `$OUT`, refresh
+`sessions.sqlite`, read/write `dashboard-defaults.json`, the `--exclude`/`--include` build flags,
+serve over loopback, stop the server) is about the BUILD/SERVE workflow, none of which changed
+this session. Nothing in the command's own text describes the generated page's internal filter-
+bar wording, tooltip behaviour, or layout, so nothing in it went stale. Confirmed to the operator
+rather than editing on a guess.
+
+**What was NOT done:** ticket 28.9 remains closed and untouched (unrelated to this session's
+work). None of the standing backlog candidates (28.2/28.10/28.11/28.12/28.14, `ccw share --open`)
+were picked - still open, still the operator's to choose. Step 5 of the sixteenth handoff's own
+dashboard plan (client-side concurrency reimplementation) remains deferred, not touched here
+either. The unresolved `dashboard-defaults.json` overwrite mystery from the sixteenth handoff is
+still unresolved - not chased down this session.
