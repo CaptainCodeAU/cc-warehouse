@@ -1669,6 +1669,29 @@ excluded from the blocking exit code. `desync_detail` (shared with `ccw
 repair`) is unchanged. Full account: `harness/tickets/34-swallowed-render-
 errors-and-batch-false-alarms.md`.
 
+**2026-09-01, ticket 35: durable logging extended to `ccw build` and `ccw
+repair`.** Operator request, following the ticket 34 fixes: "if these
+different types of situations or edge cases emerge, then everything gets
+logged in some file". `notify.append_log`/`logs/capture.jsonl` already
+covered hook captures, sweep's per-item capture failures, and (since ticket
+34) render-child failures - but `ccw build`'s per-item failures (whether run
+directly or via `ccw sweep`'s own post-capture call), and BOTH of `ccw
+repair`'s outcomes, only ever reached stdout/stderr, durable exactly when the
+caller happened to be redirected to a file. Worse for `ccw repair`
+specifically: `--quiet` (the scheduled job's own flag) suppresses the stdout
+summary entirely, so a run that silently FIXED a real problem left no trace
+anywhere that it had ever run - "it worked" was strictly less recoverable
+than "it failed" (which at least reached stderr). Two new helpers in
+`cli.py`, `_log_build_failure` and `_log_repair_outcome`, extend the SAME
+audit log (R9) rather than inventing a parallel one - matching this
+project's established convention (capture.py's `_log_stage_failure`,
+`__main__.py`'s `_log_crash`): the identical six-field schema, the extra
+context (which entry point, which outcome) folded into `message` rather than
+a new JSON key, so nothing that already reads `capture.jsonl` needs to
+change. `ccw repair`'s log calls fire regardless of `--quiet`, by design -
+quiet only ever controlled the human-readable summary. Full account:
+`harness/tickets/35-durable-logging-for-build-and-repair.md`.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
