@@ -133,9 +133,11 @@ edits to the principal instead.
 ## Layout (grows during the build)
 
 - `contract/` the five LOCKED contract documents + `contract/diagrams/` | `docs/`
-  user-facing guides (TODAY: only `sharing-and-redaction.md`; install, quickstart and
-  configuration guides are NAMED HERE BUT DO NOT EXIST, corrected 2026-08-02 after this
-  line claimed four for weeks) | `harness/prompts/` role
+  user-facing guides (`sharing-and-redaction.md`, and since 2026-09-01
+  `operations.md` - what runs on a schedule on THIS machine, every SessionStart/
+  SessionEnd hook, and the external consumers of `ccw doctor`'s output; install,
+  quickstart and configuration guides are still NAMED HERE BUT DO NOT EXIST,
+  corrected 2026-08-02 after this line claimed four for weeks) | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
   (gitignored once git init lands) | `tools/` tracked scratch tooling that is
   NOT part of `ccw`: outside `src/`, so not subject to pyright strict, the oracle
@@ -483,6 +485,47 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   nothing). NOT wired into any scheduled job yet - a system-level change outside this
   repo, left for the principal. Full account:
   `harness/tickets/32-detached-render-child-visibility.md`.
+  **THAT LAST SENTENCE IS STALE, corrected 2026-09-01 (ticket 36).** A
+  `com.captaincodeau.ccw-repair` launchd job now exists and is loaded (`ccw repair
+  --quiet`, daily 12:45, 15 minutes after `ccw-sweep`'s 12:30 so the two never
+  contend for the same catalog lock). It was added by the principal at some point
+  between this ticket's 2026-08-23 close and today - the exact date is not
+  recoverable from the plist itself (no timestamp field, and filesystem mtime is
+  not evidence of authorship date) - but the job is real, currently loaded, and
+  its own header comment cites this exact ticket by name. See `docs/operations.md`
+  for this job and its two siblings (`ccw-sweep`, `ccw-archive`) together in one
+  place, including schedules, exact commands and log locations - added because a
+  2026-09-01 session had to re-discover all three from scratch by reading plists
+  one at a time, which is exactly the gap `docs/operations.md` exists to close.
+- **Ticket 33 DONE 2026-09-01**: `hidden` used to follow the summary-candidate
+  signal directly, so a session started by a slash command and then run
+  autonomously (no further typed user text, so no summary candidate) was hidden
+  from rendering even with substantial real work - confirmed on the live archive
+  up to 1,010 lines / 216 assistant turns, permanently unrendered with zero
+  warning. Principal ruling narrowed `contract/SPEC.md` section 8's hidden rule
+  (amendment recorded there and in `contract/DESIGN.md` section 15) so a session
+  only stays hidden when it ALSO shows no substantial assistant engagement. 13 of
+  597 previously-hidden catalog rows flipped to visible and were re-rendered; 574
+  correctly stayed hidden. Full account: `harness/tickets/33-hidden-flag-recovers-real-sessions.md`.
+- **Ticket 34 DONE 2026-09-01**: two defects found by a red-team review of a live
+  false alarm, both fixed the same day. (1) `build.py`'s `_mirror` and `cli.py`'s
+  `_mirror_to_archive` each swallowed their own render exception, hiding it from
+  a correctly-designed handler one frame up in both callers (`build()`'s
+  per-head R10 handling, `_render_session`'s notify-and-exit-1 contract) -
+  exactly the shape FINDINGS F7 and DESIGN section 13 already forbid; the
+  swallows were removed, not replaced with new logging, since the outer
+  handlers already report correctly once they can see the failure. (2) `ccw
+  doctor`'s desync check could not tell "genuinely broken" from "captured
+  moments ago, still queued behind `ccw sweep`'s post-capture `build.build()`
+  call" - measured live: one session took 7m14s from capture to fully rendered
+  inside a 446-session batch, and `ccw-watch`'s RED banner fired 24 seconds
+  after that session was captured, mid-queue. `doctor._desync` now treats a
+  folder as pending (not blocking) only when every one of its problems is a
+  missing-generated-file problem AND either the sweep/build lock is held
+  (`store.lock_is_held`, new) or the folder was captured within the last 120
+  seconds - any other problem shape (hash mismatch, bad manifest, altered
+  sub-agent, bad folder name) is always real regardless of timing. Full
+  account: `harness/tickets/34-swallowed-render-errors-and-batch-false-alarms.md`.
 
 ## Standing lessons (full form in HARNESS section 8)
 
