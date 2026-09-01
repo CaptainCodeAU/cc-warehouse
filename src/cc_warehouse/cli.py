@@ -47,6 +47,7 @@ from cc_warehouse.config import (
     word_problem,
 )
 from cc_warehouse.render import RenderOptions
+from cc_warehouse.reports import ItemOutcome
 
 # The v1 verb table (DESIGN section 7). The order is the help listing order;
 # every name here must appear in `ccw -h` (test_help_lists_every_v1_verb).
@@ -151,8 +152,12 @@ _CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str, str], ...] = (
     ("subagents-compact", "subagents_compact", _COMPACT, "sub-agent (sidechain) exchanges"),
     ("attachments-compact", "attachments_compact", _COMPACT, "file / plan attachments"),
     ("commands-compact", "commands_compact", _COMPACT, "slash commands the user ran"),
-    ("extras-compact", "extras_compact", _COMPACT,
-     "bridge / queue / last-prompt / agent-name events"),
+    (
+        "extras-compact",
+        "extras_compact",
+        _COMPACT,
+        "bridge / queue / last-prompt / agent-name events",
+    ),
     ("tool-output-compact", "tool_output_compact", _COMPACT, "tool calls and their results"),
     ("breadcrumbs", "breadcrumbs", _COMPACT, "per-phase caption strips"),
 )
@@ -168,8 +173,13 @@ _CONTENT_BOOL_FLAGS: tuple[tuple[str, str, str, str], ...] = (
 # documented exception the 2026-08-01 bijection inherited rather than created.
 _CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
     ("reminders", "reminders", _FULL, "{collapse|strip|show}", "system-reminder handling"),
-    ("reminders-compact", "reminders_compact", _COMPACT, "{collapse|strip|show}",
-     "system-reminder handling"),
+    (
+        "reminders-compact",
+        "reminders_compact",
+        _COMPACT,
+        "{collapse|strip|show}",
+        "system-reminder handling",
+    ),
     # Chrome initial states (DESIGN 15 block 2). Variant-agnostic per shared rule
     # (d), so they group under `any` rather than under either variant. The legal
     # words come from config.CHROME_KEYS, which owns the frozen key map: a second
@@ -187,8 +197,13 @@ _CONTENT_VALUE_FLAGS: tuple[tuple[str, str, str, str, str], ...] = (
     # The truncation cap (block 3). Variant-agnostic like the chrome keys, but
     # its value is a NUMBER rather than one of a word list, which is why the
     # value column belongs to the row rather than to a shared constant.
-    (CAP_KEY.replace("_", "-"), CAP_KEY, _LIMITS, "N",
-     "cap each rendered tool result at N characters (0 = off)"),
+    (
+        CAP_KEY.replace("_", "-"),
+        CAP_KEY,
+        _LIMITS,
+        "N",
+        "cap each rendered tool result at N characters (0 = off)",
+    ),
     # Ticket 20. Filed under _FULL rather than _CHROME: the chrome keys are
     # initial states a reader can click away, this decides what is on the page
     # at all, and slice 16 recorded what filing a setting under the wrong
@@ -692,6 +707,7 @@ def _run_sweep(args: Sequence[str]) -> int:
         build_failures = build_report.failures
         for outcome in build_failures:
             print(f"sweep: projection failed: {outcome.item}: {outcome.detail}", file=sys.stderr)
+            _log_build_failure(config, outcome, "sweep-triggered build")
         failures = failures + build_failures
     if not quiet:
         # --quiet drops STDOUT only. Failures are already on stderr above, and the
@@ -786,6 +802,61 @@ def _run_notify(args: Sequence[str]) -> int:
     return 0
 
 
+def _log_build_failure(config: Config, outcome: ItemOutcome, via: str) -> None:
+    """Append one durable capture.jsonl record for one build failure (ticket 35).
+
+    `build.build()`'s per-item failures only ever reached stdout/stderr before this
+    -- durable exactly when the caller happened to be redirected to a file (true
+    for the `ccw-sweep`/`ccw-archive` launchd jobs, false for any manual `ccw
+    build`). Matches this project's established `append_log` convention
+    (capture.py's `_log_stage_failure`, `__main__.py`'s `_log_crash`): the SAME
+    six-field schema, the extra context (which entry point) folded into
+    `message` rather than a new JSON key, so nothing that reads capture.jsonl
+    today needs to change. Best-effort like every other notify sink: a logging
+    failure here must never turn a working build into a failing one."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "error",
+                "session": outcome.item,
+                "project": None,
+                "message": f"{via} failed: {outcome.detail or outcome.action}",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
+def _log_repair_outcome(config: Config, status: str, session: str | None, message: str) -> None:
+    """Append one durable capture.jsonl record for one `ccw repair` outcome
+    (ticket 35), fixed or still-broken alike.
+
+    Written REGARDLESS of `--quiet`: quiet only drops the human-readable stdout
+    summary (matching `ccw sweep`'s own established contract -- see `_run_sweep`'s
+    docstring), never the durable record. Before this, a scheduled repair run
+    that silently FIXED a real problem left no trace anywhere that it had ever
+    run, let alone what it fixed -- "it worked" was strictly less recoverable
+    than "it failed" (which at least reached stderr). Same schema and
+    best-effort contract as `_log_build_failure`."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": status,
+                "session": session,
+                "project": None,
+                "message": f"repair: {message}",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
 def _run_build(args: Sequence[str]) -> int:
     """`ccw build`: project the catalog into projections/ (DESIGN sections 1, 6).
 
@@ -794,10 +865,7 @@ def _run_build(args: Sequence[str]) -> int:
     without projecting anything (R14). Otherwise prints a one-line report and names any
     failed item (R10); exits non-zero when the build was refused or an item failed."""
     rest = args[1:]
-    if any(
-        a in ("--since", "--until") or a.startswith(("--since=", "--until="))
-        for a in rest
-    ):
+    if any(a in ("--since", "--until") or a.startswith(("--since=", "--until=")) for a in rest):
         # REFUSED in DESIGN 15 block 5, recorded rather than deferred: a windowed
         # build either deletes out-of-window projections (R4) or emits an index
         # that silently omits sessions. Refusing loudly is the whole point.
@@ -824,6 +892,7 @@ def _run_build(args: Sequence[str]) -> int:
     failures = report.failures
     for outcome in failures:
         print(f"build failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
+        _log_build_failure(config, outcome, "build")
     # "unchanged" is its own segment, never folded into "built" (R10/F6):
     # an all-skipped run must not read as "0 built" with no explanation,
     # mirroring archive.MigrationReport.summary()'s "N unchanged" line.
@@ -864,6 +933,8 @@ def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | No
                 source = arg
             i += 1
     return session, out, source
+
+
 def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> None:
     """Keep the archive-first tree CURRENT from the capture path (slice 19i).
 
@@ -952,8 +1023,7 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
     conn = catalog.open_catalog(config.root)
     try:
         exists = (
-            conn.execute("SELECT 1 FROM session WHERE short = ?", (short,)).fetchone()
-            is not None
+            conn.execute("SELECT 1 FROM session WHERE short = ?", (short,)).fetchone() is not None
         )
         head = build.head_for_short(conn, short) if exists else None
     finally:
@@ -1119,9 +1189,7 @@ def _run_project(args: Sequence[str]) -> int:
     conn = catalog.open_catalog(config.root)
     try:
         if sub == "list":
-            rows = conn.execute(
-                "SELECT id, label, retired FROM project ORDER BY id"
-            ).fetchall()
+            rows = conn.execute("SELECT id, label, retired FROM project ORDER BY id").fetchall()
             if not rows:
                 print("no projects yet")
                 return 0
@@ -1338,8 +1406,10 @@ def _run_import(args: Sequence[str]) -> int:
         planned = import_tree.plan(config, source)
         failures = planned.failures
         for outcome in failures:
-            print(f"import failed: {outcome.item}: {outcome.detail or outcome.action}",
-                  file=sys.stderr)
+            print(
+                f"import failed: {outcome.item}: {outcome.detail or outcome.action}",
+                file=sys.stderr,
+            )
         if not quiet:
             for outcome in planned.outcomes:
                 if outcome.action.startswith("would-"):
@@ -1360,8 +1430,7 @@ def _run_import(args: Sequence[str]) -> int:
         return 2
     failures = report.failures
     for outcome in failures:
-        print(f"import failed: {outcome.item}: {outcome.detail or outcome.action}",
-              file=sys.stderr)
+        print(f"import failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
 
     def _count(action: str) -> int:
         return sum(1 for outcome in report.outcomes if outcome.action == action)
@@ -1389,8 +1458,7 @@ def _run_import(args: Sequence[str]) -> int:
     if stored:
         build_report = build.build(config)
         for outcome in build_report.failures:
-            print(f"import: projection failed: {outcome.item}: {outcome.detail}",
-                  file=sys.stderr)
+            print(f"import: projection failed: {outcome.item}: {outcome.detail}", file=sys.stderr)
         if build_report.failures:
             return 1
     return 1 if failures else 0
@@ -1489,7 +1557,9 @@ def _run_repair(rest: Sequence[str]) -> int:
                 (session_uuid,),
             ).fetchone()
             if row is None:
-                still_broken.append(f"{folder.name}: no catalog row for {session_uuid}")
+                message = f"no catalog row for {session_uuid}"
+                still_broken.append(f"{folder.name}: {message}")
+                _log_repair_outcome(config, "error", None, message)
                 continue
             short = cast(str, row[0])
             render = subprocess.run(
@@ -1499,13 +1569,18 @@ def _run_repair(rest: Sequence[str]) -> int:
             )
             if render.returncode != 0:
                 detail = render.stderr.strip() or f"exit {render.returncode}"
-                still_broken.append(f"{folder.name}: render failed: {detail}")
+                message = f"render failed: {detail}"
+                still_broken.append(f"{folder.name}: {message}")
+                _log_repair_outcome(config, "error", short, message)
                 continue
             remaining = archive.verify_folder(folder, config.archive_timezone)
             if remaining:
-                still_broken.append(f"{folder.name}: still broken: {remaining[0].problem}")
+                message = f"still broken: {remaining[0].problem}"
+                still_broken.append(f"{folder.name}: {message}")
+                _log_repair_outcome(config, "error", short, message)
                 continue
             fixed += 1
+            _log_repair_outcome(config, "ok", short, "fixed")
     finally:
         conn.close()
     if not quiet:
@@ -1948,7 +2023,11 @@ def _run_share(args: Sequence[str]) -> int:
     config = load_config()
     keep = functools.partial(in_window, window=window) if windowed else None
     report = share.share(
-        config, tuple(sessions), out_path, allow_findings=allow, window=keep,
+        config,
+        tuple(sessions),
+        out_path,
+        allow_findings=allow,
+        window=keep,
         timezone=_flag_value(rest, "zone"),
     )
     if report.findings and not allow:
@@ -2089,9 +2168,7 @@ def _flag_spellings(spec: str) -> tuple[tuple[str, bool], ...]:
         if not token.startswith("--"):
             continue
         following = tokens[index + 1] if index + 1 < len(tokens) else None
-        takes_value = (
-            following is not None and not following.startswith("-") and following != "..."
-        )
+        takes_value = following is not None and not following.startswith("-") and following != "..."
         found.append((token, takes_value))
     return tuple(found)
 
