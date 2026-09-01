@@ -1636,6 +1636,39 @@ behavior change for anything the old suite already pinned. Full account and
 the recovery run against real data: `harness/tickets/33-hidden-flag-recovers-
 real-sessions.md`.
 
+**2026-09-01, ticket 34: two swallow-and-cry-wolf defects, both from the same
+red-team audit, both fixed.** 34.1: `build.py` `_mirror` and `cli.py`
+`_mirror_to_archive` each swallowed the exception from
+`archive.write_session_folder` on the theory that DESIGN 12 forbids a
+detached child from turning a stored capture into a lost one. That
+over-reached - each function's ONE caller already has its own correctly-
+designed outer handler for exactly this failure (`_render_session`'s
+best-effort-notify-and-exit-1 contract, `build()`'s per-head R10 "name it
+and carry on"), and the inner swallow only hid the failure from it. FINDINGS
+F7 names this shape directly and DESIGN section 13 forbids it ("item-level
+errors: report + skip item, never reclassify"); no contract amendment was
+needed, only removing code that already contradicted the locked rules. Real
+consequence, 2026-08-04 (`cli.py`'s own `_run_sweep` comment): a sweep stored
+642 sessions with zero rendered pages, invisible until a manual `ccw archive
+--verify`. Fixed by deleting both inner `except Exception: return` blocks.
+34.2: `ccw doctor`'s desync check (`_DESYNC_SAMPLE`, ticket 31.5) cannot tell
+"still queued behind a sweep-triggered `build()` batch" from "genuinely
+broken", and sampled mid-batch on 2026-09-01 (measured: one session took
+7m14s from capture to rendered inside a 446-session batch; doctor sampled 24
+seconds after that session was captured) - the real mechanism behind a live
+`ccw-watch` RED "capture is NOT working" false alarm the same day. Fixed with
+two carve-outs, narrowed to missing-generated-file problems ONLY (a hash
+mismatch, bad manifest, altered sub-agent, or bad folder name is never
+excused, regardless of timing): a new `store.lock_is_held` (pure read) lets
+`_desync` treat a folder as pending while the sweep or build lock is held by
+a live process, covering the bulk-batch case for as long as it actually
+takes rather than a guessed duration; a 120-second grace window covers the
+live hook's own single-session detached render child, which holds no lock at
+all. Pending folders are still counted and shown in the detail text, just
+excluded from the blocking exit code. `desync_detail` (shared with `ccw
+repair`) is unchanged. Full account: `harness/tickets/34-swallowed-render-
+errors-and-batch-false-alarms.md`.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
