@@ -268,3 +268,24 @@ def release_lock(root: Path, name: str) -> None:
     if holder != os.getpid():
         return
     lock.unlink(missing_ok=True)
+
+
+def lock_is_held(root: Path, name: str) -> bool:
+    """True while `locks/<name>` names a live process (ticket 34).
+
+    A pure read, unlike `acquire_lock`: never links, renames, or removes
+    anything, so it is safe for a read-only caller (`ccw doctor`'s desync
+    check) to ask "is a batch actively running right now" without racing an
+    actual acquirer for the lock. A stale lock (dead PID, or content that does
+    not parse) reads as NOT held, matching `acquire_lock`'s own definition of
+    stale-and-takeover-eligible -- this function tells the truth about the
+    SAME lock file `acquire_lock` would decide the same way about, it just
+    never takes any action on what it finds.
+    """
+    _validate_lock_name(name)
+    lock = root / "locks" / name
+    try:
+        holder = _read_lock_holder(lock)
+    except (FileNotFoundError, OSError):
+        return False
+    return holder is not None and _pid_is_alive(holder)

@@ -29,12 +29,34 @@ from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import archive, parser, status, sweep
+from cc_warehouse import archive, parser, status, store, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
 # missed rather than merely pending.
 _OVERDUE_SECONDS = 24 * 60 * 60
+
+# Ticket 34: how long a just-captured folder gets before a missing render file
+# counts as a real problem rather than "still queued". Covers the live hook's
+# own single-session detached render child, which holds no lock at all, so
+# `_BATCH_LOCK_NAMES` below cannot see it. Deliberately short: a normal
+# single-session render finishes in well under a minute; this is headroom for
+# process-start jitter, not a render budget. The much longer bulk-batch case
+# (hundreds of sessions queued behind `ccw sweep`'s call to `build.build()`,
+# measured 2026-09-01 at over 7 minutes for one item) is NOT covered by this
+# window on purpose -- it is covered by the lock check instead, which lasts
+# exactly as long as the batch actually takes rather than guessing a number.
+_PENDING_GRACE_SECONDS = 120
+
+# The lock names `sweep.py` (`_SWEEP_LOCK`) and `build.py` (`_BUILD_LOCK`)
+# acquire for their entire run. Repeated here as literals rather than
+# importing those private module constants across a peer boundary: the
+# shared truth this module actually depends on is store.py's lock file
+# FORMAT (`lock_is_held`), not sweep/build's own private naming choice, and a
+# renamed lock constant over there would need a matching rename here either
+# way. A test pins both names against their source of truth so this cannot
+# drift silently.
+_BATCH_LOCK_NAMES = ("sweep", "build")
 
 # A hook that mentions either console script is ours; the plugin wrapper and a
 # settings.json entry both end up as a command string containing one of these.
@@ -330,18 +352,77 @@ def desync_detail(
     return folders, broken
 
 
-def _desync(config: Config) -> tuple[int, int, str | None]:
+def _batch_render_in_progress(root: Path) -> bool:
+    """True while `ccw sweep` or `ccw build` is actively running against this
+    warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
+    doctor read-only by construction. `build.build()` holds its lock for its
+    entire per-head loop (acquire before the loop, release in a `finally`
+    after), so this stays true for exactly as long as a sweep-triggered batch
+    is still rendering -- unlike a fixed timer, it cannot expire mid-batch."""
+    return any(store.lock_is_held(root, name) for name in _BATCH_LOCK_NAMES)
+
+
+def _desync(config: Config) -> tuple[int, int, int, str | None]:
     """Verify the most recently captured archive folders against their own manifests
-    (ticket 31.5). Returns (checked, problems, first problem description or None).
+    (ticket 31.5). Returns (checked, problems, pending, first problem description or
+    None) -- `problems` is what blocks `report.ok`; `pending` never does.
 
     BOUNDED, DELIBERATELY (see `_DESYNC_SAMPLE`): `archive.verify_folder` reads and
     re-hashes each folder's JSONL, so a full pass over a 21,000+ folder tree is not
     SessionStart-cheap -- that cost is exactly what ticket 31 exists to remove elsewhere.
+
+    PENDING VS. PROBLEM (ticket 34). A folder missing its generated files is not
+    always broken: `ccw sweep` can capture hundreds of sessions in under two
+    minutes and then render them afterward through `build.build()`, which takes
+    real wall-clock time (measured 2026-09-01: one ordinary session took 7m14s
+    from capture to fully rendered, inside a 446-session batch). Sampling mid-batch
+    used to report every still-queued folder as broken -- confirmed as the real
+    mechanism behind a live false alarm the same day (`ccw-watch`'s RED banner
+    fired 24 seconds after one such folder was captured).
+
+    NARROW ON PURPOSE: a folder reclassifies as PENDING only when EVERY one of
+    its problems is a missing-generated-file problem (`FolderProblem.problem`
+    starting with "missing ", the one shape `archive.verify_folder` produces for
+    a not-yet-rendered file -- see `GENERATED_NAMES`) AND either a sweep/build
+    batch is currently running (`_batch_render_in_progress`, covering the bulk
+    case for as long as it actually takes) or the folder was captured within
+    `_PENDING_GRACE_SECONDS` of now (covering the live hook's own single-session
+    detached render child, which holds no lock at all). Any OTHER problem shape
+    on a folder -- a hash mismatch, an unreadable manifest, a missing/altered
+    sub-agent, a name that disagrees with its own payload -- always counts as a
+    real problem regardless of timing, because none of those describe "still
+    queued"; they describe something actually wrong. A folder with a mix (some
+    missing files AND, say, a hash mismatch) is real too, for the same reason.
+    Pending folders are still counted and still surfaced in the detail text -- a
+    genuinely stuck pending item does not become invisible, it just does not
+    trip the alarm on its own.
     """
     folders, broken = desync_detail(config)
-    problems = sum(len(p) for _, p in broken)
-    first = f"{broken[0][0].name}: {broken[0][1][0].problem}" if broken else None
-    return len(folders), problems, first
+    if not broken:
+        return len(folders), 0, 0, None
+    # broken is non-empty only when desync_detail actually walked a configured
+    # archive, so config.root is a real warehouse to check locks against.
+    batch_active = _batch_render_in_progress(config.root)
+    now = datetime.now(UTC)
+    problems: list[tuple[Path, list[archive.FolderProblem]]] = []
+    pending_count = 0
+    for folder, folder_problems in broken:
+        only_missing_files = all(p.problem.startswith("missing ") for p in folder_problems)
+        moment = _folder_moment(folder.name)
+        within_grace = moment is not None and (now - moment) <= timedelta(
+            seconds=_PENDING_GRACE_SECONDS
+        )
+        if only_missing_files and (batch_active or within_grace):
+            # Counted the same unit as `problem_count` below (individual
+            # FolderProblem entries, e.g. up to one per GENERATED_NAMES file),
+            # not folders -- so "N problem(s)" and "M pending render(s)" stay
+            # directly comparable in the detail text.
+            pending_count += len(folder_problems)
+        else:
+            problems.append((folder, folder_problems))
+    problem_count = sum(len(p) for _, p in problems)
+    first = f"{problems[0][0].name}: {problems[0][1][0].problem}" if problems else None
+    return len(folders), problem_count, pending_count, first
 
 
 def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
@@ -453,17 +534,20 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     )
 
-    checked, problems, first_problem = _desync(config)
+    checked, problems, pending, first_problem = _desync(config)
+    pending_suffix = f", {pending} pending render(s)" if pending else ""
     if config.archive_root is None:
         desync_detail = "no archive configured"
     elif checked == 0:
         desync_detail = "no archived sessions yet"
     elif problems == 0:
-        desync_detail = f"0 problems in the {checked} most recently captured folder(s)"
+        desync_detail = (
+            f"0 problems{pending_suffix} in the {checked} most recently captured folder(s)"
+        )
     else:
         desync_detail = (
-            f"{problems} problem(s) in the {checked} most recently captured folder(s),"
-            f" e.g. {first_problem}"
+            f"{problems} problem(s){pending_suffix} in the {checked} most recently captured"
+            f" folder(s), e.g. {first_problem}"
         )
     checks.append(Check("desync", problems == 0, desync_detail))
 

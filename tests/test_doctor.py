@@ -511,12 +511,148 @@ def test_desync_check_is_bounded_to_the_recent_sample(
     config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
 
     monkeypatch.setattr(doctor, "_DESYNC_SAMPLE", 1)
-    checked, problems, _ = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    checked, problems, _pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
     assert checked == 1, "sample size was not respected"
     assert problems == 0, "an out-of-sample desync was caught; the scope decision changed"
 
     monkeypatch.setattr(doctor, "_DESYNC_SAMPLE", 25)
-    checked, problems, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    checked, problems, _pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
     assert checked == 2
     assert problems >= 1, "the same desync, back in-sample, was missed"
     assert first is not None and UUID_A in first
+
+
+# ---------------------------------------------------------------------------
+# Ticket 34: pending (still rendering) vs. a genuine problem
+# ---------------------------------------------------------------------------
+
+
+def _break_render(folder: Path) -> None:
+    """Simulate a folder whose generated pages have not landed yet: the JSONL
+    arrives (the hook's synchronous, safe half); none of the five generated
+    files do (the render half, whether still queued or genuinely failed)."""
+    for name in archive.GENERATED_NAMES:
+        path = folder / name
+        if path.exists():
+            path.unlink()
+
+
+def test_an_old_missing_render_with_no_batch_running_is_still_a_real_problem(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Negative case, the one that matters most: a genuinely broken folder
+    (old capture, no sweep/build lock held) must still fail doctor. Proves the
+    pending carve-out did not quietly widen into "any missing render passes"."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1
+    assert pending == 0, "an old, genuinely broken folder was wrongly excused as pending"
+    assert problems >= 1, "a real desync was suppressed"
+    assert first is not None and folder.name in first
+
+
+def fresh_session(session_id: str) -> bytes:
+    """A session whose own payload timestamp is close to actual wall-clock
+    now, unlike `basic_session` (fixed at 2026-01-05, long outside any grace
+    window by the time this suite runs) -- needed to exercise the grace-window
+    carve-out, which keys on real elapsed time, not a small fixed test date."""
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return jsonl(
+        entry("user", "hello", now, session_id=session_id),
+        entry("assistant", "hi", now, session_id=session_id),
+    )
+
+
+def test_a_freshly_captured_missing_render_is_pending_not_a_problem(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The grace-window carve-out: a folder captured moments ago (payload
+    timestamp near now, not backdated like `stale_session`) with no render
+    files yet must not fail doctor -- it is still inside the live hook's own
+    single-session render window, no lock involved at all."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)  # so only the desync check under test can fail report.ok
+    write_transcript(ccw_env, fresh_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1
+    assert problems == 0, "a freshly-captured, still-rendering folder tripped the alarm"
+    assert pending == len(archive.GENERATED_NAMES), "the pending files were not counted"
+
+    report = doctor.diagnose(config)
+    assert report.ok, "pending alone must not flip doctor's overall exit code"
+    detail = next(c.detail for c in report.checks if c.name == "desync")
+    assert "pending" in detail, detail
+
+
+def test_a_missing_render_is_pending_while_a_batch_lock_is_held(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The lock-aware carve-out, isolated from recency: an OLD folder (well
+    outside the grace window) with missing render files must still read as
+    pending while `ccw sweep`/`ccw build`'s own lock is held by a live
+    process -- proving the lock signal, not just elapsed time, is doing the
+    work. Uses this test's own pid as the "live" holder, matching how
+    `store.lock_is_held` defines liveness (`os.kill(pid, 0)`)."""
+    from cc_warehouse import store
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+
+    root = warehouse_root(ccw_env)
+    assert store.acquire_lock(root, "build")
+    try:
+        config = Config(root=root, archive_root=archive_root, archive_timezone=ZONE)
+        checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+        assert checked == 1
+        assert problems == 0, "a batch-in-progress folder tripped the alarm"
+        assert pending == len(archive.GENERATED_NAMES)
+    finally:
+        store.release_lock(root, "build")
+
+    # Same folder, same problems, lock released: must revert to a real problem.
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert problems >= 1, "the desync was not reinstated once the batch lock was released"
+    assert first is not None and folder.name in first
+
+
+def test_a_tampered_folder_is_never_pending_even_inside_the_grace_window(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The narrowing that matters most: `_tamper` (JSONL vs. manifest hash
+    mismatch) on a FRESHLY captured folder must still fail doctor. A hash
+    mismatch describes real corruption, not "still queued", so it must never
+    be excused by recency or a live batch lock -- unlike a plain missing-file
+    problem, which the two tests above prove IS excused in the same
+    circumstances."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _tamper(folder)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1
+    assert pending == 0, "a hash-mismatch problem was wrongly excused as pending"
+    assert problems >= 1, "tampering inside the grace window was not caught"
+    assert first is not None and folder.name in first
