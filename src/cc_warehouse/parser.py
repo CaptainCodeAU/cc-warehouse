@@ -129,6 +129,51 @@ def _summary_candidate(entries: list[dict[str, object]]) -> str | None:
     return None
 
 
+def _assistant_content_is_substantive(content: object) -> bool:
+    """True if an assistant message's content is real work: non-blank text or a
+    tool call, never just structural/empty blocks."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        for block in cast(list[object], content):
+            if not isinstance(block, dict):
+                continue
+            block_d = cast(dict[str, object], block)
+            if block_d.get("type") == "tool_use":
+                return True
+            if block_d.get("type") == "text" and str(block_d.get("text") or "").strip():
+                return True
+    return False
+
+
+def _has_substantial_engagement(entries: list[dict[str, object]]) -> bool:
+    """SPEC 8 amendment (DESIGN 15, 2026-09-01): True once the assistant has
+    produced real content (text or a tool call) in at least two separate turns.
+
+    Only consulted when `_summary_candidate` found nothing: that signal answers
+    "does this session have a good display title", a DIFFERENT question from
+    "is this session worth rendering". A session started by a slash command and
+    then run autonomously has no qualifying user text (command text is
+    `<`-prefixed, excluded on purpose) even when the assistant did substantial
+    real work afterward - the original rule hid those sessions permanently,
+    with zero warning, confirmed on real archive data (a 1,010-line, 216-turn
+    session among them). A single assistant turn still reads as a stub (matches
+    the pre-existing `(no summary)` fixture), so the bar is two, not one."""
+    seen = 0
+    for entry in entries:
+        if entry.get("type") != "assistant":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = cast(dict[str, object], message).get("content")
+        if _assistant_content_is_substantive(content):
+            seen += 1
+            if seen >= 2:
+                return True
+    return False
+
+
 # U+FFFD, what the Unicode standard defines for a character that cannot be
 # represented. Used for LONE SURROGATES, which arrive when Claude Code truncates
 # a field mid-emoji and leaves half a surrogate pair behind: json.loads decodes
@@ -298,7 +343,7 @@ def parse_session(data: bytes) -> ParsedSession:
     candidate = _summary_candidate(entries)
     if candidate is None:
         summary = "(no summary)"
-        hidden = True
+        hidden = not _has_substantial_engagement(entries)
     else:
         trimmed = candidate.strip()
         if len(trimmed) > _SUMMARY_MAX_LEN:

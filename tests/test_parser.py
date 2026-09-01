@@ -225,3 +225,83 @@ def test_ismeta_is_honored_only_as_a_true_boolean() -> None:
     parsed = parser.parse_session(data)
     assert parsed.summary == "real hello"
     assert parsed.hidden is False
+
+
+# ---------------------------------------------------------------------------
+# Hidden/summary decoupling (SPEC 8 amendment, DESIGN 15 2026-09-01). A session
+# with no summary candidate used to be hidden unconditionally. Real archive
+# data found this hides genuine work: a session kicked off by a slash command
+# and then run autonomously has no qualifying user text (command text is
+# `<`-prefixed, excluded from `_summary_candidate` on purpose) even when the
+# assistant did substantial real work afterward. The DISPLAY TITLE rule is
+# unchanged (still "(no summary)" when there's no candidate); only whether
+# that same condition also means HIDDEN now asks a second question: did the
+# assistant produce real content in more than one turn.
+# ---------------------------------------------------------------------------
+
+
+def test_slash_command_only_session_is_still_hidden() -> None:
+    """A genuinely trivial session (slash command, no further engagement) has
+    no summary candidate and no assistant engagement either: still hidden.
+    Mirrors a real archived example (a bare `/exit`, 2026-05-08)."""
+    data = jsonl(
+        entry(
+            "user",
+            "<command-name>/exit</command-name>\n<command-message>exit</command-message>",
+            "2026-01-05T10:00:00.000Z",
+        ),
+        entry(
+            "user",
+            "<local-command-stdout>Catch you later!</local-command-stdout>",
+            "2026-01-05T10:00:01.000Z",
+        ),
+    )
+    parsed = parser.parse_session(data)
+    assert parsed.summary == "(no summary)"
+    assert parsed.hidden is True
+
+
+def test_slash_command_session_with_substantial_engagement_is_not_hidden() -> None:
+    """A session kicked off by a slash command and then run autonomously (no
+    further typed user text, so still no summary candidate) but with real
+    multi-turn assistant/tool engagement is NOT hidden. Mirrors a real archived
+    example: 216 assistant turns, 126 tool calls, permanently unrendered under
+    the old rule before this amendment."""
+    data = jsonl(
+        entry(
+            "user",
+            "<command-name>/cc-skills:tdd</command-name>",
+            "2026-01-05T10:00:00.000Z",
+        ),
+        entry(
+            "assistant",
+            [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "pytest"}}],
+            "2026-01-05T10:00:01.000Z",
+        ),
+        entry(
+            "user",
+            [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+            "2026-01-05T10:00:02.000Z",
+        ),
+        entry(
+            "assistant",
+            [{"type": "text", "text": "Ran the tests, all green."}],
+            "2026-01-05T10:00:03.000Z",
+        ),
+    )
+    parsed = parser.parse_session(data)
+    assert parsed.summary == "(no summary)"
+    assert parsed.hidden is False
+
+
+def test_single_assistant_reply_alone_is_still_hidden() -> None:
+    """One assistant turn with no user text is a stub, not substantial work:
+    still hidden. Guards against a threshold of 1 (matches the pre-existing
+    `test_session_without_summary_is_hidden_with_placeholder` fixture shape,
+    asserted again here explicitly as the amendment's lower bound)."""
+    data = jsonl(
+        entry("assistant", "only assistant text", "2026-01-05T10:00:00.000Z"),
+    )
+    parsed = parser.parse_session(data)
+    assert parsed.summary == "(no summary)"
+    assert parsed.hidden is True
