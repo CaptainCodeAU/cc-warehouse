@@ -28,6 +28,8 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from cc_warehouse import __version__, archive
 from cc_warehouse.render import RenderOptions
 from conftest import (
@@ -324,3 +326,65 @@ def test_hidden_sessions_are_still_projected_by_include_hidden(
     result = run_cli(["build", "--include-hidden"])
     assert result.code == 0, result.err
     assert "0 unchanged" in result.out, "a hidden head must never report as current"
+
+
+# ---------------------------------------------------------------------------
+# Ticket 34: a mirror failure must surface as an error, never a silent "built"
+# ---------------------------------------------------------------------------
+
+
+def test_a_mirror_failure_is_reported_as_an_error_not_built(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_mirror` used to swallow any exception from `write_session_folder` and
+    return as if nothing happened, so `build()`'s per-head loop recorded
+    "built" (success) for a head whose archive folder was never actually
+    written. Real incident, 2026-08-04 (cli.py's `_run_sweep` comment):
+    a sweep-triggered build stored 642 sessions with zero rendered pages,
+    invisible until a manual `ccw archive --verify`. This pins the fix:
+    the failure must reach `build()`'s own existing per-head `except`, which
+    already knows how to report it (R10)."""
+    target = tmp_path / "archive"
+    configure(ccw_env, archive_root=target, keep=True)
+    capture(ccw_env)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated mirror failure")
+
+    monkeypatch.setattr(archive, "write_session_folder", boom)
+    result = run_cli(["build"])
+    assert result.code != 0, "a swallowed mirror failure reported success"
+    assert "1 failed" in result.out, result.out
+    assert "0 built" in result.out, result.out
+    assert "RuntimeError: simulated mirror failure" in result.err, result.err
+
+
+def test_a_mirror_failure_blocks_pruning_of_the_projections_tree(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`build()` only prunes retired projection dirs after a fully-successful
+    run (F7/F9: keep the last-good tree rather than strand a session with
+    zero projections). A swallowed mirror failure hid errors from that guard
+    too. Grow a session's payload (the existing "landed in a new dir" fixture
+    above) so its OLD projection dir becomes genuinely retired, then make the
+    grown head's mirror fail: the retired dir must still stand, because the
+    build as a whole did not succeed."""
+    target = tmp_path / "archive"
+    configure(ccw_env, archive_root=target, keep=True)
+    capture(ccw_env)
+    assert run_cli(["build"]).code == 0
+    retired = projection_dirs(ccw_env)[0]
+    assert retired.is_dir()
+
+    grown = basic_session(session_id=UUID_A) + jsonl(
+        entry("user", "more", "2026-01-05T11:00:00.000Z", session_id=UUID_A)
+    )
+    capture(ccw_env, grown)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated mirror failure")
+
+    monkeypatch.setattr(archive, "write_session_folder", boom)
+    result = run_cli(["build"])
+    assert result.code != 0
+    assert retired.is_dir(), "pruning ran despite a failed head; a bad build ate a good dir"

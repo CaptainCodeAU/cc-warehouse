@@ -16,12 +16,19 @@ there catches this without touching the locked stdio decision at all.
 import json
 import subprocess
 import sys
+from pathlib import Path
+from typing import cast
 
+import pytest
+
+from cc_warehouse import archive
 from conftest import (
     basic_session,
     catalog_path,
+    catalog_rows,
     hook_payload,
     run_ccw,
+    run_cli,
     warehouse_root,
     write_transcript,
 )
@@ -71,3 +78,49 @@ def test_the_original_exception_still_propagates(ccw_env: dict[str, str]) -> Non
     )
     assert proc.returncode != 0
     assert "DatabaseError" in proc.stderr or "sqlite3" in proc.stderr, proc.stderr
+
+
+def configure_archive(env: dict[str, str], archive_root: Path) -> None:
+    cfg = Path(env["HOME"]) / ".config" / "cc-warehouse"
+    cfg.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f'root = "{warehouse_root(env)}"',
+        'archive_timezone = "Australia/Melbourne"',
+        f'archive_root = "{archive_root}"',
+    ]
+    (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env["XDG_CONFIG_HOME"] = str(cfg.parent)
+
+
+def test_a_mirror_to_archive_failure_reaches_render_sessions_own_error_path(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ticket 34: `_mirror_to_archive` used to catch and drop any exception
+    from `archive.write_session_folder` itself, so `_render_session`'s own
+    outer `except` (which reports a best-effort error notification and exits
+    non-zero, DESIGN section 4's documented contract for this exact call
+    site) never got the chance to run -- a real render failure looked like a
+    clean, silent success. This pins the fix: the failure must surface
+    through the EXISTING outer handler, with no new machinery needed."""
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    transcript = write_transcript(ccw_env, basic_session())
+    assert run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript)).code == 0
+
+    rows = catalog_rows(ccw_env, "SELECT short FROM session")
+    assert rows, "fixture precondition: no catalog row after capture"
+    short = cast(tuple[object, ...], rows[0])[0]
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated archive mirror failure")
+
+    monkeypatch.setattr(archive, "write_session_folder", boom)
+    result = run_cli(["render", "--session", f"s:{short}"])
+    assert result.code != 0, "a swallowed mirror failure reported success"
+
+    log_path = warehouse_root(ccw_env) / "logs" / "capture.jsonl"
+    assert log_path.exists(), "the failure left no durable trace at all"
+    records = [json.loads(line) for line in log_path.read_text().splitlines()]
+    errors = [r for r in records if r.get("status") == "error"]
+    assert errors, f"no error record among: {records}"
+    assert "simulated archive mirror failure" in errors[-1].get("message", "")

@@ -425,9 +425,23 @@ def _mirror(
     """Refresh this session's archive folder, when an archive is configured.
 
     Imported lazily because archive.py imports build.py: the archive layer sits
-    ABOVE this one and a module-level import would be a cycle. Never fatal, for
-    the same reason the capture path's mirror is not - the item is already
-    stored and already reported.
+    ABOVE this one and a module-level import would be a cycle.
+
+    NO LONGER SWALLOWS ITS OWN FAILURES (corrected 2026-09-01, ticket 34). It
+    used to catch and drop any exception here on the theory that the item is
+    already stored and already reported, so a mirror failure must not be
+    fatal. That theory over-reached: this function's only caller, `build()`'s
+    per-head loop, already wraps it in its own `except Exception` that records
+    an "error" `ItemOutcome` (the R10 "name it and carry on" pattern) and, on
+    the strength of that record, correctly skips pruning for an incomplete
+    build (see `build()`, "a build with any failed head keeps the last-good
+    projections"). Swallowing here hid the failure from that machinery too,
+    which is exactly the forbidden shape FINDINGS F7 names and DESIGN section
+    13 requires ("item-level errors: report + skip item, never reclassify").
+    Confirmed live 2026-08-04: a sweep-triggered build stored 642 sessions
+    with zero rendered pages, invisible until a manual `ccw archive --verify`
+    (cli.py's `_run_sweep` comment records it) -- silence like that is what
+    this swallow produced whenever it fired.
 
     `rebuild` is forwarded, not dropped (ticket 31 fix): without it,
     `ccw build --rebuild` silently did nothing to an already-current archive
@@ -443,18 +457,15 @@ def _mirror(
         return
     from cc_warehouse import archive
 
-    try:
-        archive.write_session_folder(
-            config.archive_root,
-            label,
-            data,
-            options,
-            config.archive_timezone,
-            fallback_stem=f"session-{short}",
-            rebuild=rebuild,
-        )
-    except Exception:
-        return
+    archive.write_session_folder(
+        config.archive_root,
+        label,
+        data,
+        options,
+        config.archive_timezone,
+        fallback_stem=f"session-{short}",
+        rebuild=rebuild,
+    )
 
 
 def _prune(projections: Path, expected: set[Path]) -> None:

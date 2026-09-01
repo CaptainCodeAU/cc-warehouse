@@ -871,14 +871,26 @@ def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> N
     every new session landed in the old store and the tree drifted from the
     moment the command finished. It was an export, not an archive.
 
-    OPT-IN and NEVER FATAL. No `archive_root` means this is a no-op and the
-    capture path behaves exactly as it did before, which is what lets the slice
-    ship against a live warehouse. When it is set, a failure here is swallowed:
-    the session is already in the store by the time this runs, the projections
-    are already written, and DESIGN 12's rule is that the detached child must
-    never turn a STORED capture into a lost one. The archive is the new tree and
-    the old one is still the live one; an archive problem must not cost the
-    operator the tree they actually use today.
+    OPT-IN. No `archive_root` means this is a no-op and the capture path behaves
+    exactly as it did before, which is what lets the slice ship against a live
+    warehouse.
+
+    NO LONGER SWALLOWS ITS OWN FAILURES (corrected 2026-09-01, ticket 34). It
+    used to catch and drop any exception here on the theory that DESIGN 12
+    forbids the detached child from turning a STORED capture into a lost one.
+    That theory over-reached: this function's only caller, `_render_session`,
+    already has its own outer `except Exception` (DESIGN section 4's documented
+    contract for this exact call site) that reports a best-effort error
+    notification and exits non-zero WITHOUT touching capture or catalog state
+    -- the "never lose a stored capture" guarantee was already provided one
+    frame up. Swallowing here just hid the failure from it, which is exactly
+    the forbidden shape FINDINGS F7 names ("any error on the evidence path
+    aborts the action for that item and reports it") and DESIGN section 13
+    requires ("item-level errors: report + skip item, never reclassify").
+    Confirmed live 2026-08-04: a sweep stored 642 sessions with zero rendered
+    pages, invisible until a manual `ccw archive --verify` (cli.py's own
+    `_run_sweep` comment records it) -- silence like that is what this swallow
+    produced whenever it fired.
 
     Takes the two fields it needs rather than the catalog head object: the
     head type is private to build.py, and reaching across a module boundary
@@ -890,17 +902,14 @@ def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> N
     """
     if config.archive_root is None:
         return
-    try:
-        archive.write_session_folder(
-            config.archive_root,
-            label,
-            data,
-            build.render_options(config),
-            config.archive_timezone,
-            fallback_stem=f"session-{short}",
-        )
-    except Exception:
-        return
+    archive.write_session_folder(
+        config.archive_root,
+        label,
+        data,
+        build.render_options(config),
+        config.archive_timezone,
+        fallback_stem=f"session-{short}",
+    )
 
 
 def _open_rendered_page(config: Config, directory: Path, short: str) -> None:
