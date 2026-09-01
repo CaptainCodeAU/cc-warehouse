@@ -52,9 +52,10 @@ specifically (not something `cc-warehouse` the package controls):
 ```
 test -x "$HOME/.local/bin/ccw-watch" && "$HOME/.local/bin/ccw-watch" || true
 ```
-`ccw-watch` is NOT part of this repo. It is a bash script in a different repo entirely
-(`~/CODE/Scaffoldings/fifty-shades-of-dotfiles/home/.local/bin/ccw-watch`, symlinked to
-`~/.local/bin/ccw-watch`). See "The two consumers of `ccw doctor`" below for what it does.
+`ccw-watch` is NOT part of this repo. It is a bash script in a different repo entirely,
+`fifty-shades-of-dotfiles`, tracked under that repo's own `home` subtree (which mirrors a
+home directory layout for symlinking) at `.local/bin/ccw-watch`, and symlinked into place at
+`~/.local/bin/ccw-watch`. See "The two consumers of `ccw doctor`" below for what it does.
 
 **This repo's own plugin** - `plugins/cc-capture/hooks/hooks.json` (installed as the
 `cc-capture@cc-warehouse` plugin, confirmed enabled in `~/.claude/settings.json`'s
