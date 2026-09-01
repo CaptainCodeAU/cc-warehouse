@@ -227,6 +227,18 @@ different mechanics (difference stated inline) | `DROP` not carried (reason inli
   title) is a separate concern and now prefers Claude Code's own `ai-title` entry over
   this summary-derived fallback (DESIGN section 6); the catalog `summary` field and the
   hidden logic still use the rule above.
+  **AMENDED 2026-09-01 (principal ruling, DESIGN section 15).** The extraction priority
+  and the display text ("(no summary)" when there's no candidate) are still KEEP,
+  unchanged. Only the no-summary-candidate branch's HIDDEN decision is narrowed: it no
+  longer hides unconditionally, but only when the session ALSO shows no substantial
+  assistant engagement (fewer than two assistant turns with real text or a tool call -
+  `parser._has_substantial_engagement`). Found because the reused signal conflated "no
+  good display title" with "worth rendering": a session started by a slash command
+  (excluded from the title candidate on purpose, being `<`-prefixed) and then run
+  autonomously with no further typed user text was hidden even with substantial real
+  work, measured on the live archive up to 1,010 lines / 216 assistant turns / 126 tool
+  calls, permanently unrendered with zero warning. The `warmup` branch (a candidate
+  exists but reads as `warmup`) is untouched.
 - Agent-session filtering: files named `agent-*` are ALWAYS excluded from `local`
   (summary.py:96-97) and excluded by default from `all` with an `--include-agents`
   opt-in (archive.py:28-29, cli.py:782-786). **CHANGE:** cc-warehouse captures and

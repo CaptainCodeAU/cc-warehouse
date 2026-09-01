@@ -1599,6 +1599,43 @@ unconfirmed, matching ticket 31.4's own "don't design a fix for an unproven
 cause" precedent - only the NEXT occurrence, if any, is now diagnosable).
 Full account: `harness/tickets/32-detached-render-child-visibility.md`.
 
+**2026-09-01: SPEC 8's "no summary -> hidden" rule amended (principal ruling).**
+A red-team audit (launched to investigate a same-day capture-health false alarm)
+independently re-checked an earlier session's own claim that folders missing
+their five render files were harmless - found instead that the underlying
+`hidden` flag was wrongly catching real work. `_summary_candidate` (parser.py)
+answers "does this session have a good display title": no `type:summary` entry
+and no non-meta user message with non-`<`-prefixed text. SPEC 8's KEEP verdict
+reused that exact same signal to also answer a different question, "is this
+session worth rendering" - and a session started by a slash command (command
+text is `<`-prefixed, excluded from the title candidate on purpose) that then
+runs autonomously with no further typed user text has NO summary candidate
+even when the assistant did substantial real work afterward. Measured on the
+live archive: 597 sessions carried `hidden=1`; sampling by size found the
+smallest genuinely trivial (a bare `/exit`) but the largest real, substantial
+work permanently unrendered with zero warning - one example 1,010 lines /
+1.57MB / 216 assistant turns / 126 tool calls. ~101 of the 597 exceed 20KB, a
+rough lower bound on how many are real sessions rather than noise.
+
+RULED: decouple the two questions. The summary/title rule is UNCHANGED (still
+"(no summary)" display text when there's no candidate, per SPEC 8's extraction
+priority, which stays KEEP as written). Only the HIDDEN decision, for the
+no-candidate branch specifically, now asks a second, independent question:
+did the assistant produce real content (non-blank text or a tool call) in at
+least two separate turns. Two, not one, so a single canned reply still reads
+as a stub (matches the pre-existing `(no summary)` oracle fixture, which
+needed no change). The "warmup" branch (a candidate exists but reads as
+`warmup`) is untouched - this amendment narrows the no-candidate branch only.
+Implemented as `parser._has_substantial_engagement`, consulted only when
+`_summary_candidate` returns `None`. Oracle tests added: a slash-command-only
+session with no follow-up stays hidden, a slash-command session with 2+ real
+assistant/tool turns is not hidden, and a single bare assistant reply (the
+old fixture's shape) still is - all three pass, and the full existing suite
+(1,201 tests) passed unchanged, meaning this is a strict narrowing, not a
+behavior change for anything the old suite already pinned. Full account and
+the recovery run against real data: `harness/tickets/33-hidden-flag-recovers-
+real-sessions.md`.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
