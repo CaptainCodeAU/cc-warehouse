@@ -376,3 +376,27 @@ def test_applescript_escapes_quotes_backslashes_and_newlines() -> None:
     assert refresh._applescript_string('a "b" \\ c') == '"a \\"b\\" \\\\ c"'
     # A literal newline cannot live inside an AppleScript string.
     assert refresh._applescript_string("one\ntwo") == '"one\\ntwo"'
+
+
+def test_a_dialog_that_never_appeared_breaks_the_quiet_convention(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty log means "ran fine". The box is the only other sign the job ran.
+
+    Losing both at once is indistinguishable from a job that never fired, so a
+    dialog that could not appear must reach the log even under --quiet. It still
+    must not change the exit status.
+    """
+    install(monkeypatch, {"osascript": FakeProc(1, stderr="not allowed")})
+    assert refresh.main(["--quiet"]) == 0
+    out = capsys.readouterr().out
+    assert "dialog not shown" in out
+    assert "not allowed" in out
+
+
+def test_a_shown_dialog_keeps_quiet_quiet(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(monkeypatch, {"osascript": FakeProc(0, pressed(refresh.OPEN_PAGE))})
+    assert refresh.main(["--quiet"]) == 0
+    assert capsys.readouterr().out == ""

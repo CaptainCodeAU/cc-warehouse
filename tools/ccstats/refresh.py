@@ -141,12 +141,18 @@ def _applescript_string(value: str) -> str:
     return '"' + out + '"'
 
 
-def notify(title: str, message: str, page: str | None, log: list[str]) -> None:
+def notify(title: str, message: str, page: str | None, log: list[str]) -> bool:
     """Open one dialog box reporting the run, and act on the button. Never raises.
 
-    A notifier that can take down the job it reports on is worse than no
-    notifier, so every failure here is logged and swallowed. Every binary is
-    called by absolute path because launchd's PATH is near-empty.
+    True when the box actually appeared. The caller needs that answer because
+    the whole point of the box is to be the only visible sign a scheduled job
+    ran; a box that silently failed to appear looks exactly like a job that
+    never fired, and under `--quiet` the log line saying so would never be
+    printed. It is deliberately NOT part of the exit status: a notifier that can
+    take down the job it reports on is worse than no notifier.
+
+    Every failure here is logged and swallowed. Every binary is called by
+    absolute path because launchd's PATH is near-empty.
 
     The two page buttons are offered only when a page was actually written, so
     the box can never hand out a button that opens nothing.
@@ -170,16 +176,17 @@ def notify(title: str, message: str, page: str | None, log: list[str]) -> None:
         )
     except OSError as exc:
         log.append(f"  ! dialog not shown: {exc}")
-        return
+        return False
     if proc.returncode != 0:
         log.append(f"  ! dialog not shown: osascript exited {proc.returncode}")
         for line in proc.stderr.splitlines():
             log.append(f"  ! {line}")
-        return
+        return False
 
     pressed = _button_pressed(proc.stdout)
     log.append(f"  dialog: {pressed or 'closed itself'}")
     _act_on(pressed, page, log)
+    return True
 
 
 def _act_on(pressed: str | None, page: str | None, log: list[str]) -> None:
@@ -247,6 +254,7 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
+    shown = True  # nothing to show is not a failure to show
     started = time.monotonic()
     stamp = datetime.now().astimezone().isoformat(timespec="seconds")
     log: list[str] = [f"ccstats refresh {stamp}"]
@@ -289,9 +297,13 @@ def main(argv: list[str]) -> int:
             lines += ["", "The scan failed, so the data was not refreshed."]
         if not built:
             lines += ["", "dashboard.py failed. See this job's log."]
-        notify(title, "\n".join(lines), page, log)
+        shown = notify(title, "\n".join(lines), page, log)
 
-    if not ok or not quiet:
+    # A dialog that failed to appear breaks the quiet convention on purpose.
+    # An empty log means "ran fine", and the box is the only other evidence the
+    # job ran at all - so losing both at once must never be silent. It still
+    # does not change the exit status.
+    if not ok or not quiet or not shown:
         print("\n".join(log))
     return 0 if ok else 1
 
