@@ -13,6 +13,14 @@ a working link to it. If this is the first time running this command in a sessio
 `tools/ccstats/README.md`'s "The live dashboard" and "Safety" sections first - they explain what
 the flags actually do and why the output must never be committed or uploaded.
 
+**A scheduled, agent-free path exists and this command does not replace it.**
+`tools/ccstats/refresh.py` runs Steps 1 and 3 (collect, then build) with no questions and no
+web server, and `com.captaincodeau.ccstats-dashboard` runs it daily at 13:00 (see
+`docs/operations.md`). So the page is usually already fresh. What this command still adds:
+choosing whether to refresh right now, showing and editing the saved project-exclude list, and
+serving the file over loopback because the browser tool refuses `file://`. If all the operator
+wants is a rebuild, `uv run python3 tools/ccstats/refresh.py` is the shorter answer.
+
 **Mode = `$ARGUMENTS`** (default: full normal run):
 
 - **blank** - full run: Steps 1-5 below, in order.

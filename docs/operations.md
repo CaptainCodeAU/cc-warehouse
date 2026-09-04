@@ -8,8 +8,8 @@ below was verified directly (read the plist, read the script, ran `launchctl lis
 
 ## Scheduled jobs (launchd)
 
-Three jobs, all under `~/Library/LaunchAgents/`, all currently loaded
-(`launchctl list | grep captaincode`). A fourth entry there,
+Four jobs, all under `~/Library/LaunchAgents/`, all currently loaded
+(`launchctl list | grep captaincode`). A fifth entry there,
 `com.captaincodeau.hermes-o-backup-pull`, is unrelated to this project.
 
 | Job | Schedule | Command | Log |
@@ -17,6 +17,7 @@ Three jobs, all under `~/Library/LaunchAgents/`, all currently loaded
 | `com.captaincodeau.ccw-sweep` | daily 12:30 | `ccw sweep --quiet` | `~/.claude/logs/ccw-sweep.log` |
 | `com.captaincodeau.ccw-repair` | daily 12:45 | `ccw repair --quiet` | `~/.claude/logs/ccw-repair.log` |
 | `com.captaincodeau.ccw-archive` | weekly, Sunday 03:00 | `ccw archive --to ~/cc-warehouse-archive` | `~/.claude/logs/ccw-archive.log` |
+| `com.captaincodeau.ccstats-dashboard` | daily 13:00 | `.venv/bin/python3 tools/ccstats/refresh.py --quiet` | `~/.claude/logs/ccstats-dashboard.log` |
 
 Notes:
 
@@ -24,7 +25,7 @@ Notes:
   for the same catalog lock (`locks/sweep` and `locks/build` are separate locks, but
   running them back to back rather than concurrently was the simpler choice made when
   `ccw-repair` was added).
-- All three use `--quiet` (sweep, repair) or rely on `ccw archive`'s own default output;
+- All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
   `--quiet` means **no stdout on success, failures still print**, so an empty log file is
   the expected healthy state, not evidence the job never ran. Check `launchctl list` for
   a job's last exit status (the number after the PID column; `0` is success) rather than
@@ -34,9 +35,22 @@ Notes:
   only full-tree integrity check (`ccw archive --to <dir> --verify`, which writes
   nothing) is currently run BY HAND. As of 2026-09-01 this had apparently not been run in
   an unknown amount of time before that day.
+- **`ccstats-dashboard` is not part of `ccw` and does not touch the warehouse.** It runs
+  `tools/ccstats/refresh.py` (added 2026-09-04), which calls `collect.py` then
+  `dashboard.py` to rebuild `~/.cc-warehouse/stats/claude-code-dashboard-live.html`. Both
+  children only READ `~/.claude/projects` and `~/cc-warehouse-archive`; every write lands
+  under `~/.cc-warehouse/stats`, and `common.resolve_out` refuses an output root inside the
+  repo, `~/.claude`, the archive or the warehouse data root. It passes no project
+  include/exclude flags on purpose - `dashboard.py` reads the saved
+  `dashboard-defaults.json` itself, so the scheduled page and a `/dashboard` page cannot
+  drift apart. Scheduled at 13:00, after `ccw-repair` (12:45), so a sweep's fresh captures
+  are already rendered before the stats scan reads them. Measured runtime 2026-09-04 on a
+  10,148 session corpus: 12 seconds. The interactive `/dashboard` command still exists for
+  editing the exclude list and for serving the page over loopback; the scheduled job
+  replaces only the rebuild half of it.
 - To run any of these manually right now: `launchctl kickstart -p gui/$(id -u)/<label>`.
   To see a job's own header comment (why it exists, what it assumes): `cat
-  ~/Library/LaunchAgents/<label>.plist` - all three carry a substantial comment block at
+  ~/Library/LaunchAgents/<label>.plist` - all four carry a substantial comment block at
   the top explaining their own reasoning.
 - `ccw sweep`, when it captures anything, also calls `build.build()` at the end of its own
   run (see `cli.py::_run_sweep`) - this is what actually renders a session that only

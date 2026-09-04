@@ -144,6 +144,38 @@ date range, not the project-exclude filter, which the panel itself says.
 shows the top 50 by cost in range, not 200. Every other panel is fully live on
 both filters.
 
+## Rebuilding it on a schedule, with no session
+
+`refresh.py` is the whole `/dashboard` command minus the parts that need a human or an
+agent:
+
+```
+uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect]
+```
+
+It calls `collect.py --quiet` then `dashboard.py`, and nothing else. It passes no
+`--include`/`--exclude` on purpose: `dashboard.py` already reads the saved
+`dashboard-defaults.json` itself (`load_default_filters`), so a scheduled page and a
+`/dashboard` page cannot drift apart. Editing that exclude list stays a human job
+(`/dashboard edit-list`, or edit the JSON by hand).
+
+`--quiet` prints nothing on success and the full run on any failure, matching the
+`ccw-sweep` / `ccw-repair` convention: an empty log is the healthy state. If the scan
+fails the page is still rebuilt from the existing database (stale beats absent) but the
+exit status is still 1. `--skip-collect` rebuilds the page from the existing database
+without rescanning, which takes about 3 seconds instead of 12.
+
+It runs the two children with `sys.executable`, not a bare `python3`. That matters under
+`launchd`, whose near-empty PATH would otherwise resolve `python3` to the macOS 3.9 system
+build, and `collect.py` needs 3.12+ for `tomllib`.
+
+**Scheduled on this machine** as `com.captaincodeau.ccstats-dashboard`, daily at 13:00.
+See `docs/operations.md` for that job alongside the three `ccw` ones.
+
+**What it does NOT do:** serve the page. The `/dashboard` command only spins up a loopback
+web server because the agent's browser tool refuses a `file://` URL; a human opens
+`~/.cc-warehouse/stats/claude-code-dashboard-live.html` directly.
+
 ## The 3D companion page
 
 **Quickest way to build and open it:** `/daywall`, the same shape as `/dashboard` (build, serve
