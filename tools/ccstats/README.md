@@ -150,7 +150,7 @@ both filters.
 agent:
 
 ```
-uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect]
+uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect] [--no-notify]
 ```
 
 It calls `collect.py --quiet` then `dashboard.py`, and nothing else. It passes no
@@ -168,6 +168,20 @@ without rescanning, which takes about 3 seconds instead of 12.
 It runs the two children with `sys.executable`, not a bare `python3`. That matters under
 `launchd`, whose near-empty PATH would otherwise resolve `python3` to the macOS 3.9 system
 build, and `collect.py` needs 3.12+ for `tomllib`.
+
+Every completion posts one macOS notification banner: the title says whether the page was
+rebuilt, is STALE (the scan failed but the old database still produced a page) or FAILED,
+the subtitle is the full path of `refresh.py` itself, and the body is the full path of the
+page. That path is read back out of `dashboard.py`'s own success line rather than
+recomputed here, so the banner can never name a file some other output root would have
+produced. It exists because a scheduled job leaves no trace on screen and a healthy run
+leaves an empty log, so without a banner "ran fine" and "never fired" look identical.
+`--no-notify` turns it off.
+
+The banner goes through `osascript`, which means macOS attributes it to Script Editor.
+If banners stop appearing, check Script Editor under System Settings > Notifications
+first. A notifier that cannot post never fails the run; it writes one line to the log
+and the job carries on.
 
 **Scheduled on this machine** as `com.captaincodeau.ccstats-dashboard`, daily at 13:00.
 See `docs/operations.md` for that job alongside the three `ccw` ones.
