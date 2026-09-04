@@ -114,10 +114,16 @@ FIXTURE = [
 ]
 
 
-def _build_html(tmp_path: Path, unticked: list[str] | None = None) -> Path:
+def _build_html(
+    tmp_path: Path,
+    unticked: list[str] | None = None,
+    extra: list[dict[str, object]] | None = None,
+) -> Path:
     conn = _make_db()
     for row in FIXTURE:
         _insert(conn, **row)
+    for row in extra or []:
+        _insert(conn, **row)  # type: ignore[arg-type]
     payload, unmatched = dashboard.build_payload(conn, Window())
     assert unmatched == []
     if unticked is not None:
@@ -237,3 +243,51 @@ def test_an_unapplied_default_exclude_list_no_longer_ships_silently(tmp_path: Pa
     html_path = _build_html(tmp_path, unticked=[PARENT])
     result = _run_probe(html_path)
     assert result["fsLength"] == 0, "the baked-in default exclusion should apply on first load"
+
+
+# Deliberately chosen so alphabetical order and most-recent order DISAGREE in
+# both directions: the newest project sorts last alphabetically, the oldest
+# sorts first, and two projects share a date so the tiebreak is exercised too.
+# `demo-parent`'s own newest row is 2026-06-14 (mine-5, under the worktree
+# child label, which folds onto the parent), so it lands in the middle.
+RECENCY_EXTRA: list[dict[str, object]] = [
+    dict(key="rec-1", date="2026-07-01", project="zzz-newest", engaged=60.0, cost=0.1),
+    dict(key="rec-2", date="2026-06-20", project="mmm-tie-b", engaged=60.0, cost=0.1),
+    dict(key="rec-3", date="2026-06-20", project="bbb-tie-a", engaged=60.0, cost=0.1),
+    dict(key="rec-4", date="2026-01-01", project="aaa-oldest", engaged=60.0, cost=0.1),
+]
+
+
+def test_project_checklist_is_ordered_most_recently_worked_on_first(tmp_path: Path) -> None:
+    """The checklist used to be alphabetical, which buried the two or three
+    projects a reader is actually here for behind dozens they last touched
+    months ago. It is now ordered by each canonical project's newest session
+    date, descending, with the old alphabetical order as the tiebreak.
+
+    Asserted against dates computed here from RECENCY_EXTRA directly, never
+    by asking the page for them, so a bug on either side fails this."""
+    html_path = _build_html(tmp_path, extra=RECENCY_EXTRA)
+    result = _run_probe(html_path)
+    assert result["runError"] is None, result["runError"]
+
+    assert result["projectLastDate"] == {
+        "zzz-newest": "2026-07-01",
+        "mmm-tie-b": "2026-06-20",
+        "bbb-tie-a": "2026-06-20",
+        PARENT: "2026-06-14",
+        "aaa-oldest": "2026-01-01",
+    }
+    expected = ["zzz-newest", "bbb-tie-a", "mmm-tie-b", PARENT, "aaa-oldest"]
+    assert result["canonList"] == expected
+    # The order the reader actually sees, not just the array behind it.
+    assert result["projListRowNames"] == expected
+
+
+def test_worktree_child_rows_do_not_get_their_own_checklist_entry(tmp_path: Path) -> None:
+    """The recency map and the checklist are both keyed on the CANONICAL
+    name, so an auto-generated agent-worktree folder must not appear as its
+    own row even though it carries the newest date of the two."""
+    html_path = _build_html(tmp_path, extra=RECENCY_EXTRA)
+    result = _run_probe(html_path)
+    assert WORKTREE_CHILD not in result["projectLastDate"]
+    assert WORKTREE_CHILD not in result["projListRowNames"]

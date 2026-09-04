@@ -282,7 +282,29 @@ const CANON_PROJECT = LK.projects.map(canonicalProjectName);
    (2026-08-24 dashboard investigation). Keying both sides on the same
    canonical name fixes it, and also gives the checklist one row per real
    project instead of one per throwaway agent-worktree folder. */
-const CANON_LIST = [...new Set(CANON_PROJECT)].sort((a,b) => a.localeCompare(b));
+const CANON_LIST = [...new Set(CANON_PROJECT)];
+/* Order the checklist MOST RECENTLY WORKED ON FIRST. With hundreds of
+   canonical names in the list, alphabetical order buries the handful of
+   projects the reader is actually here for behind dozens they last touched
+   months ago. "Recent" is deliberately the newest session date across the
+   WHOLE embedded corpus, not the current date range: a range-aware order
+   would reshuffle the rows under the reader's cursor every time they nudged
+   a date picker, which is the wrong behaviour for a list you scan and tick.
+   local_date is an ISO "YYYY-MM-DD" string straight out of SQLite (see the
+   session query in dashboard.py), so a plain string compare IS a date
+   compare here. Ties, meaning two projects last touched on the same day,
+   fall back to the previous alphabetical order so the result stays
+   deterministic across rebuilds. */
+const PROJECT_LAST_DATE = new Map();
+for (const row of DATA.S) {
+  const name = CANON_PROJECT[row[IDX.S.project]];
+  const d = row[IDX.S.date];
+  const seen = PROJECT_LAST_DATE.get(name);
+  if (seen === undefined || d > seen) PROJECT_LAST_DATE.set(name, d);
+}
+CANON_LIST.sort((a, b) =>
+  (PROJECT_LAST_DATE.get(b) || "").localeCompare(PROJECT_LAST_DATE.get(a) || "")
+  || a.localeCompare(b));
 /* Model FAMILY (opus/sonnet/haiku/fable), version numbers rolled together.
    Shared with the Overview KPI tile's own model-cost split so both use the
    exact same grouping. */
@@ -1317,7 +1339,8 @@ function buildProjList(filterText) {
     if (q && !name.toLowerCase().includes(q)) return;
     const excluded = state.excluded.has(name);
     html += `<div class="proj-item${excluded ? " excluded" : ""}" data-name="${esc(name)}">`
-      + `<input type="checkbox" ${excluded ? "" : "checked"}><label title="${esc(name || "(none)")}">${esc(name || "(none)")}</label></div>`;
+      + `<input type="checkbox" ${excluded ? "" : "checked"}><label title="${esc(name || "(none)")}">${esc(name || "(none)")}</label>`
+      + `<span class="n" title="last session in this project">${esc(PROJECT_LAST_DATE.get(name) || "")}</span></div>`;
   });
   projList.innerHTML = html || `<div class="proj-item"><label>no match</label></div>`;
 }

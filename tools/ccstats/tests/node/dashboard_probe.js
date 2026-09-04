@@ -171,7 +171,8 @@ const context = vm.createContext({
 // which close over the live binding rather than a one-time snapshot of it.
 const probeEpilogue = `
 ;globalThis.__probe = { state, KIND_IDX, PANELS, kindCounts, LK, IDX,
-  CANON_PROJECT, CANON_LIST, renderAll, recomputeFilteredSessions, DATA,
+  CANON_PROJECT, CANON_LIST, PROJECT_LAST_DATE, buildProjList,
+  renderAll, recomputeFilteredSessions, DATA,
   getFS: () => FS, getFS_set: () => FS_set,
   getFSW: () => FSW, getFSW_set: () => FSW_set };
 `;
@@ -214,6 +215,16 @@ if (!runError) {
   result.fswLength = probe.getFSW().length;
   result.stateKinds = [...probe.state.kinds];
   result.stateExcluded = [...probe.state.excluded];
+  // The project checklist's ORDER is a real, testable property (most
+  // recently worked on first), so expose both the list the page sorts and
+  // the per-project "last session date" it sorts by, plus the row order the
+  // reader actually sees after buildProjList() has written the DOM.
+  result.canonList = probe.CANON_LIST;
+  result.projectLastDate = Object.fromEntries(probe.PROJECT_LAST_DATE);
+  probe.buildProjList();
+  result.projListRowNames = [
+    ...documentStub.getElementById("proj-list").innerHTML.matchAll(/data-name="([^"]*)"/g),
+  ].map((m) => m[1]);
 
   probe.PANELS.forEach((p) => {
     try {
