@@ -1,10 +1,10 @@
 """`refresh.py`, the unattended dashboard rebuild.
 
 Every test here fakes `subprocess.run`, so nothing scans a transcript, nothing
-reads the real `sessions.sqlite`, nothing writes a page, and no notification
-banner reaches the screen. What is under test is the ORCHESTRATION: which
+reads the real `sessions.sqlite`, nothing writes a page, no dialog box opens and
+no Finder window appears. What is under test is the ORCHESTRATION: which
 children run, with which arguments, in which order, what the exit code and log
-look like when one of them fails, and what the completion banner says.
+look like when one of them fails, and what the completion dialog says and does.
 """
 
 from __future__ import annotations
@@ -24,6 +24,12 @@ import refresh  # noqa: E402
 
 PAGE = "/Users/x/.cc-warehouse/stats/claude-code-dashboard-live.html"
 PAGE_LINE = f"{PAGE}  (1,714,214 bytes, 10,148 sessions, full range)"
+GAVE_UP = "gave up:true"
+
+
+def pressed(button: str) -> str:
+    """`osascript` stdout for a run where someone clicked `button`."""
+    return f"button returned:{button}, gave up:false"
 
 
 class FakeProc:
@@ -34,9 +40,10 @@ class FakeProc:
 
 
 def key_of(cmd: list[str]) -> str:
-    """What a recorded command line is keyed by: a child script, or osascript."""
-    if Path(cmd[0]).name == "osascript":
-        return "osascript"
+    """What a recorded command line is keyed by: a helper binary, or a child script."""
+    name = Path(cmd[0]).name
+    if name in {"osascript", "open"}:
+        return name
     return Path(cmd[1]).name
 
 
@@ -47,9 +54,14 @@ def install(
 
     `outcomes` is keyed the same way `key_of` keys; anything not named exits 0.
     `dashboard.py` defaults to a realistic success line so the page path this
-    script reads back from it is exercised rather than stubbed away.
+    script reads back from it is exercised rather than stubbed away, and the
+    dialog defaults to timing out, so a test that says nothing about buttons
+    triggers no follow-up action.
     """
-    table = {"dashboard.py": FakeProc(0, stdout=PAGE_LINE)}
+    table = {
+        "dashboard.py": FakeProc(0, stdout=PAGE_LINE),
+        "osascript": FakeProc(0, stdout=GAVE_UP),
+    }
     table.update(outcomes or {})
     calls: list[list[str]] = []
 
@@ -65,11 +77,16 @@ def ran(calls: list[list[str]]) -> list[str]:
     return [key_of(c) for c in calls]
 
 
-def banner(calls: list[list[str]]) -> str:
-    """The AppleScript of the one notification posted."""
-    posted = [c for c in calls if key_of(c) == "osascript"]
-    assert len(posted) == 1, f"expected exactly one banner, got {len(posted)}"
-    return posted[0][2]
+def dialog(calls: list[list[str]]) -> str:
+    """The AppleScript of the one dialog shown."""
+    shown = [c for c in calls if key_of(c) == "osascript"]
+    assert len(shown) == 1, f"expected exactly one dialog, got {len(shown)}"
+    return shown[0][2]
+
+
+def opened(calls: list[list[str]]) -> list[list[str]]:
+    """The arguments of every `/usr/bin/open` call, in order."""
+    return [c[1:] for c in calls if key_of(c) == "open"]
 
 
 # ------------------------------------------------------------- orchestration
@@ -165,7 +182,7 @@ def test_non_quiet_success_still_logs(
     assert "dashboard" in out
 
 
-# --------------------------------------------------------- the page path
+# --------------------------------------------------------------- the page path
 
 
 def test_page_path_reads_the_dashboard_success_line() -> None:
@@ -173,81 +190,173 @@ def test_page_path_reads_the_dashboard_success_line() -> None:
 
 
 def test_page_path_is_none_when_absent() -> None:
-    """Better a banner that names no file than one that names the wrong file."""
+    """Better a dialog that names no file than one that names the wrong file."""
     assert refresh.page_path("") is None
     assert refresh.page_path("error: refusing to write there") is None
 
 
-# ------------------------------------------------------------ notification
+# ------------------------------------------------------------- the dialog box
 
 
-def test_completion_posts_one_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_completion_shows_one_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--quiet"]) == 0
     assert ran(calls) == ["collect.py", "dashboard.py", "osascript"]
 
 
-def test_banner_names_the_program_and_the_page_in_full(
+def test_dialog_names_the_program_and_the_page_in_full(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The whole ask: which program ran, and which file it produced, full paths."""
     calls = install(monkeypatch)
     refresh.main(["--quiet"])
-    text = banner(calls)
+    text = dialog(calls)
     assert str(refresh.ME) in text
     assert PAGE in text
     assert "rebuilt" in text
 
 
-def test_banner_uses_absolute_osascript(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dialog_offers_three_buttons_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three is AppleScript's ceiling, so all three must earn their place."""
+    calls = install(monkeypatch)
+    refresh.main(["--quiet"])
+    text = dialog(calls)
+    for label in (refresh.SHOW_SCRIPT, refresh.SHOW_FOLDER, refresh.OPEN_PAGE):
+        assert f'"{label}"' in text
+    assert f'default button "{refresh.OPEN_PAGE}"' in text
+
+
+def test_dialog_hides_the_page_buttons_when_there_is_no_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A button that opens nothing is worse than no button."""
+    calls = install(monkeypatch, {"dashboard.py": FakeProc(1)})
+    refresh.main(["--quiet"])
+    text = dialog(calls)
+    assert refresh.OPEN_PAGE not in text
+    assert refresh.SHOW_FOLDER not in text
+    assert f'"{refresh.SHOW_SCRIPT}"' in text
+    assert f'"{refresh.DISMISS}"' in text
+
+
+def test_dialog_always_gives_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Modal plus unattended equals a process parked for days without this."""
+    calls = install(monkeypatch)
+    refresh.main(["--quiet"])
+    assert f"giving up after {refresh.DIALOG_TIMEOUT_SECONDS}" in dialog(calls)
+
+
+def test_dialog_uses_absolute_osascript(monkeypatch: pytest.MonkeyPatch) -> None:
     """launchd's PATH is near-empty, so a bare `osascript` would not resolve."""
     calls = install(monkeypatch)
     refresh.main(["--quiet"])
-    posted = next(c for c in calls if key_of(c) == "osascript")
-    assert posted[0] == "/usr/bin/osascript"
-    assert posted[1] == "-e"
+    shown = next(c for c in calls if key_of(c) == "osascript")
+    assert shown[0] == "/usr/bin/osascript"
+    assert shown[1] == "-e"
 
 
-def test_banner_says_failed_when_the_page_was_not_written(
+def test_dialog_says_failed_when_the_page_was_not_written(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = install(monkeypatch, {"dashboard.py": FakeProc(1, stderr="nope")})
     assert refresh.main(["--quiet"]) == 1
-    text = banner(calls)
+    text = dialog(calls)
     assert "FAILED" in text
-    assert "no page written" in text
+    assert "no page was written" in text
 
 
-def test_banner_says_stale_when_only_the_scan_failed(
+def test_dialog_says_stale_when_only_the_scan_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The page exists and is named, but the banner must not imply fresh data."""
+    """The page exists and is named, but the dialog must not imply fresh data."""
     calls = install(monkeypatch, {"collect.py": FakeProc(2)})
     assert refresh.main(["--quiet"]) == 1
-    text = banner(calls)
+    text = dialog(calls)
     assert "STALE" in text
     assert PAGE in text
-    assert "data not refreshed" in text
+    assert "data was not refreshed" in text
 
 
-def test_no_notify_posts_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_notify_shows_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(monkeypatch)
     refresh.main(["--quiet", "--no-notify"])
     assert "osascript" not in ran(calls)
 
 
-def test_a_broken_notifier_cannot_fail_the_job(
+# ---------------------------------------------------------- what a button does
+
+
+def test_open_page_button_opens_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install(monkeypatch, {"osascript": FakeProc(0, pressed(refresh.OPEN_PAGE))})
+    refresh.main(["--quiet"])
+    assert opened(calls) == [[PAGE]]
+
+
+def test_show_folder_button_reveals_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`-R` opens the enclosing folder AND selects the file, which is "take me to it"."""
+    calls = install(monkeypatch, {"osascript": FakeProc(0, pressed(refresh.SHOW_FOLDER))})
+    refresh.main(["--quiet"])
+    assert opened(calls) == [["-R", PAGE]]
+
+
+def test_show_script_button_reveals_this_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = install(monkeypatch, {"osascript": FakeProc(0, pressed(refresh.SHOW_SCRIPT))})
+    refresh.main(["--quiet"])
+    assert opened(calls) == [["-R", str(refresh.ME)]]
+
+
+def test_timing_out_opens_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install(monkeypatch)  # default stdout is `gave up:true`
+    refresh.main(["--quiet"])
+    assert opened(calls) == []
+
+
+def test_dismiss_opens_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install(monkeypatch, {"osascript": FakeProc(0, pressed(refresh.DISMISS))})
+    refresh.main(["--quiet"])
+    assert opened(calls) == []
+
+
+def test_button_parsing() -> None:
+    assert refresh._button_pressed(pressed("Open page")) == "Open page"
+    assert refresh._button_pressed(GAVE_UP) is None
+    assert refresh._button_pressed("") is None
+
+
+def test_a_failed_open_cannot_fail_the_job(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(
+        monkeypatch,
+        {
+            "osascript": FakeProc(0, pressed(refresh.OPEN_PAGE)),
+            "open": FakeProc(1, stderr="no application knows how"),
+        },
+    )
+    assert refresh.main([]) == 0
+    out = capsys.readouterr().out
+    assert "no application knows how" in out
+
+
+# ------------------------------------------------- the notifier cannot bite
+
+
+def test_a_broken_dialog_cannot_fail_the_job(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A notifier that takes down the job it reports on is worse than none."""
     install(monkeypatch, {"osascript": FakeProc(1, stderr="not allowed")})
     assert refresh.main([]) == 0
     out = capsys.readouterr().out
-    assert "notification not sent" in out
+    assert "dialog not shown" in out
     assert "not allowed" in out
 
 
-def test_notifier_surviving_a_missing_binary(
+def test_dialog_surviving_a_missing_binary(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     install(monkeypatch)
@@ -259,10 +368,11 @@ def test_notifier_surviving_a_missing_binary(
 
     monkeypatch.setattr(subprocess, "run", boom)
     assert refresh.main([]) == 0
-    assert "notification not sent" in capsys.readouterr().out
+    assert "dialog not shown" in capsys.readouterr().out
 
 
-def test_applescript_quotes_are_escaped() -> None:
+def test_applescript_escapes_quotes_backslashes_and_newlines() -> None:
     """A path with a quote in it must not break out of the string literal."""
-    got = refresh._applescript_string('a "b" \\ c')
-    assert got == '"a \\"b\\" \\\\ c"'
+    assert refresh._applescript_string('a "b" \\ c') == '"a \\"b\\" \\\\ c"'
+    # A literal newline cannot live inside an AppleScript string.
+    assert refresh._applescript_string("one\ntwo") == '"one\\ntwo"'

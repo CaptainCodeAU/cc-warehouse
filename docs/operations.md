@@ -45,13 +45,17 @@ Notes:
   `dashboard-defaults.json` itself, so the scheduled page and a `/dashboard` page cannot
   drift apart. Scheduled at 13:00, after `ccw-repair` (12:45), so a sweep's fresh captures
   are already rendered before the stats scan reads them. **It is the only one of these jobs
-  that announces itself**: every completion posts a macOS notification naming the program
+  that announces itself**: every completion opens a macOS dialog box naming the program
   that ran and the full path of the page it wrote, because a `launchd` job leaves no trace
-  on screen and this one's healthy log is deliberately empty, so a banner is the only way
-  to tell "ran fine" from "never fired". The banner is posted with `osascript` and is
-  therefore attributed to Script Editor, which must be allowed under System Settings >
-  Notifications; a notifier that cannot post only writes a line to the log, it never fails
-  the job. `--no-notify` suppresses it for a hand run. Measured runtime 2026-09-04 on a
+  on screen and this one's healthy log is deliberately empty, so the box is the only way to
+  tell "ran fine" from "never fired". It carries three buttons (AppleScript's ceiling):
+  `Show script`, `Show page folder`, `Open page`; a run that wrote no page drops the two
+  page buttons and offers `Dismiss` instead. A box rather than a notification banner was
+  the operator's explicit call on 2026-09-04, and the cost is real: a dialog is modal and
+  transient, so a run nobody is in front of goes unseen where a banner would have waited in
+  Notification Centre. It closes itself after 300 seconds so an unattended run never parks
+  a process waiting for a click, and a dialog that cannot appear only writes a line to the
+  log rather than failing the job. `--no-notify` suppresses it for a hand run. Measured runtime 2026-09-04 on a
   10,148 session corpus: 12 seconds. The interactive `/dashboard` command still exists for
   editing the exclude list and for serving the page over loopback; the scheduled job
   replaces only the rebuild half of it.

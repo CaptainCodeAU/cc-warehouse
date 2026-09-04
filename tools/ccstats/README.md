@@ -169,19 +169,34 @@ It runs the two children with `sys.executable`, not a bare `python3`. That matte
 `launchd`, whose near-empty PATH would otherwise resolve `python3` to the macOS 3.9 system
 build, and `collect.py` needs 3.12+ for `tomllib`.
 
-Every completion posts one macOS notification banner: the title says whether the page was
-rebuilt, is STALE (the scan failed but the old database still produced a page) or FAILED,
-the subtitle is the full path of `refresh.py` itself, and the body is the full path of the
-page. That path is read back out of `dashboard.py`'s own success line rather than
-recomputed here, so the banner can never name a file some other output root would have
+Every completion opens one macOS dialog box. The title says whether the page was rebuilt,
+is STALE (the scan failed but the old database still produced a page) or FAILED, and the
+body names the full path of `refresh.py` itself and the full path of the page, each on its
+own line. That page path is read back out of `dashboard.py`'s own success line rather than
+recomputed here, so the box can never name a file some other output root would have
 produced. It exists because a scheduled job leaves no trace on screen and a healthy run
-leaves an empty log, so without a banner "ran fine" and "never fired" look identical.
+leaves an empty log, so without it "ran fine" and "never fired" look identical.
 `--no-notify` turns it off.
 
-The banner goes through `osascript`, which means macOS attributes it to Script Editor.
-If banners stop appearing, check Script Editor under System Settings > Notifications
-first. A notifier that cannot post never fails the run; it writes one line to the log
-and the job carries on.
+Three buttons, because `display dialog` accepts no more than three:
+
+| Button | Does |
+|---|---|
+| `Open page` (default) | Hands the page to the browser (`open <page>`) |
+| `Show page folder` | Opens the stats folder in Finder with the page selected (`open -R <page>`) |
+| `Show script` | Opens `tools/ccstats/` in Finder with `refresh.py` selected |
+
+A run that wrote no page drops the two page buttons and offers `Dismiss`, so the box can
+never hand out a button that opens nothing. That ceiling is also why there is no separate
+Dismiss on a successful run: every button closes the box.
+
+**A box rather than a notification banner is a deliberate trade, made 2026-09-04.** A
+dialog is modal and transient, so a scheduled run nobody is sitting in front of goes
+unseen, where a banner would have waited in Notification Centre. It closes itself after
+`DIALOG_TIMEOUT_SECONDS` (300) so an unattended run never parks a process waiting for a
+click. Everything here fails quietly: a dialog that cannot appear, a button whose `open`
+fails, a missing binary - each writes one line to the log and the run carries on with its
+real exit status.
 
 **Scheduled on this machine** as `com.captaincodeau.ccstats-dashboard`, daily at 13:00.
 See `docs/operations.md` for that job alongside the three `ccw` ones.
