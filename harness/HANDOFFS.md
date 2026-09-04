@@ -21,6 +21,71 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-first handoff, 2026-09-04 (new session)
+
+Short session, no ticket picked up. Opened by reading `OPENING-PROMPT.md`, offered the
+standing backlog candidates, and the operator instead ran `/dashboard`. Refreshed
+`sessions.sqlite` (20.67s, 30,714 files parsed, 0 unreadable, 27,015 from cache) and
+rebuilt the live dashboard, then answered two follow-up questions and made one small
+committed change.
+
+**"Does the HTML work offline?" - yes, and it was measured rather than asserted.** The
+built page registers ZERO font faces (`document.fonts.size === 0` in a real browser), has
+no `<link>`, no `@import`, no `@font-face`, no `fetch`/XHR/WebSocket, no external script
+src, and exactly one absolute URL in the whole 1.7 MB file: the SVG XML namespace
+`http://www.w3.org/2000/svg`, which is an identifier and is never fetched. Doctype and
+`<meta charset>` are both inside the file, so nothing depends on the server's headers.
+
+**"The fonts differ between the served page and the double-clicked file" - the stated
+cause was disproved, and a different one was found but NOT confirmed.** Nothing can fail
+to load, per the above, and the bytes are identical either way, so origin cannot change
+font resolution. What was measured instead: this machine's default handler for BOTH
+`public.html` and `http`/`https` is **Brave**, while the browser-automation tool only
+drives **Chrome**, so the two pages being compared were probably in two different
+browsers. Brave's own `Preferences` holds a `braveShieldsMetadata` entry for
+`http://127.0.0.1` carrying a `farbling_token`, meaning Brave's fingerprinting protection
+(which restricts which local fonts a page may use) has run on that origin; Shields do not
+apply to `file://` URLs. That points the difference at the SERVED page, the opposite of
+the initial guess. Left unconfirmed: only one browser is connected to the extension, so
+Brave could not be inspected directly. Also ruled out by measurement, not by argument:
+per-origin zoom (no saved zoom for `127.0.0.1` or for files), a stale/different file, and
+missing fonts (`SF Mono`, `Menlo`, `Georgia`, `Arial Narrow`, `Helvetica Neue` are all
+installed; only the later fallbacks `Consolas`, `DejaVu Sans Mono`, `Iowan Old Style` are
+not, and they never get reached).
+
+**Shipped: the project checklist is ordered most recently worked on first (`ca80ce7`).**
+It was alphabetical, which on the real corpus means 123 rows where the two or three
+projects the reader is here for sit wherever the alphabet puts them. Each canonical
+project now carries its newest session date; the list sorts by that descending with the
+old alphabetical order as the tiebreak, and the date renders on the right of each row
+using the `.proj-item .n` style that already existed in the template but had never been
+emitted. "Recent" is measured across the WHOLE embedded corpus, not the current date
+range, so nudging a date picker cannot reshuffle the list under the reader's cursor.
+Two new tests in `test_dashboard_headless.py`, with `dashboard_probe.js` extended to
+expose `CANON_LIST`, `PROJECT_LAST_DATE` and the rendered row order. **The tests were
+proved to bite**: the sort was temporarily reverted to alphabetical, they failed on the
+first row, and the template was restored from a backup verified by sha256. 163 tests
+green, ruff clean, verified afterwards in a real Chrome tab on the real corpus (123 rows,
+every row an ISO date, monotonically descending, zero violations).
+
+**A gotcha this session hit, worth knowing:** `cp` is interactive in this shell, so a
+`cp` that overwrites an existing file BLOCKS on a `(y/n [n])` prompt instead of finishing.
+It hung a 600s Bash call and, worse, left the deliberately-corrupted template in place
+until the restore was redone in Python. Use a Python `write` + `os.replace` for
+restore-from-backup steps, never `cp`.
+
+**Reviewed but NOT changed: the project hide-list.** The operator asked whether any hidden
+project resembled the kept ones. Measured across all 30,714 session rows with the page's
+own canonicalisation and the 23 saved rules: 140 canonical projects, 71 shown, 69 hidden.
+Four real candidates were surfaced - `Scaffoldings-fifty-shades-of-dotfiles` (4,005
+sessions, 178.8 h, $7,170, active that day), `CaptainCodeAU-cc-print-shop` (the only `cc-`
+project hidden while `cc-warehouse`, `cc-vantage` and `cc-context-forge` are all shown),
+`CaptainCodeAU-EXTENSIONS-important-soonish-links` (531 sessions, active the day before),
+and `CaptainCodeAU-claude-code-transcripts` - plus the tax family (~5,700 sessions, 288 h)
+flagged separately as probably deliberate. **The operator chose none of them**;
+`dashboard-defaults.json` is unchanged. Recorded here so a future session does not
+re-derive the same list and read silence as an oversight.
+
 ### Twentieth handoff, 2026-08-28 (new session)
 
 Opened by reading `OPENING-PROMPT.md`, then asked the operator which standing candidate to

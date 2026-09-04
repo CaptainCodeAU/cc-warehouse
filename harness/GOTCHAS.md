@@ -12,6 +12,18 @@ facts" while actually holding five - fixed here.)
   describes the venv copy - not what the hook runs. The install IS frozen.
   Unambiguous check:
   `env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/bin:/bin" ~/.local/bin/ccw doctor`
+- **`cp` is INTERACTIVE in this shell, so a `cp` that overwrites an existing
+  file blocks forever on `overwrite <path>? (y/n [n])`** instead of finishing
+  (2026-09-04). The Bash tool cannot answer that prompt, so the call burns its
+  whole timeout and every command after it in the same invocation never runs.
+  The dangerous case is a restore-from-backup step: the copy that PUTS the
+  backup down is the one that hangs, so the deliberately-modified file is left
+  in place looking finished. Both `rm` and `mv` are wrapped the same way (see
+  the deletion-safety rule in the global CLAUDE.md), so assume any of the three
+  may prompt. Write the backup back with Python instead, which is also the
+  project's own R2 write convention:
+  `tmp.write_bytes(backup.read_bytes()); os.replace(tmp, target)`, then compare
+  sha256 to prove the restore actually landed.
 - **The SSH key drops out of the agent** (ticket 28.15, seen more than once).
   `ssh-add -l` reports "no identities" and `git push` fails on access rights.
   Any commits made while this is happening land LOCAL AND UNPUSHED - the operator
