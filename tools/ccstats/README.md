@@ -146,6 +146,9 @@ both filters.
 
 ## Rebuilding it on a schedule, with no session
 
+**For the day to day commands, see `CHEATSHEET.md` beside this file** - run it now, read
+the log, change the time, turn it off. This section is the reasoning behind them.
+
 `refresh.py` is the whole `/dashboard` command minus the parts that need a human or an
 agent:
 

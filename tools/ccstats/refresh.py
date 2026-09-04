@@ -61,6 +61,9 @@ refuses a root inside this repo, `~/.claude`, the archive or the warehouse data
 root.
 
     uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect] [--no-notify]
+
+Day to day operation - run it now, read the log, change the time, turn it off -
+is in CHEATSHEET.md, beside this file.
 """
 
 from __future__ import annotations

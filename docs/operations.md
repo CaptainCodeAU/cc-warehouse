@@ -35,7 +35,8 @@ Notes:
   only full-tree integrity check (`ccw archive --to <dir> --verify`, which writes
   nothing) is currently run BY HAND. As of 2026-09-01 this had apparently not been run in
   an unknown amount of time before that day.
-- **`ccstats-dashboard` is not part of `ccw` and does not touch the warehouse.** It runs
+- **`ccstats-dashboard` is not part of `ccw` and does not touch the warehouse.** Its
+  day to day commands are collected in `tools/ccstats/CHEATSHEET.md`, beside the script. It runs
   `tools/ccstats/refresh.py` (added 2026-09-04), which calls `collect.py` then
   `dashboard.py` to rebuild `~/.cc-warehouse/stats/claude-code-dashboard-live.html`. Both
   children only READ `~/.claude/projects` and `~/cc-warehouse-archive`; every write lands
