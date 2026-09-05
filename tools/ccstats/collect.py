@@ -55,6 +55,7 @@ from common import (  # noqa: E402
     BadOut,
     Out,
     cost_note,
+    publish_text,
     resolve_out,
 )
 from common import IDLE_GAP_SECONDS as _IDLE_GAP  # noqa: E402
@@ -1661,7 +1662,7 @@ def main() -> int:
         "cost_note": cost_note(PRICES_READ_ON),
         "outputs": [str(out.db), *[str(out.root / f) for f in files]],
     }
-    out.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    publish_text(json.dumps(report, indent=2, sort_keys=True) + "\n", out.report)
     conn.close()
     os.replace(building_path, out.db)
 

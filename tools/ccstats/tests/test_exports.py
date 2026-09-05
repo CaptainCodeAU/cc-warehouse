@@ -35,7 +35,7 @@ SESSION_DEFAULTS: dict[str, object] = {
     "wall_seconds": 900.0, "active_seconds": 700.0,
     "n_user_prompts": 3, "n_tool_uses": 4, "n_assistant_turns": 5,
     "is_subagent": 0, "entrypoint": "cli", "is_real": 1,
-    "local_hour": 9, "local_weekday": 2, "tz_offset": "+10:00",
+    "local_weekday": 2, "tz_offset": "+10:00",
 }
 
 
@@ -109,12 +109,12 @@ def out(tmp_path: Path) -> Out:
 # --------------------------------------------------------- dashboard-data.json
 
 
-def test_the_dashboard_writes_its_payload_as_a_file(out: Out, capsys) -> None:
+def test_the_dashboard_writes_its_payload_as_a_file(out: Out) -> None:
     assert dashboard.main(["--out", str(out.root)]) == 0
     assert out.data_json.exists()
 
 
-def test_the_file_is_byte_identical_to_what_the_page_embeds(out: Out, capsys) -> None:
+def test_the_file_is_byte_identical_to_what_the_page_embeds(out: Out) -> None:
     """The whole reason this file exists: one string, written twice.
 
     If the JSON were rebuilt rather than reused, this could drift by a
@@ -126,7 +126,7 @@ def test_the_file_is_byte_identical_to_what_the_page_embeds(out: Out, capsys) ->
     assert blob in page
 
 
-def test_the_payload_file_is_valid_json_with_the_column_map(out: Out, capsys) -> None:
+def test_the_payload_file_is_valid_json_with_the_column_map(out: Out) -> None:
     """A consumer needs `cols` to decode the row-major arrays; it must be there."""
     dashboard.main(["--out", str(out.root)])
     data = json.loads(out.data_json.read_text(encoding="utf-8"))
@@ -134,12 +134,32 @@ def test_the_payload_file_is_valid_json_with_the_column_map(out: Out, capsys) ->
     assert len(data["S"]) == 2
 
 
-def test_the_payload_file_states_its_own_scope(out: Out, capsys) -> None:
-    """It IS project-filtered. Saying so inline stops it being averaged with
-    `stats-facts.json`, which is not."""
-    dashboard.main(["--out", str(out.root)])
+def test_the_payload_is_not_project_filtered(out: Out) -> None:
+    """THE TEST THAT WAS MISSING, and its absence shipped a false claim.
+
+    `--exclude beta` makes `beta` start UNTICKED in the page. That is a
+    starting state for the browser's own checkboxes, not a filter on the data:
+    every session must still be in the file. The first version of this feature
+    asserted the opposite in a `scope` string, and on the real corpus 4,350 of
+    10,214 embedded sessions belonged to projects that start unticked.
+    """
+    dashboard.main(["--out", str(out.root), "--exclude", "beta"])
     data = json.loads(out.data_json.read_text(encoding="utf-8"))
-    assert "project" in data["scope"]
+    assert data["default_unticked_projects"] == ["beta"]
+
+    projects = data["lookups"]["projects"]
+    column = data["cols"]["S"].index("project")
+    labels = {projects[row[column]] for row in data["S"]}
+    assert labels == {"alpha", "beta"}, "an unticked project must still be embedded"
+
+
+def test_the_payload_scope_says_no_project_filter_was_applied(out: Out) -> None:
+    """Structure, not prose. A sentence cannot be checked against the query
+    that produced the rows; this can."""
+    dashboard.main(["--out", str(out.root), "--exclude", "beta"])
+    scope = json.loads(out.data_json.read_text(encoding="utf-8"))["scope"]
+    assert scope["project_filter_applied"] is False
+    assert scope["rows"] == "sessions with is_real = 1"
 
 
 def test_the_dashboard_still_prints_the_html_path_first(out: Out, capsys) -> None:
@@ -164,12 +184,12 @@ def test_refresh_still_reads_back_the_html_path_not_the_json(out: Out, capsys) -
     )
 
 
-def test_the_payload_file_lands_under_the_resolved_root_only(out: Out, capsys) -> None:
+def test_the_payload_file_lands_under_the_resolved_root_only(out: Out) -> None:
     dashboard.main(["--out", str(out.root)])
     assert out.data_json.parent == out.root
 
 
-def test_no_building_file_survives_a_good_run(out: Out, capsys) -> None:
+def test_no_building_file_survives_a_good_run(out: Out) -> None:
     """mkstemp + os.replace, same as the HTML: nothing half-written left behind."""
     dashboard.main(["--out", str(out.root)])
     assert list(out.root.glob("*.building")) == []
@@ -178,32 +198,45 @@ def test_no_building_file_survives_a_good_run(out: Out, capsys) -> None:
 # ------------------------------------------------------------ stats-facts.json
 
 
-def test_export_writes_the_facts_card(out: Out, capsys) -> None:
+def test_export_writes_the_facts_card(out: Out) -> None:
     assert export.main(["--out", str(out.root)]) == 0
     assert out.facts_json.exists()
 
 
-def test_the_facts_card_carries_the_headline_numbers(out: Out, capsys) -> None:
+def test_the_facts_card_carries_the_headline_numbers(out: Out) -> None:
     export.main(["--out", str(out.root)])
     facts = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]
     assert facts["sessions_real"] == 2
     assert facts["files_total"] == 2
 
 
-def test_the_facts_card_is_stamped(out: Out, capsys) -> None:
+def test_the_facts_card_is_stamped(out: Out) -> None:
     export.main(["--out", str(out.root)])
     card = json.loads(out.facts_json.read_text(encoding="utf-8"))
     assert card["generated_at"].endswith("Z")
 
 
-def test_the_facts_card_states_its_own_scope(out: Out, capsys) -> None:
-    """It is NOT project-filtered, unlike `dashboard-data.json`. Say so."""
+def test_both_files_declare_the_same_population(out: Out) -> None:
+    """They cover the same window and the same rows, so their scopes must be
+    EQUAL - a fact worth asserting rather than describing, since a reader
+    comparing two English sentences cannot tell agreement from near-agreement."""
+    # `export.py` has no `--exclude`, and rejects it: it applies no project
+    # filter at all. That asymmetry in the FLAGS is exactly why the scopes
+    # coming out EQUAL is the thing worth pinning.
+    dashboard.main(["--out", str(out.root), "--exclude", "beta"])
     export.main(["--out", str(out.root)])
+    data = json.loads(out.data_json.read_text(encoding="utf-8"))
     card = json.loads(out.facts_json.read_text(encoding="utf-8"))
-    assert "not" in card["scope"].lower()
+    assert data["scope"] == card["scope"]
 
 
-def test_the_facts_card_carries_the_cost_disclaimer(out: Out, capsys) -> None:
+def test_the_scope_travels_with_the_window(out: Out) -> None:
+    export.main(["--out", str(out.root), "--since", "2026-07-02"])
+    scope = json.loads(out.facts_json.read_text(encoding="utf-8"))["scope"]
+    assert scope["since"] == "2026-07-02"
+
+
+def test_the_facts_card_carries_the_cost_disclaimer(out: Out) -> None:
     """`cost_usd` is a list-price estimate, never a bill. It must travel with
     the number, because this file is designed to be read somewhere else."""
     export.main(["--out", str(out.root)])
@@ -216,39 +249,39 @@ def test_export_prints_the_path_it_wrote(out: Out, capsys) -> None:
     assert str(out.facts_json) in capsys.readouterr().out
 
 
-def test_export_refuses_a_missing_database(tmp_path: Path, capsys) -> None:
+def test_export_refuses_a_missing_database(tmp_path: Path) -> None:
     assert export.main(["--out", str(tmp_path)]) == 1
     assert not (tmp_path / "stats-facts.json").exists()
 
 
-def test_export_rejects_an_unknown_flag(out: Out, capsys) -> None:
+def test_export_rejects_an_unknown_flag(out: Out) -> None:
     assert export.main(["--out", str(out.root), "--wat"]) == 2
 
 
-def test_export_refuses_a_protected_output_root(capsys) -> None:
+def test_export_refuses_a_protected_output_root() -> None:
     """`resolve_out`'s fence must apply here too, not just to its siblings."""
     import common
 
     assert export.main(["--out", str(common.REPO_ROOT)]) == 2
 
 
-def test_export_honours_the_window(out: Out, capsys) -> None:
+def test_export_honours_the_window(out: Out) -> None:
     export.main(["--out", str(out.root), "--since", "2026-07-02"])
     facts = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]
     assert facts["sessions_real"] == 1
 
 
-def test_the_facts_card_lands_under_the_resolved_root_only(out: Out, capsys) -> None:
+def test_the_facts_card_lands_under_the_resolved_root_only(out: Out) -> None:
     export.main(["--out", str(out.root)])
     assert out.facts_json.parent == out.root
 
 
-def test_export_leaves_no_building_file(out: Out, capsys) -> None:
+def test_export_leaves_no_building_file(out: Out) -> None:
     export.main(["--out", str(out.root)])
     assert list(out.root.glob("*.building")) == []
 
 
-def test_the_facts_card_is_small(out: Out, capsys) -> None:
+def test_the_facts_card_is_small(out: Out) -> None:
     """The point of this file over `dashboard-data.json` is that it is tiny.
     A card that grew into a second full export would have lost its reason to
     exist, so the size is a fence, not a coincidence."""

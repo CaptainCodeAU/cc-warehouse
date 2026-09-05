@@ -32,7 +32,7 @@ import re
 import sqlite3
 import tempfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 # ------------------------------------------------------------------- paths
@@ -186,24 +186,71 @@ COST_NOTE = (
 )
 
 
-def publish_text(text: str, target: Path, *, prefix: str, suffix: str) -> None:
+def publish_text(text: str, target: Path) -> None:
     """Write `text` to `target` atomically: build beside it, then one rename.
 
     `mkstemp` in the SAME directory so the rename cannot cross a filesystem,
     then `os.replace`, which is atomic: a reader sees the whole old file or the
-    whole new one, never half of either. This is DESIGN R2's idiom, and it lives
-    here because three call sites were about to hold three copies of it - the
-    exact drift the architecture board's C12 recommendation names.
+    whole new one, never half of either. This is DESIGN R2's idiom, and it is
+    THE text writer for this package - `dashboard.py`, `daywall.py`,
+    `export.py`, `collect.py`'s report and `write_manifest` all route through
+    here, because five copies of an idiom is five chances to fix four of them.
+
+    The scratch file is named from the target rather than from an argument at
+    each call site: six literals restating a filename that is already the
+    second parameter is a drift waiting to happen.
+
+    Requires the directory to exist; `Out.ensure` is still the only mkdir any
+    ccstats tool performs, and every caller has already run it.
 
     A failure leaves the `.building` file behind rather than removing it. That
     is deliberate: nothing under ccstats deletes, not even its own scratch, and
     `tests/test_ccstats_fences.py` enforces it.
     """
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, building = tempfile.mkstemp(dir=target.parent, prefix=prefix, suffix=suffix)
+    fd, building = tempfile.mkstemp(
+        dir=target.parent, prefix=f"{target.stem}.", suffix=f"{target.suffix}.building"
+    )
     with open(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
     Path(building).replace(target)
+
+
+DB_NOT_FOUND = (
+    "no sessions.sqlite in {out}. Run collect.py first:\n"
+    "  uv run python3 tools/ccstats/collect.py"
+)
+
+
+def header(meta: dict[str, str], window: Window, *, rows: str) -> dict[str, object]:
+    """The five-key preamble every generated data file carries, built once.
+
+    `dashboard.py`, `daywall.py` and `export.py` each grew their own literal
+    copy of this block. That is the shape `COST_NOTE` was in when the CSVs in
+    one folder shipped two differently-worded cost disclaimers, which is the
+    reason this module exists.
+
+    `scope` is DATA, not prose, so two files can be compared (`a["scope"] ==
+    b["scope"]`) instead of a reader having to trust two English sentences. A
+    sentence cannot be checked against the query that produced the rows; this
+    can, and `tests/test_exports.py` does exactly that.
+    """
+    return {
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timezone": meta.get("local_timezone", "unknown"),
+        "cost_note": cost_note(meta.get("prices_read_on", "")),
+        "prices_read_on": meta.get("prices_read_on", ""),
+        "window_desc": window.describe(),
+        "scope": {
+            "since": window.since,
+            "until": window.until,
+            "rows": rows,
+            # NO ccstats output filters rows by project. The dashboard's tick
+            # list is applied by the PAGE at render time; the data behind it is
+            # whole. Stated as a field rather than a sentence because the first
+            # version of this said the opposite and shipped.
+            "project_filter_applied": False,
+        },
+    }
 
 
 def cost_note(prices_read_on: str = "") -> str:
@@ -370,14 +417,14 @@ def read_meta(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def write_manifest(window: Window, generated_at: str, out: Out) -> None:
-    out.manifest.write_text(
+    publish_text(
         json.dumps(
             {"since": window.since, "generated_at": generated_at},
             indent=2,
             sort_keys=True,
         )
         + "\n",
-        encoding="utf-8",
+        out.manifest,
     )
 
 

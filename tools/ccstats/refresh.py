@@ -151,15 +151,6 @@ def page_path(dashboard_stdout: str) -> str | None:
     return _path_named(dashboard_stdout, PAGE_NAME)
 
 
-def data_path(dashboard_stdout: str) -> str | None:
-    """The payload-file path out of the same stdout."""
-    return _path_named(dashboard_stdout, DATA_NAME)
-
-
-def facts_path(export_stdout: str) -> str | None:
-    """The facts-card path out of `export.py`'s stdout."""
-    return _path_named(export_stdout, FACTS_NAME)
-
 
 def _applescript_string(value: str) -> str:
     """`value` as an AppleScript string literal.
@@ -291,7 +282,6 @@ def main(argv: list[str]) -> int:
     started = time.monotonic()
     stamp = datetime.now().astimezone().isoformat(timespec="seconds")
     log: list[str] = [f"ccstats refresh {stamp}"]
-    ok = True
     scan_failed = False
 
     if skip_collect:
@@ -300,38 +290,43 @@ def main(argv: list[str]) -> int:
         log.append("collect")
         if not _run("collect.py", ["--quiet"], log)[0]:
             log.append("  scan failed; building the page from the existing database anyway")
-            ok = False
             scan_failed = True
 
     log.append("dashboard")
     built, dashboard_stdout = _run("dashboard.py", [], log)
-    if not built:
-        ok = False
     page = page_path(dashboard_stdout)
-    data = data_path(dashboard_stdout)
+    data = _path_named(dashboard_stdout, DATA_NAME)
 
     # Last, and with no flags, for the same anti-drift reason `dashboard.py` gets
     # none: it resolves its own output root and its own window.
     log.append("export")
     exported, export_stdout = _run("export.py", [], log)
-    if not exported:
-        ok = False
-    card = facts_path(export_stdout)
+    card = _path_named(export_stdout, FACTS_NAME)
+
+    # ONE definition, not a boolean mutated at four sites. The exit status and
+    # the dialog below are then visibly reading the same three facts, and a
+    # future fourth child cannot be added while forgetting to flip a flag.
+    ok = built and exported and not scan_failed
 
     if want_notify:
         elapsed = f"{time.monotonic() - started:.0f}s"
-        # Worst-first, and an export failure gets its OWN word. STALE means "the
-        # data was not refreshed", which is what a failed SCAN means; reusing it
-        # for a failed export would send someone reading the collector for a
-        # fault that is not there.
+        # Every failure NAMED, not just the worst one. An if/elif ladder
+        # ordered by severity silently drops the others: the first version of
+        # this said "STALE" for a run where the scan AND the export had both
+        # failed, and the export was never mentioned anywhere in the title.
+        #
+        # STALE still means "the data was not refreshed", which is what a failed
+        # SCAN means; an export failure keeps its own word, so nobody goes
+        # reading the collector for a fault that is not there.
+        faults = []
         if not built:
-            title = f"ccstats dashboard FAILED ({elapsed})"
-        elif scan_failed:
-            title = f"ccstats dashboard STALE ({elapsed})"
-        elif not exported:
-            title = f"ccstats page rebuilt, DATA EXPORT FAILED ({elapsed})"
-        else:
-            title = f"ccstats dashboard rebuilt ({elapsed})"
+            faults.append("PAGE FAILED")
+        if scan_failed:
+            faults.append("STALE")
+        if not exported:
+            faults.append("EXPORT FAILED")
+        what = ", ".join(faults) if faults else "rebuilt"
+        title = f"ccstats dashboard {what} ({elapsed})"
         # Program then artefacts, each on its own line and each in full: the box
         # is often the only place any of these paths is ever seen.
         lines = [
@@ -350,7 +345,9 @@ def main(argv: list[str]) -> int:
         if not built:
             lines += ["", "dashboard.py failed. See this job's log."]
         if not exported:
-            lines += ["", "export.py failed, so the JSON files may be stale."]
+            # Only `stats-facts.json` is export.py's; `dashboard-data.json` was
+            # written by dashboard.py and is as fresh as the page beside it.
+            lines += ["", "export.py failed, so stats-facts.json may be stale."]
         shown = notify(title, "\n".join(lines), page, log)
 
     # A dialog that failed to appear breaks the quiet convention on purpose.

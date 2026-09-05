@@ -107,10 +107,14 @@ uv run python3 tools/ccstats/dashboard.py    # page + dashboard-data.json
 uv run python3 tools/ccstats/export.py       # stats-facts.json only, under a second
 ```
 
-**THE TWO FILES DO NOT COVER THE SAME SESSIONS.** `dashboard-data.json` honours the
-page's project tick list. `stats-facts.json` does not, so it covers everything in the
-window, the same as `collect-report.json`. Never average one against the other. Each
-file says which it is, in its own `scope` field.
+**THE PROJECT TICK LIST IS NOT A FILTER ON THESE FILES.** `dashboard-data.json`
+holds EVERY session in the window, including projects that start unticked - the page
+applies the tick list in your browser, not in the data. Both files carry the same
+`scope` object and cover the same rows, so you can check that with
+`jq -e '.scope' <file>` on each and compare.
+
+The one real difference: `stats-facts.json`'s `files_total` counts every session
+file, where the payload's per-session rows are real sessions only.
 
 ## Change which projects start unticked
 

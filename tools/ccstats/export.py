@@ -7,14 +7,26 @@ of row-major arrays that only make sense with its own `cols` map. Neither is
 something a menu-bar app, a status badge, a shell script or an LLM can read in
 one gulp. This one is a few kilobytes of named numbers.
 
-WHY IT IS A SEPARATE PROGRAM, not another write inside `dashboard.py`. Its
-SCOPE is different, and the difference is easy to miss and expensive to get
-wrong. `dashboard-data.json` is project-FILTERED: it holds exactly the sessions
-the page's project tick list leaves ticked. The numbers here honour the date
-window but apply NO project filter, so they describe the same population as
-`collect-report.json`. Two scopes in one file would invite a consumer to average
-across them and be quietly wrong, so each file states its scope inline and they
-stay apart.
+WHY IT IS A SEPARATE PROGRAM, not another write inside `dashboard.py`. Only
+because `facts.compute` is aggregate-over-a-window and `build_payload` is
+per-session, so they share no query and no shape. That is a weak reason and it
+is stated as one.
+
+THE FIRST VERSION OF THIS FILE GAVE A STRONGER REASON AND IT WAS FALSE. It said
+`dashboard-data.json` is project-FILTERED and this one is not, so the two cover
+different populations. `build_payload` applies NO project predicate: it selects
+`FROM session WHERE is_real = 1` plus the date bounds, and `default_unticked_projects`
+is a starting state the BROWSER applies to its own checkboxes. Measured on the
+real corpus after the claim shipped: 4,350 of the 10,214 embedded sessions belong
+to the 65 projects that start unticked. Both files cover the same window and the
+same `is_real = 1` rows. That is why `scope` is now a STRUCTURE built by
+`common.header`, comparable with `==`, instead of an English sentence no test
+could check - the tests that were supposed to guard the claim asserted
+`"project" in scope`, which passes on almost any sentence.
+
+The one population difference that IS real: `facts.files_total` counts every
+session file in the window (31,036), where the payload's per-session rows are
+`is_real = 1` only (10,214).
 
 NOTHING IS RECOMPUTED HERE. Every figure comes from `facts.compute`, which is
 already the single source for the numbers quoted in the workbook's prose and in
@@ -31,18 +43,19 @@ else. Reads the database read-only. Deletes nothing, ever.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 import facts  # noqa: E402
 from common import (  # noqa: E402
+    DB_NOT_FOUND,
     BadOut,
     BadWindow,
     Window,
-    cost_note,
+    header,
     open_ro,
     parse_since,
     parse_until,
@@ -56,42 +69,21 @@ USAGE = (
     "[--out DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
 )
 
-DB_NOT_FOUND = (
-    "no sessions.sqlite in {out}. Run collect.py first:\n"
-    "  uv run python3 tools/ccstats/collect.py"
-)
-
-SCOPE = (
-    "date window only: these numbers are NOT filtered by the dashboard's project "
-    "tick list, so they cover the same population as collect-report.json. "
-    "dashboard-data.json IS project-filtered; do not mix the two."
-)
-
-# Flags that take a value, and so are followed by an argument that is not itself
-# an unknown flag. Listed rather than inferred: an unknown argument must fail
-# loudly (a silently ignored `--sicne` would produce a whole-corpus card that
-# looks exactly like a correct windowed one).
-VALUED = {"--out", "--since", "--until"}
+KNOWN = {"--out", "--since", "--until", "-h", "--help"}
 
 
-def known(argv: list[str]) -> list[str]:
-    """Arguments that are neither a known flag nor a known flag's value."""
-    unknown: list[str] = []
-    skip = False
-    for arg in argv:
-        if skip:
-            skip = False
-            continue
-        if arg in VALUED:
-            skip = True
-            continue
-        if arg in {"-h", "--help"}:
-            continue
-        unknown.append(arg)
-    return unknown
+def unknown(argv: list[str]) -> list[str]:
+    """Flags this command does not accept.
+
+    An unknown argument must fail loudly rather than be ignored: a silently
+    dropped `--sicne` produces a whole-corpus card that looks exactly like a
+    correct windowed one. Only `-`-prefixed arguments are candidates, because
+    the values here are dates and paths.
+    """
+    return [a for a in argv if a.startswith("-") and a not in KNOWN]
 
 
-def card(conn, window: Window) -> dict[str, object]:
+def card(conn: sqlite3.Connection, window: Window) -> dict[str, object]:
     """The whole file: a header saying what this is, then the numbers.
 
     The header is not decoration. This file is designed to be read by something
@@ -99,14 +91,11 @@ def card(conn, window: Window) -> dict[str, object]:
     numbers cover, and the fact that `cost_usd` is an estimate rather than a
     bill, have to travel WITH them.
     """
-    meta = read_meta(conn)
     return {
-        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "window_desc": window.describe(),
-        "timezone": meta.get("local_timezone", "unknown"),
-        "scope": SCOPE,
-        "cost_note": cost_note(meta.get("prices_read_on", "")),
-        "prices_read_on": meta.get("prices_read_on", ""),
+        # `facts.compute` filters to `is_real = 1` (see its module docstring)
+        # except for `files_total`, which counts every session file in the
+        # window - the one figure here that is drawn from a wider population.
+        **header(read_meta(conn), window, rows="sessions with is_real = 1"),
         "facts": facts.compute(conn, window),
     }
 
@@ -116,9 +105,9 @@ def main(argv: list[str]) -> int:
         print((__doc__ or USAGE).strip())
         return 0
 
-    unknown = known(argv)
-    if unknown:
-        print(f"error: unknown argument(s): {unknown!r}", file=sys.stderr)
+    bad = unknown(argv)
+    if bad:
+        print(f"error: unknown argument(s): {bad!r}", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
 
@@ -144,7 +133,7 @@ def main(argv: list[str]) -> int:
 
     out.ensure()
     text = json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
-    publish_text(text, out.facts_json, prefix="stats-facts.", suffix=".json.building")
+    publish_text(text, out.facts_json)
     print(f"{out.facts_json}  ({len(text):,} bytes, {window.describe()})")
     return 0
 

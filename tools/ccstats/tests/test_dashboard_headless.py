@@ -128,7 +128,7 @@ def _build_html(
     assert unmatched == []
     if unticked is not None:
         payload["default_unticked_projects"] = unticked
-    html = dashboard.render(payload)
+    html = dashboard.render_blob(dashboard.to_blob(payload))
     out = tmp_path / "dashboard.html"
     out.write_text(html, encoding="utf-8")
     return out

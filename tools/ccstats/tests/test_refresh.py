@@ -458,6 +458,34 @@ def test_an_export_failure_is_not_called_stale(monkeypatch: pytest.MonkeyPatch) 
     assert "EXPORT" in shown
 
 
+def test_a_run_where_two_children_fail_names_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A severity-ordered if/elif ladder drops every fault but the worst.
+
+    This exact run - scan failed AND export failed - used to be titled STALE,
+    with the export failure absent from the title entirely.
+    """
+    calls = install(
+        monkeypatch,
+        {"collect.py": FakeProc(2), "export.py": FakeProc(1)},
+    )
+    assert refresh.main(["--quiet"]) == 1
+    shown = next(c for c in calls if key_of(c) == "osascript")[2]
+    assert "STALE" in shown
+    assert "EXPORT FAILED" in shown
+
+
+def test_a_clean_run_names_no_fault(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control case: the fault list must be empty when nothing failed."""
+    calls = install(monkeypatch)
+    refresh.main(["--quiet"])
+    shown = next(c for c in calls if key_of(c) == "osascript")[2]
+    assert "rebuilt" in shown
+    assert "FAILED" not in shown
+    assert "STALE" not in shown
+
+
 def test_the_dialog_names_the_data_files(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(
         monkeypatch,
@@ -477,4 +505,4 @@ def test_the_dialog_names_the_data_files(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_a_reshaped_export_line_is_not_guessed_at(monkeypatch: pytest.MonkeyPatch) -> None:
     """Same rule `page_path` follows: name no file rather than the wrong one."""
     install(monkeypatch, {"export.py": FakeProc(0, stdout="something else entirely")})
-    assert refresh.facts_path("something else entirely") is None
+    assert refresh._path_named("something else entirely", refresh.FACTS_NAME) is None

@@ -47,27 +47,22 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from common import (  # noqa: E402
+    DB_NOT_FOUND,
     BadOut,
     BadWindow,
     Window,
-    cost_note,
+    header,
     open_ro,
     parse_since,
     parse_until,
     publish_text,
     read_meta,
     resolve_out,
-)
-
-DB_NOT_FOUND = (
-    "no sessions.sqlite in {out}. Run collect.py first:\n"
-    "  uv run python3 tools/ccstats/collect.py"
 )
 
 TEMPLATE = Path(__file__).parent / "dashboard_template.html"
@@ -313,15 +308,11 @@ def build_payload(
     dates = [row[1] for row in session_rows]
     unticked, unmatched = resolve_unticked(projects.values, include or [], exclude or [])
     payload = {
-        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "timezone": meta.get("local_timezone", "unknown"),
-        "cost_note": cost_note(meta.get("prices_read_on", "")),
-        "prices_read_on": meta.get("prices_read_on", ""),
-        "window_desc": window.describe(),
-        "scope": (
-            "project-filtered: every row here honours the page's project tick list. "
-            "stats-facts.json does NOT apply that list, so the two must not be mixed."
-        ),
+        # `rows`: `window.session` is `is_real = 1` plus the date bounds, and the
+        # query above adds NO project predicate. `default_unticked_projects`
+        # below is a starting state for the page's own checkboxes, applied in
+        # the browser - every project is embedded and every session is here.
+        **header(meta, window, rows="sessions with is_real = 1"),
         "min_date": min(dates) if dates else "",
         "max_date": max(dates) if dates else "",
         "default_unticked_projects": unticked,
@@ -400,10 +391,6 @@ def render_blob(blob: str) -> str:
     return template.replace(DATA_MARKER, blob)
 
 
-def render(payload: dict[str, object]) -> str:
-    """The whole page for `payload`. Kept for callers that hold no blob."""
-    return render_blob(to_blob(payload))
-
 
 def main(argv: list[str]) -> int:
     try:
@@ -442,12 +429,12 @@ def main(argv: list[str]) -> int:
     html = render_blob(blob)
     target = out.root / "claude-code-dashboard-live.html"
     out.ensure()
-    publish_text(html, target, prefix="dashboard-live.", suffix=".html.building")
+    publish_text(html, target)
     # The SAME string, written a second time as a file another program can read.
     # It is not a summary of the page and not a re-query: it is the page's own
     # data, so a JS app fetching it and a reader looking at the page can never
     # be shown different numbers.
-    publish_text(blob, out.data_json, prefix="dashboard-data.", suffix=".json.building")
+    publish_text(blob, out.data_json)
 
     n_sessions = len(payload["S"])  # type: ignore[arg-type]
     print(f"{target}  ({len(html):,} bytes, {n_sessions:,} sessions, {window.describe()})")

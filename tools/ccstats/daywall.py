@@ -25,13 +25,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-import tempfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from common import (  # noqa: E402
+    DB_NOT_FOUND,
     BadOut,
     BadWindow,
     Window,
@@ -39,6 +39,7 @@ from common import (  # noqa: E402
     open_ro,
     parse_since,
     parse_until,
+    publish_text,
     read_meta,
     resolve_out,
 )
@@ -50,11 +51,6 @@ from dashboard import (  # noqa: E402
     parse_repeated,
     resolve_unticked,
     session_kind,
-)
-
-DB_NOT_FOUND = (
-    "no sessions.sqlite in {out}. Run collect.py first:\n"
-    "  uv run python3 tools/ccstats/collect.py"
 )
 
 TEMPLATE = Path(__file__).parent / "daywall_template.html"
@@ -246,12 +242,7 @@ def main(argv: list[str]) -> int:
     html = render(payload)
     target = out.root / "claude-code-daywall.html"
     out.ensure()
-    fd, building_name = tempfile.mkstemp(
-        dir=out.root, prefix="daywall.", suffix=".html.building"
-    )
-    with open(fd, "w", encoding="utf-8") as f:
-        f.write(html)
-    Path(building_name).replace(target)
+    publish_text(html, target)
 
     n_sessions = len(payload["S"])  # type: ignore[arg-type]
     print(f"{target}  ({len(html):,} bytes, {n_sessions:,} sessions, {window.describe()})")
