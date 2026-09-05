@@ -69,13 +69,14 @@ def test_a_kept_project_is_named_as_reviewed(out: Out, capsys) -> None:
 
 
 def test_an_excluded_project_names_the_pattern_that_did_it(out: Out, capsys) -> None:
-    """A folder is skipped BY something. Naming the pattern is what lets the
-    operator fix the right line instead of hunting for it."""
+    """A folder is skipped BY something. Grouping the folders UNDER that pattern
+    is what lets the operator fix the right line instead of hunting for it."""
     defaults(out, keep=["alpha"], exclude=["bet"])
-    review.main(["--out", str(out.root)])
+    review.main(["--out", str(out.root), "--projects"])
     printed = capsys.readouterr().out
-    assert "beta" in printed
     assert "bet" in printed
+    beta = next(ln for ln in printed.splitlines() if ln.rstrip().endswith("beta"))
+    assert printed.index("bet") < printed.index(beta)
 
 
 def test_a_project_in_neither_list_is_reported_as_unreviewed(out: Out, capsys) -> None:
@@ -106,8 +107,15 @@ def test_an_allowlist_switches_off_what_it_does_not_name(out: Out, capsys) -> No
     defaults(out, keep=["alpha"], include=["alpha"], exclude=[])
     review.main(["--out", str(out.root)])
     printed = capsys.readouterr().out
-    beta = next(ln for ln in printed.splitlines() if "  beta" in ln)
-    assert "allowlist" in beta, beta
+    assert "not in the include allowlist" in printed, printed
+
+
+def test_an_allowlist_orphan_is_not_lost_from_the_report(out: Out, capsys) -> None:
+    """It belongs to no exclude pattern, so a pattern-shaped report could count
+    it in the totals and show it in no row at all."""
+    defaults(out, keep=["alpha"], include=["alpha"], exclude=[])
+    review.main(["--out", str(out.root), "--projects"])
+    assert "beta" in capsys.readouterr().out
 
 
 def test_the_report_writes_nothing(out: Out, capsys) -> None:
@@ -218,3 +226,133 @@ def test_keep_is_not_a_filter(out: Out, capsys) -> None:
     review.main(["--out", str(out.root)])
     printed = capsys.readouterr().out
     assert "gamma" in printed, "a project outside `keep` must still be counted"
+
+
+# ------------------------------------------------------- the report's shape
+# The first version printed one row per project: 139 rows and a 242-character
+# line on the live corpus, three quarters of them repeating one prefix and two
+# thirds printing the same number twice. The operator specified this selection
+# as 31 KEYWORDS, so the default view answers in patterns and the per-project
+# detail moves behind `--projects`. Nothing is removed, only reordered.
+
+
+def report(out: Out, capsys, *args: str) -> str:
+    review.main(["--out", str(out.root), *args])
+    return capsys.readouterr().out
+
+
+def test_the_unreviewed_section_comes_first(out: Out, capsys) -> None:
+    """It is the only part that needs a decision. Burying it under 138 rows
+    already ruled on is what the first version did."""
+    add_project(out, "g1", "gamma")
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    text = report(out, capsys)
+    assert text.index("gamma") < text.index("alpha")
+
+
+def test_the_cracks_section_prints_even_when_empty(out: Out, capsys) -> None:
+    """A block that appears only sometimes is one the eye stops looking for.
+    The heading and its count are always in the same place."""
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    text = report(out, capsys)
+    assert "NEVER RULED ON - in neither list  (0)" in text
+    assert "none - every project matches" in text
+
+
+def test_a_project_in_keep_that_exclude_overrides_is_reported(out: Out, capsys) -> None:
+    """THE QUIETER CRACK. `exclude` wins over `keep`, so a project the operator
+    explicitly asked to count can be dropped with nothing said. Eight of these
+    existed on the live corpus and none was visible anywhere."""
+    defaults(out, keep=["beta"], exclude=["bet"])
+    text = report(out, capsys)
+    assert "IN `keep` BUT EXCLUDED ANYWAY" in text
+    # Summarised by default - the pattern to blame, not eighteen lines of folder
+    assert "excluded by: bet" in text
+    # ...and in full under --projects
+    full = report(out, capsys, "--projects")
+    assert "beta" in full.split("IN `keep` BUT EXCLUDED ANYWAY")[1]
+
+
+def test_no_overrides_says_none(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    section = report(out, capsys).split("IN `keep` BUT EXCLUDED ANYWAY")[1]
+    assert section.splitlines()[1].strip() == "none."
+
+
+def test_the_keep_section_has_one_row_per_pattern(out: Out, capsys) -> None:
+    """Two projects, one pattern covering both: one row, not two."""
+    add_project(out, "a2", "alpha-two")
+    defaults(out, keep=["alpha"], exclude=[])
+    rows = [ln for ln in report(out, capsys).splitlines() if ln.rstrip().endswith("alpha")]
+    assert len(rows) == 1, rows
+
+
+def test_a_pattern_row_counts_its_projects(out: Out, capsys) -> None:
+    add_project(out, "a2", "alpha-two")
+    defaults(out, keep=["alpha"], exclude=[])
+    row = next(ln for ln in report(out, capsys).splitlines() if ln.rstrip().endswith("alpha"))
+    assert row.split()[2] == "2", row
+
+
+def test_a_pattern_row_counts_what_it_alone_holds(out: Out, capsys) -> None:
+    """`only` is the delete signal: how much falls out if this pattern goes."""
+    defaults(out, keep=["alpha", "lph"], exclude=[])
+    text = report(out, capsys)
+    alpha = next(ln for ln in text.splitlines() if ln.rstrip().endswith("alpha"))
+    lph = next(ln for ln in text.splitlines() if ln.rstrip().endswith("lph"))
+    assert alpha.split()[3] == "0", alpha
+    assert lph.split()[3] == "0", lph
+
+
+def test_patterns_covered_by_others_are_named(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha", "lph"], exclude=[])
+    assert "lph" in report(out, capsys)
+
+
+def test_the_redundancy_callout_warns_it_is_one_at_a_time(out: Out, capsys) -> None:
+    """THE TRAP. `only` is computed per pattern in isolation. Two patterns can
+    each read 0 because they cover EACH OTHER - drop either safely, drop both
+    and the projects are gone. Live example: `infisical` and `agent-vault`."""
+    defaults(out, keep=["alpha", "lph"], exclude=[])
+    assert "one at a time" in report(out, capsys).lower()
+
+
+def test_a_pattern_matching_nothing_is_named(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha", "no-such-thing"], exclude=[])
+    text = report(out, capsys)
+    assert "no-such-thing" in text
+    assert "match nothing" in text.lower()
+
+
+def test_rows_sort_by_sessions_in_the_window(out: Out, capsys) -> None:
+    add_project(out, "a2", "alpha-two")
+    add_project(out, "a3", "alpha-three")
+    defaults(out, keep=["alpha", "beta"], exclude=[])
+    lines = report(out, capsys).splitlines()
+    assert lines.index(next(x for x in lines if x.rstrip().endswith("alpha"))) < lines.index(
+        next(x for x in lines if x.rstrip().endswith("beta"))
+    )
+
+
+def test_projects_lists_the_folders(out: Out, capsys) -> None:
+    add_project(out, "a2", "alpha-two")
+    defaults(out, keep=["alpha"], exclude=[])
+    assert "alpha-two" not in report(out, capsys)
+    assert "alpha-two" in report(out, capsys, "--projects")
+
+
+def test_the_default_report_is_short(out: Out, capsys) -> None:
+    """The whole point. One row per project is what made it unreadable."""
+    for i in range(30):
+        add_project(out, f"p{i}", f"alpha-{i}")
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    assert len(report(out, capsys).splitlines()) < 25
+
+
+def test_new_is_unchanged_by_all_of_this(out: Out, capsys) -> None:
+    """The scheduled job parses this. Its shape is a compatibility surface."""
+    add_project(out, "g1", "gamma")
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    line = report(out, capsys, "--new").strip()
+    assert line.endswith("gamma")
+    assert line.split()[:2] == ["1", "since"], line

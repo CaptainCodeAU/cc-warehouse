@@ -172,14 +172,28 @@ A pattern matching no project prints a warning naming it.
 uv run python3 tools/ccstats/review.py
 ```
 
-Three lists: projects counted and named by `keep`, projects skipped and the exact
-pattern that skipped them, and projects in **neither** list. That last group still
-counts - an unreviewed project quietly missing from your total would be worse than
-one visibly in it - but now you can see it and decide.
+Anything **neither list mentions** prints first, because it is the only part that
+needs a decision. Then one row per **pattern** - not per folder - for `keep` and
+`exclude`.
 
-Columns are sessions **in the window** and sessions **all time**. A folder with
-nothing since June but hundreds behind it is a real project having a quiet month,
-not a scratch directory.
+| Column | Means |
+|---|---|
+| `win` | sessions since your start date. This is what reaches `stats-facts.json` |
+| `all` | sessions ever. A folder with nothing since June but hundreds behind it is a real project having a quiet month, not a scratch directory |
+| `proj` | how many project folders this pattern matches |
+| `only` | how many it is the **sole** match for - what you would lose by deleting it |
+
+Two footnotes print themselves when they apply: patterns matching **nothing**,
+and patterns whose every match is **also caught by another**. Treat the second as
+a hint, not an instruction: `only` is checked one pattern at a time, so two
+patterns covering each other's folders both read 0 - drop either safely, drop
+both and the folders are gone.
+
+```
+uv run python3 tools/ccstats/review.py --projects
+```
+
+adds every folder under its pattern, with the shared prefix trimmed off and named.
 
 To clear one, add a pattern to `keep` or `exclude`. To silence it without deciding:
 

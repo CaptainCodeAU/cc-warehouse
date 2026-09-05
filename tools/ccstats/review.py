@@ -16,9 +16,17 @@ An unreviewed project would then be silently missing from a total the operator
 uses to track effort, where under `exclude`-only it appears in the total AND in
 this report, which is impossible to miss.
 
-    uv run python3 tools/ccstats/review.py              # the full three buckets
-    uv run python3 tools/ccstats/review.py --new        # only what is unreviewed
+    uv run python3 tools/ccstats/review.py                  # one row per pattern
+    uv run python3 tools/ccstats/review.py --projects       # ...and every folder
+    uv run python3 tools/ccstats/review.py --new            # only what is unreviewed
     uv run python3 tools/ccstats/review.py --new --record   # ...and acknowledge it
+
+ONE ROW PER PATTERN, NOT PER PROJECT. The first version printed a row for every
+folder: 139 rows and a 242-character line on the live corpus, three quarters of
+them repeating one directory prefix and two thirds printing the same number
+twice. The selection is SPECIFIED as patterns, so the report answers in patterns
+and `--projects` restores the folder detail. Nothing is hidden that cannot be
+asked for.
 
 `--new` IS READ-ONLY, AND THAT SEPARATION IS THE POINT. `refresh.py` runs it on
 the daily schedule and puts anything it names into the completion dialog. That
@@ -59,8 +67,10 @@ from dashboard import (  # noqa: E402
     resolve_unticked,
 )
 
-USAGE = "uv run python3 tools/ccstats/review.py [--out DIR] [--new [--record]]"
-KNOWN = {"--out", "--new", "--record", "-h", "--help"}
+USAGE = (
+    "uv run python3 tools/ccstats/review.py [--out DIR] [--projects] [--new [--record]]"
+)
+KNOWN = {"--out", "--projects", "--new", "--record", "-h", "--help"}
 BASELINE = "review-baseline.json"
 
 
@@ -113,6 +123,86 @@ def buckets(
     return order(reviewed), order(skipped), order(unreviewed)
 
 
+def _pattern_section(
+    title: str,
+    pats: list[str],
+    rows: list[tuple[str, int, int, list[str]]],
+    show_projects: bool,
+) -> None:
+    """One row per PATTERN: what it holds, and what it alone holds.
+
+    `only` - projects for which this is the SOLE matching pattern - is the
+    question a reader actually has, because it says what deleting the pattern
+    would cost. `proj` alone cannot: a pattern matching fifteen projects that
+    are all also caught by another is holding nothing up.
+    """
+    owned = {p: [r for r in rows if p in r[3]] for p in pats}
+    sole = {p: [r for r in owned[p] if r[3] == [p]] for p in pats}
+    order = sorted(pats, key=lambda p: (-sum(r[1] for r in owned[p]), p))
+
+    win_total = sum(r[1] for r in rows)
+    all_total = sum(r[2] for r in rows)
+    print(f"\n{title}  {len(pats)} patterns -> {len(rows)} projects, "
+          f"{win_total:,} sessions in window, {all_total:,} all time")
+    print(f"  {'win':>6} {'all':>7} {'proj':>5} {'only':>5}  pattern")
+    for p in order:
+        hits, mine = owned[p], sole[p]
+        print(f"  {sum(r[1] for r in hits):>6} {sum(r[2] for r in hits):>7}"
+              f" {len(hits):>5} {len(mine):>5}  {p}")
+        if show_projects:
+            prefix = _shared_prefix([r[0] for r in hits])
+            for label, win_n, all_n, _ in hits:
+                short = label[len(prefix):] if prefix else label
+                print(f"  {win_n:>6} {all_n:>7}          {short}")
+            if prefix:
+                # Said, not assumed. A trimmed name the reader cannot reconstruct
+                # is a different project as far as searching the folder goes.
+                print(f"  {'':>6} {'':>7}          (all prefixed `{prefix}`)")
+
+    # A project can be switched off WITHOUT any exclude pattern matching it:
+    # a non-empty `include` is an allowlist, so anything it does not name is off.
+    # Those rows belong to no pattern and would otherwise vanish from a
+    # pattern-shaped report - present in the totals, absent from every row.
+    orphans = [r for r in rows if not any(p in r[3] for p in pats)]
+    if orphans:
+        print(f"  {sum(r[1] for r in orphans):>6} {sum(r[2] for r in orphans):>7}"
+              f" {len(orphans):>5} {len(orphans):>5}  (not in the include allowlist)")
+        if show_projects:
+            for label, win_n, all_n, _ in orphans:
+                print(f"  {win_n:>6} {all_n:>7}          {label}")
+
+    dead = [p for p in order if not owned[p]]
+    covered = [p for p in order if owned[p] and not sole[p]]
+    if dead:
+        print(f"  match nothing: {', '.join(dead)}")
+    if covered:
+        # NOT "safe to delete". `only` is computed ONE PATTERN AT A TIME, so two
+        # patterns covering each other's projects both read 0 - drop either and
+        # nothing changes, drop both and the projects are gone. Live case:
+        # `infisical` and `agent-vault` hold the same two folders.
+        print(f"  every match also caught by another pattern: {', '.join(covered)}")
+        print("    (checked one at a time - two of these may be covering each other,"
+              " so removing both can still lose a project)")
+
+
+def _shared_prefix(labels: list[str]) -> str:
+    """The FIRST repeated segment every label shares, or `""`.
+
+    75% of rows on the live corpus began `CaptainCodeAU-`, so trimming is worth
+    a column of screen and one less thing for the eye to skip.
+
+    The FIRST `-`, not the last. Cutting at the last boundary of the common text
+    splits the project's own name: every `cc-warehouse` folder shares the prefix
+    `CaptainCodeAU-cc-`, so the rows read `warehouse`, `warehouse-.worktree-...`,
+    which is a different project as far as the eye is concerned. Taking one
+    segment removes the noise and leaves every name intact.
+    """
+    if len(labels) < 2:
+        return ""
+    head = labels[0].split("-")[0] + "-"
+    return head if all(label.startswith(head) for label in labels) else ""
+
+
 def read_baseline(root: Path) -> set[str]:
     """Projects already acknowledged. Unreadable or malformed means none.
 
@@ -139,6 +229,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     new_only, record = "--new" in argv, "--record" in argv
+    show_projects = "--projects" in argv
     if record and not new_only:
         print("error: --record only means something with --new", file=sys.stderr)
         print(USAGE, file=sys.stderr)
@@ -187,26 +278,52 @@ def main(argv: list[str]) -> int:
             )
         return 0
 
-    def section(title: str, rows: list[tuple[str, int, int, list[str]]], why: str) -> None:
-        win_total = sum(r[1] for r in rows)
-        all_total = sum(r[2] for r in rows)
-        print(f"\n{title}  ({len(rows)} projects, {win_total:,} in window, {all_total:,} all time)")
-        for label, win_n, all_n, hits in rows:
-            tail = f"   <- {why} {hits}" if hits else ""
-            print(f"  {win_n:>5} {all_n:>6}   {label}{tail}")
+    print(f"ccstats review  {out.root / 'dashboard-defaults.json'}")
+    print(f"window {window.describe()}  ---  "
+          f"{len(reviewed)} counted, {len(skipped)} skipped, {len(unreviewed)} unruled")
 
-    print(f"{out.root / 'dashboard-defaults.json'}")
-    print(f"keep: {len(keep)} patterns   exclude: {len(exclude)} patterns"
-          f"   window: {window.describe()}")
-    print("columns: sessions in window, sessions all time")
-    section("COUNTED, and named by `keep`", reviewed, "keep")
-    section("SKIPPED by `exclude`", skipped, "exclude")
-    section("COUNTED, but in NEITHER list - never ruled on", unreviewed, "")
+    # FIRST, because it is the only part that asks for a decision. The first
+    # version put it last, under 138 rows already ruled on.
+    # ALWAYS printed, even when empty, so the section never moves. A block that
+    # appears only sometimes is one the eye stops looking for.
+    print(f"\nNEVER RULED ON - in neither list  ({len(unreviewed)})")
     if unreviewed:
-        print(
-            "\nTo clear one: add a pattern to `keep` or `exclude` in that file."
-            "\nTo silence it without deciding: --new --record"
-        )
+        print(f"  {'win':>5} {'all':>6}   project")
+        for label, win_n, all_n, _ in unreviewed:
+            print(f"  {win_n:>5} {all_n:>6}   {label}")
+        print("  -> add a pattern to `keep` or `exclude`, or run: review.py --new --record")
+    else:
+        print("  none - every project matches `keep` or `exclude`.")
+
+    # THE OTHER KIND OF CRACK, and the quieter one. A project can be in `keep`
+    # AND be excluded; `exclude` wins, so the operator's own decision to count it
+    # is overruled with nothing said. It is not unreviewed - it was ruled on
+    # twice, in opposite directions - so it belongs in its own block rather than
+    # above.
+    overruled = [r for r in skipped if matched_by(r[0], keep)]
+    print(f"\nIN `keep` BUT EXCLUDED ANYWAY - exclude wins  ({len(overruled)})")
+    if not overruled:
+        print("  none.")
+    elif show_projects:
+        print(f"  {'win':>5} {'all':>6}   project")
+        for label, win_n, all_n, why in overruled:
+            print(f"  {win_n:>5} {all_n:>6}   {label}")
+            print(f"  {'':>5} {'':>6}     keep {matched_by(label, keep)} vs exclude {why}")
+    else:
+        # Summarised, because on the live corpus all eight are scratch folders
+        # under a real project - expected, and eighteen lines of expected every
+        # day is how a report becomes wallpaper. The exclude patterns doing it
+        # are what a reader needs to judge whether it is still intended.
+        blame = sorted({p for r in overruled for p in r[3]})
+        print(f"  {sum(r[1] for r in overruled):>5} {sum(r[2] for r in overruled):>6}"
+              f"   {len(overruled)} project(s), excluded by: {', '.join(blame)}")
+    print("  -> intended when these are scratch folders under a real project."
+          " Otherwise narrow the exclude pattern." if overruled else "")
+
+    _pattern_section("KEEP", keep, reviewed, show_projects)
+    _pattern_section("EXCLUDE", exclude, skipped, show_projects)
+    if not show_projects:
+        print("\n--projects lists the folders under each pattern.")
     return 0
 
 
