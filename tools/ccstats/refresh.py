@@ -9,9 +9,18 @@ the questions and the throwaway web server, the whole command is two calls:
 
     collect.py --quiet      # scan transcripts -> <out>/sessions.sqlite
     dashboard.py            # that db -> <out>/claude-code-dashboard-live.html
+                            #            + <out>/dashboard-data.json
+    export.py               # that db -> <out>/stats-facts.json
 
-This script is those two calls plus a log line and a macOS dialog box, so
-`launchd` has one program to start instead of two.
+This script is those three calls plus a log line and a macOS dialog box, so
+`launchd` has one program to start instead of three.
+
+THE PAGE IS FOR A PERSON; THE TWO JSON FILES ARE FOR A PROGRAM. `dashboard.py`
+writes its own payload out beside the page (the SAME string it embeds, so a
+fetcher and a reader can never see different numbers), and `export.py` writes a
+few kilobytes of top-line numbers. `export.py` runs LAST because it is the least
+important of the three: if it fails, the run is reported as failed but nobody
+loses the page.
 
 NO FLAG PLUMBING, ON PURPOSE. `dashboard.py` already reads the saved
 `dashboard-defaults.json` itself when no `--include`/`--exclude` is passed (see
@@ -81,6 +90,8 @@ FLAGS = {"--quiet", "--skip-collect", "--no-notify", "-h", "--help"}
 USAGE = "uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect] [--no-notify]"
 
 PAGE_NAME = "claude-code-dashboard-live.html"
+DATA_NAME = "dashboard-data.json"
+FACTS_NAME = "stats-facts.json"
 OSASCRIPT = "/usr/bin/osascript"
 OPEN = "/usr/bin/open"
 
@@ -117,18 +128,37 @@ def _run(script: str, args: list[str], log: list[str]) -> tuple[bool, str]:
     return True, proc.stdout
 
 
-def page_path(dashboard_stdout: str) -> str | None:
-    """The absolute page path out of `dashboard.py`'s own success line.
+def _path_named(stdout: str, filename: str) -> str | None:
+    """The absolute path of `filename` out of a child's own success line.
 
-    That line is `<path>  (<bytes> bytes, <n> sessions, <window>)`, so the path
-    is everything before the two spaces that open the parenthetical. Returns
-    None rather than guessing if the line is absent or reshaped - a banner that
-    names no file is honest, one that names the wrong file is not.
+    Every one of these lines is `<path>  (<parenthetical>)`, so the path is
+    everything before the two spaces that open it. Returns None rather than
+    guessing if no line names that file, or the line has been reshaped - a box
+    that names no file is honest, one that names the wrong file is not.
+
+    Matching on the FILENAME, not on line position, is what lets `dashboard.py`
+    print a second path line without this reading back the wrong one.
     """
-    for line in dashboard_stdout.splitlines():
-        if PAGE_NAME in line:
+    for line in stdout.splitlines():
+        if filename in line:
             return line.split("  (")[0].strip() or None
     return None
+
+
+def page_path(dashboard_stdout: str) -> str | None:
+    """The page path out of `dashboard.py`'s stdout. Read by `ccw`-adjacent
+    callers and by this script's own dialog, so it keeps its own name."""
+    return _path_named(dashboard_stdout, PAGE_NAME)
+
+
+def data_path(dashboard_stdout: str) -> str | None:
+    """The payload-file path out of the same stdout."""
+    return _path_named(dashboard_stdout, DATA_NAME)
+
+
+def facts_path(export_stdout: str) -> str | None:
+    """The facts-card path out of `export.py`'s stdout."""
+    return _path_named(export_stdout, FACTS_NAME)
 
 
 def _applescript_string(value: str) -> str:
@@ -278,28 +308,49 @@ def main(argv: list[str]) -> int:
     if not built:
         ok = False
     page = page_path(dashboard_stdout)
+    data = data_path(dashboard_stdout)
+
+    # Last, and with no flags, for the same anti-drift reason `dashboard.py` gets
+    # none: it resolves its own output root and its own window.
+    log.append("export")
+    exported, export_stdout = _run("export.py", [], log)
+    if not exported:
+        ok = False
+    card = facts_path(export_stdout)
 
     if want_notify:
         elapsed = f"{time.monotonic() - started:.0f}s"
-        if ok:
-            title = f"ccstats dashboard rebuilt ({elapsed})"
-        elif built:
-            title = f"ccstats dashboard STALE ({elapsed})"
-        else:
+        # Worst-first, and an export failure gets its OWN word. STALE means "the
+        # data was not refreshed", which is what a failed SCAN means; reusing it
+        # for a failed export would send someone reading the collector for a
+        # fault that is not there.
+        if not built:
             title = f"ccstats dashboard FAILED ({elapsed})"
-        # Program then artefact, each on its own line and each in full: the box
-        # is often the only place either path is ever seen.
+        elif scan_failed:
+            title = f"ccstats dashboard STALE ({elapsed})"
+        elif not exported:
+            title = f"ccstats page rebuilt, DATA EXPORT FAILED ({elapsed})"
+        else:
+            title = f"ccstats dashboard rebuilt ({elapsed})"
+        # Program then artefacts, each on its own line and each in full: the box
+        # is often the only place any of these paths is ever seen.
         lines = [
             "Program that ran:",
             str(ME),
             "",
             "Page written:",
             page or "none - no page was written",
+            "",
+            "Data written:",
+            data or "none - no payload file was written",
+            card or "none - no facts card was written",
         ]
         if scan_failed:
             lines += ["", "The scan failed, so the data was not refreshed."]
         if not built:
             lines += ["", "dashboard.py failed. See this job's log."]
+        if not exported:
+            lines += ["", "export.py failed, so the JSON files may be stale."]
         shown = notify(title, "\n".join(lines), page, log)
 
     # A dialog that failed to appear breaks the quiet convention on purpose.

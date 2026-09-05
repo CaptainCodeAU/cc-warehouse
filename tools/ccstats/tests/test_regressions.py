@@ -352,6 +352,7 @@ def test_every_out_path_sits_under_the_resolved_root(tmp_path) -> None:
     out = Out(root=tmp_path)
     for path in (
         out.db, out.xlsx, out.doc, out.report, out.sessions_csv, out.snapshot, out.manifest,
+        out.data_json, out.facts_json,
     ):
         assert path.parent == tmp_path
 

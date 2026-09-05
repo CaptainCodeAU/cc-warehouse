@@ -2,7 +2,10 @@
 """Build a LIVE interactive dashboard: `claude-code-dashboard-live.html`.
 
 One self-contained HTML file, no external assets, that opens straight from
-disk in a browser. Unlike `claude-code-dashboard.html` (built by hand outside
+disk in a browser, PLUS `dashboard-data.json`: the same payload the page
+embeds, written out as a file so a program that is not a browser can render
+the same numbers. It is the identical string, not a second dump, so the two
+can never disagree - see `to_blob`. Unlike `claude-code-dashboard.html` (built by hand outside
 this repo for one fixed window), this one embeds a compact per-session dataset
 and draws every chart in JavaScript, so a reader can change the date range and
 exclude projects THEMSELVES, in the page, with no re-run.
@@ -44,7 +47,6 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,6 +60,7 @@ from common import (  # noqa: E402
     open_ro,
     parse_since,
     parse_until,
+    publish_text,
     read_meta,
     resolve_out,
 )
@@ -315,6 +318,10 @@ def build_payload(
         "cost_note": cost_note(meta.get("prices_read_on", "")),
         "prices_read_on": meta.get("prices_read_on", ""),
         "window_desc": window.describe(),
+        "scope": (
+            "project-filtered: every row here honours the page's project tick list. "
+            "stats-facts.json does NOT apply that list, so the two must not be mixed."
+        ),
         "min_date": min(dates) if dates else "",
         "max_date": max(dates) if dates else "",
         "default_unticked_projects": unticked,
@@ -375,12 +382,27 @@ def load_default_filters(out_root: Path) -> tuple[list[str], list[str]]:
     return [str(x) for x in include], [str(x) for x in exclude]
 
 
-def render(payload: dict[str, object]) -> str:
+def to_blob(payload: dict[str, object]) -> str:
+    """The payload as the compact JSON string that gets embedded AND written out.
+
+    Built once and used twice, on purpose. If `dashboard-data.json` were dumped
+    from the payload a second time it could drift from the page's copy by a key
+    order or a float repr and nothing here would notice; sharing the string
+    makes them identical by construction rather than by test.
+    """
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def render_blob(blob: str) -> str:
     template = TEMPLATE.read_text(encoding="utf-8")
     if DATA_MARKER not in template:
         raise SystemExit(f"{TEMPLATE} is missing the {DATA_MARKER} marker")
-    blob = json.dumps(payload, separators=(",", ":"))
     return template.replace(DATA_MARKER, blob)
+
+
+def render(payload: dict[str, object]) -> str:
+    """The whole page for `payload`. Kept for callers that hold no blob."""
+    return render_blob(to_blob(payload))
 
 
 def main(argv: list[str]) -> int:
@@ -416,22 +438,23 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
 
-    html = render(payload)
+    blob = to_blob(payload)
+    html = render_blob(blob)
     target = out.root / "claude-code-dashboard-live.html"
     out.ensure()
-    # mkstemp + os.replace (DESIGN R2's idiom, same as collect.py's sessions.sqlite
-    # publish): build into a fresh file, one atomic rename onto the target. A
-    # write that fails leaves the ".building" file behind rather than deleting
-    # it, matching collect.py -- this project never deletes, even its own scratch.
-    fd, building_name = tempfile.mkstemp(
-        dir=out.root, prefix="dashboard-live.", suffix=".html.building"
-    )
-    with open(fd, "w", encoding="utf-8") as f:
-        f.write(html)
-    Path(building_name).replace(target)
+    publish_text(html, target, prefix="dashboard-live.", suffix=".html.building")
+    # The SAME string, written a second time as a file another program can read.
+    # It is not a summary of the page and not a re-query: it is the page's own
+    # data, so a JS app fetching it and a reader looking at the page can never
+    # be shown different numbers.
+    publish_text(blob, out.data_json, prefix="dashboard-data.", suffix=".json.building")
 
     n_sessions = len(payload["S"])  # type: ignore[arg-type]
     print(f"{target}  ({len(html):,} bytes, {n_sessions:,} sessions, {window.describe()})")
+    # Second line, and deliberately not the same shape as the first: `refresh.py`
+    # reads the HTML path back out of this stdout by looking for the page's own
+    # filename, so this line must never be mistakable for that one.
+    print(f"{out.data_json}  ({len(blob):,} bytes of payload)")
     return 0
 
 

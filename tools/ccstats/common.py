@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -131,6 +132,25 @@ class Out:
     def manifest(self) -> Path:
         return self.root / "export-manifest.json"
 
+    @property
+    def data_json(self) -> Path:
+        """The live dashboard's own payload, as a file another program can read.
+
+        Written by `dashboard.py` from the SAME string it embeds in the page, so
+        the two cannot disagree. Project-FILTERED, exactly as the page is.
+        """
+        return self.root / "dashboard-data.json"
+
+    @property
+    def facts_json(self) -> Path:
+        """The top-line numbers, small enough for a widget or a badge.
+
+        Written by `export.py` from `facts.compute`. Honours the date window but
+        NOT the project include/exclude list, so its scope is `collect-report.json`'s
+        (the whole corpus in the window), not `data_json`'s.
+        """
+        return self.root / "stats-facts.json"
+
     def ensure(self) -> None:
         """Create `root` if absent. The only mkdir any ccstats tool performs."""
         self.root.mkdir(parents=True, exist_ok=True)
@@ -164,6 +184,26 @@ COST_NOTE = (
     "It is a usage-weight estimate, NOT a bill: Claude Code subscription usage "
     "is not billed per token."
 )
+
+
+def publish_text(text: str, target: Path, *, prefix: str, suffix: str) -> None:
+    """Write `text` to `target` atomically: build beside it, then one rename.
+
+    `mkstemp` in the SAME directory so the rename cannot cross a filesystem,
+    then `os.replace`, which is atomic: a reader sees the whole old file or the
+    whole new one, never half of either. This is DESIGN R2's idiom, and it lives
+    here because three call sites were about to hold three copies of it - the
+    exact drift the architecture board's C12 recommendation names.
+
+    A failure leaves the `.building` file behind rather than removing it. That
+    is deliberate: nothing under ccstats deletes, not even its own scratch, and
+    `tests/test_ccstats_fences.py` enforces it.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, building = tempfile.mkstemp(dir=target.parent, prefix=prefix, suffix=suffix)
+    with open(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    Path(building).replace(target)
 
 
 def cost_note(prices_read_on: str = "") -> str:

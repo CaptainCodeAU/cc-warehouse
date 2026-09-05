@@ -92,12 +92,12 @@ def opened(calls: list[list[str]]) -> list[list[str]]:
 # ------------------------------------------------------------- orchestration
 
 
-def test_happy_path_runs_collect_then_dashboard(
+def test_happy_path_runs_collect_then_dashboard_then_export(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--quiet", "--no-notify"]) == 0
-    assert ran(calls) == ["collect.py", "dashboard.py"]
+    assert ran(calls) == ["collect.py", "dashboard.py", "export.py"]
     # --quiet on success is silent, so an empty log means healthy.
     assert capsys.readouterr().out == ""
 
@@ -106,7 +106,7 @@ def test_children_inherit_this_interpreter(monkeypatch: pytest.MonkeyPatch) -> N
     """Never a bare `python3`: under launchd that resolves to the 3.9 system build."""
     calls = install(monkeypatch)
     refresh.main(["--quiet", "--no-notify"])
-    assert [c[0] for c in calls] == [sys.executable, sys.executable]
+    assert [c[0] for c in calls] == [sys.executable] * 3
 
 
 def test_dashboard_gets_no_filter_flags(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,7 +133,7 @@ def test_collect_is_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_skip_collect_only_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--skip-collect", "--quiet", "--no-notify"]) == 0
-    assert ran(calls) == ["dashboard.py"]
+    assert ran(calls) == ["dashboard.py", "export.py"]
 
 
 def test_failed_scan_still_builds_but_reports_failure(
@@ -142,7 +142,7 @@ def test_failed_scan_still_builds_but_reports_failure(
     """A stale page beats no page, but the exit status must not lie."""
     calls = install(monkeypatch, {"collect.py": FakeProc(2, stderr="boom")})
     assert refresh.main(["--quiet", "--no-notify"]) == 1
-    assert ran(calls) == ["collect.py", "dashboard.py"]
+    assert ran(calls) == ["collect.py", "dashboard.py", "export.py"]
     out = capsys.readouterr().out
     # --quiet is overridden by failure: the whole run must reach the log.
     assert "boom" in out
@@ -201,7 +201,7 @@ def test_page_path_is_none_when_absent() -> None:
 def test_completion_shows_one_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--quiet"]) == 0
-    assert ran(calls) == ["collect.py", "dashboard.py", "osascript"]
+    assert ran(calls) == ["collect.py", "dashboard.py", "export.py", "osascript"]
 
 
 def test_dialog_names_the_program_and_the_page_in_full(
@@ -400,3 +400,81 @@ def test_a_shown_dialog_keeps_quiet_quiet(
     install(monkeypatch, {"osascript": FakeProc(0, pressed(refresh.OPEN_PAGE))})
     assert refresh.main(["--quiet"]) == 0
     assert capsys.readouterr().out == ""
+
+
+# --------------------------------------------------- the data export, third child
+# The page is for a human. `export.py` writes the same run's numbers as files a
+# DIFFERENT program can read. It runs last because it is the least important of
+# the three: a failure here must not cost anyone the page.
+
+
+DATA = "/Users/x/.cc-warehouse/stats/dashboard-data.json"
+FACTS = "/Users/x/.cc-warehouse/stats/stats-facts.json"
+FACTS_LINE = f"{FACTS}  (2,410 bytes, full range)"
+
+
+def test_export_runs_after_the_dashboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install(monkeypatch)
+    refresh.main(["--quiet", "--no-notify"])
+    assert ran(calls).index("export.py") > ran(calls).index("dashboard.py")
+
+
+def test_export_gets_no_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same anti-drift rule the dashboard child follows: it resolves its own
+    output root and its own window, so this script passes neither."""
+    calls = install(monkeypatch)
+    refresh.main(["--quiet", "--no-notify"])
+    exp = next(c for c in calls if key_of(c) == "export.py")
+    assert exp[2:] == []
+
+
+def test_a_failed_export_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(monkeypatch, {"export.py": FakeProc(1, stderr="nope")})
+    assert refresh.main(["--quiet", "--no-notify"]) == 1
+    out = capsys.readouterr().out
+    assert "nope" in out
+    assert "export.py exited 1" in out
+
+
+def test_a_failed_export_does_not_stop_the_page_being_offered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The page was written. Its buttons must still work."""
+    calls = install(monkeypatch, {"export.py": FakeProc(1)})
+    refresh.main(["--quiet"])
+    assert PAGE in dialog(calls)
+
+
+def test_an_export_failure_is_not_called_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """STALE means `the data was not refreshed`, which is what a FAILED SCAN
+    means. Reusing that word for an export failure would send someone looking
+    at the collector for a fault that is not there."""
+    calls = install(monkeypatch, {"export.py": FakeProc(1)})
+    refresh.main(["--quiet"])
+    shown = next(c for c in calls if key_of(c) == "osascript")[2]
+    assert "STALE" not in shown
+    assert "EXPORT" in shown
+
+
+def test_the_dialog_names_the_data_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install(
+        monkeypatch,
+        {
+            "dashboard.py": FakeProc(
+                0, stdout=f"{PAGE_LINE}\n{DATA}  (1,650,000 bytes of payload)"
+            ),
+            "export.py": FakeProc(0, stdout=FACTS_LINE),
+        },
+    )
+    refresh.main(["--quiet"])
+    text = dialog(calls)
+    assert DATA in text
+    assert FACTS in text
+
+
+def test_a_reshaped_export_line_is_not_guessed_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same rule `page_path` follows: name no file rather than the wrong one."""
+    install(monkeypatch, {"export.py": FakeProc(0, stdout="something else entirely")})
+    assert refresh.facts_path("something else entirely") is None
