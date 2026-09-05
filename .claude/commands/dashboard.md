@@ -125,7 +125,7 @@ want to keep it open longer, wait and ask again rather than killing it under the
 ## Never
 
 - Never commit `~/.cc-warehouse/stats/` or anything inside it - not the dashboard HTML, not the
-  CSVs, not the new `dashboard-defaults.json`. Real project data, stays outside this repo, per the
+  CSVs, not `dashboard-defaults.json`, not `dashboard-data.json` or `stats-facts.json`. Real project data, stays outside this repo, per the
   README's own Safety section.
 - Never upload the built HTML or the defaults JSON via the Artifact tool or any other external
   host.

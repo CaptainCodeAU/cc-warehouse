@@ -36,7 +36,8 @@ the 3D companion page - see **The 3D companion page**, below.
 | `collect.py` | the one pass over every transcript; writes `sessions.sqlite` and 9 CSVs |
 | `build_workbook.py` | 20 pre-aggregated sheets as `claude-code-stats.xlsx` (`--no-titles` to strip session titles) |
 | `make_docs.py` | `DATA-GUIDE.md`, generated from the workbook so it cannot drift |
-| `dashboard.py` | `claude-code-dashboard-live.html`: one file, live date-range + project-exclude controls, no re-run needed to change them (see below) |
+| `dashboard.py` | `claude-code-dashboard-live.html`: one file, live date-range + project-exclude controls, no re-run needed to change them (see below). Also writes `dashboard-data.json`, the page's own payload as a file |
+| `export.py` | `stats-facts.json`: the top-line numbers only, a few KB, for something that is not this repo |
 | `daywall.py` | `claude-code-daywall.html`: the 3D companion page - one box per session, positioned by day and hour, hand-rolled WebGL2, no library (see below) |
 | `xlsx.py` | a dependency-free .xlsx writer (the project is stdlib-only) |
 | `facts.py` | the numbers quoted in prose, computed once so the two artefacts cannot disagree |
@@ -260,6 +261,8 @@ refuses an unpadded date: loudly, before any write happens.
 | `collect-report.json` | what was scanned, the totals, and the self-check results |
 | `scan-cache.sqlite` | `collect.py`'s own incremental cache (see below) - safe to delete, `--no-cache` ignores it |
 | `claude-code-dashboard-live.html` | the interactive dashboard (see **The live dashboard**, below) |
+| `dashboard-data.json` | the SAME payload that page embeds, as a file another program can read: ~1.6 MB, row-major arrays plus the `cols` map that decodes them. Project-FILTERED, exactly as the page is |
+| `stats-facts.json` | ~2 KB of named top-line numbers, from `facts.compute`. Date-windowed but NOT project-filtered, so its scope is `collect-report.json`'s. Do not average it against `dashboard-data.json` |
 | `claude-code-daywall.html` | the 3D companion page (see **The 3D companion page**, below) |
 
 ## Verify it

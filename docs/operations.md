@@ -37,8 +37,11 @@ Notes:
   an unknown amount of time before that day.
 - **`ccstats-dashboard` is not part of `ccw` and does not touch the warehouse.** Its
   day to day commands are collected in `tools/ccstats/CHEATSHEET.md`, beside the script. It runs
-  `tools/ccstats/refresh.py` (added 2026-09-04), which calls `collect.py` then
-  `dashboard.py` to rebuild `~/.cc-warehouse/stats/claude-code-dashboard-live.html`. Both
+  `tools/ccstats/refresh.py` (added 2026-09-04), which calls `collect.py`, then
+  `dashboard.py` to rebuild `~/.cc-warehouse/stats/claude-code-dashboard-live.html` and
+  `dashboard-data.json` beside it, then `export.py` for `stats-facts.json` (both JSON files
+  added 2026-09-05, so a program other than a browser can render the same run's numbers; the
+  payload file is the page's OWN embedded string, so the two cannot disagree). All three
   children only READ `~/.claude/projects` and `~/cc-warehouse-archive`; every write lands
   under `~/.cc-warehouse/stats`, and `common.resolve_out` refuses an output root inside the
   repo, `~/.claude`, the archive or the warehouse data root. It passes no project

@@ -20,6 +20,8 @@ page, then shows a box on screen with three buttons.
 | The job | `~/Library/LaunchAgents/com.captaincodeau.ccstats-dashboard.plist` |
 | The log | `~/.claude/logs/ccstats-dashboard.log` |
 | The page it builds | `~/.cc-warehouse/stats/claude-code-dashboard-live.html` |
+| The data it exports | `~/.cc-warehouse/stats/dashboard-data.json` (the page's own payload, ~1.6 MB) |
+| The facts card | `~/.cc-warehouse/stats/stats-facts.json` (top-line numbers, ~2 KB) |
 | Job name (the "label") | `com.captaincodeau.ccstats-dashboard` |
 
 ## The box that appears
@@ -82,6 +84,33 @@ otherwise "ran fine" and "never ran" would look identical.
 ```
 open ~/.cc-warehouse/stats/claude-code-dashboard-live.html
 ```
+
+## Read the numbers without opening the page
+
+The job writes two JSON files beside the page, for anything that is not a browser.
+
+```
+# the top-line numbers, ~2 KB, easy to read by eye or with jq
+cat ~/.cc-warehouse/stats/stats-facts.json
+jq '.facts.sessions_real, .facts.cost' ~/.cc-warehouse/stats/stats-facts.json
+
+# the page's own payload, ~1.6 MB. `.cols` tells you what each array column means
+jq 'keys' ~/.cc-warehouse/stats/dashboard-data.json
+jq '.cols.S' ~/.cc-warehouse/stats/dashboard-data.json
+```
+
+Build them by hand, without waiting for 13:00:
+
+```
+cd ~/CODE/CaptainCodeAU/cc-warehouse
+uv run python3 tools/ccstats/dashboard.py    # page + dashboard-data.json
+uv run python3 tools/ccstats/export.py       # stats-facts.json only, under a second
+```
+
+**THE TWO FILES DO NOT COVER THE SAME SESSIONS.** `dashboard-data.json` honours the
+page's project tick list. `stats-facts.json` does not, so it covers everything in the
+window, the same as `collect-report.json`. Never average one against the other. Each
+file says which it is, in its own `scope` field.
 
 ## Change which projects start unticked
 
