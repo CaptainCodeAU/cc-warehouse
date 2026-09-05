@@ -62,6 +62,7 @@ from common import (  # noqa: E402
     publish_text,
     read_meta,
     resolve_out,
+    unknown_flags,
 )
 from dashboard import (  # noqa: E402
     load_default_filters,
@@ -75,17 +76,6 @@ USAGE = (
 )
 
 KNOWN = {"--out", "--since", "--until", "-h", "--help"}
-
-
-def unknown(argv: list[str]) -> list[str]:
-    """Flags this command does not accept.
-
-    An unknown argument must fail loudly rather than be ignored: a silently
-    dropped `--sicne` produces a whole-corpus card that looks exactly like a
-    correct windowed one. Only `-`-prefixed arguments are candidates, because
-    the values here are dates and paths.
-    """
-    return [a for a in argv if a.startswith("-") and a not in KNOWN]
 
 
 def selected_projects(conn: sqlite3.Connection, out_root: Path) -> list[str] | None:
@@ -174,7 +164,7 @@ def main(argv: list[str]) -> int:
         print((__doc__ or USAGE).strip())
         return 0
 
-    bad = unknown(argv)
+    bad = unknown_flags(argv, KNOWN)
     if bad:
         print(f"error: unknown argument(s): {bad!r}", file=sys.stderr)
         print(USAGE, file=sys.stderr)

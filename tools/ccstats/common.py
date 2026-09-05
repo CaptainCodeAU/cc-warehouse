@@ -277,6 +277,29 @@ def header(
     }
 
 
+def matched_by(label: str, patterns: list[str]) -> list[str]:
+    """Every pattern matching `label`: case-insensitive, substring, anywhere.
+
+    THE one implementation of the rule. `dashboard.resolve_unticked` decides
+    with it and `review.py` explains with it, so a report can never disagree
+    with the filter about what a pattern matched - which it briefly could,
+    when each had its own copy.
+    """
+    low = label.lower()
+    return [p for p in patterns if p.lower() in low]
+
+
+def unknown_flags(argv: list[str], known: set[str]) -> list[str]:
+    """`-`-prefixed arguments this command does not accept.
+
+    An unknown argument must fail loudly rather than be ignored: a silently
+    dropped `--sicne` produces a whole-corpus answer that looks exactly like a
+    correct windowed one. Only `-`-prefixed arguments are candidates, because
+    the values these commands take are dates and paths.
+    """
+    return [a for a in argv if a.startswith("-") and a not in known]
+
+
 def cost_note(prices_read_on: str = "") -> str:
     """The disclaimer, optionally naming the date the price table was read.
 

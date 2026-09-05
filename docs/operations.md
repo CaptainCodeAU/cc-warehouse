@@ -39,7 +39,10 @@ Notes:
   day to day commands are collected in `tools/ccstats/CHEATSHEET.md`, beside the script. It runs
   `tools/ccstats/refresh.py` (added 2026-09-04), which calls `collect.py`, then
   `dashboard.py` to rebuild `~/.cc-warehouse/stats/claude-code-dashboard-live.html` and
-  `dashboard-data.json` beside it, then `export.py` for `stats-facts.json` (both JSON files
+  `dashboard-data.json` beside it, then `export.py` for `stats-facts.json`, then
+  `review.py --new` (advisory: it cannot fail the run, and is deliberately never given
+  `--record`, so an unwatched dialog cannot acknowledge a warning on the operator's
+  behalf). (Both JSON files
   added 2026-09-05, so a program other than a browser can render the same run's numbers; the
   payload file is the page's OWN embedded string, so the two cannot disagree). The payload
   is whole, because the page's own date pickers and tick boxes need it to be; the facts card

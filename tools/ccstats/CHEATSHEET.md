@@ -126,11 +126,21 @@ Both live in one file, `~/.cc-warehouse/stats/dashboard-defaults.json`:
 
 ```json
 {
-  "since": "2026-06-08",
-  "exclude": ["3rdParty-", "Scaffoldings-"],
-  "include": []
+  "since":   "2026-06-08",
+  "keep":    ["docbrain", "DIB", "chorustic"],
+  "include": [],
+  "exclude": ["3rdParty-", "private-"]
 }
 ```
+
+**Four keys, and only ONE of them decides what counts.**
+
+| Key | What it does |
+|---|---|
+| `since` | start date for `stats-facts.json` |
+| `keep` | a **ledger**, not a filter. Projects you have ruled as belonging. Nothing reads it to decide the numbers - it exists so `review.py` can tell you what you have never ruled on |
+| `include` | a real **allowlist**. Leave it EMPTY. The moment it has anything in it, every project not matching is switched off |
+| `exclude` | the **denylist**, and the only one in charge. A project counts unless a pattern here matches it |
 
 - `since` - the start date for `stats-facts.json`. Remove it for the full range.
   A value that is not `YYYY-MM-DD` is ignored, and you get a full-range card
@@ -155,6 +165,34 @@ uv run python3 tools/ccstats/export.py
 ```
 
 A pattern matching no project prints a warning naming it.
+
+## What have I never ruled on?
+
+```
+uv run python3 tools/ccstats/review.py
+```
+
+Three lists: projects counted and named by `keep`, projects skipped and the exact
+pattern that skipped them, and projects in **neither** list. That last group still
+counts - an unreviewed project quietly missing from your total would be worse than
+one visibly in it - but now you can see it and decide.
+
+Columns are sessions **in the window** and sessions **all time**. A folder with
+nothing since June but hundreds behind it is a real project having a quiet month,
+not a scratch directory.
+
+To clear one, add a pattern to `keep` or `exclude`. To silence it without deciding:
+
+```
+uv run python3 tools/ccstats/review.py --new --record
+```
+
+The daily job runs `review.py --new` and lists anything new in its box. It NEVER
+runs `--record`: the box closes itself after five minutes, so a run you did not
+watch must not be able to acknowledge a warning for you.
+
+**Watch out for short patterns.** Matching is plain substring, so `edge` also
+matches `knowledge`, and `bp` would match `webpack`. Harmless today, worth knowing.
 
 **One number in the card ignores all of this on purpose:** `dst_sessions_all`.
 It counts sessions hit by a timezone bug that has been fixed, so it has to quote

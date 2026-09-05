@@ -57,6 +57,7 @@ from common import (  # noqa: E402
     BadWindow,
     Window,
     header,
+    matched_by,
     open_ro,
     parse_since,
     parse_until,
@@ -148,8 +149,7 @@ def resolve_unticked(
     """
 
     def matches(name: str, patterns: list[str]) -> bool:
-        lname = name.lower()
-        return any(pattern.lower() in lname for pattern in patterns)
+        return bool(matched_by(name, patterns))
 
     ticked = {p for p in all_projects if matches(p, include)} if include else set(all_projects)
     if exclude:
@@ -402,11 +402,20 @@ def load_default_filters(out_root: Path) -> tuple[list[str], list[str]]:
     depend on a file only the operator-facing command writes.
     """
     data = read_defaults(out_root)
-    include = data.get("include") or []
-    exclude = data.get("exclude") or []
-    if not isinstance(include, list) or not isinstance(exclude, list):
-        return [], []
-    return [str(x) for x in include], [str(x) for x in exclude]
+    return pattern_list(data, "include"), pattern_list(data, "exclude")
+
+
+def pattern_list(data: dict[str, object], field: str) -> list[str]:
+    """One pattern list out of the defaults file, or `[]` if unusable.
+
+    PER-FIELD, not all-or-nothing. The previous rule threw BOTH lists away if
+    either was malformed, so `{"include": "oops", "exclude": ["3rdParty-"]}`
+    made `export.py` produce a whole-corpus card while `review.py`, degrading
+    per field, reported every `3rdParty-` project as skipped: two descriptions
+    of one file. One rule now governs both.
+    """
+    value = data.get(field)
+    return [str(x) for x in value] if isinstance(value, list) else []
 
 
 def to_blob(payload: dict[str, object]) -> str:

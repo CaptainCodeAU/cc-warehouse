@@ -370,3 +370,25 @@ def test_a_filtered_card_drops_sessions_that_belong_to_no_project(out: Out) -> N
     export.main(["--out", str(out.root)])
     filtered = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]["files_total"]
     assert whole == filtered + 1
+
+
+def test_an_unknown_key_in_the_defaults_file_is_ignored(out: Out) -> None:
+    """`keep` is a ledger read only by `review.py`. Every other reader must pass
+    over it, or a note would silently become a filter."""
+    (out.root / "dashboard-defaults.json").write_text(
+        '{"keep": ["alpha"], "exclude": [], "include": [], "future_key": 1}', encoding="utf-8"
+    )
+    export.main(["--out", str(out.root)])
+    card = json.loads(out.facts_json.read_text(encoding="utf-8"))
+    # `keep` names only alpha; if it were acting as a filter, beta would be gone.
+    assert card["facts"]["sessions_real"] == 2
+    assert card["scope"]["project_filter_applied"] is False
+
+
+def test_keep_does_not_change_the_pages_project_selection(out: Out, capsys) -> None:
+    (out.root / "dashboard-defaults.json").write_text(
+        '{"keep": ["alpha"], "exclude": [], "include": []}', encoding="utf-8"
+    )
+    dashboard.main(["--out", str(out.root)])
+    data = json.loads(out.data_json.read_text(encoding="utf-8"))
+    assert data["default_unticked_projects"] == []

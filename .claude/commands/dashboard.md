@@ -57,10 +57,32 @@ Check whether `$OUT/sessions.sqlite` exists and how old it is (on macOS:
 
 ## Step 2 - the project-exclude list
 
-Saved at `$OUT/dashboard-defaults.json`, shape:
-`{"exclude": ["substring", ...], "include": ["substring", ...]}`. This file holds real project
-folder names. It already lives outside the repo and must never be committed or uploaded - same
-rule as the dashboard output itself.
+Saved at `$OUT/dashboard-defaults.json`. **FOUR keys, not two:**
+
+```json
+{
+  "since":   "2026-06-08",              // start date for stats-facts.json
+  "keep":    ["substring", ...],        // a LEDGER: projects ruled as belonging
+  "include": [],                        // an ALLOWLIST, normally empty
+  "exclude": ["substring", ...]         // a DENYLIST - the one in charge
+}
+```
+
+**READ-MODIFY-WRITE. NEVER REBUILD THIS FILE FROM SCRATCH.** Load the existing JSON, change only
+the key you were asked to change, and write the whole object back with every other key intact -
+including any key not listed above. This paragraph exists because the shape declared here used to
+say two keys while the file carried four, and the write step below said "build the new content":
+following both literally destroys `since` and `keep` silently, and `/dashboard edit-list` exits
+without re-reading, so nothing downstream would notice. This file has already been silently
+overwritten once with a generic list (see `harness/HANDOFFS.md`), mechanism never identified.
+
+`keep` is NOT a filter and must never be passed to `dashboard.py`. It records which projects the
+operator has ruled on, so `tools/ccstats/review.py` can list the ones neither list mentions.
+`include` is a real allowlist: the moment it is non-empty, every project not matching it is
+switched off. Leave it empty unless the operator explicitly asks for allowlist behaviour.
+
+This file holds real project folder names. It already lives outside the repo and must never be
+committed or uploaded - same rule as the dashboard output itself.
 
 - **File exists:** read it, show the operator the current `exclude` (and `include`, if any) list,
   and ask whether to reuse it as-is or edit it (add/remove substrings, or replace the whole list).
@@ -82,9 +104,10 @@ rule as the dashboard output itself.
   "
   ```
   Ask for the exclude list (and, only if wanted, an include allowlist). Write the JSON with this
-  project's own write convention (R2): build the new content, write it to
+  project's own write convention (R2): start from the file's CURRENT contents if it exists (an
+  empty object if not), change only the keys you were asked to change, write the whole object to
   `dashboard-defaults.json.tmp` in `$OUT`, then replace the target with it atomically - never edit
-  the live file in place.
+  the live file in place, and never drop a key you did not touch.
 - **Mode is `edit-list`:** stop here once saved. Do not build or serve.
 
 ## Step 3 - build

@@ -97,7 +97,7 @@ def test_happy_path_runs_collect_then_dashboard_then_export(
 ) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--quiet", "--no-notify"]) == 0
-    assert ran(calls) == ["collect.py", "dashboard.py", "export.py"]
+    assert ran(calls) == ["collect.py", "dashboard.py", "export.py", "review.py"]
     # --quiet on success is silent, so an empty log means healthy.
     assert capsys.readouterr().out == ""
 
@@ -106,7 +106,7 @@ def test_children_inherit_this_interpreter(monkeypatch: pytest.MonkeyPatch) -> N
     """Never a bare `python3`: under launchd that resolves to the 3.9 system build."""
     calls = install(monkeypatch)
     refresh.main(["--quiet", "--no-notify"])
-    assert [c[0] for c in calls] == [sys.executable] * 3
+    assert [c[0] for c in calls] == [sys.executable] * 4
 
 
 def test_dashboard_gets_no_filter_flags(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,7 +133,7 @@ def test_collect_is_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_skip_collect_only_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--skip-collect", "--quiet", "--no-notify"]) == 0
-    assert ran(calls) == ["dashboard.py", "export.py"]
+    assert ran(calls) == ["dashboard.py", "export.py", "review.py"]
 
 
 def test_failed_scan_still_builds_but_reports_failure(
@@ -142,7 +142,7 @@ def test_failed_scan_still_builds_but_reports_failure(
     """A stale page beats no page, but the exit status must not lie."""
     calls = install(monkeypatch, {"collect.py": FakeProc(2, stderr="boom")})
     assert refresh.main(["--quiet", "--no-notify"]) == 1
-    assert ran(calls) == ["collect.py", "dashboard.py", "export.py"]
+    assert ran(calls) == ["collect.py", "dashboard.py", "export.py", "review.py"]
     out = capsys.readouterr().out
     # --quiet is overridden by failure: the whole run must reach the log.
     assert "boom" in out
@@ -201,7 +201,7 @@ def test_page_path_is_none_when_absent() -> None:
 def test_completion_shows_one_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = install(monkeypatch)
     assert refresh.main(["--quiet"]) == 0
-    assert ran(calls) == ["collect.py", "dashboard.py", "export.py", "osascript"]
+    assert ran(calls) == ["collect.py", "dashboard.py", "export.py", "review.py", "osascript"]
 
 
 def test_dialog_names_the_program_and_the_page_in_full(
@@ -506,3 +506,101 @@ def test_a_reshaped_export_line_is_not_guessed_at(monkeypatch: pytest.MonkeyPatc
     """Same rule `page_path` follows: name no file rather than the wrong one."""
     install(monkeypatch, {"export.py": FakeProc(0, stdout="something else entirely")})
     assert refresh._path_named("something else entirely", refresh.FACTS_NAME) is None
+
+
+# ------------------------------------------- the unreviewed-projects warning
+# `review.py --new` prints projects matching neither the keep nor the exclude
+# list. Anything it names goes in the dialog. It is ADVISORY: it must never
+# fail the run, and - the point of the whole design - it is run WITHOUT
+# `--record`, so an unattended dialog nobody watched cannot consume the warning.
+
+
+def test_review_runs_without_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    """THE ONE THAT MATTERS. `--record` here would let a 13:00 run whose box
+    timed out unread acknowledge the warning on the operator's behalf."""
+    calls = install(monkeypatch)
+    refresh.main(["--quiet", "--no-notify"])
+    rev = next(c for c in calls if key_of(c) == "review.py")
+    assert rev[2:] == ["--new"]
+    assert "--record" not in rev
+
+
+def test_a_new_unreviewed_project_reaches_the_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = install(
+        monkeypatch, {"review.py": FakeProc(0, stdout="   42  CaptainCodeAU-something-new")}
+    )
+    refresh.main(["--quiet"])
+    text = dialog(calls)
+    assert "CaptainCodeAU-something-new" in text
+
+
+def test_nothing_unreviewed_adds_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Silence is the healthy state. A warning printed every day is wallpaper.
+
+    Asserts on `REVIEW_HEADING` itself, not on a paraphrase of it. The first
+    version looked for "never ruled on", which is not a substring of "Projects
+    neither list has ruled on:" - so it passed whether or not the line was
+    there, and would have gone on passing if the line were never removed.
+    """
+    calls = install(monkeypatch, {"review.py": FakeProc(0, stdout="")})
+    refresh.main(["--quiet"])
+    assert refresh.REVIEW_HEADING not in dialog(calls)
+
+
+def test_a_dead_review_check_does_not_look_like_a_clean_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scheduled job runs `--quiet`, which suppresses the log on a good run.
+    Without a dialog line, a review.py broken for months is indistinguishable
+    from a clean backlog - and clean is what silence is defined to mean."""
+    calls = install(monkeypatch, {"review.py": FakeProc(1)})
+    refresh.main(["--quiet"])
+    assert "review.py failed" in dialog(calls)
+
+
+def test_a_long_unreviewed_list_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`display dialog` has no scrollbar. A first run against an empty baseline
+    can name a hundred projects."""
+    many = "\n".join(f"    0 since /    1 all   project-{i}" for i in range(40))
+    calls = install(monkeypatch, {"review.py": FakeProc(0, stdout=many)})
+    refresh.main(["--quiet"])
+    text = dialog(calls)
+    assert "project-0" in text
+    assert "project-39" not in text
+    assert f"and {40 - refresh.REVIEW_MAX_LINES} more" in text
+
+
+def test_a_failing_review_does_not_fail_the_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Advisory, unlike the other three children. A backlog report that can take
+    down the job it advises on is worse than no report."""
+    install(monkeypatch, {"review.py": FakeProc(1, stderr="nope")})
+    assert refresh.main(["--quiet", "--no-notify"]) == 0
+
+
+def test_a_failing_review_still_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not fatal is not the same as invisible."""
+    install(monkeypatch, {"review.py": FakeProc(1, stderr="nope")})
+    refresh.main(["--no-notify"])
+    assert "nope" in capsys.readouterr().out
+
+
+def test_review_runs_last(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = install(monkeypatch)
+    refresh.main(["--quiet", "--no-notify"])
+    order = ran(calls)
+    assert order.index("review.py") > order.index("export.py")
+
+
+def test_a_crashed_review_puts_nothing_in_the_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Half a line from a dying advisory child reads as a real finding."""
+    calls = install(
+        monkeypatch, {"review.py": FakeProc(1, stdout="   42  half-a-proj")}
+    )
+    refresh.main(["--quiet"])
+    assert "half-a-proj" not in dialog(calls)

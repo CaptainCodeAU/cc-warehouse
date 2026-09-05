@@ -11,9 +11,16 @@ the questions and the throwaway web server, the whole command is two calls:
     dashboard.py            # that db -> <out>/claude-code-dashboard-live.html
                             #            + <out>/dashboard-data.json
     export.py               # that db -> <out>/stats-facts.json
+    review.py --new         # names any project neither list has ruled on
 
-This script is those three calls plus a log line and a macOS dialog box, so
-`launchd` has one program to start instead of three.
+This script is those four calls plus a log line and a macOS dialog box, so
+`launchd` has one program to start instead of four.
+
+THE REVIEW CHECK IS ADVISORY, unlike the other three. It cannot fail the run: a
+backlog report that takes down the job it advises on is worse than no report.
+It also runs WITHOUT `--record`, which is the whole design - this dialog closes
+itself after five minutes and the healthy log is empty, so a run nobody watched
+must not be able to acknowledge a warning on the operator's behalf.
 
 THE PAGE IS FOR A PERSON; THE TWO JSON FILES ARE FOR A PROGRAM. `dashboard.py`
 writes its own payload out beside the page (the SAME string it embeds, so a
@@ -90,6 +97,11 @@ FLAGS = {"--quiet", "--skip-collect", "--no-notify", "-h", "--help"}
 USAGE = "uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect] [--no-notify]"
 
 PAGE_NAME = "claude-code-dashboard-live.html"
+REVIEW_HEADING = "Projects neither list has ruled on:"
+# How many of them the box will name. A first run against an empty baseline can
+# have a hundred, and `display dialog` has no scrollbar - a box taller than the
+# screen is worse than a short one that says where the rest are.
+REVIEW_MAX_LINES = 12
 DATA_NAME = "dashboard-data.json"
 FACTS_NAME = "stats-facts.json"
 OSASCRIPT = "/usr/bin/osascript"
@@ -303,6 +315,14 @@ def main(argv: list[str]) -> int:
     exported, export_stdout = _run("export.py", [], log)
     card = _path_named(export_stdout, FACTS_NAME)
 
+    # Advisory only: its exit status is deliberately dropped, and it is NEVER
+    # given `--record`. See this module's docstring.
+    log.append("review")
+    # Its stdout is trusted ONLY on a clean exit. A crash mid-print would
+    # otherwise put half a line into the dialog, which reads as a real finding.
+    reviewed_ok, review_stdout = _run("review.py", ["--new"], log)
+    unreviewed = review_stdout.strip() if reviewed_ok else ""
+
     # ONE definition, not a boolean mutated at four sites. The exit status and
     # the dialog below are then visibly reading the same three facts, and a
     # future fourth child cannot be added while forgetting to flip a flag.
@@ -348,6 +368,22 @@ def main(argv: list[str]) -> int:
             # Only `stats-facts.json` is export.py's; `dashboard-data.json` was
             # written by dashboard.py and is as fresh as the page beside it.
             lines += ["", "export.py failed, so stats-facts.json may be stale."]
+        if not reviewed_ok:
+            # A dead advisory check must not look like a clean one. Under
+            # `--quiet` the log is suppressed on an otherwise-good run, so
+            # without this line a review.py broken for months would be
+            # byte-identical to "nothing to review" - and silence is exactly
+            # what this feature declares to MEAN "nothing to review".
+            lines += ["", "review.py failed; the unreviewed-project check did not run."]
+        if unreviewed:
+            # Named, because the operator rules on these by reading the folder
+            # name and a count alone would be useless. Capped, because the box
+            # cannot scroll.
+            shown = unreviewed.splitlines()
+            more = len(shown) - REVIEW_MAX_LINES
+            lines += ["", REVIEW_HEADING, *shown[:REVIEW_MAX_LINES]]
+            if more > 0:
+                lines += [f"...and {more} more - run review.py to see them all."]
         shown = notify(title, "\n".join(lines), page, log)
 
     # A dialog that failed to appear breaks the quiet convention on purpose.

@@ -38,10 +38,13 @@ the 3D companion page - see **The 3D companion page**, below.
 | `make_docs.py` | `DATA-GUIDE.md`, generated from the workbook so it cannot drift |
 | `dashboard.py` | `claude-code-dashboard-live.html`: one file, live date-range + project-exclude controls, no re-run needed to change them (see below). Also writes `dashboard-data.json`, the page's own payload as a file |
 | `export.py` | `stats-facts.json`: the top-line numbers only, a few KB, for something that is not this repo |
+| `review.py` | which projects the `keep`/`exclude` lists have ruled on, and which neither mentions |
 
-`dashboard-defaults.json` holds BOTH an `include` (allowlist) and an `exclude`
-(denylist) list; whichever is non-empty is the one in play, and `exclude`
-narrows `include` when both are given. The page's Projects drop-down offers
+`dashboard-defaults.json` holds four keys: `since`, `keep`, `include` and
+`exclude`. `exclude` (a denylist) is the one in charge; `include` is a real
+allowlist and is normally EMPTY, because a non-empty one switches off every
+project it does not name. `keep` is a LEDGER read only by `review.py` - it
+records which projects have been ruled on so the unreviewed ones can be listed. The page's Projects drop-down offers
 **Include all**, **Exclude all** and **My list**, the last of which restores
 exactly that saved selection without touching the date range.
 
