@@ -41,9 +41,11 @@ Notes:
   `dashboard.py` to rebuild `~/.cc-warehouse/stats/claude-code-dashboard-live.html` and
   `dashboard-data.json` beside it, then `export.py` for `stats-facts.json` (both JSON files
   added 2026-09-05, so a program other than a browser can render the same run's numbers; the
-  payload file is the page's OWN embedded string, so the two cannot disagree). Neither file
-  is filtered by project - the dashboard's tick list is applied in the browser, and both
-  carry a machine-comparable `scope` object saying so. All three
+  payload file is the page's OWN embedded string, so the two cannot disagree). The payload
+  is whole, because the page's own date pickers and tick boxes need it to be; the facts card
+  is narrowed to the `since` and project lists saved in `dashboard-defaults.json`, because
+  whatever renders it has no controls. Both carry a machine-comparable `scope` object saying
+  which they are. All three
   children only READ `~/.claude/projects` and `~/cc-warehouse-archive`; every write lands
   under `~/.cc-warehouse/stats`, and `common.resolve_out` refuses an output root inside the
   repo, `~/.claude`, the archive or the warehouse data root. It passes no project

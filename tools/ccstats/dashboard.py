@@ -345,6 +345,47 @@ def build_payload(
 DEFAULTS_FILENAME = "dashboard-defaults.json"
 
 
+def read_defaults(out_root: Path) -> dict[str, object]:
+    """`dashboard-defaults.json` as a dict, or `{}` if it is not usable.
+
+    Missing file, unreadable file, malformed JSON and a non-object top level all
+    degrade to "no defaults" (R5/R10) rather than failing a build - this file is
+    written only by the operator-facing command, and a build must never depend
+    on it being there.
+    """
+    try:
+        data = json.loads((out_root / DEFAULTS_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_default_since(out_root: Path) -> str:
+    """The saved start date, or `""` for the full range.
+
+    THE OPERATOR ASKED FOR THIS TO BE A SETTING rather than a constant, so the
+    scheduled job keeps using it without anyone re-typing a date. It lives beside
+    the project list because the two are one thought: "these projects, from this
+    date".
+
+    Anything that is not a `YYYY-MM-DD` string is ignored rather than raising:
+    a typo here must not stop the daily job, and a full-range card is a visible,
+    checkable outcome where a crashed job is a silent one.
+
+    NOTE, because it is a second place a start date lives: the page template
+    carries its own hard-coded `DEFAULT_FROM` for where its date pickers open.
+    That is a UI starting position a reader can change; this is the scope of a
+    generated file. Related, deliberately not the same setting.
+    """
+    value = read_defaults(out_root).get("since")
+    if not isinstance(value, str):
+        return ""
+    try:
+        return parse_since(["--since", value])
+    except BadWindow:
+        return ""
+
+
 def load_default_filters(out_root: Path) -> tuple[list[str], list[str]]:
     """The project include/exclude lists `/dashboard` saves at
     `<out_root>/dashboard-defaults.json` (shape: `{"exclude": [...], "include": [...]}`).
@@ -360,12 +401,7 @@ def load_default_filters(out_root: Path) -> tuple[list[str], list[str]]:
     defaults" (R5/R10) rather than failing the build - a build must never
     depend on a file only the operator-facing command writes.
     """
-    try:
-        data = json.loads((out_root / DEFAULTS_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return [], []
-    if not isinstance(data, dict):
-        return [], []
+    data = read_defaults(out_root)
     include = data.get("include") or []
     exclude = data.get("exclude") or []
     if not isinstance(include, list) or not isinstance(exclude, list):

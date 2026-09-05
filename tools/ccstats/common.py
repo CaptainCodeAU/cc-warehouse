@@ -137,7 +137,10 @@ class Out:
         """The live dashboard's own payload, as a file another program can read.
 
         Written by `dashboard.py` from the SAME string it embeds in the page, so
-        the two cannot disagree. Project-FILTERED, exactly as the page is.
+        the two cannot disagree. NOT project-filtered: it holds every session in
+        the window, and its `default_unticked_projects` is a starting state the
+        PAGE applies to its own checkboxes at render time. Its `scope` block
+        says so as data.
         """
         return self.root / "dashboard-data.json"
 
@@ -145,9 +148,14 @@ class Out:
     def facts_json(self) -> Path:
         """The top-line numbers, small enough for a widget or a badge.
 
-        Written by `export.py` from `facts.compute`. Honours the date window but
-        NOT the project include/exclude list, so its scope is `collect-report.json`'s
-        (the whole corpus in the window), not `data_json`'s.
+        Written by `export.py` from `facts.compute`, honouring BOTH the saved
+        start date and the saved project selection - so unlike `data_json` this
+        one IS narrowed, and its `scope` block names the projects it counted.
+
+        This docstring said the exact opposite until 2026-09-05, having been
+        written before the filter existed and left behind when it landed. Both
+        of these properties are the place a reader checks what a file covers;
+        a stale answer here is the same defect as a stale `scope` field.
         """
         return self.root / "stats-facts.json"
 
@@ -221,7 +229,13 @@ DB_NOT_FOUND = (
 )
 
 
-def header(meta: dict[str, str], window: Window, *, rows: str) -> dict[str, object]:
+def header(
+    meta: dict[str, str],
+    window: Window,
+    *,
+    rows: str,
+    projects: list[str] | None = None,
+) -> dict[str, object]:
     """The five-key preamble every generated data file carries, built once.
 
     `dashboard.py`, `daywall.py` and `export.py` each grew their own literal
@@ -244,11 +258,21 @@ def header(meta: dict[str, str], window: Window, *, rows: str) -> dict[str, obje
             "since": window.since,
             "until": window.until,
             "rows": rows,
-            # NO ccstats output filters rows by project. The dashboard's tick
-            # list is applied by the PAGE at render time; the data behind it is
-            # whole. Stated as a field rather than a sentence because the first
-            # version of this said the opposite and shipped.
-            "project_filter_applied": False,
+            # Whether the PRODUCER filtered, not whether a consumer could.
+            # `dashboard-data.json` passes None here and is whole: its
+            # `default_unticked_projects` is a starting state the PAGE applies
+            # at render time. `stats-facts.json` passes the selected labels and
+            # every one of its figures is narrowed to them. Stated as fields
+            # rather than a sentence because the first version of this was a
+            # sentence, said the opposite of what the query did, and shipped.
+            "project_filter_applied": projects is not None,
+            "projects": sorted(projects) if projects is not None else None,
+            "project_count": len(projects) if projects is not None else None,
+            # Figures that ignore everything above, and why. Inside `scope`
+            # rather than beside it: `scope` already IS the "what do these
+            # numbers cover" block, and two of those in one file is two places
+            # to look. Filled by the producer; empty here by default.
+            "whole_corpus_facts": {},
         },
     }
 
@@ -372,9 +396,21 @@ class Window:
     @property
     def child_keys(self) -> str:
         """` AND session_key IN (...)` for turn / tool_call / attribution."""
-        if not self.active:
+        return self.child_keys_and("")
+
+    def child_keys_and(self, extra: str) -> str:
+        """`child_keys` with `extra` added INSIDE the subquery.
+
+        A caller narrowing sessions further (a project selection, say) has to
+        get its predicate inside this subquery or the child tables quietly stay
+        corpus-wide. Doing that here keeps `Window` the one place the forms are
+        derived; the alternative was the caller rebuilding this literal by hand,
+        which meant one form built two ways and a future change to this line
+        reaching only the unfiltered path.
+        """
+        if not self.active and not extra:
             return ""
-        return f" AND session_key IN (SELECT key FROM session WHERE {self.session})"
+        return f" AND session_key IN (SELECT key FROM session WHERE {self.session}{extra})"
 
     @property
     def overlap_where(self) -> str:

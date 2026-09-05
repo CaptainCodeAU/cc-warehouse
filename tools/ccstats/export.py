@@ -63,6 +63,11 @@ from common import (  # noqa: E402
     read_meta,
     resolve_out,
 )
+from dashboard import (  # noqa: E402
+    load_default_filters,
+    load_default_since,
+    resolve_unticked,
+)
 
 USAGE = (
     "uv run python3 tools/ccstats/export.py "
@@ -83,7 +88,56 @@ def unknown(argv: list[str]) -> list[str]:
     return [a for a in argv if a.startswith("-") and a not in KNOWN]
 
 
-def card(conn: sqlite3.Connection, window: Window) -> dict[str, object]:
+def selected_projects(conn: sqlite3.Connection, out_root: Path) -> list[str] | None:
+    """The project labels to count, or None for "no project filter".
+
+    Reads the SAME saved `dashboard-defaults.json` the page reads, and runs the
+    SAME `resolve_unticked` matcher over the SAME population. Running one
+    matcher over two different universes makes "the card and the page agree"
+    true of the code and false of the answer.
+
+    THAT POPULATION IS FULL-RANGE `is_real = 1`, NOT THE CARD'S OWN WINDOW.
+    `dashboard.py` builds its list from `WHERE {window.session}`, and
+    `refresh.py` runs it with no flags, so the page's universe is every real
+    session ever - 139 labels on the live corpus. Narrowing this to the card's
+    window instead gave 102, a THIRD universe agreeing with neither, and made
+    13 of the operator's saved patterns report as unmatched purely because
+    those projects had no sessions since June. Which projects are SELECTED is a
+    standing choice; how many sessions they had inside the window is the
+    question the card answers, and `facts.compute` applies the window itself.
+
+    `resolve_unticked` returns the projects that start UNTICKED; the selection
+    is everything else. Getting that the wrong way round would invert the whole
+    filter while still producing a plausible-looking number, so it is stated
+    once, here, and asserted in `tests/test_filtered_facts.py`.
+    """
+    include, exclude = load_default_filters(out_root)
+    if not include and not exclude:
+        return None
+    labels = [
+        str(r[0])
+        for r in conn.execute(
+            f"SELECT DISTINCT project_label FROM session WHERE {Window().session}"
+            " AND project_label IS NOT NULL"
+        )
+    ]
+    unticked, unmatched = resolve_unticked(labels, include, exclude)
+    if unmatched:
+        # `dashboard.py` warns about these and so must this. A typo'd `include`
+        # pattern matches nothing, leaves the selection empty, and writes a card
+        # of zeros with `project_filter_applied: true` - which looks exactly
+        # like a quiet week rather than like a broken setting.
+        print(
+            f"warning: these saved include/exclude patterns matched no project_label:"
+            f" {unmatched!r} (see dashboard-defaults.json)",
+            file=sys.stderr,
+        )
+    return sorted(set(labels) - set(unticked))
+
+
+def card(
+    conn: sqlite3.Connection, window: Window, projects: list[str] | None = None
+) -> dict[str, object]:
     """The whole file: a header saying what this is, then the numbers.
 
     The header is not decoration. This file is designed to be read by something
@@ -91,12 +145,27 @@ def card(conn: sqlite3.Connection, window: Window) -> dict[str, object]:
     numbers cover, and the fact that `cost_usd` is an estimate rather than a
     bill, have to travel WITH them.
     """
+    # `facts.compute` filters to `is_real = 1` (see its module docstring) except
+    # for `files_total` and `subagents`, which count every session FILE in the
+    # window rather than every real session.
+    #
+    # A project filter narrows those two further, by a definition worth stating
+    # because the numbers are otherwise unexplainable. The selection universe is
+    # the PAGE's - labels that appear on at least one real session - so a
+    # filtered card leaves out every session file whose project is not in it.
+    # Measured on the live corpus: 58 files, being 8 sessions with no
+    # `project_label` at all plus 50 in the 17 projects that have never had a
+    # real session. `shell_pct` and `inflate` are computed from `files_total`,
+    # so they move with it. Nothing here is wrong; it is just not derivable from
+    # the card alone.
+    head = header(read_meta(conn), window, rows="sessions with is_real = 1", projects=projects)
+    # Named, not silent. Everything else honours the window and the selection;
+    # these do not, and a reader of this file somewhere else has no way to work
+    # that out from the numbers alone.
+    head["scope"]["whole_corpus_facts"] = facts.WHOLE_CORPUS_FACTS  # type: ignore[index]
     return {
-        # `facts.compute` filters to `is_real = 1` (see its module docstring)
-        # except for `files_total`, which counts every session file in the
-        # window - the one figure here that is drawn from a wider population.
-        **header(read_meta(conn), window, rows="sessions with is_real = 1"),
-        "facts": facts.compute(conn, window),
+        **head,
+        "facts": facts.compute(conn, window, projects),
     }
 
 
@@ -113,10 +182,7 @@ def main(argv: list[str]) -> int:
 
     try:
         out = resolve_out(argv)
-        # Mirrors `dashboard.py` rather than using `resolve_window`'s manifest
-        # inheritance: these two run back to back in `refresh.py` and describing
-        # different windows would be worse than describing a wide one.
-        window = Window(parse_since(argv), parse_until(argv))
+        since, until = parse_since(argv), parse_until(argv)
     except (BadOut, BadWindow) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -125,9 +191,25 @@ def main(argv: list[str]) -> int:
         print(DB_NOT_FOUND.format(out=out.root), file=sys.stderr)
         return 1
 
+    # An explicit --since always wins; the saved setting is the default, not an
+    # override. Same precedence `dashboard.py` gives --include/--exclude over
+    # the saved lists, for the same reason: a deliberate one-off flag must never
+    # be silently merged with a stale saved value.
+    #
+    # THIS CARD AND THE PAGE BESIDE IT NOW DESCRIBE DIFFERENT WINDOWS, ON
+    # PURPOSE, and an earlier comment here said they must not. That comment was
+    # right about a page: the page embeds the full range because its date
+    # pickers have to be able to widen, and narrowing the embedded data would
+    # break the control. This file is not a page. It is the answer to one
+    # question - "these projects, from this date" - which is why the operator
+    # asked for the filtering to be baked in rather than left to a reader.
+    # `scope` states which window and which projects, so the difference is
+    # readable rather than something to be inferred from two files.
+    window = Window(since or load_default_since(out.root), until)
+
     conn = open_ro(out.db)
     try:
-        payload = card(conn, window)
+        payload = card(conn, window, selected_projects(conn, out.root))
     finally:
         conn.close()
 

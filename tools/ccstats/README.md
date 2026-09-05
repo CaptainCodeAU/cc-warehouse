@@ -271,7 +271,7 @@ refuses an unpadded date: loudly, before any write happens.
 | `scan-cache.sqlite` | `collect.py`'s own incremental cache (see below) - safe to delete, `--no-cache` ignores it |
 | `claude-code-dashboard-live.html` | the interactive dashboard (see **The live dashboard**, below) |
 | `dashboard-data.json` | the SAME payload that page embeds, as a file another program can read: ~1.6 MB, row-major arrays plus the `cols` map that decodes them |
-| `stats-facts.json` | ~2 KB of named top-line numbers, from `facts.compute` |
+| `stats-facts.json` | ~6 KB of named top-line numbers, from `facts.compute`, narrowed to the saved start date and the saved project selection |
 | `claude-code-daywall.html` | the 3D companion page (see **The 3D companion page**, below) |
 
 ## Verify it

@@ -216,18 +216,64 @@ def test_the_facts_card_is_stamped(out: Out) -> None:
     assert card["generated_at"].endswith("Z")
 
 
-def test_both_files_declare_the_same_population(out: Out) -> None:
-    """They cover the same window and the same rows, so their scopes must be
-    EQUAL - a fact worth asserting rather than describing, since a reader
-    comparing two English sentences cannot tell agreement from near-agreement."""
-    # `export.py` has no `--exclude`, and rejects it: it applies no project
-    # filter at all. That asymmetry in the FLAGS is exactly why the scopes
-    # coming out EQUAL is the thing worth pinning.
-    dashboard.main(["--out", str(out.root), "--exclude", "beta"])
+def test_the_two_files_declare_DIFFERENT_populations(out: Out) -> None:
+    """And that difference is the whole point of the facts card.
+
+    The payload is whole - the page it mirrors needs every session so its date
+    pickers and tick boxes can widen. The card is narrowed, because the program
+    reading it has no pickers and no tick boxes. Both say which they are, in the
+    same structured field, so a consumer can tell them apart with `==` rather
+    than by reading two paragraphs of English.
+
+    An earlier version of this test asserted the scopes were EQUAL. That was
+    true, and correct to pin, until the card learned to filter.
+    """
+    (out.root / "dashboard-defaults.json").write_text('{"exclude": ["beta"]}', encoding="utf-8")
+    dashboard.main(["--out", str(out.root)])
     export.main(["--out", str(out.root)])
-    data = json.loads(out.data_json.read_text(encoding="utf-8"))
+    data = json.loads(out.data_json.read_text(encoding="utf-8"))["scope"]
+    card = json.loads(out.facts_json.read_text(encoding="utf-8"))["scope"]
+
+    assert data["project_filter_applied"] is False
+    assert card["project_filter_applied"] is True
+    assert card["projects"] == ["alpha"]
+    assert data != card
+
+
+def test_the_card_actually_counts_only_the_selected_projects(out: Out) -> None:
+    """The scope field claiming a filter is not the same as a filter."""
+    (out.root / "dashboard-defaults.json").write_text('{"exclude": ["beta"]}', encoding="utf-8")
+    export.main(["--out", str(out.root)])
+    narrowed = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]["sessions_real"]
+    (out.root / "dashboard-defaults.json").write_text("{}", encoding="utf-8")
+    export.main(["--out", str(out.root)])
+    whole = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]["sessions_real"]
+    assert narrowed == 1
+    assert whole == 2
+
+
+def test_the_saved_start_date_is_honoured(out: Out) -> None:
+    (out.root / "dashboard-defaults.json").write_text(
+        '{"since": "2026-07-02", "exclude": ["nothing-matches-this"]}', encoding="utf-8"
+    )
+    export.main(["--out", str(out.root)])
     card = json.loads(out.facts_json.read_text(encoding="utf-8"))
-    assert data["scope"] == card["scope"]
+    assert card["scope"]["since"] == "2026-07-02"
+    assert card["facts"]["sessions_real"] == 1
+
+
+def test_an_explicit_since_beats_the_saved_one(out: Out) -> None:
+    (out.root / "dashboard-defaults.json").write_text('{"since": "2026-07-02"}', encoding="utf-8")
+    export.main(["--out", str(out.root), "--since", "2026-07-01"])
+    assert json.loads(out.facts_json.read_text(encoding="utf-8"))["scope"]["since"] == "2026-07-01"
+
+
+def test_a_malformed_saved_start_date_is_ignored_not_fatal(out: Out) -> None:
+    """A typo in a settings file must not stop the daily job. A full-range card
+    is a visible outcome; a job that did not run is a silent one."""
+    (out.root / "dashboard-defaults.json").write_text('{"since": "last tuesday"}', encoding="utf-8")
+    assert export.main(["--out", str(out.root)]) == 0
+    assert json.loads(out.facts_json.read_text(encoding="utf-8"))["scope"]["since"] == ""
 
 
 def test_the_scope_travels_with_the_window(out: Out) -> None:
@@ -287,3 +333,40 @@ def test_the_facts_card_is_small(out: Out) -> None:
     exist, so the size is a fence, not a coincidence."""
     export.main(["--out", str(out.root)])
     assert out.facts_json.stat().st_size < 8192
+
+
+def test_a_pattern_matching_nothing_is_warned_about(out: Out, capsys) -> None:
+    """An empty selection writes a card of zeros. That must look like a broken
+    setting, not like a quiet week."""
+    (out.root / "dashboard-defaults.json").write_text(
+        '{"include": ["no-such-project"]}', encoding="utf-8"
+    )
+    export.main(["--out", str(out.root)])
+    assert "matched no project_label" in capsys.readouterr().err
+
+
+def test_a_filtered_card_drops_sessions_that_belong_to_no_project(out: Out) -> None:
+    """A session outside the selection universe is not counted, so a filtered
+    card reports fewer FILES than an unfiltered one over the same window.
+
+    True by definition and stated in `card()`, because from the card alone the
+    difference looks like a defect. Two populations are affected: sessions with
+    no `project_label`, and sessions in a project that has never had a real
+    session (the selection universe is drawn from `is_real = 1`, matching the
+    page's). On the live corpus those are 8 and 50 files respectively.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(out.db)
+    conn.execute(
+        "INSERT INTO session (key, local_date, is_real) VALUES ('orphan', '2026-07-01', 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    export.main(["--out", str(out.root)])
+    whole = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]["files_total"]
+    (out.root / "dashboard-defaults.json").write_text('{"exclude": ["zzz"]}', encoding="utf-8")
+    export.main(["--out", str(out.root)])
+    filtered = json.loads(out.facts_json.read_text(encoding="utf-8"))["facts"]["files_total"]
+    assert whole == filtered + 1

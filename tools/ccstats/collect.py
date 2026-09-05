@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from common import (  # noqa: E402
     ARCHIVE,
+    DAY_SECONDS,
     HOME,
     LIVE,
     BadOut,
@@ -1124,8 +1125,35 @@ def build_overlap(conn: sqlite3.Connection) -> None:
         "SELECT first_ts, last_ts FROM session "
         "WHERE is_real = 1 AND first_ts IS NOT NULL AND last_ts IS NOT NULL"
     ).fetchall()
+    conn.executemany(
+        "INSERT INTO overlap_day VALUES (?, ?, ?, ?, ?, ?, ?)",
+        overlap_rows(rows, _LOCAL_TZ),
+    )
 
-    day_seconds = 86400.0
+
+def overlap_rows(rows: list[tuple[str, str]], tz: tzinfo) -> list[tuple[object, ...]]:
+    """`overlap_day` rows for whatever `(first_ts, last_ts)` pairs it is given.
+
+    SPLIT OUT OF `build_overlap` SO IT CAN BE ASKED ABOUT A SUBSET. `overlap_day`
+    is pre-aggregated per day across EVERY project and carries no `project_label`
+    column, so the eight clock-time and concurrency figures in `facts.compute`
+    could not be filtered by project at all. They can now, because `facts.py`
+    calls this over the selected sessions instead of reading the table.
+
+    ONE implementation, deliberately. The clipping below is a hard-won fix and
+    reimplementing it beside a filter would be the same bug twice: see
+    `build_overlap`'s docstring, and the eight tests in `tests/test_overlap.py`
+    which now exercise this function through it.
+
+    THE ZONE IS AN ARGUMENT, not this module's `_LOCAL_TZ` global. Which day a
+    session falls on depends on it, and the process RECOMPUTING a subset is not
+    the process that COLLECTED the corpus: `_LOCAL_TZ` is detected at import
+    from config and environment, so a config change between the two would have
+    bucketed the recomputed days into a different calendar from the stored ones,
+    silently. `facts.py` passes the zone the collector actually recorded, from
+    `meta.local_timezone` in the database itself.
+    """
+    day_seconds = DAY_SECONDS
     per_day: dict[str, list[tuple[float, float]]] = {}
     started: Counter[str] = Counter()
 
@@ -1200,7 +1228,7 @@ def build_overlap(conn: sqlite3.Connection) -> None:
             )
         )
 
-    conn.executemany("INSERT INTO overlap_day VALUES (?, ?, ?, ?, ?, ?, ?)", out)
+    return out
 
 
 def export_csv(conn: sqlite3.Connection, note: str, out: Out) -> list[str]:

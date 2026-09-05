@@ -14,8 +14,32 @@ prose.
 from __future__ import annotations
 
 import sqlite3
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from common import Window
+import collect
+from common import Window, read_meta
+
+# The TEMP table holding the selected session keys. TEMP so it works on the
+# read-only connection every ccstats command opens, and so it cannot touch the
+# database file. Dropped and rebuilt per call, since one connection may be asked
+# about several different selections in a row.
+SELECTED = "_ccstats_selected"
+
+# Figures that DELIBERATELY ignore both the window and any project selection,
+# and why. Declared here rather than known by whoever happens to have read
+# `_timezone_dst`, because a whole-corpus number sitting unlabelled inside a
+# file called "filtered" is the same defect class as a `scope` string that
+# describes a filter the query never applied.
+#
+# `export.py` copies this into the card, so a consumer is TOLD which figures
+# are exceptions instead of having to notice that one of them never moves.
+WHOLE_CORPUS_FACTS = {
+    "dst_sessions_all": (
+        "the whole corpus, always: this counts the sessions affected by a "
+        "timezone bug that has been fixed, and a window excluding that period "
+        "would render the sentence as 'the 0 sessions that were wrong'"
+    ),
+}
 
 # Claude Code began emitting `output_tokens_details.thinking_tokens` at this
 # version. Established by census, not assumption: 2.1.227 (2026-08-11) records
@@ -23,8 +47,8 @@ from common import Window
 THINKING_FIRST_VERSION = "2.1.228"
 
 
-def _one(conn: sqlite3.Connection, sql: str) -> tuple[object, ...]:
-    row = conn.execute(sql).fetchone()
+def _one(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> tuple[object, ...]:
+    row = conn.execute(sql, params).fetchone()
     return row if row is not None else ()
 
 
@@ -75,22 +99,87 @@ def _core_counts(conn: sqlite3.Connection, win: str) -> dict[str, object]:
     }
 
 
+def _recorded_zone(conn: sqlite3.Connection) -> object:
+    """The timezone the COLLECTOR used, read from the database it wrote.
+
+    Not this process's `collect._LOCAL_TZ`, which is detected at import from
+    config and environment. Which calendar day a session lands on depends on
+    the zone, so recomputing a subset with a different one from the stored table
+    would bucket the same sessions into different days with nothing to show for
+    it. The collector records what it used in `meta.local_timezone`; that is the
+    answer, and it travels with the data.
+
+    An unreadable or unknown zone falls back to this process's own rather than
+    failing: a card built in the wrong calendar is recoverable and visible in
+    `scope`, a crashed daily job is neither.
+    """
+    name = read_meta(conn).get("local_timezone", "")
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return collect._LOCAL_TZ
+
+
+def _overlap_days(
+    conn: sqlite3.Connection, chosen: str, window: Window, *, filtered: bool
+) -> list[tuple[object, ...]]:
+    """The `overlap_day` rows for this selection.
+
+    With NO project selection this reads the stored table, which `collect.py`
+    already built over the whole corpus - the cheap path, and the one that keeps
+    an unfiltered card byte-for-byte what it always was.
+
+    With a selection it RECOMPUTES, because `overlap_day` is pre-aggregated per
+    day across every project and has no `project_label` column: there is nothing
+    in it to filter on. `collect.overlap_rows` is the same function that built
+    the table, so the two cannot disagree about the day-clipping.
+
+    Takes the `Window` OBJECT, not its rendered SQL. The first version sniffed
+    the predicate string to decide which branch to take and parsed the dates
+    back out of a WHERE clause it had just produced - a round trip through SQL
+    for two values the caller was already holding.
+
+    THE DATE WINDOW IS APPLIED TO THE DAY ROWS, NEVER TO THE SESSIONS, and the
+    parameter is `chosen` (the project predicate alone) rather than the full
+    `win` for exactly that reason. `session.local_date` is a session's START
+    day, so selecting sessions by it drops one that began before the window and
+    ran into it - along with every clipped slice it contributed to days that ARE
+    in the window. The stored path never had this problem because it filters
+    already-bucketed days. Measured when this shipped that way: 4 sessions,
+    335.6 summed hours and 13.3 clock hours missing from a real card.
+    """
+    if not filtered:
+        return conn.execute(f"SELECT * FROM overlap_day{window.overlap_where}").fetchall()
+    pairs = conn.execute(
+        "SELECT first_ts, last_ts FROM session WHERE is_real = 1"
+        f" AND first_ts IS NOT NULL AND last_ts IS NOT NULL{chosen}"
+    ).fetchall()
+    lo, hi = window.since, window.until
+    return [
+        r
+        for r in collect.overlap_rows(pairs, _recorded_zone(conn))
+        if (not lo or str(r[0]) >= lo) and (not hi or str(r[0]) <= hi)
+    ]
+
+
 def _hours_and_overlap(
-    conn: sqlite3.Connection, win: str, dwin: str, keys: str
+    conn: sqlite3.Connection, days: list[tuple[object, ...]], keys: str
 ) -> dict[str, object]:
-    """Clock-time figures from `overlap_day` (concurrency, not per-session sums)."""
-    elapsed_h, summed_h, mean_elapsed, max_elapsed, over24 = _one(
-        conn,
-        "SELECT SUM(elapsed_hours), SUM(summed_hours), AVG(elapsed_hours),"
-        f" MAX(elapsed_hours), SUM(elapsed_hours > 24.001) FROM overlap_day{dwin}",
-    )
+    """Clock-time figures over the selected days (concurrency, not per-session sums)."""
+    # Column order is `overlap_day`'s own: date, active, started, summed, elapsed, ...
+    elapsed = [float(r[4] or 0) for r in days]
+    summed_h = round(sum(float(r[3] or 0) for r in days), 1)
+    elapsed_h = round(sum(elapsed), 1)
+    mean_elapsed = round(sum(elapsed) / len(elapsed), 1) if elapsed else 0
+    max_elapsed = round(max(elapsed), 1) if elapsed else 0
+    over24 = sum(1 for e in elapsed if e > 24.001)
     turn_rows = _one(conn, f"SELECT COUNT(*) FROM turn{keys}")[0]
     tool_rows = _one(conn, f"SELECT COUNT(*) FROM tool_call{keys}")[0]
     return {
-        "elapsed_h": round(elapsed_h or 0, 1),
-        "summed_h": round(summed_h or 0, 1),
-        "mean_elapsed": round(mean_elapsed or 0, 1),
-        "max_elapsed": round(max_elapsed or 0, 1),
+        "elapsed_h": elapsed_h,
+        "summed_h": summed_h,
+        "mean_elapsed": mean_elapsed,
+        "max_elapsed": max_elapsed,
         "days_over_24h": over24,
         "turn_rows": turn_rows,
         "tool_rows": tool_rows,
@@ -132,22 +221,46 @@ def _month_boundaries(conn: sqlite3.Connection, win: str) -> dict[str, object]:
     }
 
 
-def _busiest_day(conn: sqlite3.Connection, win: str, dwin: str) -> dict[str, object]:
-    """The single busiest day in the window, and the corpus-wide concurrency peak."""
-    busiest_day, busiest_n = _one(
+def _busiest_day(
+    conn: sqlite3.Connection, win: str, days: list[tuple[object, ...]]
+) -> dict[str, object]:
+    """The single busiest day in the window, and the selection's concurrency peak.
+
+    THE EMPTY CASE IS REAL NOW. `GROUP BY ... LIMIT 1` returns NO ROW when the
+    selection matches nothing, and this used to unpack that into two names and
+    raise. It could not happen while the only filter was a date window over a
+    corpus that always had sessions in it; a project selection that matches
+    nothing is an ordinary thing for an operator to do, so it must report zero
+    rather than crash.
+    """
+    busiest = _one(
         conn,
         f"SELECT local_date, COUNT(*) FROM session WHERE is_real=1{win}"
         " GROUP BY 1 ORDER BY 2 DESC LIMIT 1",
     )
-    peak_c, peak_day = _one(conn, f"SELECT MAX(max_concurrent), local_date FROM overlap_day{dwin}")
-    busiest_engaged = _one(
-        conn,
-        f"SELECT ROUND(SUM(engaged_seconds)/3600.0,1) FROM session WHERE is_real=1{win}"
-        f" AND local_date = '{busiest_day}'",
-    )[0]
-    busiest_elapsed = _one(
-        conn, f"SELECT elapsed_hours FROM overlap_day WHERE local_date = '{busiest_day}'"
-    )[0]
+    busiest_day, busiest_n = busiest if busiest else (None, 0)
+    # EARLIEST day attaining the peak, not the latest. This replaced
+    # `SELECT MAX(max_concurrent), local_date`, whose bare-MAX idiom returns the
+    # companion column of the first row reaching the max - and `overlap_day` is
+    # keyed by date, so that was the earliest. A plain `max` over `(peak, date)`
+    # tuples breaks the tie the other way and silently moved the answer on the
+    # UNFILTERED path, which three other commands read.
+    ranked = [(int(r[6] or 0), str(r[0])) for r in days]
+    peak_c = max((c for c, _ in ranked), default=None)
+    peak_day = next((d for c, d in sorted(ranked, key=lambda x: x[1]) if c == peak_c), None)
+    busiest_engaged = (
+        _one(
+            conn,
+            f"SELECT ROUND(SUM(engaged_seconds)/3600.0,1) FROM session WHERE is_real=1{win}"
+            " AND local_date = ?",
+            (busiest_day,),
+        )[0]
+        if busiest_day
+        else None
+    )
+    busiest_elapsed = next(
+        (round(float(r[4] or 0), 3) for r in days if str(r[0]) == str(busiest_day)), None
+    )
     return {
         "busiest_day": busiest_day,
         "busiest_n": busiest_n,
@@ -210,24 +323,72 @@ def _derived_ratios(core: dict[str, object]) -> dict[str, object]:
     return {"shell_pct": shell_pct, "inflate": inflate, "cr_ratio": cr_ratio}
 
 
-def compute(conn: sqlite3.Connection, window: Window | None = None) -> dict[str, object]:
-    """Every number any prose string needs, honouring the window.
+def _select_projects(conn: sqlite3.Connection, projects: list[str]) -> str:
+    """Load the selected sessions into a TEMP table and return the predicate.
+
+    A TEMP TABLE rather than an `IN (?, ?, ...)` list threaded through every
+    query. `win` is interpolated into as many as four places in a single
+    statement here, so carrying a parameter tuple alongside it would mean
+    getting the ordering right at 15 call sites; a table turns the predicate
+    back into a constant string with no parameters, which is exactly the shape
+    the existing `win`/`keys`/`dwin` plumbing already expects.
+
+    The labels themselves ARE bound. They come off disk as folder names, so
+    interpolating them would make a project called `it's` a syntax error and
+    anything worse a real one.
+    """
+    conn.execute(f"DROP TABLE IF EXISTS temp.{SELECTED}")
+    conn.execute(f"CREATE TEMP TABLE {SELECTED} (key TEXT PRIMARY KEY)")
+    if projects:
+        holes = ", ".join("?" for _ in projects)
+        conn.execute(
+            f"INSERT OR IGNORE INTO {SELECTED} (key)"
+            f" SELECT key FROM session WHERE project_label IN ({holes})",
+            tuple(projects),
+        )
+    return f" AND key IN (SELECT key FROM {SELECTED})"
+
+
+def compute(
+    conn: sqlite3.Connection,
+    window: Window | None = None,
+    projects: list[str] | None = None,
+) -> dict[str, object]:
+    """Every number any prose string needs, honouring the window and selection.
 
     The window forms come from `common.Window`, which is the ONE place they are
     derived. They used to be rebuilt here and again in build_workbook.py, two
     implementations of one filter kept in step by hand.
+
+    `projects` is the list of `project_label`s to count, or None for all of
+    them. `None` and `[]` are DIFFERENT: `None` means "no project filter", `[]`
+    means "a filter that matched nothing", and an operator whose patterns
+    matched nothing must get zero rather than silently get the whole corpus.
     """
     window = window or Window()
     since = window.since
     win = window.and_clause
-    dwin = window.overlap_where
     keys = f" WHERE 1=1{window.child_keys}" if window.active else ""
+    filtered = projects is not None
+    chosen = ""
+
+    if projects is not None:
+        chosen = _select_projects(conn, projects)
+        win += chosen
+        # The child tables reach `session` through a subquery, so the selection
+        # has to go INSIDE it or turn/tool_call counts quietly stay corpus-wide.
+        # `Window` builds that form, here as everywhere else: rebuilding the
+        # literal here would be one form constructed two ways.
+        keys = f" WHERE 1=1{window.child_keys_and(chosen)}"
 
     core = _core_counts(conn, win)
     facts: dict[str, object] = {"since": since, **core}
-    facts.update(_hours_and_overlap(conn, win, dwin, keys))
+    # Computed ONCE and shared: the filtered path walks every selected session
+    # through the clip-and-merge, and both helpers below want the same answer.
+    days = _overlap_days(conn, chosen, window, filtered=filtered)
+    facts.update(_hours_and_overlap(conn, days, keys))
     facts.update(_month_boundaries(conn, win))
-    facts.update(_busiest_day(conn, win, dwin))
+    facts.update(_busiest_day(conn, win, days))
     facts.update(_project_labels(conn, win))
     facts.update(_timezone_dst(conn, win))
     facts.update(_derived_ratios(core))

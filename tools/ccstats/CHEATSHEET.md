@@ -107,14 +107,52 @@ uv run python3 tools/ccstats/dashboard.py    # page + dashboard-data.json
 uv run python3 tools/ccstats/export.py       # stats-facts.json only, under a second
 ```
 
-**THE PROJECT TICK LIST IS NOT A FILTER ON THESE FILES.** `dashboard-data.json`
-holds EVERY session in the window, including projects that start unticked - the page
-applies the tick list in your browser, not in the data. Both files carry the same
-`scope` object and cover the same rows, so you can check that with
-`jq -e '.scope' <file>` on each and compare.
+**THE TWO FILES ARE NARROWED DIFFERENTLY, AND EACH SAYS SO.**
 
-The one real difference: `stats-facts.json`'s `files_total` counts every session
-file, where the payload's per-session rows are real sessions only.
+`dashboard-data.json` holds EVERY session, including projects that start unticked -
+the page applies the tick list in your browser, so narrowing the data would break its
+own controls.
+
+`stats-facts.json` IS narrowed, to the saved start date and the saved project
+selection, because whatever renders it has no controls. Check either file with:
+
+```
+jq '.scope' ~/.cc-warehouse/stats/stats-facts.json
+```
+
+## Change the start date, or which projects count
+
+Both live in one file, `~/.cc-warehouse/stats/dashboard-defaults.json`:
+
+```json
+{
+  "since": "2026-06-08",
+  "exclude": ["3rdParty-", "Scaffoldings-"],
+  "include": []
+}
+```
+
+- `since` - the start date for `stats-facts.json`. Remove it for the full range.
+  A value that is not `YYYY-MM-DD` is ignored, and you get a full-range card
+  rather than a failed job.
+- `exclude` / `include` - substring patterns, case-insensitive. `exclude` is a
+  denylist, `include` an allowlist, and `exclude` narrows `include`. These set
+  both which projects start unticked on the page AND which ones the facts card
+  counts.
+
+After editing, rebuild without waiting for 13:00:
+
+```
+cd ~/CODE/CaptainCodeAU/cc-warehouse
+uv run python3 tools/ccstats/export.py
+```
+
+A pattern matching no project prints a warning naming it.
+
+**One number in the card ignores all of this on purpose:** `dst_sessions_all`.
+It counts sessions hit by a timezone bug that has been fixed, so it has to quote
+the whole corpus. It is listed by name in the file, under
+`scope.whole_corpus_facts`, with the reason.
 
 ## Change which projects start unticked
 
