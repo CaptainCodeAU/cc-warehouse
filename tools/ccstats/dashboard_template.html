@@ -218,6 +218,7 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
           <div class="proj-actions">
             <button class="btn" id="proj-clear" type="button">Include all</button>
             <button class="btn" id="proj-none" type="button">Exclude all</button>
+            <button class="btn" id="proj-saved" type="button" title="Tick exactly the projects your saved settings leave switched on, from dashboard-defaults.json. The same set stats-facts.json counts.">My list</button>
           </div>
           <div class="proj-list" id="proj-list"></div>
         </div>
@@ -1359,6 +1360,12 @@ document.addEventListener("click", e => {
 });
 document.getElementById("proj-clear").addEventListener("click", () => { state.excluded.clear(); buildProjList(projSearch.value); scheduleRedraw(); });
 document.getElementById("proj-none").addEventListener("click", () => { CANON_LIST.forEach(name => state.excluded.add(name)); buildProjList(projSearch.value); scheduleRedraw(); });
+/* "My list": back to the saved selection, WITHOUT touching the dates the way
+   Reset does. `defaultExcludedNames()` is the same function that sets the
+   opening state and the same one Reset uses, so all three can never disagree
+   about what "my list" means. This is also the exact set `stats-facts.json`
+   counts, so a reader can put the page and that file side by side. */
+document.getElementById("proj-saved").addEventListener("click", () => { state.excluded = defaultExcludedNames(); buildProjList(projSearch.value); scheduleRedraw(); });
 
 document.getElementById("mast-kicker").textContent =
   `${DATA.timezone} · ${fmtInt(DATA.S.length)} session/agent/automated-call rows embedded · ${DATA.min_date} to ${DATA.max_date}`;

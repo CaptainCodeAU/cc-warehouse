@@ -39,6 +39,12 @@ the 3D companion page - see **The 3D companion page**, below.
 | `dashboard.py` | `claude-code-dashboard-live.html`: one file, live date-range + project-exclude controls, no re-run needed to change them (see below). Also writes `dashboard-data.json`, the page's own payload as a file |
 | `export.py` | `stats-facts.json`: the top-line numbers only, a few KB, for something that is not this repo |
 
+`dashboard-defaults.json` holds BOTH an `include` (allowlist) and an `exclude`
+(denylist) list; whichever is non-empty is the one in play, and `exclude`
+narrows `include` when both are given. The page's Projects drop-down offers
+**Include all**, **Exclude all** and **My list**, the last of which restores
+exactly that saved selection without touching the date range.
+
 Both JSON files carry a `scope` OBJECT (`since`, `until`, `rows`,
 `project_filter_applied`) built by `common.header`, so two files can be compared
 with `==` instead of a reader trusting two English sentences. **No ccstats output

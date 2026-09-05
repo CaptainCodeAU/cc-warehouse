@@ -136,9 +136,16 @@ Both live in one file, `~/.cc-warehouse/stats/dashboard-defaults.json`:
   A value that is not `YYYY-MM-DD` is ignored, and you get a full-range card
   rather than a failed job.
 - `exclude` / `include` - substring patterns, case-insensitive. `exclude` is a
-  denylist, `include` an allowlist, and `exclude` narrows `include`. These set
-  both which projects start unticked on the page AND which ones the facts card
-  counts.
+  denylist (matches are switched OFF), `include` an allowlist (only matches are
+  switched ON), and `exclude` narrows `include`. **Yours is an exclude list:**
+  `include` is empty and `exclude` names the projects to skip. These set both
+  which projects start unticked on the page AND which ones the facts card counts.
+
+The page's Projects drop-down has three buttons. **Include all** ticks
+everything, **Exclude all** unticks everything, and **My list** goes back to
+exactly what this file says - without rewinding the dates the way **Reset**
+does. That third set is the same one `stats-facts.json` counts, so the page and
+that file can be read side by side.
 
 After editing, rebuild without waiting for 13:00:
 

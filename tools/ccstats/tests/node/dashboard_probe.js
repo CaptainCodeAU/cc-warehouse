@@ -17,9 +17,9 @@
  * crashing the probe.
  *
  * <json-scenario>, if given, is applied to `state` AFTER the initial render
- * (from, to, kinds: [names], excludedCanonical: [names]) so a caller can
- * exercise a specific filter combination without reimplementing the page's
- * own state machine.
+ * (from, to, kinds: [names], excludedCanonical: [names], click: "<id>") so a
+ * caller can exercise a specific filter combination without reimplementing the
+ * page's own state machine. `click` dispatches to the real listener.
  */
 
 const fs = require("fs");
@@ -201,6 +201,12 @@ if (!runError) {
     }
     if (scenario.excludedCanonical) {
       stateRef.excluded = new Set(scenario.excludedCanonical);
+    }
+    // `click: "<element-id>"` fires that control's REAL handler, so a test can
+    // assert what a reader pressing the button actually gets rather than what
+    // a re-implementation of the handler would produce.
+    if (scenario.click) {
+      documentStub.getElementById(scenario.click).dispatch("click", {});
     }
     probe.renderAll();
   }

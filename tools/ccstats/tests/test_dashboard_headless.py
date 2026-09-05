@@ -291,3 +291,88 @@ def test_worktree_child_rows_do_not_get_their_own_checklist_entry(tmp_path: Path
     result = _run_probe(html_path)
     assert WORKTREE_CHILD not in result["projectLastDate"]
     assert WORKTREE_CHILD not in result["projListRowNames"]
+
+
+# ------------------------------------------------- the project panel's buttons
+# Three buttons, and the third exists because the other two could not express
+# the state the reader actually wants most often: their own saved selection.
+# Each test presses the REAL handler through the probe rather than setting
+# `state.excluded` directly, so what is under test is the button, not a
+# re-statement of what the button is supposed to do.
+#
+# A SECOND, UNRELATED PROJECT IS ADDED FOR THESE. The standing fixture holds
+# `demo-parent` and one of its worktrees, and a worktree canonicalises to its
+# parent - so "exclude the worktree" and "exclude everything" are the same set,
+# and a button that did nothing at all would still have passed.
+
+OTHER = "demo-other"
+OTHER_ROWS = [
+    dict(key="oth-1", date="2026-06-12", project=OTHER, engaged=1200.0, cost=2.0),
+    dict(key="oth-2", date="2026-06-13", project=OTHER, engaged=1200.0, cost=2.0),
+]
+
+
+def _two_project_html(tmp_path: Path, unticked: list[str]) -> Path:
+    return _build_html(tmp_path, unticked=unticked, extra=OTHER_ROWS)
+
+
+def test_my_list_button_restores_the_saved_selection(tmp_path: Path) -> None:
+    html = _two_project_html(tmp_path, unticked=[OTHER])
+    # Start from everything switched off, so "restores" has to mean something.
+    result = _run_probe(
+        html, scenario={"excludedCanonical": [PARENT, OTHER], "click": "proj-saved"}
+    )
+    assert result["runError"] is None
+    assert sorted(result["stateExcluded"]) == [OTHER]
+
+
+def test_my_list_button_also_switches_things_OFF_again(tmp_path: Path) -> None:
+    """The half a naive implementation forgets. Coming from `Include all`, the
+    saved selection has to re-exclude, not merely re-include."""
+    html = _two_project_html(tmp_path, unticked=[OTHER])
+    result = _run_probe(html, scenario={"excludedCanonical": [], "click": "proj-saved"})
+    assert sorted(result["stateExcluded"]) == [OTHER]
+
+
+def test_my_list_button_leaves_the_dates_alone(tmp_path: Path) -> None:
+    """The whole reason it is not just `Reset`, which also rewinds the dates. A
+    reader narrowing a period and then fixing the project list must not lose the
+    period.
+
+    Asserted through the ROW COUNT, since that is what a widened date range
+    would change: pressing the button must land on exactly the state a reader
+    would have had by ticking the boxes themselves, with the window untouched.
+    """
+    html = _two_project_html(tmp_path, unticked=[OTHER])
+    dates = {"from": "2026-06-12", "to": "2026-06-13"}
+    clicked = _run_probe(html, scenario={**dates, "click": "proj-saved"})
+    by_hand = _run_probe(html, scenario={**dates, "excludedCanonical": [OTHER]})
+    wide = _run_probe(html, scenario={"excludedCanonical": [OTHER]})
+
+    assert sorted(clicked["stateExcluded"]) == [OTHER]
+    assert clicked["fsLength"] == by_hand["fsLength"]
+    assert clicked["fsLength"] < wide["fsLength"], "the date range was widened"
+
+
+def test_my_list_with_nothing_saved_ticks_everything(tmp_path: Path) -> None:
+    """An operator who has saved no exclusions must not get an empty page."""
+    html = _two_project_html(tmp_path, unticked=[])
+    result = _run_probe(html, scenario={"excludedCanonical": [PARENT], "click": "proj-saved"})
+    assert result["stateExcluded"] == []
+
+
+def test_my_list_matches_a_worktree_to_its_whole_project(tmp_path: Path) -> None:
+    """Saved names are canonicalised, so an exclusion recorded against one
+    throwaway worktree folder switches off the real project it belongs to."""
+    html = _two_project_html(tmp_path, unticked=[WORKTREE_CHILD])
+    result = _run_probe(html, scenario={"excludedCanonical": [], "click": "proj-saved"})
+    assert sorted(result["stateExcluded"]) == [PARENT]
+
+
+def test_the_other_two_buttons_still_do_their_jobs(tmp_path: Path) -> None:
+    """The control: a third button must not have disturbed the first two."""
+    html = _two_project_html(tmp_path, unticked=[OTHER])
+    none_ = _run_probe(html, scenario={"click": "proj-none"})
+    assert sorted(none_["stateExcluded"]) == sorted(none_["canonList"])
+    all_ = _run_probe(html, scenario={"excludedCanonical": [PARENT], "click": "proj-clear"})
+    assert all_["stateExcluded"] == []
