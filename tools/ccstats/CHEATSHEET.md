@@ -183,11 +183,16 @@ needs a decision. Then one row per **pattern** - not per folder - for `keep` and
 | `proj` | how many project folders this pattern matches |
 | `only` | how many it is the **sole** match for - what you would lose by deleting it |
 
-Two footnotes print themselves when they apply: patterns matching **nothing**,
-and patterns whose every match is **also caught by another**. Treat the second as
-a hint, not an instruction: `only` is checked one pattern at a time, so two
-patterns covering each other's folders both read 0 - drop either safely, drop
-both and the folders are gone.
+Three footnotes print themselves when they apply:
+
+- **match nothing** - a typo, or a project that no longer exists. Safe to delete.
+- **redundant on their own** - every folder is also held by a pattern that is
+  itself pulling its weight. Safe to delete, one or all.
+- **keep at least one of** - these patterns cover *each other's* folders and
+  nothing else does. Drop any one safely; drop them all and the folders go.
+
+The daily job also names a pattern that has stopped matching anything, so a
+rotted list tells you rather than waiting to be asked.
 
 ```
 uv run python3 tools/ccstats/review.py --projects

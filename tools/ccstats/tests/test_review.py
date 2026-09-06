@@ -309,14 +309,6 @@ def test_patterns_covered_by_others_are_named(out: Out, capsys) -> None:
     assert "lph" in report(out, capsys)
 
 
-def test_the_redundancy_callout_warns_it_is_one_at_a_time(out: Out, capsys) -> None:
-    """THE TRAP. `only` is computed per pattern in isolation. Two patterns can
-    each read 0 because they cover EACH OTHER - drop either safely, drop both
-    and the projects are gone. Live example: `infisical` and `agent-vault`."""
-    defaults(out, keep=["alpha", "lph"], exclude=[])
-    assert "one at a time" in report(out, capsys).lower()
-
-
 def test_a_pattern_matching_nothing_is_named(out: Out, capsys) -> None:
     defaults(out, keep=["alpha", "no-such-thing"], exclude=[])
     text = report(out, capsys)
@@ -356,3 +348,149 @@ def test_new_is_unchanged_by_all_of_this(out: Out, capsys) -> None:
     line = report(out, capsys, "--new").strip()
     assert line.endswith("gamma")
     assert line.split()[:2] == ["1", "since"], line
+
+
+# ------------------------------------------- dead patterns and covering pairs
+# Two gaps found by running the report against the live lists. A pattern that
+# matches nothing rots unmentioned, because the daily job only reports unreviewed
+# PROJECTS. And "every match also caught by another" is computed one pattern at a
+# time, so two patterns covering EACH OTHER both appear in it - remove either
+# safely, remove both and the projects are gone.
+
+
+def test_new_names_a_dead_keep_pattern(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha", "no-such-thing"], exclude=["beta"])
+    text = report(out, capsys, "--new")
+    assert "no-such-thing" in text
+    assert "keep" in text
+
+
+def test_new_names_a_dead_exclude_pattern(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha"], exclude=["beta", "ghost-pattern"])
+    text = report(out, capsys, "--new")
+    assert "ghost-pattern" in text
+    assert "exclude" in text
+
+
+def test_new_stays_silent_when_nothing_is_wrong(out: Out, capsys) -> None:
+    """Silence is the healthy state and the daily box shows nothing."""
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    assert report(out, capsys, "--new").strip() == ""
+
+
+def test_the_unreviewed_line_keeps_its_shape(out: Out, capsys) -> None:
+    """`refresh.py` puts this stdout in the dialog. Adding lines is the point;
+    reshaping the existing one is not."""
+    add_project(out, "g1", "gamma")
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    line = next(ln for ln in report(out, capsys, "--new").splitlines() if "gamma" in ln)
+    assert line.split()[:2] == ["1", "since"], line
+
+
+def test_record_acknowledges_a_dead_pattern(out: Out, capsys) -> None:
+    """Or the box nags forever - the wallpaper failure `--record` exists to avoid."""
+    defaults(out, keep=["alpha", "no-such-thing"], exclude=["beta"])
+    report(out, capsys, "--new", "--record")
+    assert "no-such-thing" not in report(out, capsys, "--new")
+
+
+def test_a_newly_dead_pattern_is_reported_after_an_earlier_record(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha", "no-such-thing"], exclude=["beta"])
+    report(out, capsys, "--new", "--record")
+    defaults(out, keep=["alpha", "no-such-thing", "second-ghost"], exclude=["beta"])
+    text = report(out, capsys, "--new")
+    assert "second-ghost" in text
+    assert "no-such-thing" not in text
+
+
+def test_a_baseline_from_before_this_change_still_loads(out: Out, capsys) -> None:
+    """It had only an `acknowledged` key. A missing second key is not an error."""
+    add_project(out, "g1", "gamma")
+    defaults(out, keep=["alpha"], exclude=["beta"])
+    (out.root / "review-baseline.json").write_text(
+        '{"acknowledged": ["gamma"]}', encoding="utf-8"
+    )
+    assert report(out, capsys, "--new").strip() == ""
+
+
+def test_a_pattern_covered_by_a_real_one_is_simply_redundant(out: Out, capsys) -> None:
+    """`alpha-two` matches one folder that `alpha` also matches, while `alpha`
+    holds a folder of its OWN - so `alpha` survives any cull and `alpha-two`
+    costs nothing to drop, under any circumstance.
+
+    The first version of this test used `alpha` and `lph`, which is a substring
+    of it: those two can never match different sets, so they are a covering
+    PAIR, not a redundant pattern. The test was asserting the wrong thing.
+    """
+    add_project(out, "a2", "alpha-two")
+    defaults(out, keep=["alpha", "alpha-two"], exclude=[])
+    text = report(out, capsys)
+    assert "redundant on their own" in text
+    assert "alpha-two" in text.split("redundant on their own")[1].splitlines()[0]
+
+
+def test_two_patterns_covering_each_other_are_named_as_a_group(out: Out, capsys) -> None:
+    """THE TRAP. `alph` and `lpha` match the same project and nothing else does.
+    Either may go; both may not. Live case: `infisical` and `agent-vault`."""
+    defaults(out, keep=["alph", "lpha"], exclude=["beta"])
+    text = report(out, capsys)
+    group = text.split("keep at least one")[1].splitlines()[0]
+    assert "alph" in group and "lpha" in group, text
+
+
+def test_the_group_line_says_to_keep_one(out: Out, capsys) -> None:
+    defaults(out, keep=["alph", "lpha"], exclude=["beta"])
+    assert "keep at least one" in report(out, capsys)
+
+
+def test_a_pattern_holding_something_alone_is_never_called_redundant(out: Out, capsys) -> None:
+    defaults(out, keep=["alpha", "beta"], exclude=[])
+    text = report(out, capsys)
+    assert "redundant" not in text.lower(), text
+
+
+def test_a_keep_pattern_whose_projects_are_overruled_is_not_called_dead(
+    out: Out, capsys
+) -> None:
+    """THE REGRESSION. "Matches nothing" is a claim about the CORPUS, and the
+    first version checked it against the counted rows instead - so a keep
+    pattern whose every project `exclude` overrules was reported as matching
+    nothing, while the SAME report listed that project under "IN `keep` BUT
+    EXCLUDED ANYWAY". Live case: `Network-Plan` was the only thing the daily
+    check ever reported, and it was false.
+
+    This test previously asserted the wrong behaviour and passed.
+    """
+    defaults(out, keep=["alpha", "beta"], exclude=["beta"])
+    full = report(out, capsys)
+    assert "match nothing: beta" not in full
+    assert "IN `keep` BUT EXCLUDED ANYWAY - exclude wins  (1)" in full
+    assert report(out, capsys, "--new").strip() == ""
+
+
+def test_a_dead_include_pattern_is_reported_too(out: Out, capsys) -> None:
+    """`include` can rot like the others and nothing else looks at it."""
+    defaults(out, keep=["alpha"], include=["alpha", "ghost"], exclude=[])
+    assert "`ghost` in `include`" in report(out, capsys, "--new")
+
+
+def test_a_superset_group_does_not_swallow_a_droppable_pattern(out: Out, capsys) -> None:
+    """Only MINIMAL groups. `{A,B}` implies `{A,B,C}`, and printing the superset
+    hides that C is genuinely safe to drop - the row keeps A and B either way."""
+    # `xy` is matched by x and y; `xyz` by x, y and z. None of the three is the
+    # sole match for anything, so all are candidates - and {x,y} implies {x,y,z}.
+    add_project(out, "q1", "xy")
+    add_project(out, "q2", "xyz")
+    defaults(out, keep=["x", "y", "z", "alpha", "beta"], exclude=[])
+    text = report(out, capsys)
+    groups = [ln for ln in text.splitlines() if "keep at least one of" in ln]
+    assert len(groups) == 1, groups
+    assert "x, y" in groups[0], groups
+    # ...and z, swallowed by the superset before, is correctly droppable
+    assert "z" in text.split("redundant on their own")[1].splitlines()[0]
+
+
+def test_a_repeated_pattern_is_not_reported_as_a_group_of_one(out: Out, capsys) -> None:
+    """A one-member "keep at least one of" is nonsense; a list may repeat."""
+    defaults(out, keep=["alpha", "alpha"], exclude=["beta"])
+    assert "keep at least one of: alpha" not in report(out, capsys)

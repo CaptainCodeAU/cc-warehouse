@@ -81,7 +81,8 @@ def buckets(
     exclude: list[str],
     window: Window,
 ) -> tuple[list[tuple[str, int, int, list[str]]], ...]:
-    """`(reviewed, skipped, unreviewed)`, each `(label, in_window, all_time, why)`.
+    """`(reviewed, skipped, unreviewed, labels)`; the first three are rows of
+    `(label, in_window, all_time, why)` and the last is every project label seen.
 
     WHICH PROJECTS ARE SWITCHED OFF IS ASKED, NOT RE-DECIDED. `resolve_unticked`
     owns that policy and it is subtler than "exclude matched": a non-empty
@@ -108,7 +109,8 @@ def buckets(
         f" FROM session WHERE {Window().session} AND project_label IS NOT NULL GROUP BY 1"
     ).fetchall()
     counted = [(str(r[0]), int(r[1] or 0), int(r[2] or 0)) for r in rows]
-    off = set(resolve_unticked([c[0] for c in counted], include, exclude)[0])
+    all_labels = [c[0] for c in counted]
+    off = set(resolve_unticked(all_labels, include, exclude)[0])
     reviewed: list[tuple[str, int, int, list[str]]] = []
     skipped: list[tuple[str, int, int, list[str]]] = []
     unreviewed: list[tuple[str, int, int, list[str]]] = []
@@ -120,7 +122,7 @@ def buckets(
         held = matched_by(label, keep)
         (reviewed if held else unreviewed).append((label, win_n, all_n, held))
     order = lambda b: sorted(b, key=lambda r: (-r[1], -r[2], r[0]))  # noqa: E731
-    return order(reviewed), order(skipped), order(unreviewed)
+    return order(reviewed), order(skipped), order(unreviewed), all_labels
 
 
 def _pattern_section(
@@ -128,6 +130,7 @@ def _pattern_section(
     pats: list[str],
     rows: list[tuple[str, int, int, list[str]]],
     show_projects: bool,
+    dead_here: set[str],
 ) -> None:
     """One row per PATTERN: what it holds, and what it alone holds.
 
@@ -171,18 +174,75 @@ def _pattern_section(
             for label, win_n, all_n, _ in orphans:
                 print(f"  {win_n:>6} {all_n:>7}          {label}")
 
-    dead = [p for p in order if not owned[p]]
-    covered = [p for p in order if owned[p] and not sole[p]]
+    dead = [p for p in order if p in dead_here]
     if dead:
         print(f"  match nothing: {', '.join(dead)}")
-    if covered:
-        # NOT "safe to delete". `only` is computed ONE PATTERN AT A TIME, so two
-        # patterns covering each other's projects both read 0 - drop either and
-        # nothing changes, drop both and the projects are gone. Live case:
-        # `infisical` and `agent-vault` hold the same two folders.
-        print(f"  every match also caught by another pattern: {', '.join(covered)}")
-        print("    (checked one at a time - two of these may be covering each other,"
-              " so removing both can still lose a project)")
+    alone, groups = redundancy(pats, rows)
+    if alone:
+        print(f"  redundant on their own: {', '.join(p for p in order if p in alone)}")
+    for group in groups:
+        print(f"  keep at least one of: {', '.join(sorted(group))}"
+              "   (each looks redundant only because the others exist)")
+
+
+def dead_patterns(lists: dict[str, list[str]], labels: list[str]) -> list[tuple[str, str]]:
+    """`(list_name, pattern)` for every pattern matching no project label.
+
+    AGAINST THE LABELS, NOT AGAINST A SECTION'S ROWS. "Matches nothing" is a
+    statement about the corpus, and checking it against the rows of one section
+    makes it a statement about that section instead. The first version checked
+    `keep` against the COUNTED rows, so a keep pattern whose every project is
+    overruled by `exclude` was reported as matching nothing while the same
+    report listed that project two sections earlier under "IN `keep` BUT
+    EXCLUDED ANYWAY". Live on the operator's corpus: `Network-Plan` matches
+    `fonzarelli-.claude-...-Network-Plan-memory`, which `fonzarelli-` overrules.
+    It was the ONLY thing the daily check reported, and it was false.
+
+    Every list is checked, `include` included: an allowlist pattern can rot the
+    same way and nothing else looks at it.
+    """
+    return [
+        (field, p)
+        for field, pats in lists.items()
+        for p in dict.fromkeys(pats)
+        if not any(matched_by(label, [p]) for label in labels)
+    ]
+
+
+def redundancy(
+    pats: list[str], rows: list[tuple[str, int, int, list[str]]]
+) -> tuple[set[str], list[frozenset[str]]]:
+    """`(redundant_alone, mutually_covering_groups)`.
+
+    JUDGED AGAINST THE WHOLE REDUNDANT SET, not one pattern at a time. The
+    naive measure - "is this pattern the sole match for anything?" - answers a
+    question nobody asked: `infisical` and `agent-vault` match the same two
+    folders and nothing else does, so BOTH read "sole match for nothing" and a
+    reader deleting both on that advice loses the folders.
+
+    Let Z be the patterns that are the sole match for nothing. A project whose
+    every matching pattern lies inside Z is orphaned when all of Z goes; that
+    project's own matching set is the group to warn about. A pattern in Z that
+    orphans nothing is safe on its own AND alongside the rest of Z, which is
+    what "redundant" should be allowed to mean.
+    """
+    seen = list(dict.fromkeys(pats))  # a list may repeat a pattern; a set of one
+    sole_of = {p: any(set(r[3]) == {p} for r in rows) for p in seen}
+    z = {p for p in seen if not sole_of[p] and any(p in r[3] for r in rows)}
+
+    found: set[frozenset[str]] = set()
+    for row in rows:
+        matching = {p for p in row[3] if p in seen}
+        if matching and matching <= z:
+            found.add(frozenset(matching))
+
+    # MINIMAL GROUPS ONLY. A superset group is implied by the subset it contains
+    # - satisfying {A,B} already satisfies {A,B,C} - and printing it does real
+    # harm: C is swallowed into `grouped` and never reaches `alone`, so a pattern
+    # that IS safe to drop is reported as one you must keep.
+    groups = [g for g in found if not any(o < g for o in found)]
+    grouped = {p for g in groups for p in g}
+    return z - grouped, sorted(groups, key=lambda g: sorted(g))
 
 
 def _shared_prefix(labels: list[str]) -> str:
@@ -213,8 +273,17 @@ def read_baseline(root: Path) -> set[str]:
         data = json.loads((root / BASELINE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return set()
-    seen = data.get("acknowledged") if isinstance(data, dict) else None
-    return {str(x) for x in seen} if isinstance(seen, list) else set()
+    if not isinstance(data, dict):
+        return set()
+    out: set[str] = set()
+    # Two keys, and a baseline written before dead patterns existed carries only
+    # the first. A missing key is "nothing acknowledged of that kind", never an
+    # error - the file is a convenience, and losing it costs one noisy report.
+    for key in ("acknowledged", "acknowledged_patterns"):
+        seen = data.get(key)
+        if isinstance(seen, list):
+            out |= {f"{key}:{x}" for x in seen}
+    return out
 
 
 def main(argv: list[str]) -> int:
@@ -255,21 +324,43 @@ def main(argv: list[str]) -> int:
     window = Window(load_default_since(out.root))
     conn = open_ro(out.db)
     try:
-        reviewed, skipped, unreviewed = buckets(conn, keep, include, exclude, window)
+        reviewed, skipped, unreviewed, all_labels = buckets(conn, keep, include, exclude, window)
     finally:
         conn.close()
 
     if new_only:
-        fresh = [r for r in unreviewed if r[0] not in read_baseline(out.root)]
+        known_already = read_baseline(out.root)
+        fresh = [r for r in unreviewed if f"acknowledged:{r[0]}" not in known_already]
+        # A pattern matching nothing has rotted - a typo, or a project that no
+        # longer exists. It is as much a finding as an unreviewed project and
+        # was previously visible only to someone running the full report by hand.
+        all_dead = dead_patterns(
+            {"keep": keep, "include": include, "exclude": exclude}, all_labels
+        )
+        rotted = [
+            (field, p)
+            for field, p in all_dead
+            if f"acknowledged_patterns:{field}:{p}" not in known_already
+        ]
         # Silence is the healthy state, matching ccw-sweep and this folder's
         # other scheduled jobs. `refresh.py` shows the dialog line only when
         # this prints something.
         for label, win_n, all_n, _ in fresh:
             print(f"{win_n:>5} since / {all_n:>5} all   {label}")
+        for field, p in rotted:
+            print(f"matches nothing: `{p}` in `{field}`")
         if record:
+            # From the SAME list that was just reported against, so recording can
+            # never acknowledge something that was never printed, nor miss one
+            # that was.
             publish_text(
                 json.dumps(
-                    {"acknowledged": sorted(r[0] for r in unreviewed)},
+                    {
+                        "acknowledged": sorted(r[0] for r in unreviewed),
+                        "acknowledged_patterns": sorted(
+                            f"{field}:{p}" for field, p in all_dead
+                        ),
+                    },
                     indent=2,
                     sort_keys=True,
                 )
@@ -320,8 +411,13 @@ def main(argv: list[str]) -> int:
     print("  -> intended when these are scratch folders under a real project."
           " Otherwise narrow the exclude pattern." if overruled else "")
 
-    _pattern_section("KEEP", keep, reviewed, show_projects)
-    _pattern_section("EXCLUDE", exclude, skipped, show_projects)
+    # ONE definition of dead, computed once and handed to each section, rather
+    # than a comment claiming two computations agree.
+    dead = dead_patterns({"keep": keep, "include": include, "exclude": exclude}, all_labels)
+    _pattern_section("KEEP", keep, reviewed, show_projects,
+                     {p for f, p in dead if f == "keep"})
+    _pattern_section("EXCLUDE", exclude, skipped, show_projects,
+                     {p for f, p in dead if f == "exclude"})
     if not show_projects:
         print("\n--projects lists the folders under each pattern.")
     return 0

@@ -97,7 +97,10 @@ FLAGS = {"--quiet", "--skip-collect", "--no-notify", "-h", "--help"}
 USAGE = "uv run python3 tools/ccstats/refresh.py [--quiet] [--skip-collect] [--no-notify]"
 
 PAGE_NAME = "claude-code-dashboard-live.html"
-REVIEW_HEADING = "Projects neither list has ruled on:"
+# Neutral, because `review.py --new` reports two KINDS of finding: projects
+# neither list has ruled on, and patterns that have stopped matching anything.
+# A pattern is not a project, and the first heading said it was.
+REVIEW_HEADING = "Needs a look (review.py --new):"
 # How many of them the box will name. A first run against an empty baseline can
 # have a hundred, and `display dialog` has no scrollbar - a box taller than the
 # screen is worse than a short one that says where the rest are.
@@ -383,7 +386,7 @@ def main(argv: list[str]) -> int:
             more = len(shown) - REVIEW_MAX_LINES
             lines += ["", REVIEW_HEADING, *shown[:REVIEW_MAX_LINES]]
             if more > 0:
-                lines += [f"...and {more} more - run review.py to see them all."]
+                lines += [f"...and {more} more finding(s) - run review.py to see them all."]
         shown = notify(title, "\n".join(lines), page, log)
 
     # A dialog that failed to appear breaks the quiet convention on purpose.
