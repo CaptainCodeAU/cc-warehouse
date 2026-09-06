@@ -244,6 +244,18 @@ WHOLE session's range in one shot, catching anything a `--no-verify` or
 `LEAK_SCAN_DISABLE=1` commit slipped past, and it checks far more than username/path: GitHub/
 Slack/AWS/OpenAI-shaped tokens, PEM private keys, and phone numbers.
 
+**Prove the instrument before trusting its verdict** - run `--control` first, every time:
+
+```bash
+git-leak-scan --control
+```
+
+Read the line itself: "tested N of M rules, K disarmed" and every rule reading `FIRED`, none
+`NOT TESTED`. A green control proves the SCANNER still works today, not that this session is
+clean - the two are separate facts, and this is the same principle behind every other "verify
+the instrument, not just the reading" moment in this project's own history. Only once this
+comes back clean, run the real scan:
+
 ```bash
 git-leak-scan --since SESSION_START_REF
 ```
@@ -340,9 +352,10 @@ for anything that could otherwise read as a silent pass:
 
 Cover: Step 0's result; the guard totals verbatim; the release-tag check and what (if anything)
 was pushed; which ticket/decision files gained entries; whether `OPENING-PROMPT.md` needed a
-correction and its current line count; the CHANGELOG entry if one was written; the secrets scan
-result; commit + push confirmation and the tag name if any; anything still open with its trigger;
-anything that needs the operator's own action, spelled out exactly. End with one line: the tree
-is fully clean, or it explicitly is not and why.
+correction and its current line count; the CHANGELOG entry if one was written; the `--control`
+result AND the secrets scan's own summary line (both quoted, not summarized as "clean"); commit
++ push confirmation and the tag name if any; anything still open with its trigger; anything that
+needs the operator's own action, spelled out exactly. End with one line: the tree is fully
+clean, or it explicitly is not and why.
 
 In `check` mode, report the same list as findings and stop - nothing gets written.
