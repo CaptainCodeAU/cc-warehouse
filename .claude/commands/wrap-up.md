@@ -69,9 +69,18 @@ memory) - a concurrent session can commit AND push while you're still working, w
 push already caught the upstream comparison up. Measured live 2026-09-06: a session's own
 `@{u}..HEAD` showed nothing partway through its work for exactly this reason, and the only
 thing that still showed the real picture was comparing against the remembered start commit.
+This is deliberately a captured value, not something re-derived later from a commit trailer
+or similar marker - a marker stamped by a hook is absent exactly when a hook was skipped
+(`--no-verify`, an editor's skip-hooks toggle, an unhooked machine), which silently shortens
+the range on precisely the commits least likely to have been scanned in the first place.
+Capturing the plain starting `HEAD` has no such dependency.
+
 If you didn't note SESSION_START_REF at the time and can't recover it (context got
-summarized, say), fall back to the earliest commit in the log you can actually recognize as
-this conversation's own work, and say in the Step 9 report that you did.
+summarized, say), **that is a refuse condition, not a guess-and-continue one**: say so
+plainly in the Step 9 report, name it as unresolved, and do not silently substitute the
+earliest commit you merely recognize as "probably" this session's own - a wrong guess here
+makes every check in this step to certify a range that quietly isn't the real one, and looks
+identical to a correct one.
 
 ```bash
 git status --short                              # uncommitted, including untracked
@@ -253,6 +262,36 @@ git diff SESSION_START_REF..HEAD -- . ':!*.lock' | grep -E '^\+[^+]' | grep -F "
 git diff SESSION_START_REF..HEAD -- . ':!*.lock' | grep -E '^\+[^+]' | grep -E "/Users/[A-Za-z0-9_.-]+/" \
   && echo "STOP: a real macOS home path found in an added line"
 ```
+
+**Three things this scan cannot see, measured directly rather than assumed - one of them needs
+an extra command, the other two are accepted limitations to state plainly rather than silently
+trust past:**
+
+1. **Commit MESSAGES never appear in any `git diff`.** A token pasted into a commit message
+   (or an annotated tag message) scans clean forever - confirmed live: a real GitHub-token-shaped
+   string in a commit message scanned exit 0 with `git-leak-scan`, while the same string in file
+   content correctly blocked. Run this too:
+   ```bash
+   git log --format=%B SESSION_START_REF..HEAD | gitleaks detect --pipe --no-banner
+   ```
+   (the underlying tool directly, since the wrapper has no stdin mode). Non-zero means a hit.
+2. **Binary file content is invisible** - `git diff` prints "Binary files ... differ" and nothing
+   else, confirmed live with a token embedded in a binary file (exit 0, no mention). This repo's
+   own tracked files are all text as of this writing (checked); if that ever changes, this gap
+   becomes real.
+3. **A value added in one commit and removed in a later commit, BOTH inside this same range, is
+   invisible to any two-dot diff** - confirmed directly with plain `git diff` (not even
+   `git-leak-scan`-specific): the diff between the range's endpoints shows nothing for that line,
+   while `git log -p` over the same range shows it sitting in the middle commit. This project's own
+   standing habit of pushing immediately after each commit makes this a real risk, not a
+   theoretical one - a leak-then-fix pair can genuinely be public between the two pushes with
+   nothing here able to see it. A scan of this session's RANGE certifies the range, never the
+   repo's full history; if that stronger guarantee is ever needed, it takes a full-history audit
+   (`git-leak-scan --range 4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD`, diffing against git's
+   empty-tree hash), which is heavier and belongs in `/refresh`'s scope, not here.
+
+Also eyeball Step 1's `git status --short` output for untracked files - they never appear in any
+diff either, staged, ranged, or otherwise, until something actually adds them.
 
 The test suite's own sanctioned placeholder is `/home/alice` (a Linux-style example path used
 inside test fixtures, per `CLAUDE.md`) - it never matches the `/Users/...` pattern above, so it
