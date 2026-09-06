@@ -64,7 +64,10 @@ def test_adhoc_open_flag_opens_the_actual_page(
     from cc_warehouse import notify
 
     opened: list[str] = []
-    monkeypatch.setattr(notify, "open_page", lambda path: opened.append(path))
+    def record_open(path: str) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr(notify, "open_page", record_open)
 
     source = tmp_path / "adhoc.jsonl"
     source.write_bytes(basic_session())
@@ -81,7 +84,10 @@ def test_adhoc_without_open_never_opens_anything(
     from cc_warehouse import notify
 
     opened: list[str] = []
-    monkeypatch.setattr(notify, "open_page", lambda path: opened.append(path))
+    def record_open(path: str) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr(notify, "open_page", record_open)
 
     source = tmp_path / "adhoc.jsonl"
     source.write_bytes(basic_session())
@@ -120,7 +126,10 @@ def test_session_open_flag_opens_the_projections_copy_without_an_archive(
     short = stored_short(ccw_env)
 
     opened: list[str] = []
-    monkeypatch.setattr(notify, "open_page", lambda path: opened.append(path))
+    def record_open(path: str) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr(notify, "open_page", record_open)
     result = run_cli(["render", "--session", f"s:{short}", "--open"])
     assert result.code == 0, result.err
     assert len(opened) == 1
@@ -143,7 +152,10 @@ def test_session_open_flag_prefers_the_archive_folder(
     short = stored_short(ccw_env)
 
     opened: list[str] = []
-    monkeypatch.setattr(notify, "open_page", lambda path: opened.append(path))
+    def record_open(path: str) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr(notify, "open_page", record_open)
     result = run_cli(["render", "--session", f"s:{short}", "--open"])
     assert result.code == 0, result.err
     assert len(opened) == 1
@@ -162,7 +174,10 @@ def test_session_without_open_never_opens_anything(
     short = stored_short(ccw_env)
 
     opened: list[str] = []
-    monkeypatch.setattr(notify, "open_page", lambda path: opened.append(path))
+    def record_open(path: str) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr(notify, "open_page", record_open)
     result = run_cli(["render", "--session", f"s:{short}"])
     assert result.code == 0, result.err
     assert opened == []
