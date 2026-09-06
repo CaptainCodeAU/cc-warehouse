@@ -88,6 +88,18 @@ this session to check its own MEMORY for related keywords, which surfaced that
 constantly, and no-personal-data) without ever connecting them - a dated note was added
 there generalizing the lesson beyond just `/wrap-up`.
 
+**Corrected minutes later again: the hand-rolled grep itself was the wrong fix.** The
+operator asked whether `git-leak-scan --since <ref>` should be used instead. It should -
+this machine already has a real leak scanner (`~/.local/bin/git-leak-scan`, personal
+tooling, not part of this repo) built for exactly this case (its own header calls out
+"end-of-stage audit" by name, because the same staging-is-always-empty problem was already
+solved there), already wired into every commit here via the pre-commit hook
+(`~/.config/git/hooks/_audit-chain`), and covering far more than username/path: GitHub/
+Slack/AWS/OpenAI-shaped tokens, PEM private keys, phone numbers. Verified live: `git-leak-scan
+--since 2f374c2` (this session's actual starting commit) ran clean over the whole session.
+`/wrap-up`'s Step 7 now calls it directly, falling back to the narrower grep only if the tool
+is absent. Memory corrected to match rather than left pointing at the weaker fix.
+
 No ticket file touched, no `pyproject.toml` version bump (docs-only this track) - this
 session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff/pyright
 issues) and the release tag already correctly pushed by the concurrent twenty-fourth
