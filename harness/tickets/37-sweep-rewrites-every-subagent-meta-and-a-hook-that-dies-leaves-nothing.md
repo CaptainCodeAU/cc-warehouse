@@ -1,6 +1,6 @@
 # Ticket 37: the sweep rewrites every sub-agent `meta.json` daily, and a hook killed mid-run leaves no trace
 
-Opened 2026-09-06, NOT started. Two findings from one session's timeline
+Opened 2026-09-06. **Part A DONE and Part B row 1 DONE the same day** (see the bottom of this file). Part B rows 2, 3 and 5 and the pre-filter follow-up are OPEN. Two findings from one session's timeline
 (chorustic session `78bb0bd1-06cf-44b6-b5ec-6e7a01b0df92`), traced because
 the operator asked why the rendered files landed nine minutes after the
 JSONL and why the `subagents/` folders carried a date between the two.
@@ -208,3 +208,63 @@ Part B:
 - Reproduce this session's shape (archive folder present, no catalog row,
   then sweep) and show the `capture_event.detail` names the pre-existing
   folder.
+
+
+## DONE 2026-09-06: Part A, and Part B row 1 (commits `81784d3`, `52319d7`)
+
+**Part A.** `store.write_if_changed(path, data) -> bool` is now the one
+compare-before-write primitive (the C12 shape). `build._write_if_changed`,
+`archive.write_project_sidecar` and `archive.write_subagent` (meta.json AND
+the orphan note, which sat two lines below with the same defect and which the
+first cut of this fix missed until the review caught it) all call it.
+`SubagentResult` gained `wrote`, `refused` and `unchanged`; `sweep.
+_archive_subagent` reports `skipped_unchanged` for a no-op and
+`refused-subagent` for a smaller or same-size-different payload, instead of a
+plain `archived-subagent` for all three. Oracle tests first, over the whole
+`subagents/` tree, not one folder.
+
+Real-data acceptance, exactly the three counts from Part A above:
+
+```
+touch marker; ccw sweep            -> sweep: 26708 items, 13 stored, 0 failed (2m20s)
+find archive -name meta.json -newer marker | wc -l          -> 0
+find archive -path "*/subagents/*" -newer marker | wc -l    -> 0
+```
+
+Against 2,501 of 2,505 rewritten by the 12:30 run the same morning.
+
+**Part B row 1.** `ccw-hook.py` writes a `started` line before it runs
+anything, and EVERY line it writes now carries `"source": "ccw-hook"` and
+`"session": <id>` (the review pointed out that a `started`-only session id
+forces pairing by position, which is wrong when concurrent session ends
+interleave). `grep <session-id> ~/.claude/logs/ccw-hook.log` is the whole
+run; a `started` with nothing after it is a hook that died. Five oracle
+tests including the killed-mid-run shape.
+
+**Not live until the plugin is updated.** The frozen `ccw` was reinstalled
+and carries the archive change; the hook wrapper is loaded by Claude Code from
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<sha>/`, which still holds
+the old script until the operator runs `/plugin` and updates
+`cc-capture@cc-warehouse`. Verified 2026-09-06: 0 of the cached copies
+contain `_started`.
+
+**Still open, in priority order** (from the four-angle review of `81784d3`):
+
+1. Part B row 2, the SIGTERM/SIGHUP `killed` line. Small; the wrapper has no
+   signal handler at all today.
+2. Part B row 3, `capture_event.detail` naming a pre-existing archive folder
+   on the fresh path.
+3. The read side. On the unchanged path each sub-agent source file is read 3
+   times and JSON-parsed 4 times per sweep (`_content_hash`,
+   `_is_subagent_file`, `_archive_subagent`, then `write_subagent`), the
+   archived JSONL is read in full for a size compare, `catalog.open_catalog`
+   runs once per sub-agent for a label lookup, and `_parent_folder` lists the
+   project directory once per sub-agent. About 80 MB of reads and 2,300 sqlite
+   opens per day to conclude "unchanged". The fix is the pre-filter: record
+   the digest `sweep.sweep` already computes at line ~459 (a small
+   `subagent_seen` table, or a second SELECT folded into `_cataloged_hashes`),
+   keyed on JSONL+meta together so a changed meta with an unchanged JSONL is
+   not skipped. Catalog schema change: its own ticket.
+4. Part B row 5, a `source: sweep` line per sweep-stored session.
+5. A shared `SubagentResult.action` enum so `capture._archive_subagents_of`
+   (which currently discards the result) and the sweep share one vocabulary.
