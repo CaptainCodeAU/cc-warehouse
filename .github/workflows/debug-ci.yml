@@ -24,15 +24,5 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
-      - name: installed package fingerprint
-        run: |
-          uv run python3 -c "import cc_warehouse, cc_warehouse.build as b; print('cc_warehouse:', cc_warehouse.__file__); print('build.py:', b.__file__)"
-          ls -la --time-style=full-iso $(uv run python3 -c "import cc_warehouse.build as b; print(b.__file__)")
-          grep -n "NO LONGER SWALLOWS" $(uv run python3 -c "import cc_warehouse.build as b; print(b.__file__)") || echo "MISSING ticket-34 fix in installed build.py"
-      - name: no-cache reinstall and rerun the one failing test
-        run: |
-          rm -rf .venv
-          uv sync --no-cache
-          uv run pytest -q tests/test_build_incremental.py::test_a_mirror_failure_is_reported_as_an_error_not_built -v
-      - name: oracle suite (using the no-cache install)
-        run: uv run pytest -q
+      - name: rerun the one failing test with debug prints
+        run: uv run pytest -q -s tests/test_build_incremental.py::test_a_mirror_failure_is_reported_as_an_error_not_built -v

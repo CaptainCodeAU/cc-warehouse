@@ -352,7 +352,17 @@ def test_a_mirror_failure_is_reported_as_an_error_not_built(
         raise RuntimeError("simulated mirror failure")
 
     monkeypatch.setattr(archive, "write_session_folder", boom)
+    import sys
+
+    print(
+        f"DEBUG_TEST archive_id={id(archive)} "
+        f"module_id={id(sys.modules.get('cc_warehouse.archive'))} "
+        f"fn_after_patch={archive.write_session_folder!r} "
+        f"config_archive_root={target!r} target_exists={target.exists()}",
+        file=sys.stderr,
+    )
     result = run_cli(["build"])
+    print(f"DEBUG_TEST result.out={result.out!r} result.err={result.err!r}", file=sys.stderr)
     assert result.code != 0, "a swallowed mirror failure reported success"
     assert "1 failed" in result.out, result.out
     assert "0 built" in result.out, result.out
