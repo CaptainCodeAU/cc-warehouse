@@ -21,6 +21,57 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-fifth handoff, 2026-09-06 (cross-machine audit; ccw provisioning design with fifty-shades-of-dotfiles; agent-setup-contract.md added)
+
+Ran concurrently with the twenty-fourth handoff's session, same day, different track: this
+one started from the operator asking to understand `ccstats`/`cc-capture` at a high level,
+then to audit this Mac's hook/launchd wiring plus a second machine reachable over SSH
+(`mlbox-ubuntu`, alias for a WSL Ubuntu box, hostname `MLBox`).
+
+**This Mac: clean.** Hooks correctly wired (`cc-capture@cc-warehouse` enabled, plugin
+files byte-identical to the repo), all four `launchd` jobs loaded with last exit status 0,
+`ccw doctor` fully green.
+
+**MLBox: a genuine second, independent `ccw` install, not a backup of this Mac's
+archive** - real data (one project, 14 objects). Found stale three ways (`ccw` 0.1.1 vs
+0.1.2 here, no config file at all so no `archive_root` ever configured, plugin clone
+pinned a month back at the original 2026-08-10 install commit). Full detail, kept as
+personal-path memory rather than in this public file:
+`[[ccw-deployment-on-mlbox]]` (project memory). Everything found came from read-only SSH
+commands; nothing on MLBox was changed.
+
+**A peer Claude session in `fifty-shades-of-dotfiles` reached out unprompted** once this
+account was relayed to it, and the two sessions traded several rounds of messages the same
+day - each side re-verified the other's claims rather than trusting them (its
+`claude plugin update` discovery and this session's MLBox settings.json read both got
+independently confirmed, and one MLBox prediction from the other side turned out wrong and
+was retracted on direct evidence). Outcome, operator-ruled on both sides and confirmed
+matching: the dotfiles installer owns every deterministic step of `ccw`'s lifecycle
+(install if missing, keep current, register a fresh plugin, scaffold a baseline config,
+triggered by whether a config file exists at all - not `ccw doctor`'s exit code, since
+doctor correctly treats a missing `archive_root` as healthy by design, which is exactly
+why MLBox went a month unnoticed). A new file, `docs/agent-setup-contract.md`, written FOR
+an AI agent to read cold, covers only what the installer can't safely automate: where
+`archive_root` should point, approving a plugin update's `-y` flag (it accepts whatever
+command the marketplace declares AT UPDATE TIME, not just "yes" to the update itself), and
+Linux/systemd scheduled jobs (untested by this project - macOS `launchd` only). Also filed:
+`contract/PROPOSALS/doctor-json-config-fields.md`, a forward-looking requirement that a
+future `ccw doctor --json` expose config-presence and archive_root-set as their own
+fields rather than folded into one verdict.
+
+**OPEN, not resolved this session:** the dotfiles session flagged, after the doc was
+already written and pushed, that its wording ("upgrade to the latest PyPI release on every
+run") conflicts with a policy it says the operator ruled directly to it - pin + floor +
+notify instead, to stop a bad release reaching every machine silently. Surfaced to the
+operator; not yet corrected in the doc. See `[[cross-project-ccw-provisioning-with-dotfiles]]`
+(project memory) for the full account and check there before trusting either side's account
+of "settled."
+
+No ticket file touched, no `pyproject.toml` version bump (docs-only this track) - this
+session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff/pyright
+issues) and the release tag already correctly pushed by the concurrent twenty-fourth
+handoff session.
+
 ### Twenty-fourth handoff, 2026-09-06 (0.1.2 shipped; a real cross-platform test bug found and fixed; /wrap-up added)
 
 Started from an operator question - "can PyPI auto-update from GitHub?" - answered by reading
