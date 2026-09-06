@@ -229,9 +229,15 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
     if result.unchanged:
         # Ticket 37: sub-agents never enter the hash pre-filter (no catalog
-        # row), so every sweep reaches write_subagent for every one of them.
-        # An unchanged one must read as unchanged, not as archived (F6).
+        # row; the follow-up is in that ticket), so every sweep reaches
+        # write_subagent for every one of them. An unchanged one must read as
+        # unchanged, not as archived (F6).
         return ItemOutcome(path.name, "skipped_unchanged", str(result.directory))
+    if result.refused:
+        # Sub-agents have no manifest.json to record a refusal in, so the
+        # sweep report is the only place it can be seen (F6).
+        why = "smaller than archived" if result.refused_smaller else "same size, different bytes"
+        return ItemOutcome(path.name, "refused-subagent", f"{why}: {result.directory}")
     action = "archived-subagent-orphaned" if result.orphaned else "archived-subagent"
     return ItemOutcome(path.name, action, str(result.directory))
 

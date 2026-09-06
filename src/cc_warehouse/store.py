@@ -68,6 +68,26 @@ def atomic_write(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def write_if_changed(path: Path, data: bytes) -> bool:
+    """atomic_write, skipped when the target already holds the same bytes.
+
+    Returns True when it wrote. The compare reads the full file, never a size
+    or mtime proxy (F1); an unreadable target falls through to a write. One
+    primitive rather than a copy per caller: ticket 37 found a third hand-
+    rolled copy of this compare (write_subagent's meta.json), and the
+    architecture board's C12 is exactly "one shared primitive, not three
+    copies that drift". build.write_projection and archive's project sidecar
+    and sub-agent writer all go through here.
+    """
+    try:
+        if path.read_bytes() == data:
+            return False
+    except OSError:
+        pass
+    atomic_write(path, data)
+    return True
+
+
 def is_sha256_hex(value: str) -> bool:
     """True when value is exactly 64 lowercase hex chars (a sha256 digest).
 

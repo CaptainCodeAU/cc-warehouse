@@ -214,30 +214,24 @@ class SubagentResult:
     # write_session_folder's ticket-30 twin: same size as archived is not the
     # same thing as same bytes (F1). See write_subagent's docstring.
     refused_equal_size: bool = False
-    # Ticket 37: meta.json is compared before it is written, so a repeat call
-    # over unchanged input costs no write and says so. Measured 2026-09-06: one
-    # daily sweep rewrote 2,501 of 2,505 archive meta.json files, and every
-    # sub-agent folder's mtime said "today" whatever day its content arrived.
-    meta_written: bool = False
-    # True on the first write of a JSONL. `replaced` only covers the case where a
-    # larger payload displaced an existing one, so on its own it cannot tell
-    # "first ever write" from "nothing to do".
-    jsonl_written: bool = False
+    # Ticket 37: True when ANY file was written this call (first JSONL write, a
+    # replace, meta.json, the orphan note). `replaced` alone cannot tell "first
+    # ever write" from "nothing to do", and meta.json used to be rewritten on
+    # every call: one daily sweep rewrote 2,501 of 2,505 of them (2026-09-06),
+    # so every sub-agent folder's mtime said "today" whatever day it arrived.
+    wrote: bool = False
+
+    @property
+    def refused(self) -> bool:
+        return self.refused_smaller or self.refused_equal_size
 
     @property
     def unchanged(self) -> bool:
         """Nothing was written AND nothing was refused: the call was a no-op.
 
-        A refusal (smaller or same-size-different payload) is NOT unchanged; it
-        is the F6 signal the caller must still surface."""
-        return not (
-            self.jsonl_written
-            or self.replaced
-            or self.meta_written
-            or self.orphaned
-            or self.refused_smaller
-            or self.refused_equal_size
-        )
+        A refusal is NOT unchanged; it is the F6 signal the caller must still
+        surface, and sub-agents have no manifest to record it in."""
+        return not (self.wrote or self.refused)
 
 
 def write_subagent(
@@ -299,11 +293,10 @@ def write_subagent(
     directory.mkdir(parents=True, exist_ok=True)
 
     jsonl = directory / f"{agent_id}{_JSONL_SUFFIX}"
-    replaced = refused_smaller = refused_equal_size = False
-    jsonl_written = False
+    replaced = refused_smaller = refused_equal_size = wrote = False
     if not jsonl.exists():
         store.atomic_write(jsonl, data)
-        jsonl_written = True
+        wrote = True
     else:
         # R1 as amended: size answers "which of two payloads KNOWN to differ is
         # larger", never "are these the same bytes".
@@ -318,28 +311,24 @@ def write_subagent(
             # smaller (R5) - see the docstring above.
             refused_equal_size = True
 
-    meta_written = False
+    # Ticket 37: meta.json and the orphan note are compared before they are
+    # written, like the JSONL above. Both used to be rewritten on every call.
     if meta is not None:
-        # Ticket 37: compare before writing. The JSONL branch above already
-        # never rewrites equal bytes; the meta used to be written every call.
-        meta_path = directory / _META
-        if not meta_path.exists() or meta_path.read_bytes() != meta:
-            store.atomic_write(meta_path, meta)
-            meta_written = True
+        wrote |= store.write_if_changed(directory / _META, meta)
     if orphaned:
         note = {
             "parent_session_uuid": meta_parsed.session_uuid,
             "agent_id": agent_id,
             "reason": "the parent session was not in the archive when this was written",
         }
-        store.atomic_write(
+        wrote |= store.write_if_changed(
             directory / _ORPHAN_NOTE,
             json.dumps(note, sort_keys=True, indent=2).encode("utf-8") + b"\n",
         )
     return SubagentResult(
         directory, jsonl, orphaned, replaced,
         refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
-        meta_written=meta_written, jsonl_written=jsonl_written,
+        wrote=wrote or replaced,
     )
 
 
@@ -1028,15 +1017,7 @@ def write_project_file(archive_root: Path, label: str, aliases: Sequence[Alias])
     if not directory.is_dir():
         # A project with no surviving session has no folder to describe.
         return False
-    target = directory / PROJECT_JSON
-    body = sidecar_bytes(label, aliases)
-    try:
-        if target.is_file() and target.read_bytes() == body:
-            return False
-    except OSError:
-        pass  # unreadable: fall through and rewrite it
-    store.atomic_write(target, body)
-    return True
+    return store.write_if_changed(directory / PROJECT_JSON, sidecar_bytes(label, aliases))
 
 
 def project_record(conn: sqlite3.Connection, project_id: int) -> ProjectRecord | None:

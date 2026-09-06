@@ -278,13 +278,10 @@ def _write_if_changed(path: Path, data: bytes, *, force: bool) -> None:
     The compare reads the full file bytes, never a size or mtime proxy (F1). A
     force pass always writes.
     """
-    if not force:
-        try:
-            if path.read_bytes() == data:
-                return
-        except OSError:
-            pass
-    store.atomic_write(path, data)
+    if force:
+        store.atomic_write(path, data)
+    else:
+        store.write_if_changed(path, data)
 
 
 def write_projection(

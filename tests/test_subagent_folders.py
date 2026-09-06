@@ -293,7 +293,7 @@ def test_the_subagent_jsonl_survives_repeated_writes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_identical_meta_written_twice_is_not_rewritten(tmp_path: Path) -> None:
+def test_identical_input_twice_writes_nothing_the_second_time(tmp_path: Path) -> None:
     parent_folder(tmp_path)
     data = subagent_session(agent_id=AGENT)
     first = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
@@ -303,8 +303,9 @@ def test_identical_meta_written_twice_is_not_rewritten(tmp_path: Path) -> None:
     again = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
     assert meta_path.stat().st_mtime_ns == before
     assert first.directory.stat().st_mtime_ns == dir_before
-    assert first.meta_written is True
-    assert again.meta_written is False
+    assert first.wrote is True
+    assert again.wrote is False
+    assert again.unchanged is True
 
 
 def test_changed_meta_is_written(tmp_path: Path) -> None:
@@ -313,16 +314,31 @@ def test_changed_meta_is_written(tmp_path: Path) -> None:
     archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
     changed = subagent_meta(description="a different description")
     result = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=changed)
-    assert result.meta_written is True
+    assert result.wrote is True
+    assert result.unchanged is False
     assert (result.directory / "meta.json").read_bytes() == changed
 
 
-def test_unchanged_reports_nothing_written(tmp_path: Path) -> None:
-    """The flag the sweep leans on: neither the JSONL nor the meta moved."""
-    parent_folder(tmp_path)
+def test_an_orphan_re_offered_writes_nothing_the_second_time(tmp_path: Path) -> None:
+    """The orphan note sat two lines below the meta write with the same defect
+    (standing lesson: census the class, not the one file you were looking at)."""
     data = subagent_session(agent_id=AGENT)
-    archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    first = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    assert first.orphaned and first.wrote
+    stamps = {p: p.stat().st_mtime_ns for p in first.directory.iterdir()}
     again = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    assert again.orphaned
     assert again.unchanged is True
-    assert again.replaced is False
-    assert again.meta_written is False
+    assert {p: p.stat().st_mtime_ns for p in first.directory.iterdir()} == stamps
+
+
+def test_a_refusal_is_not_unchanged(tmp_path: Path) -> None:
+    parent_folder(tmp_path)
+    big = subagent_session(agent_id=AGENT, prompt="x" * 5_000)
+    archive.write_subagent(tmp_path, LABEL, big, ZONE, meta=subagent_meta())
+    result = archive.write_subagent(
+        tmp_path, LABEL, subagent_session(agent_id=AGENT), ZONE, meta=subagent_meta()
+    )
+    assert result.refused is True
+    assert result.unchanged is False
+    assert result.wrote is False

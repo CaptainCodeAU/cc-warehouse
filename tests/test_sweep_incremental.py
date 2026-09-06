@@ -284,6 +284,20 @@ def _mtimes_under(root: Path, pattern: str) -> dict[Path, int]:
     return {p: p.stat().st_mtime_ns for p in root.rglob(pattern)}
 
 
+def _plant_subagents(env: dict[str, str], parent: Path, parent_uuid: str, *agents: str) -> Path:
+    """Write `agent-<id>.jsonl` + `.meta.json` pairs where Claude Code puts them."""
+    from conftest import subagent_meta, subagent_session
+
+    subagents_dir = claude_projects(env) / parent.parent.name / parent_uuid / "subagents"
+    subagents_dir.mkdir(parents=True, exist_ok=True)
+    for agent in agents:
+        (subagents_dir / f"agent-{agent}.jsonl").write_bytes(
+            subagent_session(agent_id=agent, parent_uuid=parent_uuid)
+        )
+        (subagents_dir / f"agent-{agent}.meta.json").write_bytes(subagent_meta())
+    return subagents_dir
+
+
 def test_a_repeat_sweep_writes_nothing_under_any_subagent_folder(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
@@ -293,18 +307,10 @@ def test_a_repeat_sweep_writes_nothing_under_any_subagent_folder(
     live archive 2026-09-06, 2,501 of 2,505 meta.json files were rewritten by
     one daily sweep. The assertion is over the WHOLE subagents tree, not one
     folder (standing lesson: a census on one file is still an instance fix)."""
-    from conftest import subagent_meta, subagent_session
-
     archive_root = tmp_path / "archive"
     _configure_archive(ccw_env, archive_root)
     parent = write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
-    subagents_dir = claude_projects(ccw_env) / parent.parent.name / UUID_A / "subagents"
-    subagents_dir.mkdir(parents=True)
-    for agent in ("sub1", "sub2", "sub3"):
-        (subagents_dir / f"agent-{agent}.jsonl").write_bytes(
-            subagent_session(agent_id=agent, parent_uuid=UUID_A)
-        )
-        (subagents_dir / f"agent-{agent}.meta.json").write_bytes(subagent_meta())
+    _plant_subagents(ccw_env, parent, UUID_A, "sub1", "sub2", "sub3")
 
     assert run_cli(["sweep"]).code == 0
     files_before = _mtimes_under(archive_root, "subagents/*/*")
@@ -321,10 +327,11 @@ def test_a_repeat_sweep_reports_an_unchanged_subagent_as_skipped(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
     """The BatchReport must say what it touched (F6): an untouched sub-agent is
-    `skipped_unchanged`, not `archived-subagent`."""
+    `skipped_unchanged`, not `archived-subagent`; a refused one is `refused-subagent`,
+    because a sub-agent has no manifest.json anywhere else to record that in."""
     from cc_warehouse import sweep as sweep_module
     from cc_warehouse.config import load_config
-    from conftest import subagent_meta, subagent_session
+    from conftest import subagent_session
 
     archive_root = tmp_path / "archive"
     _configure_archive(ccw_env, archive_root)
@@ -335,12 +342,15 @@ def test_a_repeat_sweep_reports_an_unchanged_subagent_as_skipped(
     # (`capture._archive_subagents_of`) and pass two correctly finds it
     # unchanged; the sub-agent has to appear later to exercise the write path.
     assert sweep_module.sweep(config).failures == ()
-    subagents_dir = claude_projects(ccw_env) / parent.parent.name / UUID_A / "subagents"
-    subagents_dir.mkdir(parents=True)
-    (subagents_dir / "agent-sub1.jsonl").write_bytes(subagent_session(parent_uuid=UUID_A))
-    (subagents_dir / "agent-sub1.meta.json").write_bytes(subagent_meta())
+    subagents_dir = _plant_subagents(ccw_env, parent, UUID_A, "sub1")
 
-    first = {o.item: o.action for o in sweep_module.sweep(config).outcomes}
-    assert first["agent-sub1.jsonl"] == "archived-subagent"
-    second = {o.item: o.action for o in sweep_module.sweep(config).outcomes}
-    assert second["agent-sub1.jsonl"] == "skipped_unchanged"
+    def actions() -> dict[str, str]:
+        return {o.item: o.action for o in sweep_module.sweep(config).outcomes}
+
+    assert actions()["agent-sub1.jsonl"] == "archived-subagent"
+    assert actions()["agent-sub1.jsonl"] == "skipped_unchanged"
+    # Same size, different bytes: refused (F1), and the report says so.
+    (subagents_dir / "agent-sub1.jsonl").write_bytes(
+        subagent_session(agent_id="sub1", parent_uuid=UUID_A).replace(b"REUSE", b"REUSA")
+    )
+    assert actions()["agent-sub1.jsonl"] == "refused-subagent"

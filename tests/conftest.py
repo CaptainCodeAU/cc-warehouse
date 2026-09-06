@@ -19,6 +19,7 @@ import sys
 from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 
 import pytest
@@ -590,3 +591,21 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
         elif path.is_file():
             snap[rel] = path.read_bytes()
     return snap
+
+
+# ---------------------------------------------------------------------------
+# Plugin hook scripts (plugins/cc-capture/hooks/*.py are standalone scripts,
+# not a package, so tests import them by path)
+# ---------------------------------------------------------------------------
+
+HOOKS_DIR = REPO_ROOT / "plugins" / "cc-capture" / "hooks"
+
+
+def load_hook_module(name: str, filename: str) -> ModuleType:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, HOOKS_DIR / filename)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

@@ -45,7 +45,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -54,19 +54,24 @@ VOICE_URL = "http://localhost:8888/notify"
 VOICE_ID = "fTtv3eikoepIosk8dTZ5"
 
 
-def report(status: str, detail: str, session: str | None = None) -> None:
+_session: str | None = None  # set once from the payload; carried by every line
+
+
+def report(status: str, detail: str) -> None:
     """Say it out loud and write it down. Never raises: a reporting failure must
     not become the thing that breaks capture.
 
-    `session` is only carried by the `started` line (ticket 37): it is what
-    makes "which session's hook died?" a one-grep question."""
+    Every line carries the session id (ticket 37), so `grep <id>` on the log
+    shows that session's whole hook run, and a `started` with nothing after it
+    is a hook that died. Concurrent session ends interleave lines, so pairing
+    by position would be wrong; pairing by id is not."""
     record: dict[str, str | None] = {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "source": "ccw-hook",
+        "session": _session,
         "status": status,
         "detail": detail,
     }
-    if session is not None or status == "started":
-        record["session"] = session
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
         with LOG.open("a", encoding="utf-8") as handle:
@@ -124,18 +129,18 @@ def _started(payload: str) -> None:
 
     Parses the payload defensively: a bad payload is one of the things this
     line exists to record, so it must not be the reason there is no line."""
-    session: str | None = None
+    global _session
     transcript = ""
     try:
         data: object = json.loads(payload)
         if isinstance(data, dict):
             fields = cast("dict[object, object]", data)
             raw = fields.get("session_id")
-            session = str(raw) if raw is not None else None
+            _session = str(raw) if raw is not None else None
             transcript = str(fields.get("transcript_path") or "")
     except (ValueError, TypeError):
         pass
-    report("started", transcript, session)
+    report("started", transcript)
 
 
 def main() -> int:

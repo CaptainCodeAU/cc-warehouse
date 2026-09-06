@@ -13,24 +13,19 @@ this log's status values (the freshness check only appends to it; `ccw-watch`
 reads `ccw doctor`, not this file), so a new value is safe to add.
 """
 
-import importlib.util
+import io
 import json
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from conftest import REPO_ROOT
-
-HOOK = REPO_ROOT / "plugins" / "cc-capture" / "hooks" / "ccw-hook.py"
+from conftest import load_hook_module
 
 
-def _load() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("ccw_hook", HOOK)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+class _Closer:
+    def close(self) -> None:
+        return None
 
 
 def _lines(log: Path) -> list[dict[str, object]]:
@@ -39,7 +34,7 @@ def _lines(log: Path) -> list[dict[str, object]]:
 
 @pytest.fixture
 def hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, Path]:
-    module = _load()
+    module = load_hook_module("ccw_hook", "ccw-hook.py")
     log = tmp_path / "ccw-hook.log"
     monkeypatch.setattr(module, "LOG", log)
     monkeypatch.setattr(module, "VOICE_URL", "http://127.0.0.1:9/never")
@@ -52,31 +47,23 @@ def hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, P
 
 
 def _run(module: ModuleType, monkeypatch: pytest.MonkeyPatch, payload: str) -> int:
-    import io
-
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     return int(module.main())
 
 
-def test_started_is_written_before_ccw_runs(
+PAYLOAD = json.dumps({"session_id": "abc-123", "transcript_path": "/x/abc-123.jsonl"})
+
+
+def test_started_is_written_first_and_every_line_carries_the_session(
     hook: tuple[ModuleType, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module, log = hook
-    payload = json.dumps({"session_id": "abc-123", "transcript_path": "/x/abc-123.jsonl"})
-    assert _run(module, monkeypatch, payload) == 0
+    assert _run(module, monkeypatch, PAYLOAD) == 0
     lines = _lines(log)
     assert [line["status"] for line in lines] == ["started", "ok"]
-
-
-def test_started_carries_the_session_id(
-    hook: tuple[ModuleType, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module, log = hook
-    payload = json.dumps({"session_id": "abc-123", "transcript_path": "/x/abc-123.jsonl"})
-    _run(module, monkeypatch, payload)
-    started = _lines(log)[0]
-    assert started["session"] == "abc-123"
-    assert started["detail"] == "/x/abc-123.jsonl"
+    assert [line["session"] for line in lines] == ["abc-123", "abc-123"]
+    assert lines[0]["detail"] == "/x/abc-123.jsonl"
+    assert {line["source"] for line in lines} == {"ccw-hook"}
 
 
 def test_started_survives_a_payload_that_is_not_json(
@@ -102,13 +89,8 @@ def test_started_does_not_raise_the_voice_alert(
         return _Closer()
 
     monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
-    _run(module, monkeypatch, json.dumps({"session_id": "s"}))
+    _run(module, monkeypatch, PAYLOAD)
     assert calls == []
-
-
-class _Closer:
-    def close(self) -> None:
-        return None
 
 
 def test_a_started_with_no_end_is_what_a_killed_hook_leaves(

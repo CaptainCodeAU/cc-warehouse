@@ -22,27 +22,16 @@ file. The raw uncaptured figure still rides along as detail in the message;
 it just does not drive the alarm.
 """
 
-import importlib.util
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
-from conftest import REPO_ROOT
-
-HOOKS_DIR = REPO_ROOT / "plugins" / "cc-capture" / "hooks"
-
-
-def _load(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from conftest import HOOKS_DIR, load_hook_module
 
 
 def _freshness() -> ModuleType:
-    return _load("ccw_freshness_check", HOOKS_DIR / "ccw-freshness-check.py")
+    return load_hook_module("ccw_freshness_check", "ccw-freshness-check.py")
 
 
 def test_reads_the_pinned_doctor_substring() -> None:
