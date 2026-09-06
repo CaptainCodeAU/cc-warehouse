@@ -248,6 +248,12 @@ Slack/AWS/OpenAI-shaped tokens, PEM private keys, and phone numbers.
 git-leak-scan --since SESSION_START_REF
 ```
 
+Range mode prints a denominator line regardless of verdict (e.g. "scanned 20 commit(s), 1339
+added line(s) in `<range>`") - **quote it verbatim in the Step 9 report**, the same way
+Step 2 quotes pytest's own total, instead of just saying "scanned, clean." The count comes
+from the scan that actually ran, so it doubles as proof `SESSION_START_REF` resolved to
+something real rather than an accidentally-empty range.
+
 Read its own exit codes, don't guess: **0** clean, **1** a real BLOCK-category hit (stop, do
 not commit/push past it - if it's already in a pushed commit, say so explicitly and ask the
 operator, a follow-up commit does not un-publish it), **2** it refused to scan at all (an
