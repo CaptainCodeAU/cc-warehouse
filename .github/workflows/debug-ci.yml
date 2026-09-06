@@ -8,6 +8,9 @@ name: debug-ci
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
 
 permissions:
   contents: read
