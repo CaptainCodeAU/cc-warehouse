@@ -158,6 +158,16 @@ def ccw_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("CCW_SKIP_HOOK", raising=False)
+    # An ambient XDG_CONFIG_HOME (real machines rarely set one; GitHub's
+    # ubuntu-latest runner does) would otherwise outrank config.py's own
+    # $HOME/.config fallback for every in-process run_cli() call, sending it
+    # to a real directory instead of this sandbox's. The ~23 test helpers
+    # across this suite that write a config.toml under $HOME/.config and set
+    # env["XDG_CONFIG_HOME"] to match are all trying to guarantee exactly
+    # this - they set it on a subprocess-only dict, never on the real
+    # process env, so it silently never took effect for run_cli() at all.
+    # Found 2026-09-06: 22 tests failed only on GitHub CI for this reason.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     return env
 
 
