@@ -21,6 +21,40 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-third handoff, 2026-09-06 (planning session, no code)
+
+Started from two screenshots and two questions: why the archive folder for chorustic session
+`78bb0bd1` has no `tool-results/` when the source folder does, and why only some sessions
+have a `<uuid>/` folder at all. Answers: the product has never referenced `tool-results`
+(census over 26 `src/` files, control hit, 0 matches), and Claude Code creates `<uuid>/` only
+when it has a sidecar to put there (sub-agents, or a tool output too big to inline).
+
+**Measured before designing.** 1,196 real sidecar dirs; child names are exactly
+`tool-results/` (1,067), `subagents/` (481), `workflows/` (9), `.DS_Store`. `tool-results/`
+holds 2,084 files, 135.7 MB; a byte check against every JSONL shows **65.4 MB exists in no
+JSONL** (every hook-stdout file, half the overflow files, all pdf pages), because
+`toolUseResult.stdout` is itself capped. First appeared 2026-05-08. Also found: the hook's
+non-recursive glob misses `subagents/workflows/wf_*/agent-*.jsonl` (432 files, 33 MB; the
+sweep's recursive walk has all 211 transcripts in the archive), 20 forked-skill files inside
+`subagents/` copied by nothing, `<uuid>/workflows/` copied by nothing, and 35 sidecar dirs with
+no transcript anywhere. Session id inside the transcript matched the dir name 450 of 450.
+
+**Plan written, red-teamed, approved:** saved as
+`harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md` (`Plans/` is gitignored). Two Plan
+agents (mechanism; red-team plus anomaly signal) and three Explore agents; every load-bearing
+claim re-checked in source, two corrected (the layout tests will NOT break because the
+session writer never creates sidecar dirs; the anomaly record must be a notice file, not a
+manifest key, because the manifest is re-rendered later by a process that cannot see the
+source dir and ~617 hidden sessions have none). Operator rulings taken in-session: copy the
+stranded dirs under `_not-sessions/stranded-sidecars/`; doctor line informational plus a
+desktop/voice alert fired once per new anomaly; all three sidecars in ticket 38. Ruling (c)
+(sidecar identity from the transcript beside it) still needs its DESIGN 15 entry.
+
+**Also closed:** the ticket 37 Part B row 1 check from handoff 22. The plugin update landed;
+the newest cache copy contains `_started` and `ccw-hook.log` shows `started` lines.
+
+Nothing in `src/`, `tests/` or `contract/` was changed. Next session: build 38a-38f.
+
 ### Twenty-second handoff, 2026-09-06 (new session)
 
 Started from a plain question: why did one chorustic session's rendered files land nine

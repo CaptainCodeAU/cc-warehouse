@@ -5,8 +5,27 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**Nothing is currently active. Ask the operator which of the standing candidates below to
-pick up, or whether something else has come up since.**
+**ACTIVE: ticket 38, archive the `tool-results/` and `workflows/` sidecars and add an
+unknown-sibling signal. The plan is complete, red-teamed and approved (2026-09-06):
+read `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md` first (the same
+text also sits in the gitignored `Plans/can-i-get-you-compiled-pumpkin.md`), then start
+at its section 9 (housekeeping is already done by the planning session: this pointer and handoff 23) and
+build slices 38a-38f in order, oracle tests first.** The short version: Claude Code has
+written `<uuid>/tool-results/` beside every big-output session since 2026-05-08 (1,067
+dirs, 135.7 MB, 65.4 MB of it in no JSONL) and nothing in `src/` ever looked at it; the
+plan adds a generic sidecar copier, a `sidecars.py` known-names list with a fence, a
+`sidecars.json` notice + log line + desktop/voice alert for any future unknown sibling,
+an informational `sidecars` doctor line, and version 0.1.3. Three rulings are already
+taken by the operator and recorded in the plan (copy stranded dirs under
+`_not-sessions/`, informational doctor line plus OS alert, all three sidecars in scope);
+ruling (c) still needs its DESIGN 15 entry. The ticket file exists and holds the plan;
+slice 38f appends its DONE block.
+
+**Ticket 37 Part B row 1 IS LIVE** (the check handoff 22 asked for): the newest plugin
+cache copy `~/.claude/plugins/cache/cc-warehouse/cc-capture/2f374c2eddf9/hooks/ccw-hook.py`
+contains `_started`, and `~/.claude/logs/ccw-hook.log` shows `started` lines (verified
+2026-09-06). Ticket 37 Part B rows 2, 3, 5 and the sub-agent pre-filter follow-up stay
+open in `harness/tickets/37-*.md`.
 
 Ticket 28.9 (`render_html`'s memory cost) is FULLY DONE - both mechanisms fixed, both
 tested per the operator's real-browser bar (not `pytest` alone). Full account:
