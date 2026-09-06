@@ -1,19 +1,37 @@
 # Agent setup contract
 
 **Audience: an AI coding agent (e.g. a Claude Code session), not a human reader.**
-A human was told to paste a prompt into a session like this one, pointing at this file,
-because a detection script found this machine's `cc-warehouse` setup incomplete or stale.
-Your job is to read this whole file, check the real state of this machine against it,
-fix what's missing, and report back to the human in plain language what you found and
-changed. Don't skip sections. Don't assume the detection script's prompt told you which
-checks failed - re-run the checks yourself, because state can change between the script
-running and you starting.
 
-Schema version 1, written 2026-09-06. If this file looks older than a couple of months
-relative to today, sanity-check the config key names below against
-`src/cc_warehouse/config.py`'s own docstring before trusting them - this project's config
-schema has changed shape twice already (2026-08-01, 2026-08-02) and this file could be
-behind.
+## The boundary this document sits behind (ruled 2026-09-06)
+
+The dotfiles installer that provisions this machine owns the deterministic parts of
+`ccw`'s lifecycle and does them itself, every run, with no AI involved:
+
+- Installing `ccw` if it's missing (`uv tool install cc-warehouse`).
+- Upgrading it if it's behind the latest PyPI release (`uv tool upgrade cc-warehouse`).
+- Installing and enabling the `cc-capture` plugin if it isn't present at all yet
+  (`claude plugin marketplace add` + `claude plugin install` - a first-time install has
+  no existing command to change, so there's nothing here that needs a human review).
+
+**You are being invoked because something was found that the installer deliberately does
+not resolve on its own** - it needs a decision, not automation. The installer's own
+trigger for handing off to you is **whether `~/.config/cc-warehouse/config.toml`
+exists**, not whether `ccw doctor` exits cleanly - `doctor` treats a missing config as
+fine by design (see Step 2), so exit-code-only detection would have called one of this
+project's own real machines perfectly healthy for a month while it sat on a legacy
+layout nobody had chosen on purpose. If you land here, treat that as the operator caring
+whether this machine is *configured the way they intend*, not just whether capture
+happens to work.
+
+Read this whole file before doing anything. Don't assume the prompt that brought you
+here told you everything that's wrong - re-run the checks below yourself, since machine
+state can drift between the installer running and you starting.
+
+Schema version 2, written 2026-09-06 (revised same day after the installer/agent
+boundary above was settled - version 1 had the AI doing the installer's job too). If this
+file looks older than a couple of months relative to today, sanity-check the config key
+names in the "Configuration" step against `src/cc_warehouse/config.py`'s own docstring -
+this project's config schema has changed shape twice already (2026-08-01, 2026-08-02).
 
 ## Rules that override everything below
 
@@ -25,106 +43,51 @@ behind.
   existing `config.toml` wholesale - you could erase a per-project override or a setting
   the operator chose on purpose.
 - Anything marked **ASK FIRST** below means: use your question tool (e.g. `AskUserQuestion`)
-  and wait for an answer before making that specific change. Don't batch it in with the
-  safe fixes.
+  and wait for an answer before making that specific change. Don't batch it in with
+  anything else.
 - When you're done, tell the human plainly: what you checked, what was already fine, what
   you changed, and what you asked them versus decided yourself. Don't say something is
   "fixed" unless you re-ran the check and saw it pass.
 
-## Step 0: is `ccw` even installed?
+## Step 1: confirm what the installer should already have handled
+
+These are the installer's job, not yours - but confirm them, since you were handed this
+prompt and shouldn't assume anything:
 
 ```
-command -v ccw
+command -v ccw && ccw --version
 ```
 
-If this fails, `cc-warehouse` isn't installed on this machine at all. Install it:
-
-```
-uv tool install cc-warehouse
-```
-
-(Confirm `uv` itself exists first - `command -v uv` - and if not, that's outside this
-document's scope; tell the human `uv` needs installing before you can continue.)
-
-Once installed, re-run `command -v ccw` to confirm, then continue to Step 1.
-
-## Step 1: run the real health check
+If `ccw` is genuinely missing, or its version is behind the latest PyPI release of
+`cc-warehouse`, the installer's own mechanical step didn't run or failed. Tell the human
+that plainly rather than quietly doing the installer's job yourself - it's worth them
+knowing the installer itself needs attention, not just this machine's `ccw` config.
 
 ```
 ccw doctor
 ```
 
-This one command already checks most of what matters: whether the SessionEnd capture
-hook is registered (via the `cc-capture` plugin), whether it has actually fired, whether
-recent captures rendered without errors, what version is running, and what the current
-config resolves to. Read its full output before doing anything else - don't act on a
-guess about what it says.
+Read the full output. `hook` should read `ok` and name `cc-capture@cc-warehouse` as the
+registered SessionEnd hook - if it doesn't, or if it names something that clearly isn't
+the capture hook (a stale-doctor-version symptom described in CHANGELOG 0.1.2), the
+plugin install step also didn't complete. Same as above: say so, don't silently redo it.
 
-A healthy result ends with `doctor: capture is working` and every line reads `ok`. If you
-see that, capture itself is fine; skip to Step 3 (config) since `doctor` does not treat a
-missing archive setup as a failure (see below) - that's the one thing it stays quiet
-about on purpose.
+## Step 2: the actual reason you're here - configuration
 
-## Step 2: fix whatever `doctor` flagged as not-ok
+The installer handed off to you specifically because `~/.config/cc-warehouse/config.toml`
+doesn't exist (or, less commonly, exists but looks incomplete or wrong). This step is
+your real job.
 
-| `doctor` line reads | Meaning | Fix |
-|---|---|---|
-| `hook` FAIL | No SessionEnd capture hook registered at all | See "Installing the plugin" below |
-| `hook` ok but names something that isn't `ccw-hook.py` | A stale doctor version may be misreporting - see CHANGELOG 0.1.2. Check `ccw --version`; if it's below 0.1.2, upgrade (Step 4) and re-check before assuming the hook itself is broken |
-| `fired` FAIL | Hook is registered but has never run | Usually means no session has ended since install - not a bug, just wait for one, or tell the human |
-| `desync` reports problems | Some captured sessions failed to render | Run `ccw repair` (safe, idempotent, only touches its own generated files) and re-check |
-| `install` reports anything other than `frozen: running from ...` | The install is "editable" - a live view of a working source tree, which means a half-finished code change could run in production | Flag this to the human; don't try to fix it yourself, since fixing it means knowing which source tree it should be frozen from, which you can't guess |
+No config file means `ccw` is running on built-in defaults: everything gets written to
+`~/cc-warehouse-data/objects/` and `~/cc-warehouse-data/projections/` (the old "vault"
+layout), with no second copy anywhere and no scheduled catch-up. This is **not an error
+and `ccw doctor` will not flag it** - it's a deliberate silent fallback, by design, so a
+missing config never blocks a capture (see `config.py`'s own comment on `archive_root`).
+Vault-only is a fully supported, working mode - it's what one of this project's own
+machines runs today - so don't treat "no config" as broken. It just means nobody has told
+`ccw` what this operator actually wants yet, and that's what you're here to find out.
 
-### Installing the plugin (if `hook` reads FAIL)
-
-Use the real CLI commands, not a hand-edited settings file - `enabledPlugins` alone
-doesn't install anything; it just flags something Claude Code otherwise already has:
-
-```
-claude plugin marketplace add https://github.com/CaptainCodeAU/cc-warehouse.git
-claude plugin install cc-capture@cc-warehouse
-```
-
-Both are ordinary CLI commands and work outside an interactive session too.
-
-### Updating a stale plugin
-
-If `~/.claude/plugins/marketplaces/cc-warehouse` exists but is many commits behind this
-project's GitHub `master` (check with `git -C <that path> log -1`, compare against the
-repo), update it:
-
-```
-claude plugin update cc-capture@cc-warehouse
-```
-
-**Do not add `-y` / `--yes` here unless you are certain you want to.** That flag accepts
-whatever install command the marketplace declares *at update time*, not just "yes to this
-update" - it's a supply-chain-relevant confirmation, not a convenience skip. Run it without
-`-y` and read what it shows before confirming, or ASK FIRST if you can't read the prompt
-output directly.
-
-Also: **the update needs a restart to take effect.** If you check `ccw doctor` again
-immediately in this same session, it may still report the pre-update state. Tell the human
-a restart is needed to confirm the update took, rather than declaring it done.
-
-## Step 3: warehouse configuration
-
-Check whether a config file exists:
-
-```
-cat ~/.config/cc-warehouse/config.toml
-```
-
-If this file doesn't exist, `ccw` is running on built-in defaults: everything gets
-written to `~/cc-warehouse-data/objects/` and `~/cc-warehouse-data/projections/` (the
-old "vault" layout), with no second copy anywhere and no scheduled catch-up. This is
-**not an error and `ccw doctor` will not flag it** - it's a deliberate silent fallback, by
-design, so a missing config never blocks a capture (see `config.py`'s own comment on
-`archive_root`). That means "running on defaults" and "configured the way the operator
-wants" look identical from `doctor`'s output alone - you have to check the file yourself.
-
-**ASK FIRST, before creating or changing this file**, since it's a real decision about
-where months of future data will live:
+**ASK FIRST**, since this is a real decision about where months of future data will live:
 
 - Does the operator want an archive-first layout (a second, human-readable copy of every
   session, kept current automatically) on this machine? If yes, ask what path
@@ -145,32 +108,30 @@ where months of future data will live:
   space immediately, ASK FIRST again before setting either to false, and only do it if
   `archive_root` is already set and confirmed working.
 
-- If they say no (or you're not sure), leave the file absent or unchanged. Vault-only is
-  a fully supported, working mode - it's what one of this project's own machines runs
-  today.
+- If they say no (or you're not sure), leave the file absent or unchanged, and tell the
+  human that's a supported choice, not a gap.
 
-## Step 4: version currency
+## Step 3: a plugin update that needs a human on the accept
 
-```
-ccw --version
-```
-
-Compare against the latest release on PyPI (`cc-warehouse` - that is this project's real,
-confirmed published name; don't confuse it with `claude-code-transcripts`, an unrelated
-tool with a history of name-collision problems that has nothing to do with this project).
-This project auto-publishes to PyPI on every version bump, so PyPI's latest is a reliable
-target - a git tag is not, because the machine that develops this project intentionally
-runs a different build (a frozen local install, not PyPI) than every other machine should.
-
-If behind:
+If `ccw doctor` or the installer flagged the plugin as installed but many commits behind
+this project's GitHub `master`, that update is your job specifically, not the installer's
+- because updating an *existing* install is different from a fresh one:
 
 ```
-uv tool upgrade cc-warehouse
+claude plugin update cc-capture@cc-warehouse
 ```
 
-Then re-run `ccw doctor` to confirm the new version is what's actually running.
+**Do not add `-y` / `--yes` here unless you are certain you want to.** That flag accepts
+whatever install command the marketplace declares *at update time*, not just "yes to this
+update" - it's a supply-chain-relevant confirmation, not a convenience skip. This is
+exactly why this step isn't the installer's to automate. Run it without `-y` and read what
+it shows before confirming, or ASK FIRST if you can't read the prompt output directly.
 
-## Step 5: scheduled catch-up jobs (optional, ASK FIRST)
+Also: **the update needs a restart to take effect.** If you check `ccw doctor` again
+immediately in this same session, it may still report the pre-update state. Tell the human
+a restart is needed to confirm the update took, rather than declaring it done.
+
+## Step 4: scheduled catch-up jobs (optional, ASK FIRST)
 
 The live SessionEnd hook is enough on its own for capture to work - this is proven: one
 of this project's own machines runs with no scheduled jobs at all and captures fine.
@@ -188,8 +149,8 @@ been tested here.
 ## Reporting back
 
 Close with a plain summary covering, at minimum:
-- Whether `ccw` was already installed, and what version is running now.
-- Whether the capture hook was already working, and anything you had to install or fix.
+- Whether the installer's own steps (ccw present and current, plugin installed) had
+  actually completed correctly, or whether you found and flagged a gap there instead.
 - Whether a config file existed, what (if anything) you added, and what you asked the
   operator versus decided yourself.
 - Anything you found but deliberately did not touch, and why (usually: it needs a human
