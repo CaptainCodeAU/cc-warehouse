@@ -12,6 +12,21 @@
 # Every key here is OPTIONAL. An absent key always means "use the built-in
 # default" - a missing file entirely is a fully supported, working mode (vault-only
 # capture with no second copy), not an error.
+#
+# ENV VAR MAPPING (checked directly against src/cc_warehouse/config.py - there is no
+# mechanical TOML-key -> CCW_* naming rule, because most keys have NO env var at all):
+#   CCW_ROOT           -> root
+#   CCW_SKIP_HOOK=1    -> skip_hook (a debug escape hatch, not a config.toml key at all)
+#   CCW_VOICE_URL      -> [notify].voice_url
+#   CCW_VOICE_ID       -> [notify].voice_id
+#   CCW_OPEN_FOLDER=1  -> [notify].open_folder
+# That is the COMPLETE list. `archive_root`, `archive_timezone`, `keep_objects`,
+# `keep_projections`, `archive_subagents`, and every [render]/[share]/[relocate]/
+# [import] key have NO environment-variable equivalent - they can only be set in a
+# config.toml file (or a [project.<id>.*] override inside one). An installer that
+# tries to set archive_root via an env var will silently do nothing; ccw will keep
+# reporting no archive configured. (`CCW_WEBHOOKS` is declared in config.py's own
+# ENV_VARS tuple but never actually read anywhere - dead, not a fourth notify var.)
 
 # Where the warehouse's own data lives. Default: $HOME/cc-warehouse-data
 # root = "/home/you/cc-warehouse-data"
