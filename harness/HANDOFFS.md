@@ -21,6 +21,49 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-second handoff, 2026-09-06 (new session)
+
+Started from a plain question: why did one chorustic session's rendered files land nine
+minutes after its JSONL, and why did its `subagents/` folders carry a date in between.
+Traced through file mtimes, `capture_event`, the hook log and source. Answer: the SessionEnd
+hook wrote the raw JSONL and sub-agent files, then died before the catalog row and every log;
+the 12:30 daily sweep recovered it two minutes later and rendered after its full walk (ticket
+34's known shape). The in-between date was the sweep rewriting every sub-agent `meta.json`.
+
+**Ticket 37 opened and Part A closed the same day** (`harness/tickets/37-*.md`, commits
+`fb08ea0`, `81784d3`, `52319d7`, `9d70689`, tag `ticket-37-part-a`). Measured: one daily
+sweep rewrote 2,501 of 2,505 archive `meta.json` files because `write_subagent` wrote the
+meta unconditionally and sub-agents never enter the hash pre-filter. Fixed with
+`store.write_if_changed`, now the one shared compare-before-write primitive (the projection
+writer, the project sidecar, the meta and the orphan note all use it); the sweep reports
+`skipped_unchanged` and `refused-subagent` instead of a blanket success. Real-data
+acceptance: a full `ccw sweep` over 26,708 items wrote 0 files under any `subagents/`.
+Frozen `ccw` reinstalled and verified with `ccw doctor` from outside the repo.
+
+**Part B row 1 shipped but is NOT LIVE.** `ccw-hook.py` writes a `started` line and puts
+`source` and `session` on every log line. Claude Code runs the copy in
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<sha>/`, which still has the old script
+until the operator runs `/plugin` and updates `cc-capture@cc-warehouse`. Verified: 0 cached
+copies contain `_started`. **First thing next session: check whether that update happened**
+(`grep -c _started ~/.claude/plugins/cache/cc-warehouse/cc-capture/*/hooks/ccw-hook.py`).
+
+A `/simplify` four-angle review of the first commit found four real things, all fixed in
+`52319d7`: a hand-rolled compare where `build.py` already had one, the orphan note two lines
+below carrying the identical bug (the standing "census the class" lesson, missed again in the
+first cut), refusals reported as successes, and a session id that only worked if log lines
+never interleaved. Left as ordered follow-ups in the ticket: the `killed` signal line, the
+`capture_event.detail` pre-existing-folder note, and the read-side cost (each sub-agent read
+3x and parsed 4x per sweep, sqlite opened per file; fix is a sub-agent hash pre-filter, a
+catalog schema change that wants its own ticket).
+
+Also committed: the `tools/ccstats` review-report work found uncommitted at session start
+(`5f75844`, 320 tests green), under the operator's reaffirmed rule "always make frequent
+commits and pushes". Operator also ruled: ignore `cc-warehouse-architecture/` unless it
+bears on the CLI (it does not; nothing in `src/`, `plugins/` or `pyproject.toml` references it).
+
+**What was NOT done:** ticket 37 Part B rows 2, 3, 5 and the pre-filter follow-up. Nothing
+else opened.
+
 ### Twenty-first handoff, 2026-09-04 (new session)
 
 Short session, no ticket picked up. Opened by reading `OPENING-PROMPT.md`, offered the
