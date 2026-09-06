@@ -192,6 +192,7 @@ silently.
 | `ccw status` | recent captures, counts, store size, last errors |
 | `ccw doctor` | is capture working, and if not, since when |
 | `ccw verify` | re-hash stored objects and cross-check the catalog |
+| `ccw repair` | re-render recent archive folders `doctor`'s desync check flags |
 | `ccw reindex` | rebuild the catalog from the archive tree alone |
 | `ccw project` | list / show / rename / move / merge projects |
 | `ccw import` | adopt a foreign transcript tree (`--from DIR`) |
