@@ -64,8 +64,12 @@ already written and pushed, that its wording ("upgrade to the latest PyPI releas
 run") conflicts with a policy it says the operator ruled directly to it - pin + floor +
 notify instead, to stop a bad release reaching every machine silently. Surfaced to the
 operator; not yet corrected in the doc. See `[[cross-project-ccw-provisioning-with-dotfiles]]`
-(project memory) for the full account and check there before trusting either side's account
-of "settled."
+(project memory) for the full account.
+
+**Resolved same session, minutes later:** operator confirmed directly - the real policy is
+pin + floor + notify, not "upgrade to latest on every run." `docs/agent-setup-contract.md`
+corrected to say the installer enforces a pinned floor and reports (never auto-installs)
+when PyPI has something newer. Both sides now consistent.
 
 No ticket file touched, no `pyproject.toml` version bump (docs-only this track) - this
 session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff/pyright

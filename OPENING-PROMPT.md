@@ -64,12 +64,11 @@ fast follow-up to `ccw render --open` (28.1, already done). Full entries:
   before 2026-08-24T01:25 - no session's own account claims to have done it, and the
   mechanism is unknown. It was restored once (16th handoff, see `harness/HANDOFFS.md`);
   if it happens again, that's the lead to chase.
-- **Cross-project ccw-provisioning design with `fifty-shades-of-dotfiles`, one clause
-  open.** `docs/agent-setup-contract.md` and `contract/PROPOSALS/doctor-json-config-
-  fields.md` shipped 2026-09-06 (25th handoff). The other project flagged after the fact
-  that the doc's "upgrade to latest PyPI on every run" line conflicts with a pin+floor+
-  notify policy it says the operator ruled directly to it - not yet corrected here. Check
-  whether this got resolved before assuming the doc is current.
+- **Cross-project ccw-provisioning design with `fifty-shades-of-dotfiles`: DONE, both
+  sides consistent.** `docs/agent-setup-contract.md` and `contract/PROPOSALS/doctor-json-
+  config-fields.md` shipped 2026-09-06 (25th handoff). Its version-upgrade wording was
+  briefly wrong (said "latest PyPI on every run"); operator confirmed the real policy is
+  pin + floor + notify and the doc was corrected the same day. Nothing open here.
 
 ## Hard rules
 

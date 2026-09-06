@@ -8,7 +8,12 @@ The dotfiles installer that provisions this machine owns the deterministic parts
 `ccw`'s lifecycle and does them itself, every run, with no AI involved:
 
 - Installing `ccw` if it's missing (`uv tool install cc-warehouse`).
-- Upgrading it if it's behind the latest PyPI release (`uv tool upgrade cc-warehouse`).
+- Upgrading it when it's below the floor version the installer pins (a committed,
+  deliberately-bumped constant, not "whatever PyPI currently has") - and reporting,
+  never silently auto-installing, when PyPI has something newer than that floor. This is
+  a deliberate operator policy (pin + floor + notify), not an oversight: a version bump
+  has to be a reviewable, revertable commit, and the installer has to stay safe to run
+  offline without ever reaching for something newer on its own.
 - Installing and enabling the `cc-capture` plugin if it isn't present at all yet
   (`claude plugin marketplace add` + `claude plugin install` - a first-time install has
   no existing command to change, so there's nothing here that needs a human review).
@@ -58,10 +63,13 @@ prompt and shouldn't assume anything:
 command -v ccw && ccw --version
 ```
 
-If `ccw` is genuinely missing, or its version is behind the latest PyPI release of
-`cc-warehouse`, the installer's own mechanical step didn't run or failed. Tell the human
-that plainly rather than quietly doing the installer's job yourself - it's worth them
-knowing the installer itself needs attention, not just this machine's `ccw` config.
+If `ccw` is genuinely missing, or its version is below the floor the installer is
+supposed to enforce, the installer's own mechanical step didn't run or failed. Tell the
+human that plainly rather than quietly doing the installer's job yourself - it's worth
+them knowing the installer itself needs attention, not just this machine's `ccw` config.
+(If PyPI has something newer than the pinned floor, that's expected and not itself a
+problem - pin + floor + notify means upstream is allowed to be ahead; the installer
+reports that, it doesn't chase it automatically.)
 
 ```
 ccw doctor
