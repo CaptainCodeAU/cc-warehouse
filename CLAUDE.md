@@ -135,8 +135,14 @@ edits to the principal instead.
 - `contract/` the five LOCKED contract documents + `contract/diagrams/` | `docs/`
   user-facing guides (`sharing-and-redaction.md`, and since 2026-09-01
   `operations.md` - what runs on a schedule on THIS machine, every SessionStart/
-  SessionEnd hook, and the external consumers of `ccw doctor`'s output; install,
-  quickstart and configuration guides are still NAMED HERE BUT DO NOT EXIST,
+  SessionEnd hook, and the external consumers of `ccw doctor`'s output; since
+  2026-09-06 `agent-setup-contract.md` - written FOR an AI agent to read and act
+  on, not a human: what a machine needs to have `ccw`/`cc-capture` correctly set
+  up, how to detect each gap, which fixes are safe to apply directly and which
+  need to ask the operator first. Meant to be dropped into a fresh Claude Code
+  session by a detection script on another machine (ticket: cross-project design
+  with `fifty-shades-of-dotfiles`, 2026-09-06); install, quickstart and
+  configuration guides are still NAMED HERE BUT DO NOT EXIST,
   corrected 2026-08-02 after this line claimed four for weeks) | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
   (gitignored once git init lands) | `tools/` tracked scratch tooling that is
