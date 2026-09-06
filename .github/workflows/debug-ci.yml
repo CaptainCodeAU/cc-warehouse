@@ -1,0 +1,33 @@
+# TEMPORARY. Manually-triggered gate run for diagnosing the Linux-only test
+# failures found while releasing 0.1.2 (2026-09-06): 22 tests fail on GitHub's
+# ubuntu-latest runner that pass on macOS and in a matched local Linux
+# container. `release.yml` only runs on a version tag, which is too expensive
+# to push repeatedly while debugging, so this gives the same gate a cheap,
+# tag-free trigger. Delete this file once that investigation closes.
+name: debug-ci
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: environment fingerprint
+        run: |
+          uname -a
+          python3 --version
+          date
+          echo "TZ=$TZ"
+          locale
+          python3 -c "import zoneinfo; print(zoneinfo.ZoneInfo('Australia/Melbourne'))"
+      - name: oracle suite
+        run: uv run pytest -q
