@@ -100,6 +100,28 @@ Slack/AWS/OpenAI-shaped tokens, PEM private keys, phone numbers. Verified live: 
 `/wrap-up`'s Step 7 now calls it directly, falling back to the narrower grep only if the tool
 is absent. Memory corrected to match rather than left pointing at the weaker fix.
 
+**Further round, same day: a sibling project measured three real blind spots in ANY
+diff-based leak scan, plus a session-anchor reliability question.** Independently
+re-verified all three in a throwaway repo with real tokens before acting (one further
+claim, a BLOCK exit-code discrepancy, could not be cleanly reproduced and was dropped -
+the test repo's own history showed the triggering commit never actually existed, meaning
+the test harness was broken, not the tool). Confirmed: commit/tag messages never appear
+in any `git diff` (a real token in a commit message scanned exit 0; the same token in file
+content correctly blocked); binary file content is invisible the same way; a value added
+in one commit and removed in a later commit within the SAME range is invisible to a
+two-dot diff even though `git log -p` shows it sitting in history already pushed - a real
+risk given this project's own push-immediately habit, not theoretical. `/wrap-up` now runs
+a supplementary `git log --format=%B <range> | gitleaks detect --pipe` pass for the first
+gap, documents the other two as accepted limitations (a true full-history audit is
+`/refresh`'s scope, not a per-session one), and treats a lost `SESSION_START_REF` as a
+refuse condition rather than a silent best-guess fallback. The sibling project's own
+session-anchor critique (a commit-trailer-based anchor going blind exactly when hooks are
+skipped) does not directly apply here - this repo's anchor was already a captured starting
+`HEAD` with no trailer dependency - but the underlying principle (refuse rather than guess)
+was worth applying anyway. Full account, consolidated out of `commit-push-tag-workflow`
+memory into its own file since it had grown too large embedded there:
+`[[git-leak-scan-known-limits]]` (project memory).
+
 No ticket file touched, no `pyproject.toml` version bump (docs-only this track) - this
 session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff/pyright
 issues) and the release tag already correctly pushed by the concurrent twenty-fourth
