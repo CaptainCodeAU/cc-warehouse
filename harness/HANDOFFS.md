@@ -141,6 +141,50 @@ session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff
 issues) and the release tag already correctly pushed by the concurrent twenty-fourth
 handoff session.
 
+### Twenty-sixth handoff, 2026-09-06 (/refresh run, full sweep - a real privacy leak found and fixed)
+
+Ran the full `/refresh` sweep (not a scoped mode) at the operator's request, prompted by a
+housekeeping task relayed from a sibling project ("audit CLAUDE.md for stale rulings").
+Recognized that request maps directly onto this repo's own existing `/refresh` command
+rather than doing a lighter, duplicate ad-hoc audit.
+
+**Real finding, fixed same session: the actual local username had leaked into two tracked,
+public files** - `harness/HANDOFFS.md` (twice) and `tools/ccstats/review.py` (once) - a
+hard-rule violation caught by `/refresh`'s own personal-data probe. Redacted using this
+project's existing `<local-username>` convention, narrative content preserved.
+
+Other real fixes: one dangling memory wiki-link (`[[opening-prompt-restructure-2026-08-27]]`,
+never existed under that name - repointed to the real file,
+`[[opening-prompt-is-an-index-not-a-log]]`, which covers the same event); README's Commands
+table was missing `ccw repair` (a real, working verb since ticket 32) - added. `mcp`/`search`
+were checked and are already correctly marked planned elsewhere in README, not a table
+drift.
+
+**Flagged, not auto-fixed (genuine judgment calls, per Guardrail 7):**
+- Tag parity: 15 DONE-annotated items (slice-18 through slice-31, slice-37) carry no
+  milestone tag. Expected under the documented DIRECT-BUILD era exception (post-v1 tickets
+  don't necessarily follow the old slice-tag pattern) - report-tier, not a defect.
+- Ticket-to-test wiring: 6 tickets cite test files that don't exist under those names
+  (likely renamed when an implementation split into multiple files, e.g. ticket 19's
+  original `tests/test_archive.py` citation vs the real `test_archive_*.py` files that
+  exist); 25 real test files are cited by no ticket at all. Real drift, but sizable enough
+  (31 items) that fixing it needs the operator's own triage, not a same-session guess.
+- CHANGELOG's milestone table is missing 17 more recent tags (27.1-27.7, 29-mechanism-1,
+  31.2-31.5, several `ticket-NN` tags). Possibly intentional given the table's own framing
+  favors early illustrative tags over an exhaustive ledger - flagged rather than assumed.
+- `contract/PROPOSALS/*.md`'s em-dashes: both files are explicitly preserved "as filed"
+  per this project's own convention (one says so outright) - left untouched per Guardrail
+  3, reported rather than silently cleaned.
+
+**Verified false positives, not fixed:** CLAUDE.md's "STILL OPEN inside 24: 24.7" line
+(dated historical narration immediately followed by its own correction two sentences
+later - the probe can't see the correction, a human/careful read can); a `.claude/`
+hygiene grep hit on `wrap-up.md` (`sk-` matched inside "ta**sk-**independent", not a key).
+
+Gates re-verified unchanged after all edits (1222 passed, ruff/pyright clean). Three
+commits, all pushed (`5656d80`, `3a27235`, plus the memory-only dangling-link fix which
+lives outside the repo per this project's own memory/repo separation).
+
 ### Twenty-fourth handoff, 2026-09-06 (0.1.2 shipped; a real cross-platform test bug found and fixed; /wrap-up added)
 
 Started from an operator question - "can PyPI auto-update from GitHub?" - answered by reading
