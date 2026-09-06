@@ -21,6 +21,57 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-fourth handoff, 2026-09-06 (0.1.2 shipped; a real cross-platform test bug found and fixed; /wrap-up added)
+
+Started from an operator question - "can PyPI auto-update from GitHub?" - answered by reading
+`.github/workflows/release.yml`: the automation already existed (tag-triggered, PyPI Trusted
+Publishing, no stored token) but had never fired since 0.1.1 (2026-08-09), because nobody had
+pushed a `v0.1.2` tag despite `pyproject.toml` already reading 0.1.2 and `CHANGELOG.md` already
+carrying that version's entry. Pushed it - which surfaced three real, previously-invisible
+problems, each fixed the same session.
+
+**1. 15 pyright-strict errors in `tests/test_render_open.py`.** `monkeypatch.setattr(notify,
+"open_page", lambda path: ...)` - pyright can't propagate `open_page`'s `path: str` annotation
+through a bare lambda passed to `setattr`. Fixed by replacing each lambda with a small named
+function carrying the annotation directly; behaviour unchanged, 8 tests still pass.
+
+**2. 22 tests failed ONLY on GitHub's `ubuntu-latest` runner**, never on macOS or in a locally
+built Linux container (root, non-root+git, both tried and both green). Root-caused by reproducing
+the exact CI condition locally rather than guessing: `config.py`'s `load_config()` checks
+`XDG_CONFIG_HOME` before falling back to `$HOME/.config`. 23 test files write a sandboxed
+`config.toml` under `$HOME/.config` and set `env["XDG_CONFIG_HOME"]` to match it - but only on a
+plain dict used for `run_ccw`'s subprocess calls, never via `monkeypatch.setenv` on the real
+process environment `run_cli`'s in-process calls actually read. On any machine where
+`XDG_CONFIG_HOME` happens to already be unset (every machine tried until GitHub's runner), the
+code's own fallback silently produces the same path anyway, hiding the bug for weeks - this
+repo's tests hadn't run on GitHub since 2026-08-10 (see finding 3), so nobody had seen it fail.
+One line in `tests/conftest.py`'s shared `ccw_env` fixture (`monkeypatch.delenv("XDG_CONFIG_HOME",
+raising=False)`) fixes all 23 files at once, since every one of them computes the exact same
+`$HOME/.config` value the fallback already produces. Verified by reproducing the CI condition
+locally (`XDG_CONFIG_HOME=/tmp/x uv run pytest`): fails the same way without the fix, all 1222
+pass with it.
+
+**3. PyPI's GitHub Trusted Publisher link was broken since 2026-08-10**, the day the repo was
+deleted and recreated for the go-public audit (ticket 28.20) - PyPI ties the link to GitHub's
+internal repo ID, not the repo name, so the recreation silently orphaned it. Publish failed with
+`invalid-publisher`. By the time it was checked, PyPI showed "No publishers are currently
+configured" (not a stale entry - genuinely gone). Fixed by hand on pypi.org (walked the operator
+through it live): re-added Owner `CaptainCodeAU`, Repository `cc-warehouse`, Workflow
+`release.yml`, Environment `pypi`. `v0.1.2` published successfully afterward - confirmed against
+PyPI's own JSON API, not just the green Actions checkmark.
+
+**Standing rule added**: `commit-push-tag-workflow` memory now says push a matching `vX.Y.Z` tag
+automatically whenever `pyproject.toml`'s version bumps, no asking each time (operator's explicit
+authorization, given specifically because of finding 3's silent multi-week gap). A new memory,
+`pypi-trusted-publisher-recovery`, records the fix for if a GitHub repo delete/recreate ever
+breaks this link again.
+
+**`/wrap-up` added** (`.claude/commands/wrap-up.md`), adapted from a much larger VM-infrastructure
+version in a different project - kept the shape (derive the touched set from git alone, run the
+guards fresh, three-state report vocabulary) and replaced the box/host-specific steps with this
+project's own real gap: a version bump with no pushed release tag, which is exactly how finding 3
+sat invisible for three weeks. First real run of it is this same session.
+
 ### Twenty-third handoff, 2026-09-06 (planning session, no code)
 
 Started from two screenshots and two questions: why the archive folder for chorustic session
