@@ -454,15 +454,6 @@ def _mirror(
         return
     from cc_warehouse import archive
 
-    import sys
-
-    print(
-        f"DEBUG_MIRROR archive_root={config.archive_root!r} "
-        f"fn={archive.write_session_folder!r} "
-        f"module_id={id(sys.modules.get('cc_warehouse.archive'))} "
-        f"archive_id={id(archive)}",
-        file=sys.stderr,
-    )
     archive.write_session_folder(
         config.archive_root,
         label,
