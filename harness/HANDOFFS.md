@@ -71,6 +71,23 @@ pin + floor + notify, not "upgrade to latest on every run." `docs/agent-setup-co
 corrected to say the installer enforces a pinned floor and reports (never auto-installs)
 when PyPI has something newer. Both sides now consistent.
 
+**Also this session: `/wrap-up` itself reviewed and fixed, from having just run it.** Three
+real gaps, all hit live rather than hypothesized. (1) Step 7's secrets scan checked only the
+staged diff - but this repo's own standing cadence rule (`commit-push-tag-workflow` memory)
+is commit-and-push-immediately, so staging is almost always empty by the time the step runs;
+the scan was silently checking nothing and still reporting clean. Now scans this session's
+own commits (diffed against a captured starting commit) as well as anything still staged.
+(2) Step 1's touched-set relied on `@{u}..HEAD`, which reads empty the moment a concurrent
+session (this machine runs several against the same checkout - exactly what happened this
+session, see above) pushes first; now anchors on a captured `SESSION_START_REF` instead.
+(3) Step 4 assumed every decision fits a ticket or `contract/DESIGN.md`; the cross-project
+governance decision above fit neither, so the step now says explicitly that `HANDOFFS.md` is
+a legitimate home too. Fixed in `4ef843a`'s follow-up commits; the operator separately asked
+this session to check its own MEMORY for related keywords, which surfaced that
+`commit-push-tag-workflow.md` already documented both halves of the tension (commit-
+constantly, and no-personal-data) without ever connecting them - a dated note was added
+there generalizing the lesson beyond just `/wrap-up`.
+
 No ticket file touched, no `pyproject.toml` version bump (docs-only this track) - this
 session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff/pyright
 issues) and the release tag already correctly pushed by the concurrent twenty-fourth
