@@ -141,8 +141,12 @@ edits to the principal instead.
   up, how to detect each gap, which fixes are safe to apply directly and which
   need to ask the operator first. Meant to be dropped into a fresh Claude Code
   session by a detection script on another machine (ticket: cross-project design
-  with `fifty-shades-of-dotfiles`, 2026-09-06); install, quickstart and
-  configuration guides are still NAMED HERE BUT DO NOT EXIST,
+  with `fifty-shades-of-dotfiles`, 2026-09-06); also since 2026-09-06
+  `reference-config.toml` - every config.toml key, hand-maintained, commented
+  with its built-in default, meant to be copied and edited rather than read by
+  `ccw` itself (recommended weeks earlier, never actually built until a sibling
+  project was found genuinely blocked waiting on it - see harness/HANDOFFS.md);
+  install and quickstart guides are still NAMED HERE BUT DO NOT EXIST,
   corrected 2026-08-02 after this line claimed four for weeks) | `harness/prompts/` role
   prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
   (gitignored once git init lands) | `tools/` tracked scratch tooling that is

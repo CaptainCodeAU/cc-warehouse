@@ -107,6 +107,9 @@ machines runs today - so don't treat "no config" as broken. It just means nobody
   ```toml
   archive_root = "/home/<user>/cc-warehouse-archive"   # or the path they gave you
   ```
+  `docs/reference-config.toml` in this repo lists every key this file understands, each
+  commented with its default - read it before writing anything, since the schema has
+  changed shape before and this document's own memory of the field list can drift.
 
   Leave `root`, `keep_objects`, and `keep_projections` at their defaults (unset). Do
   **not** set `keep_objects = false` or `keep_projections = false` on a fresh setup -

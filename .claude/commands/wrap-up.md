@@ -285,16 +285,16 @@ trust past:**
    else, confirmed live with a token embedded in a binary file (exit 0, no mention). This repo's
    own tracked files are all text as of this writing (checked); if that ever changes, this gap
    becomes real.
-3. **A value added in one commit and removed in a later commit, BOTH inside this same range, is
-   invisible to any two-dot diff** - confirmed directly with plain `git diff` (not even
-   `git-leak-scan`-specific): the diff between the range's endpoints shows nothing for that line,
-   while `git log -p` over the same range shows it sitting in the middle commit. This project's own
-   standing habit of pushing immediately after each commit makes this a real risk, not a
-   theoretical one - a leak-then-fix pair can genuinely be public between the two pushes with
-   nothing here able to see it. A scan of this session's RANGE certifies the range, never the
-   repo's full history; if that stronger guarantee is ever needed, it takes a full-history audit
-   (`git-leak-scan --range 4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD`, diffing against git's
-   empty-tree hash), which is heavier and belongs in `/refresh`'s scope, not here.
+3. **FIXED upstream, no longer a gap for the common case:** a value added in one commit and
+   removed in a LATER commit, both inside the same range, used to be invisible to a two-dot
+   diff (`git diff A..B` compares endpoint trees only). `git-leak-scan` now audits ranges via
+   `git log -p` (each commit's own diff) instead, so this case is caught - reconfirmed live
+   2026-09-06 after the fix shipped. **What's still genuinely invisible, by design**: a value
+   added BEFORE the range and removed INSIDE it - that addition never appears in this range's
+   commits at all. A scan of this session's RANGE still certifies the range, never the repo's
+   full history; that stronger guarantee takes a full-history audit
+   (`git-leak-scan --range 4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD`, diffing against
+   git's empty-tree hash), which is heavier and belongs in `/refresh`'s scope, not here.
 
 Also eyeball Step 1's `git status --short` output for untracked files - they never appear in any
 diff either, staged, ranged, or otherwise, until something actually adds them.

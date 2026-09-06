@@ -1,0 +1,116 @@
+# cc-warehouse reference config.toml
+#
+# A commented example of every key this project's config file understands, with its
+# built-in default noted beside it. Meant to be copied to ~/.config/cc-warehouse/
+# config.toml (or <root>/config.toml) and edited - not read directly by ccw itself.
+#
+# THIS FILE IS HAND-MAINTAINED, NOT GENERATED. The schema it describes lives in
+# src/cc_warehouse/config.py, and has changed shape twice already (2026-08-01,
+# 2026-08-02). If this file looks more than a couple of months old relative to
+# today, diff it against that module's own docstring before trusting it.
+#
+# Every key here is OPTIONAL. An absent key always means "use the built-in
+# default" - a missing file entirely is a fully supported, working mode (vault-only
+# capture with no second copy), not an error.
+
+# Where the warehouse's own data lives. Default: $HOME/cc-warehouse-data
+# root = "/home/you/cc-warehouse-data"
+
+# The timezone archive folder names are rendered in. Pinned rather than read from
+# the machine, so the same session gets the same folder name on any machine.
+# Default: "UTC" - the one zone that's correct everywhere and never surprises.
+# archive_timezone = "UTC"
+
+# Where the archive-first tree (a second, human-readable copy of every session,
+# kept current automatically) lives. Default: unset - capture behaves exactly as
+# it did before this feature existed, i.e. vault-only (see keep_objects below).
+# Setting this is the single biggest decision in this file - it determines
+# whether this machine gets a readable, browsable session history or not.
+# archive_root = "/home/you/cc-warehouse-archive"
+
+# Whether the OLD projections/ tree (inside root, not the archive) is still
+# written. Default: true. REFUSED (and the contradiction recorded, not obeyed) if
+# set false with no archive_root - that combination would render nowhere.
+# keep_projections = true
+
+# Whether the content-addressed vault (objects/ inside root) is still written.
+# Default: true. Same refusal rule as keep_projections above. Set false only
+# once archive_root is set AND already proven correct on this machine over time -
+# this is a two-stage migration, never a first-day setting.
+# keep_objects = true
+
+# Whether sub-agent transcripts are archived at all. Default: true.
+# archive_subagents = true
+
+[notify]
+# Endpoint and voice for spoken failure alerts, if you run one. Default: unset.
+# voice_url = "http://localhost:8888/notify"
+# voice_id = "your-voice-id"
+
+# Whether a captured session's folder is revealed (opened) after each capture.
+# Default: false.
+# open_folder = false
+
+# [[notify.webhook]]
+# name = "example"
+# url = "https://example.com/hook"
+# events = ["ok", "error"]  # default when omitted
+
+[render]
+# Whether session-start breadcrumb lines render. Default: false.
+# breadcrumbs = false
+
+# How reminder blocks render in the FULL variant: "collapse" (default) or another
+# supported word - see config.py's CONTENT_WORD_KEYS-style tables for the exact set.
+# reminders_full = "collapse"
+# reminders_compact = "strip"
+
+# Content-family toggles, full variant. All default true.
+# subagents = true
+# attachments = true
+# commands = true
+# extras = true
+# tool_output = true
+
+# Same toggles, COMPACT variant. All default false - an empty config renders
+# byte-identical output to before these existed.
+# subagents_compact = false
+# attachments_compact = false
+# commands_compact = false
+# extras_compact = false
+# tool_output_compact = false
+
+# HTML chrome - the initial state a freshly opened page renders in. A reader can
+# always change these in their own browser; these only set the starting point.
+# html_width = "large"    # small | medium | large
+# html_font = "small"     # small | medium | large
+# html_turns = "expanded" # expanded | collapsed
+# details = "closed"      # closed | open
+# html_dates = "local"    # local | iso
+
+# What happens to `thinking` blocks Claude Code left empty. Default: "caption"
+# (folds the count into the phase caption; "marker" gives one line per block;
+# "off" shows nothing).
+# thinking_withheld = "caption"
+
+# Truncation cap, in characters, for tool output. 0 (default) means off.
+# tool_output_max_chars = 0
+
+[share]
+# Extra regex patterns to redact on top of the built-in set, for `ccw share`.
+# redact_patterns = []
+
+[relocate]
+# Extra roots `ccw relocate` is allowed to operate under.
+# roots = []
+
+[import]
+# Default inbox directory for `ccw import`.
+# inbox = "/home/you/cc-warehouse-inbox"
+
+# Per-project overrides. <id> is the STABLE registry id (see `ccw project show`),
+# never a label - a renamed project keeps the same id. Any [render]/[notify]/etc
+# table can be overridden per project this way; only the keys you name change,
+# the rest of that table's values are inherited unchanged.
+# [project.1.render]
+# html_width = "medium"
