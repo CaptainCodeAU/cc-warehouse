@@ -47,27 +47,33 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 LOG = Path.home() / ".claude" / "logs" / "ccw-hook.log"
 VOICE_URL = "http://localhost:8888/notify"
 VOICE_ID = "fTtv3eikoepIosk8dTZ5"
 
 
-def report(status: str, detail: str) -> None:
+def report(status: str, detail: str, session: str | None = None) -> None:
     """Say it out loud and write it down. Never raises: a reporting failure must
-    not become the thing that breaks capture."""
-    record = {
+    not become the thing that breaks capture.
+
+    `session` is only carried by the `started` line (ticket 37): it is what
+    makes "which session's hook died?" a one-grep question."""
+    record: dict[str, str | None] = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "status": status,
         "detail": detail,
     }
+    if session is not None or status == "started":
+        record["session"] = session
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
         with LOG.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")
     except OSError:
         pass
-    if status == "ok":
+    if status in ("ok", "started"):
         return
     try:
         payload = json.dumps(
@@ -106,8 +112,35 @@ def find_ccw() -> str | None:
     return str(shim) if shim.is_file() else None
 
 
+def _started(payload: str) -> None:
+    """Write `started` BEFORE anything that can die (ticket 37 part B).
+
+    Measured 2026-09-06: a hook wrote the raw JSONL and 26 sub-agent folders
+    into the archive, then was killed before the catalog row, the
+    `capture.jsonl` line and this file's `ok` line. Every log said "no such
+    capture" while the disk said "captured". This line is the trace that run
+    did not leave: a `started` with no `ok`/`error` after it is a hook that
+    died mid-run, and the session id says which one.
+
+    Parses the payload defensively: a bad payload is one of the things this
+    line exists to record, so it must not be the reason there is no line."""
+    session: str | None = None
+    transcript = ""
+    try:
+        data: object = json.loads(payload)
+        if isinstance(data, dict):
+            fields = cast("dict[object, object]", data)
+            raw = fields.get("session_id")
+            session = str(raw) if raw is not None else None
+            transcript = str(fields.get("transcript_path") or "")
+    except (ValueError, TypeError):
+        pass
+    report("started", transcript, session)
+
+
 def main() -> int:
     payload = sys.stdin.read()
+    _started(payload)
     executable = find_ccw()
     if executable is None:
         report(

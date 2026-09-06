@@ -214,6 +214,30 @@ class SubagentResult:
     # write_session_folder's ticket-30 twin: same size as archived is not the
     # same thing as same bytes (F1). See write_subagent's docstring.
     refused_equal_size: bool = False
+    # Ticket 37: meta.json is compared before it is written, so a repeat call
+    # over unchanged input costs no write and says so. Measured 2026-09-06: one
+    # daily sweep rewrote 2,501 of 2,505 archive meta.json files, and every
+    # sub-agent folder's mtime said "today" whatever day its content arrived.
+    meta_written: bool = False
+    # True on the first write of a JSONL. `replaced` only covers the case where a
+    # larger payload displaced an existing one, so on its own it cannot tell
+    # "first ever write" from "nothing to do".
+    jsonl_written: bool = False
+
+    @property
+    def unchanged(self) -> bool:
+        """Nothing was written AND nothing was refused: the call was a no-op.
+
+        A refusal (smaller or same-size-different payload) is NOT unchanged; it
+        is the F6 signal the caller must still surface."""
+        return not (
+            self.jsonl_written
+            or self.replaced
+            or self.meta_written
+            or self.orphaned
+            or self.refused_smaller
+            or self.refused_equal_size
+        )
 
 
 def write_subagent(
@@ -276,8 +300,10 @@ def write_subagent(
 
     jsonl = directory / f"{agent_id}{_JSONL_SUFFIX}"
     replaced = refused_smaller = refused_equal_size = False
+    jsonl_written = False
     if not jsonl.exists():
         store.atomic_write(jsonl, data)
+        jsonl_written = True
     else:
         # R1 as amended: size answers "which of two payloads KNOWN to differ is
         # larger", never "are these the same bytes".
@@ -292,8 +318,14 @@ def write_subagent(
             # smaller (R5) - see the docstring above.
             refused_equal_size = True
 
+    meta_written = False
     if meta is not None:
-        store.atomic_write(directory / _META, meta)
+        # Ticket 37: compare before writing. The JSONL branch above already
+        # never rewrites equal bytes; the meta used to be written every call.
+        meta_path = directory / _META
+        if not meta_path.exists() or meta_path.read_bytes() != meta:
+            store.atomic_write(meta_path, meta)
+            meta_written = True
     if orphaned:
         note = {
             "parent_session_uuid": meta_parsed.session_uuid,
@@ -307,6 +339,7 @@ def write_subagent(
     return SubagentResult(
         directory, jsonl, orphaned, replaced,
         refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
+        meta_written=meta_written, jsonl_written=jsonl_written,
     )
 
 

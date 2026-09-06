@@ -283,3 +283,46 @@ def test_the_subagent_jsonl_survives_repeated_writes(tmp_path: Path) -> None:
         archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
     assert result.jsonl.read_bytes() == data
     assert store.sha256_hex(result.jsonl.read_bytes()) == store.sha256_hex(data)
+
+
+# ---------------------------------------------------------------------------
+# Ticket 37 part A: meta.json is compared before it is written. Measured on the
+# live archive 2026-09-06: the daily sweep rewrote 2,501 of 2,505 meta.json
+# files because this function wrote the meta unconditionally, so every
+# sub-agent folder's mtime said "today" whatever day its content arrived.
+# ---------------------------------------------------------------------------
+
+
+def test_identical_meta_written_twice_is_not_rewritten(tmp_path: Path) -> None:
+    parent_folder(tmp_path)
+    data = subagent_session(agent_id=AGENT)
+    first = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    meta_path = first.directory / "meta.json"
+    before = meta_path.stat().st_mtime_ns
+    dir_before = first.directory.stat().st_mtime_ns
+    again = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    assert meta_path.stat().st_mtime_ns == before
+    assert first.directory.stat().st_mtime_ns == dir_before
+    assert first.meta_written is True
+    assert again.meta_written is False
+
+
+def test_changed_meta_is_written(tmp_path: Path) -> None:
+    parent_folder(tmp_path)
+    data = subagent_session(agent_id=AGENT)
+    archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    changed = subagent_meta(description="a different description")
+    result = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=changed)
+    assert result.meta_written is True
+    assert (result.directory / "meta.json").read_bytes() == changed
+
+
+def test_unchanged_reports_nothing_written(tmp_path: Path) -> None:
+    """The flag the sweep leans on: neither the JSONL nor the meta moved."""
+    parent_folder(tmp_path)
+    data = subagent_session(agent_id=AGENT)
+    archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    again = archive.write_subagent(tmp_path, LABEL, data, ZONE, meta=subagent_meta())
+    assert again.unchanged is True
+    assert again.replaced is False
+    assert again.meta_written is False

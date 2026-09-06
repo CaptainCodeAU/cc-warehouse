@@ -278,3 +278,69 @@ def test_status_error_list_is_unaffected_by_the_aggregate_row(
     result = run_cli(["status"])
     assert result.code == 0, result.err
     assert "error" not in result.out.lower() or "0" in result.out
+
+
+def _mtimes_under(root: Path, pattern: str) -> dict[Path, int]:
+    return {p: p.stat().st_mtime_ns for p in root.rglob(pattern)}
+
+
+def test_a_repeat_sweep_writes_nothing_under_any_subagent_folder(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Ticket 37 part A. Sub-agents never enter the hash pre-filter (no catalog
+    row), so every sweep reaches `write_subagent` for every one of them. That
+    is fine as long as an unchanged sub-agent costs no WRITE: measured on the
+    live archive 2026-09-06, 2,501 of 2,505 meta.json files were rewritten by
+    one daily sweep. The assertion is over the WHOLE subagents tree, not one
+    folder (standing lesson: a census on one file is still an instance fix)."""
+    from conftest import subagent_meta, subagent_session
+
+    archive_root = tmp_path / "archive"
+    _configure_archive(ccw_env, archive_root)
+    parent = write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    subagents_dir = claude_projects(ccw_env) / parent.parent.name / UUID_A / "subagents"
+    subagents_dir.mkdir(parents=True)
+    for agent in ("sub1", "sub2", "sub3"):
+        (subagents_dir / f"agent-{agent}.jsonl").write_bytes(
+            subagent_session(agent_id=agent, parent_uuid=UUID_A)
+        )
+        (subagents_dir / f"agent-{agent}.meta.json").write_bytes(subagent_meta())
+
+    assert run_cli(["sweep"]).code == 0
+    files_before = _mtimes_under(archive_root, "subagents/*/*")
+    dirs_before = _mtimes_under(archive_root, "subagents/*")
+    assert len(files_before) == 6, "3 jsonl + 3 meta.json expected after the first sweep"
+
+    second = run_cli(["sweep"])
+    assert second.code == 0, second.err
+    assert _mtimes_under(archive_root, "subagents/*/*") == files_before
+    assert _mtimes_under(archive_root, "subagents/*") == dirs_before
+
+
+def test_a_repeat_sweep_reports_an_unchanged_subagent_as_skipped(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The BatchReport must say what it touched (F6): an untouched sub-agent is
+    `skipped_unchanged`, not `archived-subagent`."""
+    from cc_warehouse import sweep as sweep_module
+    from cc_warehouse.config import load_config
+    from conftest import subagent_meta, subagent_session
+
+    archive_root = tmp_path / "archive"
+    _configure_archive(ccw_env, archive_root)
+    parent = write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    config = load_config(xdg_config_home=Path(ccw_env["XDG_CONFIG_HOME"]), env=ccw_env)
+    # Capture the parent FIRST, on its own. When parent and sub-agent arrive in
+    # the same sweep, the parent's capture already brings the sub-agent along
+    # (`capture._archive_subagents_of`) and pass two correctly finds it
+    # unchanged; the sub-agent has to appear later to exercise the write path.
+    assert sweep_module.sweep(config).failures == ()
+    subagents_dir = claude_projects(ccw_env) / parent.parent.name / UUID_A / "subagents"
+    subagents_dir.mkdir(parents=True)
+    (subagents_dir / "agent-sub1.jsonl").write_bytes(subagent_session(parent_uuid=UUID_A))
+    (subagents_dir / "agent-sub1.meta.json").write_bytes(subagent_meta())
+
+    first = {o.item: o.action for o in sweep_module.sweep(config).outcomes}
+    assert first["agent-sub1.jsonl"] == "archived-subagent"
+    second = {o.item: o.action for o in sweep_module.sweep(config).outcomes}
+    assert second["agent-sub1.jsonl"] == "skipped_unchanged"

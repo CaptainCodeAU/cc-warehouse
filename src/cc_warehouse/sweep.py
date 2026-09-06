@@ -227,6 +227,11 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
         )
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
+    if result.unchanged:
+        # Ticket 37: sub-agents never enter the hash pre-filter (no catalog
+        # row), so every sweep reaches write_subagent for every one of them.
+        # An unchanged one must read as unchanged, not as archived (F6).
+        return ItemOutcome(path.name, "skipped_unchanged", str(result.directory))
     action = "archived-subagent-orphaned" if result.orphaned else "archived-subagent"
     return ItemOutcome(path.name, action, str(result.directory))
 
