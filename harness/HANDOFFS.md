@@ -185,6 +185,21 @@ Gates re-verified unchanged after all edits (1222 passed, ruff/pyright clean). T
 commits, all pushed (`5656d80`, `3a27235`, plus the memory-only dangling-link fix which
 lives outside the repo per this project's own memory/repo separation).
 
+**Same evening, second relay: audit all five slash commands for the same shape of
+staleness.** Checked all five (`architecture`, `dashboard`, `daywall`, `refresh`,
+`wrap-up`) against five failure shapes a sibling project found in its own audit
+(destroying a recovery path before confirmation, recommending a deprecated tool, a step
+gone stale within the same session, an untracked command invisible to `git log`, and
+dated stamps vs drifting counts) - verified by grep, not assumed. Four of five shapes
+didn't apply anywhere in this repo's commands. The fifth did, in `/wrap-up` itself:
+`git-leak-scan` grew a `--control` self-test (proves the scanner still detects real
+patterns today, independent of whether this session's own range is clean) after Step 7
+was last edited earlier the same day. `/wrap-up` now runs `--control` immediately before
+the real scan and requires both results quoted verbatim in the report - the same
+"prove the instrument, not just the reading" principle this whole session kept
+rediscovering, now written into the command itself rather than left as something to
+remember each time.
+
 ### Twenty-fourth handoff, 2026-09-06 (0.1.2 shipped; a real cross-platform test bug found and fixed; /wrap-up added)
 
 Started from an operator question - "can PyPI auto-update from GitHub?" - answered by reading
