@@ -122,6 +122,20 @@ was worth applying anyway. Full account, consolidated out of `commit-push-tag-wo
 memory into its own file since it had grown too large embedded there:
 `[[git-leak-scan-known-limits]]` (project memory).
 
+**Final round, same evening: git-leak-scan fixed the add-then-remove gap upstream, and a
+real overdue delivery surfaced.** The sibling project shipped a per-commit (`git log -p`)
+audit mode closing limit 3 above for the common case (both commits inside one range) -
+re-verified live with the same failing reproduction, now correctly blocks. Their message
+also revealed this project had been sitting on a promise: `docs/reference-config.toml`
+(every config key, commented with its default) was recommended weeks earlier as this
+project's value-add for cross-machine provisioning and never actually built - the sibling
+project was genuinely blocked on it. Built and shipped same session (`ad2375d`);
+`agent-setup-contract.md` now points at it instead of expecting an AI agent to reconstruct
+the config schema from memory each time. `git-leak-scan-known-limits.md` also gained the
+tool's current authoritative state (commit `26c3551`, six changes, `--control` mode for
+proving the scanner itself hasn't silently regressed) and two standing verification rules
+worth carrying beyond this one tool.
+
 No ticket file touched, no `pyproject.toml` version bump (docs-only this track) - this
 session's own `/wrap-up` run found the guards already green (1222 passed, 0 ruff/pyright
 issues) and the release tag already correctly pushed by the concurrent twenty-fourth
