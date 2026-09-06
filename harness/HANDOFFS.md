@@ -860,9 +860,9 @@ both tabs closed afterward; nothing was left running.
    real 23-pattern list from `CLAUDE.md` verbatim (tmp-file + `os.replace`, R2's idiom, even
    though this file lives outside the repo entirely). One value needed reconstruction:
    `CLAUDE.md` redacts the operator's real local username as `<local-username>-` (this repo's
-   own privacy rule for anything git-tracked); the real machine account is `fonzarelli` -
-   confirmed, not assumed, by checking that real `project_label` values starting with
-   `fonzarelli-` actually exist in the corpus (`fonzarelli-.claude`, `fonzarelli-Temp`, etc. -
+   own privacy rule for anything git-tracked); confirmed, not assumed, by checking that real
+   `project_label` values starting with the real account name actually exist in the corpus
+   (`<local-username>-.claude`, `<local-username>-Temp`, etc. -
    Claude config/library folders outside `~/CODE`, exactly what that pattern exists to catch)
    before writing it. Dashboard rebuilt with the restored list: 58 raw names -> 57 canonical
    exclusions (was 32 -> 20 under the stale list), "my sessions" 564 (was 668). Verified in a

@@ -195,8 +195,9 @@ def dead_patterns(lists: dict[str, list[str]], labels: list[str]) -> list[tuple[
     overruled by `exclude` was reported as matching nothing while the same
     report listed that project two sections earlier under "IN `keep` BUT
     EXCLUDED ANYWAY". Live on the operator's corpus: `Network-Plan` matches
-    `fonzarelli-.claude-...-Network-Plan-memory`, which `fonzarelli-` overrules.
-    It was the ONLY thing the daily check reported, and it was false.
+    `<local-username>-.claude-...-Network-Plan-memory`, which the local-username
+    exclude pattern overrules. It was the ONLY thing the daily check reported,
+    and it was false.
 
     Every list is checked, `include` included: an allowlist pattern can rot the
     same way and nothing else looks at it.
