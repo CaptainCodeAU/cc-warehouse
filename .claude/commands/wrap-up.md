@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git (never memory, never a time window), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them, checks OPENING-PROMPT.md's "Next task" still matches reality and routes anything narrative to `harness/HANDOFFS.md` instead, scans the staged diff for a personal path/username before committing, then stages by name, commits, pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Manual only.
+description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from a captured session-start commit rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), checks OPENING-PROMPT.md's "Next task" still matches reality and routes anything narrative to `harness/HANDOFFS.md` instead, scans this session's own actual commits (not just whatever happens to be staged - this project commits continuously, so staging is usually empty by the time this runs) for a personal path/username before committing, then stages by name, commits, pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Manual only.
 argument-hint: "[all(default) | check(report-only)]"
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
@@ -60,18 +60,42 @@ nothing is expected, not a finding - do not report it as one.
 
 ## Step 1 - the touched set, derived from git alone
 
+**First, fix SESSION_START_REF** - the commit `HEAD` was at when this conversation began.
+Claude Code shows a "Recent commits" block at session start; that top commit is it. Note it
+now, before running anything else here. This matters because this machine routinely runs
+several sessions against the same checkout at once (see `python-process-resource-limits`
+memory) - a concurrent session can commit AND push while you're still working, which makes
+`@{u}..HEAD` read **empty even after this session did real work**, because someone else's
+push already caught the upstream comparison up. Measured live 2026-09-06: a session's own
+`@{u}..HEAD` showed nothing partway through its work for exactly this reason, and the only
+thing that still showed the real picture was comparing against the remembered start commit.
+If you didn't note SESSION_START_REF at the time and can't recover it (context got
+summarized, say), fall back to the earliest commit in the log you can actually recognize as
+this conversation's own work, and say in the Step 9 report that you did.
+
 ```bash
-git status --short                          # uncommitted, including untracked
-git log --oneline @{u}..HEAD 2>/dev/null    # committed this sitting, not yet pushed
-git diff --name-only @{u}...HEAD 2>/dev/null
+git status --short                              # uncommitted, including untracked
+git log --oneline @{u}..HEAD 2>/dev/null        # unpushed right now - can be EMPTY even
+                                                 # after real work; see above, don't trust
+                                                 # this alone
+git log --oneline SESSION_START_REF..HEAD       # everything since this session began,
+                                                 # yours and any concurrent session's alike
+git diff --name-only SESSION_START_REF...HEAD 2>/dev/null
 git describe --tags --abbrev=0 2>/dev/null
 ```
 
-If `@{u}` fails (no upstream), use `git log --oneline origin/master..HEAD`. Union all of it into
-one list - that is the real touched set for every step below, never what you remember editing.
+If `@{u}` fails (no upstream), use `git log --oneline origin/master..HEAD`. Read
+`SESSION_START_REF..HEAD` as a union, then split it: commits you actually made this
+conversation are the real touched set for every step below. Commits you didn't - a
+concurrent session's own, already committed and pushed - are not yours to fold in or
+re-document; identify whose they look like (a commit message, a same-day `HANDOFFS.md`
+entry) and say so plainly in Step 9 rather than silently absorbing or silently ignoring them.
+Never substitute "what I remember editing" for what git actually shows.
 
-🛑 **A dirty tree you don't recognise as your own work is a STOP.** Say so and ask; do not fold
-it into your commit and do not route around it.
+🛑 **Uncommitted changes you don't recognise as your own work are a STOP.** Say so and ask;
+do not fold them into your commit and do not route around them. A concurrent session's own
+work that is already cleanly committed and pushed is a different thing - not a stop, just
+something to name correctly in the report instead of claiming or re-doing it.
 
 ---
 
@@ -137,6 +161,12 @@ about HOW the work went (not what was decided), does `contract/HARNESS.md` secti
 note that section has been informally superseded by `harness/HANDOFFS.md` since 2026-08-20, so
 check which one this project is actually using before assuming the older file is still live.
 
+**Not every real decision belongs in either file.** A decision that's genuinely cross-project,
+purely a process/collaboration call, or otherwise outside `ccw`'s own internal design doesn't
+force-fit into `DESIGN.md` section 15 just because a decision was made. Recording it in
+`harness/HANDOFFS.md` instead (Step 5) is a legitimate outcome - state plainly that's the call
+you made and why, rather than silently picking a home or leaving it in neither.
+
 Ticket file untouched but genuinely stale for OTHER reasons (a status line contradicted by what
 this session found) - fix it in place. A ticket that says something false is worse than one that
 says nothing.
@@ -190,14 +220,33 @@ This is a **public** repo. `CLAUDE.md`'s standing rule is no personal data in it
 username, machine name, or personal path. Compute the pattern fresh each run rather than typing
 it into this file (which would itself leak into a public repo):
 
+**Scan this session's actual commits, not just what happens to be staged.** This project's own
+standing rule is to commit and push continuously as work happens (`commit-push-tag-workflow`
+memory) - which means by the time this step runs, staging is very often empty, not because
+nothing changed but because it was already committed minutes ago. `git diff --cached` alone
+then scans nothing and still prints a clean result, which reads as a pass when nothing was
+actually checked. Measured live 2026-09-06: a session ran this step with an empty stage and had
+to improvise a scan against its own commits by hand because the documented command found no
+work to check. Union both:
+
 ```bash
 # ^\+[^+] only matches ADDED lines (not the +++ file header, not removed/context lines) -
 # this checks what's actually being introduced, not pre-existing content the diff shows for context.
+git diff SESSION_START_REF..HEAD -- . ':!*.lock' | grep -E '^\+[^+]' | grep -F "$(whoami)" \
+  && echo "STOP: username found in an added line"
+git diff SESSION_START_REF..HEAD -- . ':!*.lock' | grep -E '^\+[^+]' | grep -E "/Users/[A-Za-z0-9_.-]+/" \
+  && echo "STOP: a real macOS home path found in an added line"
+# Plus whatever is still staged and not yet in a commit:
 git diff --cached -- . ':!*.lock' | grep -E '^\+[^+]' | grep -F "$(whoami)" \
   && echo "STOP: username found in an added line"
 git diff --cached -- . ':!*.lock' | grep -E '^\+[^+]' | grep -E "/Users/[A-Za-z0-9_.-]+/" \
   && echo "STOP: a real macOS home path found in an added line"
 ```
+
+If a leak turns up in an already-pushed commit rather than something still staged, fixing the
+source line and making a new commit isn't enough by itself - the bad line is already public in
+history. Say so explicitly and ask the operator how they want it handled, rather than treating a
+follow-up commit as having resolved it.
 
 The test suite's own sanctioned placeholder is `/home/alice` (a Linux-style example path used
 inside test fixtures, per `CLAUDE.md`) - it never matches the `/Users/...` pattern above, so it
