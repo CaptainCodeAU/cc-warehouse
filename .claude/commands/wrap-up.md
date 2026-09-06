@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from a captured session-start commit rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), checks OPENING-PROMPT.md's "Next task" still matches reality and routes anything narrative to `harness/HANDOFFS.md` instead, scans this session's own actual commits (not just whatever happens to be staged - this project commits continuously, so staging is usually empty by the time this runs) for a personal path/username before committing, then stages by name, commits, pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Manual only.
+description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from a captured session-start commit rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), checks OPENING-PROMPT.md's "Next task" still matches reality and routes anything narrative to `harness/HANDOFFS.md` instead, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - before committing, then stages by name, commits, pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Manual only.
 argument-hint: "[all(default) | check(report-only)]"
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
@@ -220,33 +220,39 @@ This is a **public** repo. `CLAUDE.md`'s standing rule is no personal data in it
 username, machine name, or personal path. Compute the pattern fresh each run rather than typing
 it into this file (which would itself leak into a public repo):
 
-**Scan this session's actual commits, not just what happens to be staged.** This project's own
-standing rule is to commit and push continuously as work happens (`commit-push-tag-workflow`
-memory) - which means by the time this step runs, staging is very often empty, not because
-nothing changed but because it was already committed minutes ago. `git diff --cached` alone
-then scans nothing and still prints a clean result, which reads as a pass when nothing was
-actually checked. Measured live 2026-09-06: a session ran this step with an empty stage and had
-to improvise a scan against its own commits by hand because the documented command found no
-work to check. Union both:
+**Use `git-leak-scan --since SESSION_START_REF`, the machine's own real audit tool - do not
+hand-roll a grep.** An earlier version of this step used two ad-hoc `grep` patterns
+(username, `/Users/` path) against `git diff --cached`. That was wrong twice over: this
+project's own standing rule is to commit and push continuously (`commit-push-tag-workflow`
+memory), so by the time this step runs staging is almost always empty - the scan checked
+nothing and still printed clean, which reads as a pass when nothing was tested. It also only
+ever covered two leak categories. `git-leak-scan` (on PATH at `~/.local/bin/git-leak-scan`)
+is this machine's real, already-battle-tested scanner: it's the SAME tool already wired into
+this repo's pre-commit hook (`~/.config/git/hooks/_audit-chain`, confirmed active - check
+`git config leakscan.disable` reads unset), so every individual commit this session made was
+already checked once at commit time. This step is the belt-and-suspenders pass over the
+WHOLE session's range in one shot, catching anything a `--no-verify` or
+`LEAK_SCAN_DISABLE=1` commit slipped past, and it checks far more than username/path: GitHub/
+Slack/AWS/OpenAI-shaped tokens, PEM private keys, and phone numbers.
 
 ```bash
-# ^\+[^+] only matches ADDED lines (not the +++ file header, not removed/context lines) -
-# this checks what's actually being introduced, not pre-existing content the diff shows for context.
+git-leak-scan --since SESSION_START_REF
+```
+
+Read its own exit codes, don't guess: **0** clean, **1** a real BLOCK-category hit (stop, do
+not commit/push past it - if it's already in a pushed commit, say so explicitly and ask the
+operator, a follow-up commit does not un-publish it), **2** it refused to scan at all (an
+empty range, or bad usage - treat this the same as a failure, never as a pass). If
+`git-leak-scan` isn't on PATH (a different machine, a fresh checkout), fall back to the two
+`grep` patterns below against `git diff SESSION_START_REF..HEAD` and say plainly in the
+report that the fallback ran, since its coverage is much narrower:
+
+```bash
 git diff SESSION_START_REF..HEAD -- . ':!*.lock' | grep -E '^\+[^+]' | grep -F "$(whoami)" \
   && echo "STOP: username found in an added line"
 git diff SESSION_START_REF..HEAD -- . ':!*.lock' | grep -E '^\+[^+]' | grep -E "/Users/[A-Za-z0-9_.-]+/" \
   && echo "STOP: a real macOS home path found in an added line"
-# Plus whatever is still staged and not yet in a commit:
-git diff --cached -- . ':!*.lock' | grep -E '^\+[^+]' | grep -F "$(whoami)" \
-  && echo "STOP: username found in an added line"
-git diff --cached -- . ':!*.lock' | grep -E '^\+[^+]' | grep -E "/Users/[A-Za-z0-9_.-]+/" \
-  && echo "STOP: a real macOS home path found in an added line"
 ```
-
-If a leak turns up in an already-pushed commit rather than something still staged, fixing the
-source line and making a new commit isn't enough by itself - the bad line is already public in
-history. Say so explicitly and ask the operator how they want it handled, rather than treating a
-follow-up commit as having resolved it.
 
 The test suite's own sanctioned placeholder is `/home/alice` (a Linux-style example path used
 inside test fixtures, per `CLAUDE.md`) - it never matches the `/Users/...` pattern above, so it
