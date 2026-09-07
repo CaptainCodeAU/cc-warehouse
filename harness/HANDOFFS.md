@@ -21,6 +21,80 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-seventh handoff, 2026-09-07 (a spoken false alarm traced to the watcher, not to ccw)
+
+**The report.** The operator heard an error spoken at session start saying cc-warehouse capture had
+failed, and asked what the logs said. They were right to doubt it: capture was working perfectly the
+whole time.
+
+**What the logs actually said.** `~/.claude/logs/ccw-hook.log` held exactly two error lines, at
+02:55:10Z and 02:56:35Z, both `TimeoutExpired` after 15 seconds. Every `ccw-hook` line around them
+said `ok`, the most recent capture having taken 24ms. Run by hand, `ccw doctor` returned all 8
+checks green in 2.75s (frozen install) and 1.92s (venv copy), 3.39s each under 4x concurrency. No
+lock was held, no ccw process was running, and all three launchd jobs reported `last exit code = 0`.
+
+**Why it was slow, measured rather than assumed.** `ccw doctor` walks `~/.claude/projects` to count
+uncaptured sessions: 27,277 files, 4.2 GB. Between 12:30 and 12:45 local, `ccw-sweep` wrote 486
+archive folders clearing an overnight backlog that had reached 453 uncaptured sessions, and 30
+session transcripts were being appended between 12:45 and 13:00. Doctor lost that race twice. NOT
+measured and stated as such: the exact CPU/IO state at 02:55:10, which macOS does not retain.
+
+**The real defect, and it was in the alarm.** `ccw-freshness-check.py` had two failure paths treated
+oppositely. A doctor that RAN and said FAIL incremented a streak and escalated politely, clearing
+when fixed. A doctor that could not be ASKED hit an `except` branch that called `report("error")`
+immediately, which is the only status `report()` says out loud, with the raw Python exception text,
+on the FIRST occurrence. It also never touched the streak counter, so a permanently unreachable
+doctor could never have escalated past that one flat line, and it `return 0`-ed early, silently
+skipping `broken_jobs()`, so the launchd job watch stopped running at exactly the moment
+things looked worst.
+Three defects, one branch. The file argued against itself: `broken_jobs()`'s own docstring, three
+functions further down, says "absence of evidence is not evidence of failure here".
+
+**Fixed, oracle tests first.** A `TimeoutExpired`/`OSError` now sets an `unreachable` string and
+falls through to the same streak path a failed verdict uses, with its own wording that says the
+check got no answer rather than claiming capture failed. Full detail is still logged, at a status
+`report()` does not speak. `_DOCTOR_TIMEOUT = 45` replaces the inline 15.
+
+**A review of that fix found a worse bug in it, and this is the part worth reading.** The four
+`/simplify` agents were pointed at the diff; the altitude agent found that `hooks/hooks.json`
+declares `"timeout": 20` for SessionStart, so Claude Code kills the whole hook process at 20s. An
+inner budget of 45s could therefore never fire on its own terms: the hard kill lands first, skipping
+the graceful except branch, the log line, the streak write and `broken_jobs()`. That is the same
+silent-early-exit shape the fix existed to close, reintroduced one layer up, and it was a regression
+against the old 15s, which used to fire cleanly with 5s of slack. The sibling hook in the same
+plugin already had this right (SessionEnd outer 45, `ccw-hook.py` inner 40). Verified from source
+before accepting it. Closed by raising the outer budget to 55, naming `_JOB_TIMEOUT = 2` (all three
+`launchctl print` calls together measure 0.03s, so 5s each was 166x the cost and now stacks on the
+doctor budget), and pinning the relationship with
+`test_the_freshness_hook_budgets_fit_inside_its_own_outer_kill`: 45 + 3*2 = 51s under a 55s kill,
+4s margin. The two files cannot see each other, so only a test can hold them together.
+
+**Also from that review:** the copy-pasted `_WARN_AT`/`_ALERT_AT` ladder in `freshness_message` was
+collapsed into one `_tier()` helper, and the identical urlopen stub that had grown independently in
+both hook test files was hoisted to `conftest.py` as `UrlopenStub`.
+
+**Gates:** ruff clean, pyright 0 errors (strict), 1,234 tests pass. Live: the real hook against the
+real `ccw doctor` exits 0 in 1.89s logging `status: ok`, silent; a sandboxed-HOME run with an
+unreadable binary proves the new path end to end (status `unreachable` logged with full detail,
+status `warn` with the plain-English message, `consecutive_broken` reaching 1, nothing spoken).
+
+**Two things found and NOT fixed, both reported to the operator rather than acted on.**
+(1) `/usr/bin/python3` on this Mac is 3.9.6 and this hook has needed 3.10+ since long before today.
+Verified by running the COMMITTED copy from HEAD under it: identical `TypeError` on PEP 604 syntax.
+Pre-existing, out of this session's scope, and harmless in practice only because Claude Code's hook
+environment resolves a newer python3.
+(2) `ccw-watch` (the sticky RED banner, in `fifty-shades-of-dotfiles`, not this repo) has its own
+20s budget, and it reads `CCW_WATCH_DOCTOR_TIMEOUT` from the environment, so it can be given the
+same headroom without editing that repo at all. Not set; the operator's call.
+
+**What is NOT done:** the fix is in this repo but NOT yet in what runs. The live plugin is a cached
+copy at `~/.claude/plugins/cache/cc-warehouse/cc-capture/<sha>`, built from a git clone of the
+GitHub remote. The operator must run a `/plugin` update after this is pushed, exactly as the
+twenty-second handoff's "hook started line waits on /plugin update" note records for the same
+reason.
+
+---
+
 ### Twenty-fifth handoff, 2026-09-06 (cross-machine audit; ccw provisioning design with fifty-shades-of-dotfiles; agent-setup-contract.md added)
 
 Ran concurrently with the twenty-fourth handoff's session, same day, different track: this
