@@ -20,12 +20,7 @@ from types import ModuleType
 
 import pytest
 
-from conftest import load_hook_module
-
-
-class _Closer:
-    def close(self) -> None:
-        return None
+from conftest import UrlopenStub, load_hook_module
 
 
 def _lines(log: Path) -> list[dict[str, object]]:
@@ -84,9 +79,9 @@ def test_started_does_not_raise_the_voice_alert(
     module, _ = hook
     calls: list[str] = []
 
-    def fake_urlopen(*args: object, **kwargs: object) -> _Closer:
+    def fake_urlopen(*args: object, **kwargs: object) -> UrlopenStub:
         calls.append("voice")
-        return _Closer()
+        return UrlopenStub()
 
     monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
     _run(module, monkeypatch, PAYLOAD)

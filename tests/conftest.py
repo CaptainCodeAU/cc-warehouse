@@ -611,6 +611,17 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
 HOOKS_DIR = REPO_ROOT / "plugins" / "cc-capture" / "hooks"
 
 
+class UrlopenStub:
+    """Stands in for the object `urllib.request.urlopen` returns. Both hooks
+    report trouble with `urlopen(request, timeout=3).close()` and nothing
+    else, so `.close()` is the whole contract. Shared rather than copied:
+    the two hook test files each grew their own identical copy, and if a hook
+    ever starts reading the response body they must not drift apart."""
+
+    def close(self) -> None:
+        return None
+
+
 def load_hook_module(name: str, filename: str) -> ModuleType:
     import importlib.util
 
