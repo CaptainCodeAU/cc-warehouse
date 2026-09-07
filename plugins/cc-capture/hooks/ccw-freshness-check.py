@@ -142,6 +142,18 @@ def report(status: str, detail: str) -> None:
     record = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": "ccw-freshness-check",
+        # WHICH INTERPRETER RAN. These hooks do not choose their own: hooks.json
+        # invokes them as a bare `python3` and the launch context's PATH decides.
+        # Measured 2026-09-07: `zsh -lc` on this machine already resolves
+        # /usr/bin/python3 3.9.6, which is what a launchd job or cron gets, while
+        # the interactive PATH resolves something newer. uv ships only
+        # version-suffixed shims (python3.12/.13/.14) and no bare `python3`, so
+        # the deliberately chosen interpreter is the one this name cannot reach.
+        # The code no longer CARES which one runs, but the log should still say,
+        # because the incident that started all this was invisible in every
+        # instrument. Removing a failure class and recording what happened are
+        # two different jobs.
+        "python": f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]} {sys.executable}",
         "status": status,
         "detail": detail,
     }

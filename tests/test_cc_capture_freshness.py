@@ -585,3 +585,69 @@ def test_no_hook_uses_syntax_no_future_import_can_defer() -> None:
         if _MATCH_STMT.search(path.read_text(encoding="utf-8"))
     ]
     assert offenders == [], f"3.10+ syntax a __future__ import cannot defer: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# EXECUTE the hooks under the oldest python3 on the box, rather than reasoning
+# about which syntax is safe. The static fences above pin the __future__ import
+# and reject match/case, and they were NOT ENOUGH: `from datetime import UTC` is
+# an ordinary import of a name that only exists on 3.11+, so it passes every
+# static check in this file and still kills the file at import time.
+#
+# That shipped. `83b7e73` claimed BOTH hooks survived 3.9.6 having tested only
+# ccw-freshness-check.py, which uses `timezone.utc`, and generalised to
+# ccw-hook.py, which did not. Generalising a shape from one sample is a lesson
+# this repo already has in contract/HARNESS.md, and it still happened.
+#
+# So this runs the real files under a real old interpreter. It skips rather than
+# fails where no old python exists (Linux CI often ships only a new one), which
+# means it is a NET, not a proof - the static fences stay for that reason.
+# ---------------------------------------------------------------------------
+
+
+def _oldest_python() -> tuple[str, tuple[int, int]] | None:
+    """A python3 on this box older than the hooks' floor, or None. macOS always
+    has /usr/bin/python3 and it is usually years behind."""
+    for path in ("/usr/bin/python3", "/usr/local/bin/python3"):
+        if not Path(path).is_file():
+            continue
+        probe = subprocess.run(
+            [path, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if probe.returncode != 0:
+            continue
+        try:
+            major, minor = (int(n) for n in probe.stdout.split())
+        except ValueError:
+            continue
+        if (major, minor) < (3, 10):
+            return path, (major, minor)
+    return None
+
+
+def test_every_hook_imports_cleanly_under_an_old_python3() -> None:
+    found = _oldest_python()
+    if found is None:
+        pytest.skip("no python3 older than 3.10 on this machine to test against")
+    interpreter, version = found
+    offenders: list[str] = []
+    for path in sorted(HOOKS_DIR.glob("*.py")):
+        result = subprocess.run(
+            [interpreter, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env={"CCW_SKIP_HOOK": "1", "HOME": "/tmp", "PATH": "/usr/bin:/bin"},
+            stdin=subprocess.DEVNULL,
+        )
+        if "Traceback" in result.stderr or result.returncode != 0:
+            first = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "?"
+            offenders.append(f"{path.name}: {first}")
+    assert offenders == [], (
+        f"hooks that die under python {version[0]}.{version[1]} ({interpreter}): {offenders}"
+    )
