@@ -32,7 +32,9 @@ entries / 911 MB whose bytes are in no JSONL, `history.jsonl` is 18,295 rows tha
 carry a `sessionId`, and `paste-cache/` is reachable only by joining through it, where
 272 of 2,186 referenced hashes ARE ALREADY GONE. Two operator rulings are recorded in the
 ticket (archive all of file-history; `~/.claude/MEMORY/` becomes ticket 40, not 39).
-Build slices 39a-39g in order, oracle tests first; 39b stands alone if the rest stalls.
+**Two operator rulings, 2026-09-07:** ticket 38 ships FIRST and UNCHANGED (not merged,
+not rescoped), and 39 STARTS AT SLICE 39b, not 39a, because the `file-history/` mirror is
+911 MB of protection that needs none of the `history.jsonl` work. Oracle tests first.
 
 **Ticket 37 Part B row 1 IS LIVE** (the check handoff 22 asked for): the newest plugin
 cache copy `~/.claude/plugins/cache/cc-warehouse/cc-capture/2f374c2eddf9/hooks/ccw-hook.py`

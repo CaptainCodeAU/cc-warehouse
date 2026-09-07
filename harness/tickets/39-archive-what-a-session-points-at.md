@@ -9,8 +9,21 @@ the tracked home.
 notice/doctor/alert scaffolding. Building 39 first would create a second, incompatible
 copy of exactly that scaffolding, which is the real duplication risk.
 
-The execution session reads this file, then builds slices 39a-39g in order, oracle tests
-first.
+The execution session reads this file, then builds the slices below, oracle tests first.
+
+**TWO OPERATOR RULINGS, 2026-09-07, recorded so they are not re-decided:**
+
+1. **Ticket 38 ships FIRST and UNCHANGED.** It is not merged into 39, not reopened, and
+   not rescoped to absorb any of this. Its approval and its red team were sized to its
+   own attack table, and that is worth more than the convenience of one ticket.
+2. **Start 39 at slice 39b, not 39a.** 39b is the `file-history/` mirror: 911 MB of
+   irreplaceable protection that needs nothing from the `history.jsonl` work. 39a's
+   census is bookkeeping and can ride alongside rather than gate the first real slice.
+   This is safe because 39b's own risk table already handles the unknown it would have
+   waited on: the ~5% of `file-history/` dirs that are not bare session uuids are
+   REPORTED AS ANOMALIES by construction, so 39b never needed to know in advance what
+   they are. **Still owed, just not as a blocker: 39a's DESIGN 15 entry** recording
+   catalog-driven discovery and MEMORY's exclusion.
 
 ---
 
@@ -157,7 +170,7 @@ without the keys, and **never starts a problem string with `missing `**
 | Slice | Delivers | Depends on |
 |---|---|---|
 | **39a** | Census + rulings: what the 5% non-uuid `file-history/` dirs are, `todos/` naming, DESIGN 15 entry recording catalog-driven discovery and MEMORY's exclusion | **ticket 38 shipped** |
-| **39b** | **FIRST VALUE SLICE: `file-history/` mirror** (+ `todos/` free). 911 MB protected, mechanically near-identical to 38's copier, **zero dependency** on the other items | 39a |
+| **39b** | **START HERE (operator ruling). FIRST VALUE SLICE: `file-history/` mirror** (+ `todos/` free). 911 MB protected, mechanically near-identical to 38's copier, **zero dependency** on the other items | ticket 38 only |
 | **39c** | `history.jsonl` whole-file content-addressed snapshot + doctor staleness line. Independent value | 39a |
 | **39d** | Per-session split into `prompts.jsonl`, verified against 39c's snapshot | 39c |
 | **39e** | paste-cache gather, reusing 39d's in-memory sessionId index rather than re-parsing. A shared hash lands under every session that referenced it | 39d |
