@@ -198,6 +198,20 @@ were built by an OLDER renderer" apart from "the payload and config haven't chan
 distinction `source_hash` and `config` alone cannot make. Chosen over a hand-maintained
 format counter because a version nobody has to remember to bump cannot be forgotten; it
 costs one full rebuild after each release, which is the run an operator would want anyway.
+A sixth and seventh top-level key, `tool_results` and `workflows` (ticket 38, 2026-09-08),
+list this session's COPIED SIDECAR FILES as `{name, sha256, bytes}`, where `name` is the
+path relative to the sidecar directory in POSIX form so the real `pdf-<uuid>/page-NN.jpg`
+nesting survives the record. Same argument as `subagents`, one level out: without them a
+deleted tool result is undetectable, and 65.4 MB of the live corpus's `tool-results/`
+exists in no JSONL at all, so a lost one is lost outright. Both are always present and
+`[]` when there are none, for the same "none versus predates the feature" reason (F6).
+They are NEW TOP-LEVEL KEYS, never an amendment to the `loss` block: a file that was
+copied is not a file that was lost, the same distinction ticket 18 had to draw for
+`unrecognised`. What was NOT copied is recorded elsewhere on purpose - in a
+`sidecars.json` NOTICE file beside the manifest rather than in the manifest itself,
+because the manifest is re-rendered minutes later by `build` or the detached render
+child, neither of which can see the source directory, and because roughly 617 hidden
+sessions have no manifest at all.
 
 **Entry-type coverage (principal rulings 2026-07-23).** A field census of the live
 JSONL format found 13 entry types where the render consumed only `user`/`assistant`.

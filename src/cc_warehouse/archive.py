@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import __version__, build, catalog, parser, render, store
+from cc_warehouse import __version__, build, catalog, parser, render, sidecars, store
 from cc_warehouse.config import Config
 from cc_warehouse.parser import parse_session
 
@@ -189,8 +189,49 @@ def is_session(data: bytes) -> bool:
 # warehouse, so this is a net for a case that does not exist yet - which is
 # exactly when it is cheap to build and expensive to retrofit.
 ORPHAN_LABEL = "_orphaned-subagents"
-SUBAGENTS_DIR = "subagents"
+# Sourced from `sidecars`, not spelled again here (R9). That module owns the list
+# of what may sit beside a transcript, and a second spelling of any of these
+# names is a second chance for the two to drift.
+SUBAGENTS_DIR = sidecars.SUBAGENTS_DIR
+TOOL_RESULTS_DIR = sidecars.TOOL_RESULTS_DIR
+WORKFLOWS_DIR = sidecars.WORKFLOWS_DIR
 _META = "meta.json"
+
+# The per-session anomaly record (ticket 38), and it is a NOTICE FILE rather
+# than a manifest key on purpose. The manifest is re-rendered minutes later by
+# `build` or the detached render child, neither of which can see the source
+# directory, so a manifest key would freeze at whatever the copier last saw.
+# About 617 hidden sessions have no manifest at all (28,787 JSONL against 28,170
+# manifests), and a hidden session is exactly the kind most likely to be
+# forgotten. Deliberately NOT in GENERATED_NAMES: it is not regenerable from the
+# payload, not required for a folder to be complete, and not the rebuild
+# module's to delete (R4).
+SIDECAR_NOTICE = "sidecars.json"
+
+# Where a sidecar dir whose transcript is nowhere goes (ruling (d)), under
+# NOT_SESSIONS_LABEL, which build.RESERVED_LABELS already keeps out of
+# walk_folders.
+STRANDED_DIR = "stranded-sidecars"
+_STRANDED_NOTE = "stranded.json"
+
+# Manifest key per sidecar, and the noun `verify_folder` uses for it. Both are
+# top-level manifest keys per DESIGN 6, never a `loss` amendment: a copied file
+# is not a lost one, which is the same distinction ticket 18's `unrecognised`
+# key had to make.
+SIDECAR_MANIFEST_KEYS = {TOOL_RESULTS_DIR: "tool_results", WORKFLOWS_DIR: "workflows"}
+_SIDECAR_NOUNS = {TOOL_RESULTS_DIR: "tool-result", WORKFLOWS_DIR: "workflow file"}
+
+# THE FENCE the operator asked for, in data form: every name `sidecars` says may
+# sit beside a transcript maps to the function that copies it, and the oracle
+# suite asserts both that the key set matches exactly and that every named
+# function exists. A name acknowledged without a copier is the F6 shape (parses,
+# is tested, does nothing); a copier for a name nobody listed is a sibling that
+# never gets flagged when it changes shape.
+COPIERS = {
+    SUBAGENTS_DIR: "write_subagent",
+    TOOL_RESULTS_DIR: "copy_sidecar_dir",
+    WORKFLOWS_DIR: "copy_sidecar_dir",
+}
 
 # Where a payload that is NOT a session lives (ticket 25.6). Reserved in
 # build.RESERVED_LABELS, so walk_folders never yields its children as session
@@ -241,6 +282,7 @@ def write_subagent(
     timezone: str,
     *,
     meta: bytes | None = None,
+    companions: Sequence[tuple[str, bytes]] = (),
 ) -> SubagentResult:
     """Write one sub-agent transcript inside the session that spawned it.
 
@@ -315,6 +357,12 @@ def write_subagent(
     # written, like the JSONL above. Both used to be rewritten on every call.
     if meta is not None:
         wrote |= store.write_if_changed(directory / _META, meta)
+    # Ticket 38: `agent-<id>.forked-skill.json` and its `.marker.json` sibling,
+    # 10 of each in the live tree and copied by nothing until now. Same argument
+    # as meta.json - they are the only record of what the agent was set up to be,
+    # so they travel with the payload rather than being left behind.
+    for name, payload in companions:
+        wrote |= store.write_if_changed(directory / Path(name).name, payload)
     if orphaned:
         note = {
             "parent_session_uuid": meta_parsed.session_uuid,
@@ -374,6 +422,205 @@ def subagent_records(session_dir: Path) -> list[dict[str, object]]:
                 "bytes": len(payload),
             })
     return out
+
+
+@dataclass(frozen=True)
+class SidecarCopy:
+    """What one mirror pass did. `refused` and `errors` carry relative POSIX
+    paths so a report or a log line can name the exact file (R10/F6); a count
+    alone cannot be checked against the tree afterwards."""
+
+    written: int = 0
+    unchanged: int = 0
+    refused: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+    @property
+    def touched(self) -> int:
+        return self.written + self.unchanged
+
+
+def write_sidecar_file(
+    session_dir: Path, sidecar: str, relative: Path, data: bytes
+) -> str:
+    """Place one copied sidecar file under `<session>/<sidecar>/<relative>`.
+
+    THE LAYOUT IS A MIRROR, not a rename, and two things force it. The JSONL's
+    own `persistedOutputPath` resolves by basename, so a renamed copy stops
+    answering the question a reader actually has; and the obvious alternative,
+    a `<stamp>_` prefix like sub-agent folders get, would have to come from the
+    file's mtime, which R12 forbids as a source of displayed time.
+
+    Goes through `store.write_if_absent`, so a file already there with different
+    bytes is refused rather than overwritten (R5). The caller records the
+    refusal; this returns it.
+    """
+    return _write_one(session_dir / sidecar, relative, data)
+
+
+def _write_one(destination_dir: Path, relative: Path, data: bytes) -> str:
+    """The single-file half of every sidecar write, guard included.
+
+    The guard is not theatre: `relative` reaches here from a directory walk of a
+    tree this project does not own, and a path that climbs out of the session
+    folder would write source-class data somewhere nobody would look for it
+    (F9). It refuses rather than normalising, because a caller that produced
+    such a path has a bug worth seeing.
+    """
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"a sidecar path may not escape its session folder: {relative}")
+    target = destination_dir / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return store.write_if_absent(target, data)
+
+
+def _mirror_tree(destination: Path, source_dir: Path) -> SidecarCopy:
+    """Copy every file under `source_dir` to the same relative path under
+    `destination`, skipping ignored names at any depth.
+
+    RECURSES, and the real corpus is why: `pdf-<uuid>/page-NN.jpg` (72 files in
+    19 dirs) is referenced by no JSONL at all, so a top-level listing would both
+    flatten the structure and drop the only record of it.
+
+    Per-file failures are collected and the pass continues (R10). One unreadable
+    file must never cost a capture the other 2,083.
+    """
+    try:
+        candidates = sorted(source_dir.rglob("*"))
+    except OSError as exc:
+        return SidecarCopy(errors=(f"{source_dir.name}: {type(exc).__name__}: {exc}",))
+
+    written = unchanged = 0
+    refused: list[str] = []
+    errors: list[str] = []
+    for source in candidates:
+        relative = source.relative_to(source_dir)
+        if any(part in sidecars.IGNORED for part in relative.parts):
+            continue
+        try:
+            if not source.is_file():
+                continue
+            outcome = _write_one(destination, relative, source.read_bytes())
+        except (OSError, ValueError) as exc:  # noqa: PERF203 - R10: name it and carry on
+            errors.append(f"{relative.as_posix()}: {type(exc).__name__}: {exc}")
+            continue
+        if outcome == "wrote":
+            written += 1
+        elif outcome == "unchanged":
+            unchanged += 1
+        else:
+            refused.append(relative.as_posix())
+    return SidecarCopy(written, unchanged, tuple(refused), tuple(errors))
+
+
+def copy_sidecar_dir(session_dir: Path, sidecar: str, source_dir: Path) -> SidecarCopy:
+    """Mirror one whole sidecar directory into its session's archive folder.
+
+    The generic copier ticket 38 is built around: it matches no file names at
+    all, so a new shape inside `tool-results/` is archived rather than lost. New
+    name shapes appear often (`toolu_<id>.txt` gave way to `[a-z0-9]{9}.txt`,
+    then `mcp-<server>-<tool>-<ts>.txt`), which is exactly why matching names
+    here would have been the wrong instinct.
+    """
+    if sidecar not in sidecars.SESSION_SIDECARS:
+        raise ValueError(f"not a known sidecar name: {sidecar!r}")
+    return _mirror_tree(session_dir / sidecar, source_dir)
+
+
+def sidecar_records(session_dir: Path, sidecar: str) -> list[dict[str, object]]:
+    """This session's copied sidecar files, as the manifest records them.
+
+    The twin of `subagent_records` and it exists for the same reason: without
+    it, a deleted tool result is UNDETECTABLE. Verify would see five valid
+    generated files, a matching source hash and a correct folder name, and
+    report clean. `name` is the path RELATIVE to the sidecar dir, in POSIX form,
+    so the nesting survives the record too.
+    """
+    root = session_dir / sidecar
+    if not root.is_dir():
+        return []
+    out: list[dict[str, object]] = []
+    for path in root.rglob("*"):
+        relative = path.relative_to(root)
+        if any(part in sidecars.IGNORED for part in relative.parts) or not path.is_file():
+            continue
+        payload = path.read_bytes()
+        out.append({
+            "name": relative.as_posix(),
+            "sha256": store.sha256_hex(payload),
+            "bytes": len(payload),
+        })
+    return sorted(out, key=lambda record: str(record["name"]))
+
+
+def write_sidecar_notice(
+    session_dir: Path, scan: sidecars.SidecarScan, refused: Sequence[str]
+) -> bool:
+    """Record what was found beside this session that nothing copied. Returns
+    True when the file changed, which is what the callers use to decide whether
+    to log and alert.
+
+    NO TIMESTAMP, and that is load-bearing rather than an omission. A body that
+    differs on every run can never be skipped by `write_if_changed`, so every
+    session folder would carry today's mtime whatever day its session actually
+    happened - which is ticket 37 Part A, in a new place.
+
+    A clean session gets NO FILE, so 22,000 folders do not each gain an empty
+    JSON. But a session that once had an anomaly keeps its notice and has it
+    rewritten to empty lists when the anomaly goes: this module has no deletion
+    primitive (R4), and an empty notice is better evidence than a missing one
+    anyway. It says "checked, clean now"; absence says nothing at all.
+    """
+    body: dict[str, object] = {
+        "schema": 1,
+        "unarchived": list(scan.unknown),
+        "unknown_inside_subagents": list(scan.unknown_inside_subagents),
+        "refused": sorted(refused),
+    }
+    path = session_dir / SIDECAR_NOTICE
+    if not scan.has_anomaly and not refused and not path.is_file():
+        return False
+    payload = json.dumps(body, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    return store.write_if_changed(path, payload)
+
+
+def read_sidecar_notice(session_dir: Path) -> dict[str, object] | None:
+    """The notice as `ccw doctor` and `ccw status` read it, or None when a folder
+    has none. Any doubt (unreadable, not an object) reads as None: a health check
+    must not turn a malformed file into a second kind of alarm."""
+    try:
+        parsed = json.loads((session_dir / SIDECAR_NOTICE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return cast(dict[str, object], parsed) if isinstance(parsed, dict) else None
+
+
+def write_stranded_sidecars(archive_root: Path, source_dir: Path) -> SidecarCopy:
+    """A sidecar dir whose transcript is nowhere, copied under `_not-sessions/`.
+
+    Ruling (d), 2026-09-06. 91 such dirs exist in the live source tree and 39
+    hold `tool-results/`, 0.9 MB in total. Nothing else can carry them: the
+    archive is organised by session, and their session is not there.
+
+    THE DIR NAME IS A LABEL, NEVER AN IDENTITY (F4). It looks like a uuid and it
+    is not being trusted as one - the entire reason these are stranded is that
+    the file which would have proved the identity is absent. `stranded.json`
+    records the name and the reason so a later reader is not left guessing why a
+    folder full of tool output is filed under no session.
+    """
+    target = archive_root / NOT_SESSIONS_LABEL / STRANDED_DIR / build.component(source_dir.name)
+    target.mkdir(parents=True, exist_ok=True)
+    copied = _mirror_tree(target, source_dir)
+    note = {
+        "schema": 1,
+        "dir_name": source_dir.name,
+        "reason": "no transcript found beside this dir",
+    }
+    store.write_if_changed(
+        target / _STRANDED_NOTE,
+        json.dumps(note, sort_keys=True, indent=2).encode("utf-8") + b"\n",
+    )
+    return copied
 
 
 def read_payload(
@@ -588,6 +835,14 @@ def folder_is_current(
     manifest = _current_manifest(directory, source_hash, options)
     if manifest is None:
         return False
+    # Ticket 38 adds two more of the same shape, for the same reason: a tool
+    # result copied in AFTER the last render would never reach the manifest, and
+    # its later deletion would then be undetectable forever. Old folders have
+    # neither key, so this reads None against [] and returns False, which is the
+    # right answer - they DO need the one rebuild that populates them.
+    for sidecar, key in SIDECAR_MANIFEST_KEYS.items():
+        if manifest.get(key) != sidecar_records(directory, sidecar):
+            return False
     return manifest.get("subagents") == subagent_records(directory)
 
 
@@ -726,6 +981,7 @@ def write_session_folder(
             # sub-agent list, so a reader can tell "none" from "this manifest
             # predates the feature" (F6).
             payload = _with_subagents(payload, subagent_records(directory))
+            payload = _with_sidecars(payload, directory)
             if refused_smaller:
                 payload = _with_refusal(
                     payload, jsonl.stat().st_size, len(data),
@@ -748,6 +1004,26 @@ def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> 
     """Record this session's sub-agents in its manifest (ticket 21e)."""
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
     manifest["subagents"] = records
+    return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+
+def _with_sidecars(manifest_bytes: bytes, directory: Path) -> bytes:
+    """Record this session's copied sidecar files in its manifest (ticket 38).
+
+    Two NEW TOP-LEVEL KEYS per DESIGN 6, never an amendment to the `loss` block:
+    a file that was copied is not a file that was lost, the same distinction
+    ticket 18's `unrecognised` key had to draw. Both are always present, `[]`
+    when there are none, so a reader can tell "this session had none" from "this
+    manifest predates the feature" (F6).
+
+    Computed from the ARCHIVE FOLDER rather than from the source tree, exactly
+    like `subagents`, because the manifest describes what the folder holds. The
+    render child and `build` both re-render manifests long after the copier has
+    finished and can see no source directory at all.
+    """
+    manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
+    for sidecar, key in SIDECAR_MANIFEST_KEYS.items():
+        manifest[key] = sidecar_records(directory, sidecar)
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
@@ -1116,6 +1392,7 @@ def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
                 FolderProblem(directory, "JSONL does not match manifest source_hash")
             )
         problems.extend(_subagent_problems(directory, manifest_path))
+        problems.extend(_sidecar_problems(directory, manifest_path))
     problems.extend(_name_problems(directory, meta, timezone))
     return problems
 
@@ -1145,6 +1422,48 @@ def _subagent_problems(directory: Path, manifest_path: Path) -> list[FolderProbl
             out.append(FolderProblem(directory, f"sub-agent {agent_id} is missing"))
         elif want and live[agent_id] != want:
             out.append(FolderProblem(directory, f"sub-agent {agent_id} does not match its hash"))
+    return out
+
+
+def _sidecar_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+    """Every copied sidecar file the manifest lists must still be there, unaltered.
+
+    NO PROBLEM STRING MAY START WITH `missing `, and that is a real constraint
+    rather than a style note: `doctor._desync` reclassifies a folder whose
+    problems ALL start with that word as "still queued behind a render" (ticket
+    34). A sidecar is never queued behind anything, so borrowing the word would
+    hide a genuine loss as pending, permanently.
+
+    A manifest with neither key yields NOTHING. Every one of the ~22,000 folders
+    already in the archive is in that state until the 0.1.3 rebuild reaches it,
+    and a daily `ccw repair` that alarms on all of them meanwhile is the
+    crying-wolf failure `ccw doctor` exists to avoid.
+
+    KNOWN LIMIT, stated rather than discovered later: a hidden session has no
+    manifest, so its sidecars are copied but never hash-verified. That is exactly
+    the position sub-agents are in today.
+    """
+    try:
+        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+    out: list[FolderProblem] = []
+    for sidecar, key in SIDECAR_MANIFEST_KEYS.items():
+        listed = manifest.get(key)
+        if not isinstance(listed, list):
+            continue
+        noun = _SIDECAR_NOUNS[sidecar]
+        live = {str(r["name"]): str(r["sha256"]) for r in sidecar_records(directory, sidecar)}
+        for raw in cast(list[object], listed):
+            if not isinstance(raw, dict):
+                continue
+            rec = cast(dict[str, object], raw)
+            name = str(rec.get("name", ""))
+            want = str(rec.get("sha256", ""))
+            if name not in live:
+                out.append(FolderProblem(directory, f"{noun} {name} is missing"))
+            elif want and live[name] != want:
+                out.append(FolderProblem(directory, f"{noun} {name} does not match its hash"))
     return out
 
 
