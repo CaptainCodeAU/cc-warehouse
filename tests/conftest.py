@@ -16,6 +16,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -589,6 +590,58 @@ def session_count(env: Mapping[str, str]) -> int:
 # ---------------------------------------------------------------------------
 # Filesystem snapshots (read-only-source proofs, F9)
 # ---------------------------------------------------------------------------
+
+
+def settle_render(root: Path, expected: int, timeout: float = 30.0) -> None:
+    """Wait until `expected` capture hooks' DETACHED RENDER CHILDREN have finished.
+
+    THE RACE THIS CLOSES, measured 2026-09-08 rather than reasoned about. The hook
+    renders in a detached child (SPEC 2.5/5), so `ccw hook` returns BEFORE any
+    projection exists. Probed directly: 0 files under `projections/` the instant
+    the hook returned, 7 files five seconds later. Any test that snapshots the
+    warehouse right after a capture is therefore comparing against a tree that is
+    still being written, and the second snapshot legitimately has MORE in it.
+
+    It is not a new race and it is not about anything ticket 38 changed: the same
+    probe showed `ccw archive --to` leaving the source warehouse byte-identical.
+    It was simply always won locally and always lost on a slower CI runner once
+    capture got a little slower. A sleep would trade one flake for another, so
+    this polls for the actual finished state and fails loudly on a timeout rather
+    than letting a genuinely stuck child pass as "settled".
+
+    TWO CONDITIONS, because neither alone is enough. `expected` is a FLOOR, not a
+    count: two payloads carrying the same `sessionId` render into ONE folder, so a
+    caller cannot always know the exact number, but it always knows at least one
+    must appear. That floor rules out "settled" firing before any child has
+    started. The quiet period then rules out stopping between two children.
+    """
+    deadline = time.monotonic() + timeout
+    projections = root / "projections"
+    quiet_for = 0.5
+    stable_since: float | None = None
+    seen: set[str] = set()
+    while time.monotonic() < deadline:
+        folders = {
+            str(d)
+            for d in projections.glob("*/*")
+            if d.is_dir() and (d / "manifest.json").is_file()
+        }
+        if folders != seen:
+            seen = folders
+            stable_since = None
+        elif stable_since is None:
+            stable_since = time.monotonic()
+        if (
+            len(seen) >= expected
+            and stable_since is not None
+            and time.monotonic() - stable_since >= quiet_for
+        ):
+            return
+        time.sleep(0.05)
+    raise AssertionError(
+        f"render children did not settle within {timeout}s under {projections}"
+        f" (saw {len(seen)} folder(s), wanted at least {expected})"
+    )
 
 
 def tree_snapshot(root: Path) -> dict[str, bytes]:

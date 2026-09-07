@@ -228,13 +228,17 @@ def test_rewriting_a_folder_never_removes_the_jsonl(tmp_path: Path) -> None:
 
 
 def captured(env: dict[str, str], *payloads: bytes) -> None:
-    from conftest import hook_payload, run_ccw, write_transcript
+    from conftest import hook_payload, run_ccw, settle_render, warehouse_root, write_transcript
 
     for i, data in enumerate(payloads):
         uuid = f"e1111111-2222-3333-4444-55555555555{i}"
         transcript = write_transcript(env, data, session_id=uuid, name=f"{uuid}.jsonl")
         result = run_ccw(["hook"], env, stdin=hook_payload(transcript, cwd=None, session_id=uuid))
         assert result.code == 0, result.err
+    # The hook renders in a DETACHED child, so it returns before any projection
+    # exists. A caller that snapshots the warehouse right after this would be
+    # comparing against a tree still being written. See settle_render.
+    settle_render(warehouse_root(env), 1)
 
 
 def test_migration_builds_the_tree_from_objects_and_touches_nothing_else(

@@ -22,6 +22,7 @@ from conftest import (
     jsonl,
     run_ccw,
     run_cli,
+    settle_render,
     tree_snapshot,
     warehouse_root,
     write_transcript,
@@ -60,6 +61,10 @@ def capture(env: dict[str, str], uuid: str, data: bytes) -> None:
 def populated(env: dict[str, str]) -> None:
     capture(env, UUID_A, session(UUID_A))
     capture(env, UUID_B, session(UUID_B, prompt="Second thing"))
+    # The hook renders in a DETACHED child, so it returns before any projection
+    # exists. Without this wait, a snapshot taken here is of a tree still being
+    # written. See settle_render's docstring for the measurement.
+    settle_render(warehouse_root(env), 2)  # two distinct session uuids
 
 
 # ---------------------------------------------------------------------------
