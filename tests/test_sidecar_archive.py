@@ -95,7 +95,7 @@ def test_a_tool_result_lands_under_the_session_folder_with_its_original_bytes(
     tmp_path: Path,
 ) -> None:
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     assert (folder / "tool-results" / STDOUT_NAME).read_bytes() == STDOUT_BYTES
 
 
@@ -104,13 +104,13 @@ def test_nesting_inside_tool_results_is_kept(tmp_path: Path) -> None:
     in 19 dirs) and it is referenced by no JSONL at all, so a flat copy would
     both lose the structure and be the only record of it."""
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     assert (folder / "tool-results" / "pdf-4f1e" / "page-01.jpg").is_file()
 
 
 def test_ds_store_is_not_copied(tmp_path: Path) -> None:
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     assert not (folder / "tool-results" / ".DS_Store").exists()
 
 
@@ -119,8 +119,8 @@ def test_a_second_copy_of_the_same_bytes_writes_nothing(tmp_path: Path) -> None:
     sweep would make every backup tool see the whole archive as changed."""
     folder = parent_folder(tmp_path)
     src = source_tool_results(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", src)
-    again = archive.copy_sidecar_dir(folder, "tool-results", src)
+    archive.copy_companion_dir(folder, "tool-results", src)
+    again = archive.copy_companion_dir(folder, "tool-results", src)
     assert again.written == 0
     assert again.unchanged == 2
 
@@ -132,9 +132,9 @@ def test_a_same_name_different_bytes_file_is_refused_and_the_original_kept(
     is for a re-captured transcript: two files with one name are two files."""
     folder = parent_folder(tmp_path)
     src = source_tool_results(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", src)
+    archive.copy_companion_dir(folder, "tool-results", src)
     (src / STDOUT_NAME).write_bytes(b"completely different content entirely")
-    result = archive.copy_sidecar_dir(folder, "tool-results", src)
+    result = archive.copy_companion_dir(folder, "tool-results", src)
     assert result.refused == (STDOUT_NAME,)
     assert (folder / "tool-results" / STDOUT_NAME).read_bytes() == STDOUT_BYTES
 
@@ -159,7 +159,7 @@ def test_the_manifest_lists_each_tool_result_with_its_hash_and_size(tmp_path: Pa
     most dangerous kind of green, and it is the same argument that put
     `subagents` in the manifest in ticket 21e."""
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
     )
@@ -176,7 +176,7 @@ def test_the_manifest_lists_workflow_files_under_their_own_key(tmp_path: Path) -
     (src / "scripts").mkdir(parents=True)
     (src / "wf_abc.json").write_bytes(b'{"id":"wf_abc"}\n')
     (src / "scripts" / "review-wf_abc.js").write_bytes(b"export const meta = {}\n")
-    archive.copy_sidecar_dir(folder, "workflows", src)
+    archive.copy_companion_dir(folder, "workflows", src)
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
     )
@@ -198,7 +198,7 @@ def test_a_folder_stops_being_current_once_a_tool_result_is_added(tmp_path: Path
     folder = parent_folder(tmp_path)
     digest = store.sha256_hex(basic_session(session_id=DEFAULT_UUID))
     assert archive.folder_is_current(folder, digest, OPTS) is True
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     assert archive.folder_is_current(folder, digest, OPTS) is False
 
 
@@ -209,7 +209,7 @@ def test_a_folder_stops_being_current_once_a_tool_result_is_added(tmp_path: Path
 
 def test_verify_reports_a_tool_result_that_has_been_deleted(tmp_path: Path) -> None:
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
     )
@@ -220,7 +220,7 @@ def test_verify_reports_a_tool_result_that_has_been_deleted(tmp_path: Path) -> N
 
 def test_verify_reports_a_tool_result_whose_bytes_changed(tmp_path: Path) -> None:
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
     )
@@ -234,7 +234,7 @@ def test_no_sidecar_problem_string_starts_with_the_word_missing(tmp_path: Path) 
     queued behind a render" (ticket 34). A sidecar problem is never that, and
     borrowing the word would hide a real one as pending forever."""
     folder = parent_folder(tmp_path)
-    archive.copy_sidecar_dir(folder, "tool-results", source_tool_results(tmp_path))
+    archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
     )

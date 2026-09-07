@@ -475,7 +475,7 @@ def _archive_sidecars_of(
         source = directory / name
         if not source.is_dir():
             continue
-        copied = archive.copy_sidecar_dir(parent, name, source)
+        copied = archive.copy_companion_dir(parent, name, source)
         refused.extend(f"{name}/{item}" for item in copied.refused)
         for item in copied.refused:
             log_sidecar_trouble(config, parsed, "refused", name, item)

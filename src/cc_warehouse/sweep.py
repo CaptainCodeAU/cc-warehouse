@@ -449,7 +449,7 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
         refused: list[str] = []
         written = 0
         for name in present:
-            copied = archive.copy_sidecar_dir(folder, name, directory / name)
+            copied = archive.copy_companion_dir(folder, name, directory / name)
             written += copied.written
             refused.extend(f"{name}/{item}" for item in copied.refused)
             # THE AUDIT LOG, not only the report and the notice. The hook path has
@@ -517,7 +517,7 @@ def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
                 folder = known.get(stranded.name)
                 if folder is not None:
                     written = sum(
-                        archive.copy_sidecar_dir(folder, name, stranded / name).written
+                        archive.copy_companion_dir(folder, name, stranded / name).written
                         for name in wanted
                         if (stranded / name).is_dir()
                     )

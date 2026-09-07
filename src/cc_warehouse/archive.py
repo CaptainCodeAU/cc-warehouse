@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import __version__, build, catalog, parser, render, sidecars, store
+from cc_warehouse import __version__, build, catalog, external, parser, render, sidecars, store
 from cc_warehouse.config import Config
 from cc_warehouse.parser import parse_session
 
@@ -214,12 +214,36 @@ SIDECAR_NOTICE = "sidecars.json"
 STRANDED_DIR = "stranded-sidecars"
 _STRANDED_NOTE = "stranded.json"
 
-# Manifest key per sidecar, and the noun `verify_folder` uses for it. Both are
-# top-level manifest keys per DESIGN 6, never a `loss` amendment: a copied file
-# is not a lost one, which is the same distinction ticket 18's `unrecognised`
-# key had to make.
-SIDECAR_MANIFEST_KEYS = {TOOL_RESULTS_DIR: "tool_results", WORKFLOWS_DIR: "workflows"}
-_SIDECAR_NOUNS = {TOOL_RESULTS_DIR: "tool-result", WORKFLOWS_DIR: "workflow file"}
+FILE_HISTORY_DIR = external.FILE_HISTORY_DIR
+TODOS_DIR = external.TODOS_DIR
+
+# Where file-history snapshots go when no archived session holds their id (39b).
+STRANDED_FILE_HISTORY_DIR = "stranded-file-history"
+
+# Manifest key per COMPANION DIRECTORY, and the noun `verify_folder` uses for it.
+# All are top-level manifest keys per DESIGN 6, never a `loss` amendment: a copied
+# file is not a lost one, the same distinction ticket 18's `unrecognised` key had
+# to make.
+#
+# ONE MAP FOR FOUR NAMES, and that is the point rather than tidiness. Ticket 38
+# built this for two names it owns; ticket 39 adds two whose SOURCE lives somewhere
+# completely different (a sibling of `projects/` rather than a child of the session
+# directory). What they have in common is everything that happens after the bytes
+# are found: mirrored under the session folder, recorded with name/sha256/bytes,
+# hash-verified, never deleted by the rebuilder. A second map would have drifted
+# from this one the first time either was touched, which is C12's whole argument.
+COMPANION_MANIFEST_KEYS = {
+    TOOL_RESULTS_DIR: "tool_results",
+    WORKFLOWS_DIR: "workflows",
+    FILE_HISTORY_DIR: "file_history",
+    TODOS_DIR: "todos",
+}
+_COMPANION_NOUNS = {
+    TOOL_RESULTS_DIR: "tool-result",
+    WORKFLOWS_DIR: "workflow file",
+    FILE_HISTORY_DIR: "file-history entry",
+    TODOS_DIR: "todo file",
+}
 
 # THE FENCE the operator asked for, in data form: every name `sidecars` says may
 # sit beside a transcript maps to the function that copies it, and the oracle
@@ -229,8 +253,8 @@ _SIDECAR_NOUNS = {TOOL_RESULTS_DIR: "tool-result", WORKFLOWS_DIR: "workflow file
 # never gets flagged when it changes shape.
 COPIERS = {
     SUBAGENTS_DIR: "write_subagent",
-    TOOL_RESULTS_DIR: "copy_sidecar_dir",
-    WORKFLOWS_DIR: "copy_sidecar_dir",
+    TOOL_RESULTS_DIR: "copy_companion_dir",
+    WORKFLOWS_DIR: "copy_companion_dir",
 }
 
 # Where a payload that is NOT a session lives (ticket 25.6). Reserved in
@@ -454,10 +478,14 @@ class SidecarCopy:
         return self.written + self.unchanged
 
 
-def write_sidecar_file(
-    session_dir: Path, sidecar: str, relative: Path, data: bytes
+def write_companion_file(
+    session_dir: Path, name: str, relative: Path, data: bytes
 ) -> str:
-    """Place one copied sidecar file under `<session>/<sidecar>/<relative>`.
+    """Place one copied file under `<session>/<name>/<relative>`.
+
+    The file-level half of the pair. `todos/` needs it because that store holds
+    loose FILES keyed by a name prefix rather than a directory per session, so
+    there is no source directory to mirror.
 
     THE LAYOUT IS A MIRROR, not a rename, and two things force it. The JSONL's
     own `persistedOutputPath` resolves by basename, so a renamed copy stops
@@ -469,7 +497,7 @@ def write_sidecar_file(
     bytes is refused rather than overwritten (R5). The caller records the
     refusal; this returns it.
     """
-    return _write_one(session_dir / sidecar, relative, data)
+    return _write_one(session_dir / name, relative, data)
 
 
 def _write_one(destination_dir: Path, relative: Path, data: bytes) -> str:
@@ -527,21 +555,27 @@ def _mirror_tree(destination: Path, source_dir: Path) -> SidecarCopy:
     return SidecarCopy(written, unchanged, tuple(refused), tuple(errors))
 
 
-def copy_sidecar_dir(session_dir: Path, sidecar: str, source_dir: Path) -> SidecarCopy:
-    """Mirror one whole sidecar directory into its session's archive folder.
+def copy_companion_dir(session_dir: Path, name: str, source_dir: Path) -> SidecarCopy:
+    """Mirror one whole companion directory into its session's archive folder.
 
-    The generic copier ticket 38 is built around: it matches no file names at
-    all, so a new shape inside `tool-results/` is archived rather than lost. New
-    name shapes appear often (`toolu_<id>.txt` gave way to `[a-z0-9]{9}.txt`,
-    then `mcp-<server>-<tool>-<ts>.txt`), which is exactly why matching names
-    here would have been the wrong instinct.
+    The generic copier ticket 38 is built around, widened by 39b to the stores
+    that live outside the session directory. It matches no file names at all, so a
+    new shape inside any of them is archived rather than lost. New name shapes
+    appear often (`toolu_<id>.txt` gave way to `[a-z0-9]{9}.txt`, then
+    `mcp-<server>-<tool>-<ts>.txt`), which is exactly why matching names here would
+    have been the wrong instinct.
+
+    WIDENED RATHER THAN COPIED. `file-history/` is a flat directory of versioned
+    snapshots, which is mechanically what `tool-results/` already was, so 39b adds
+    two NAMES rather than a second mirroring mechanism. A `copy_external_dir` twin
+    would have drifted from this the first time either was touched.
     """
-    if sidecar not in sidecars.SESSION_SIDECARS:
-        raise ValueError(f"not a known sidecar name: {sidecar!r}")
-    return _mirror_tree(session_dir / sidecar, source_dir)
+    if name not in COMPANION_MANIFEST_KEYS:
+        raise ValueError(f"not a known companion directory: {name!r}")
+    return _mirror_tree(session_dir / name, source_dir)
 
 
-def sidecar_records(session_dir: Path, sidecar: str) -> list[dict[str, object]]:
+def companion_records(session_dir: Path, name: str) -> list[dict[str, object]]:
     """This session's copied sidecar files, as the manifest records them.
 
     The twin of `subagent_records` and it exists for the same reason: without
@@ -550,7 +584,7 @@ def sidecar_records(session_dir: Path, sidecar: str) -> list[dict[str, object]]:
     report clean. `name` is the path RELATIVE to the sidecar dir, in POSIX form,
     so the nesting survives the record too.
     """
-    root = session_dir / sidecar
+    root = session_dir / name
     if not root.is_dir():
         return []
     out: list[dict[str, object]] = []
@@ -629,6 +663,37 @@ def write_stranded_sidecars(archive_root: Path, source_dir: Path) -> SidecarCopy
         "schema": 1,
         "dir_name": source_dir.name,
         "reason": "no transcript found beside this dir",
+    }
+    store.write_if_changed(
+        target / _STRANDED_NOTE,
+        json.dumps(note, sort_keys=True, indent=2).encode("utf-8") + b"\n",
+    )
+    return copied
+
+
+def write_stranded_file_history(archive_root: Path, source_dir: Path) -> SidecarCopy:
+    """File-history snapshots whose session the archive does not hold (39b).
+
+    42 of the live 1,056 are in this state, and the reason matters: their session
+    left `~/.claude/projects` before the archive ever saw it, so there is no folder
+    to nest under and no transcript to decide identity from. The same call ticket
+    38's ruling (d) made for a stranded sidecar applies here for the same reason -
+    the directory name is recorded as a LABEL and is never used to invent a session
+    folder (F4), because the file that would have proved the identity is the exact
+    thing that is missing.
+    """
+    target = (
+        archive_root
+        / NOT_SESSIONS_LABEL
+        / STRANDED_FILE_HISTORY_DIR
+        / build.component(source_dir.name)
+    )
+    target.mkdir(parents=True, exist_ok=True)
+    copied = _mirror_tree(target, source_dir)
+    note = {
+        "schema": 1,
+        "dir_name": source_dir.name,
+        "reason": "no archived session holds this id",
     }
     store.write_if_changed(
         target / _STRANDED_NOTE,
@@ -854,8 +919,8 @@ def folder_is_current(
     # its later deletion would then be undetectable forever. Old folders have
     # neither key, so this reads None against [] and returns False, which is the
     # right answer - they DO need the one rebuild that populates them.
-    for sidecar, key in SIDECAR_MANIFEST_KEYS.items():
-        if manifest.get(key) != sidecar_records(directory, sidecar):
+    for name, key in COMPANION_MANIFEST_KEYS.items():
+        if manifest.get(key) != companion_records(directory, name):
             return False
     return manifest.get("subagents") == subagent_records(directory)
 
@@ -995,7 +1060,7 @@ def write_session_folder(
             # sub-agent list, so a reader can tell "none" from "this manifest
             # predates the feature" (F6).
             payload = _with_subagents(payload, subagent_records(directory))
-            payload = _with_sidecars(payload, directory)
+            payload = _with_companions(payload, directory)
             if refused_smaller:
                 payload = _with_refusal(
                     payload, jsonl.stat().st_size, len(data),
@@ -1021,7 +1086,7 @@ def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> 
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
-def _with_sidecars(manifest_bytes: bytes, directory: Path) -> bytes:
+def _with_companions(manifest_bytes: bytes, directory: Path) -> bytes:
     """Record this session's copied sidecar files in its manifest (ticket 38).
 
     Two NEW TOP-LEVEL KEYS per DESIGN 6, never an amendment to the `loss` block:
@@ -1036,8 +1101,8 @@ def _with_sidecars(manifest_bytes: bytes, directory: Path) -> bytes:
     finished and can see no source directory at all.
     """
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
-    for sidecar, key in SIDECAR_MANIFEST_KEYS.items():
-        manifest[key] = sidecar_records(directory, sidecar)
+    for name, key in COMPANION_MANIFEST_KEYS.items():
+        manifest[key] = companion_records(directory, name)
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
@@ -1406,7 +1471,7 @@ def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
                 FolderProblem(directory, "JSONL does not match manifest source_hash")
             )
         problems.extend(_subagent_problems(directory, manifest_path))
-        problems.extend(_sidecar_problems(directory, manifest_path))
+        problems.extend(_companion_problems(directory, manifest_path))
     problems.extend(_name_problems(directory, meta, timezone))
     return problems
 
@@ -1439,7 +1504,7 @@ def _subagent_problems(directory: Path, manifest_path: Path) -> list[FolderProbl
     return out
 
 
-def _sidecar_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+def _companion_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
     """Every copied sidecar file the manifest lists must still be there, unaltered.
 
     NO PROBLEM STRING MAY START WITH `missing `, and that is a real constraint
@@ -1462,12 +1527,12 @@ def _sidecar_problems(directory: Path, manifest_path: Path) -> list[FolderProble
     except (OSError, ValueError):
         return []
     out: list[FolderProblem] = []
-    for sidecar, key in SIDECAR_MANIFEST_KEYS.items():
+    for name, key in COMPANION_MANIFEST_KEYS.items():
         listed = manifest.get(key)
         if not isinstance(listed, list):
             continue
-        noun = _SIDECAR_NOUNS[sidecar]
-        live = {str(r["name"]): str(r["sha256"]) for r in sidecar_records(directory, sidecar)}
+        noun = _COMPANION_NOUNS[name]
+        live = {str(r["name"]): str(r["sha256"]) for r in companion_records(directory, name)}
         for raw in cast(list[object], listed):
             if not isinstance(raw, dict):
                 continue
