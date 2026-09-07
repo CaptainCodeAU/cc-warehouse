@@ -21,6 +21,79 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-eighth handoff, 2026-09-07 (a false green in doctor, a hook that was never 3.9-safe, and ticket 39 planned)
+
+Same day as the twenty-seventh, continuing from it. Five things shipped and one plan
+landed.
+
+**`ccw doctor` reported a hook ok for a plugin root that does not exist (`03f7921`).**
+Found by the `fifty-shades-of-dotfiles` session red-teaming its OWN watcher and handing
+the observation over; proved here by execution before being accepted. `_mentions_ccw`
+had two paths and only the second touched the filesystem: the first returned True as soon
+as the command STRING contained "ccw", and our own registration is
+`python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py`, where "ccw" is in the FILENAME. So the
+string path fired and returned before the `is_file()` check was ever reached, and the
+`hook` line stayed green for a deleted plugin cache. The fix is narrow on purpose: a
+command that NAMES a script must have that script present, checked before the string
+match, which leaves a bare `ccw hook` (no path, resolved from PATH) still accepted. That
+legitimate case is pinned by its own control test, because requiring a file
+unconditionally was the first instinct and would have broken it.
+
+**`ccw-hook.py` was never 3.9-safe, and `83b7e73` had claimed both hooks were
+(`68d5fa7`).** That commit tested `ccw-freshness-check.py`, which uses `timezone.utc`,
+and generalised to `ccw-hook.py`, which imported `UTC` from datetime. That name is 3.11+
+and an ordinary import of a too-new NAME is not deferred by a `from __future__ import
+annotations` line, so the CAPTURE hook still died at import under 3.9 while passing every
+static fence in the suite. Generalising a shape from one sample is already a standing
+lesson in this file's own section 8, and it still happened one commit after a related one
+was written. The test that catches it now EXECUTES both hooks under the oldest python3 on
+the box rather than reasoning about which syntax is safe; it skips where no old
+interpreter exists, so it is a net and not a proof, and the static fences stay.
+
+**Both hooks now record which interpreter ran them**, in their own log record
+(`"python": "3.14.7 /opt/homebrew/opt/python@3.14/bin/python3.14"`). Suggested by the
+same peer session on the argument that removing a failure class and leaving no trace of
+what happened are two separate decisions and only the first had been made. Adding it is
+what exposed that the class was not actually removed. Measured while doing it: `zsh -lc`
+on this machine already resolves `/usr/bin/python3` 3.9.6, which is what a launchd job
+gets, and uv ships only version-suffixed shims with no bare `python3`, so the
+deliberately chosen interpreter is the one the name cannot reach.
+
+**The `my-claude-code-transcripts` DO-NOT-DELETE rule is discharged (`4f8c528`).** The
+principal deleted the tree and confirmed it directly. The bullet stood as a live
+prohibition for a path that no longer exists, which is the exact shape that misleads the
+next session. Rewritten as a CLOSED record with the whole measurement history kept, plus
+a WHAT WAS NEVER MEASURED paragraph (the sweep predates the deletion, so it proves
+absorption as of 2026-08-21, not that nothing arrived after) and the bounding evidence
+for that gap. "A satisfied gate is not consent" was kept and strengthened rather than
+retired with the gate.
+
+**Path-as-identity named as a lesson about the analyst (`7d2e348`, `89626e1`).** Third
+occurrence; the first two were recorded as instances and neither prevented the third.
+Today's was a script written to answer whether it is safe to DELETE 23,844 sessions,
+which matched by FILENAME and reported 2,228 with no archive copy; re-resolved by sha256,
+all 2,228 were present under other names and genuinely absent was 0. The general form is
+now written down, along with the half that makes it fire in this repo: A GREEN CONTROL
+DOES NOT VALIDATE THE KEY. `census` proves the instrument fired and the population was
+non-empty; it says nothing about whether the thing it fired on was keyed correctly.
+
+**Ticket 39 planned and approved, not started.** See
+`harness/tickets/39-archive-what-a-session-points-at.md`. The archive keeps what a session
+SAID and not what it POINTED AT. Blocked on ticket 38. Two operator rulings recorded in
+the ticket. Three of the planning session's own findings were grep artifacts and are
+corrected in the ticket rather than quietly dropped: repo hits for `file-history` are the
+inline block type in `parser.py`, hits for `todos` are `render.py::_render_todos`, and
+transcript hits for `paste-cache` are prose in sessions that were investigating
+`.claude`. The directories are genuinely unhandled; the reasoning for saying so was wrong
+each time, and a red-team agent caught the third one.
+
+**Still open and untouched:** the external archive backup is roughly 62,000 files behind
+(116,433 verified 2026-08-04 against 178,160 today), and no drive carrying it was mounted
+for most of this session. That is unchanged from the twenty-seventh handoff and is the
+only item here with a real downside if left.
+
+---
+
 ### Twenty-seventh handoff, 2026-09-07 (a spoken false alarm traced to the watcher, not to ccw)
 
 **The report.** The operator heard an error spoken at session start saying cc-warehouse capture had

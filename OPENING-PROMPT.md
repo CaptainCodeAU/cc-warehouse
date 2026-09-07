@@ -21,6 +21,19 @@ taken by the operator and recorded in the plan (copy stranded dirs under
 ruling (c) still needs its DESIGN 15 entry. The ticket file exists and holds the plan;
 slice 38f appends its DONE block.
 
+**NEXT AFTER 38: ticket 39, archive everything a session points at.** Read
+`harness/tickets/39-archive-what-a-session-points-at.md`; it is PLANNED, APPROVED
+(2026-09-07), NOT STARTED, and HARD-BLOCKED on 38 shipping `store.write_if_absent` plus
+the notice/doctor/alert scaffolding it reuses. The short version: ticket 38 covers the
+sidecars INSIDE a session directory; 39 covers the stores OUTSIDE it, which are siblings
+of `projects/` and so need catalog-driven discovery rather than a scan beside the
+transcript. Measured 2026-09-07: `~/.claude/file-history/` is 1,010 session-keyed
+entries / 911 MB whose bytes are in no JSONL, `history.jsonl` is 18,295 rows that 100%
+carry a `sessionId`, and `paste-cache/` is reachable only by joining through it, where
+272 of 2,186 referenced hashes ARE ALREADY GONE. Two operator rulings are recorded in the
+ticket (archive all of file-history; `~/.claude/MEMORY/` becomes ticket 40, not 39).
+Build slices 39a-39g in order, oracle tests first; 39b stands alone if the rest stalls.
+
 **Ticket 37 Part B row 1 IS LIVE** (the check handoff 22 asked for): the newest plugin
 cache copy `~/.claude/plugins/cache/cc-warehouse/cc-capture/2f374c2eddf9/hooks/ccw-hook.py`
 contains `_started`, and `~/.claude/logs/ccw-hook.log` shows `started` lines (verified

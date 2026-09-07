@@ -561,6 +561,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   sub-agent, bad folder name) is always real regardless of timing. Full
   account: `harness/tickets/34-swallowed-render-errors-and-batch-false-alarms.md`.
 
+- **Ticket 39 PLANNED 2026-09-07, NOT STARTED, blocked on ticket 38.** The archive keeps
+  what a session SAID and not what it POINTED AT. Measured: `~/.claude` is 6.7 GB, ccw
+  archives the 4.2 GB of `projects/` only. Outside it and unhandled:
+  `file-history/` (1,010 session-keyed entries, 911 MB, bytes verified absent from the
+  JSONL), `history.jsonl` (18,295 rows, 100% carrying a `sessionId`), `paste-cache/`
+  (reachable only through `history.jsonl`; **272 of 2,186 referenced hashes are already
+  gone**), and `todos/`. Separate from 38 because these are siblings of `projects/`, not
+  descendants of a transcript, so discovery is catalog-driven and never walks
+  `~/.claude`. Rulings: archive ALL of file-history; `~/.claude/MEMORY/` (317 MB) is
+  ticket 40, not this one. Full plan and slices 39a-39g:
+  `harness/tickets/39-archive-what-a-session-points-at.md`.
+
 ## Standing lessons (full form in HARNESS section 8)
 
 - **Slice completeness is not contract completeness.** The oracle suite was written from the

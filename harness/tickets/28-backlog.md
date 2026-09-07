@@ -91,6 +91,19 @@ here into their own ticket when they are taken up.
   Full suite re-confirmed green afterward (1,114 passed, ruff clean, pyright
   0 errors). No production code changed - this is a protective test only.
 
+- **28.23  `~/.claude/MEMORY/` has no archive home (opened 2026-09-07).** 317 MB,
+  4,042 files, across `LEARNING`, `RELATIONSHIP`, `SECURITY`, `STATE`, `VOICE`,
+  `WORK`. Accumulated history, not config, and nothing in `ccw` archives it.
+  Deliberately EXCLUDED from ticket 39, whose whole mechanism is keyed on session
+  uuid; `MEMORY/` has no session relationship at all, so it needs a different
+  discovery and destination shape (closer to a tree adoption than a per-session
+  enrichment). Also in flight: a separate session was relocating this directory
+  out of `~/.claude` on 2026-09-07 as part of a PAI-to-LifeOS migration, so
+  designing storage before that settles would target a path about to change.
+  Operator ruling 2026-09-07: its own ticket (40), destination the external
+  `CC-SESSIONS-ARCHIVE`. Revisit once the migration's new location is stable, and
+  census it then rather than trusting today's figures.
+
 ## Recorded, low value, not planned
 
 - **28.4  `--repo` override.** `parser.detect_github_repo` auto-detects and has
