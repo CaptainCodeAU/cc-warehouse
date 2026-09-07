@@ -118,6 +118,24 @@ def install_mode(module_file: Path) -> str:
     return "frozen" if {"site-packages", "dist-packages"} & parts else "editable"
 
 
+_SCRIPT_SUFFIXES = {".py", ".sh", ".ts", ".js"}
+
+
+def _script_tokens(command: str, plugin_root: Path | None) -> list[Path]:
+    """Every token in a hook command that NAMES a script file, with
+    `${CLAUDE_PLUGIN_ROOT}` resolved. Existence is deliberately not checked here:
+    callers need to tell "names no script" apart from "names one that is gone",
+    and those are different diagnoses with different repairs."""
+    found: list[Path] = []
+    for token in command.split():
+        if plugin_root is not None:
+            token = token.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
+        candidate = Path(token)
+        if candidate.suffix in _SCRIPT_SUFFIXES:
+            found.append(candidate)
+    return found
+
+
 def _mentions_ccw(command: str, plugin_root: Path | None) -> bool:
     """Whether this hook command runs OUR capture, following one level of wrapper.
 
@@ -130,13 +148,29 @@ def _mentions_ccw(command: str, plugin_root: Path | None) -> bool:
     ONE level, and only files that already exist: this is a diagnosis, not an
     interpreter, and it must stay read-only and bounded (F9).
     """
+    scripts = _script_tokens(command, plugin_root)
+    # A COMMAND THAT NAMES A SCRIPT IS A CLAIM THAT THE SCRIPT IS THERE, and this
+    # check runs before the string match on purpose. Until 2026-09-07 the string
+    # match came first and returned as soon as the command contained "ccw" - which
+    # our own registration does, in the FILENAME of
+    # `python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py` - so the is_file() test
+    # below was never reached for the one command shape that matters most. The
+    # plugin runs from a CACHED clone that can simply be deleted, and doctor went
+    # on printing `ok hook` for a plugin root that did not exist: a false green in
+    # the tool whose whole job is to stop a broken thing looking healthy, and the
+    # same shape 0.1.2 fixed one instance of. Found by the fifty-shades-of-dotfiles
+    # session red-teaming its own watcher.
+    # NARROW ON PURPOSE: this only bites when the command actually NAMES a script.
+    # A bare `ccw hook` in settings.json names no path at all, because the command
+    # resolves from PATH, and the string match below exists precisely to accept
+    # that form. Requiring a file unconditionally would break it (pinned by
+    # test_a_bare_ccw_hook_command_is_still_accepted).
+    if scripts and not any(candidate.is_file() for candidate in scripts):
+        return False
     if any(name in command for name in _OUR_COMMANDS):
         return True
-    for token in command.split():
-        if plugin_root is not None:
-            token = token.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
-        candidate = Path(token)
-        if candidate.suffix not in {".py", ".sh", ".ts", ".js"} or not candidate.is_file():
+    for candidate in scripts:
+        if not candidate.is_file():
             continue
         try:
             # R1 (as amended): size here is a RESOURCE BOUND, never identity and
@@ -153,6 +187,28 @@ def _mentions_ccw(command: str, plugin_root: Path | None) -> bool:
         if any(name in body for name in _OUR_COMMANDS):
             return True
     return False
+
+
+def _hooks_with_missing_scripts(
+    where: Path,
+) -> list[tuple[str, str, str | None]]:
+    """SessionEnd hooks that LOOK like ours by name but whose script file is gone.
+
+    Exists so the failure DETAIL can tell two different problems apart. "Registered
+    but its file is missing" is repaired by a plugin update or reinstall; "nothing
+    is registered at all" is repaired by registering a hook. Reporting the first as
+    the second sends the reader to the wrong repair, which on this machine means
+    hunting a configuration that is already correct while capture stays dead.
+
+    Returns (command, the first missing script path, the hook source) per hook."""
+    found: list[tuple[str, str, str | None]] = []
+    for command, root, hook_source in _hook_commands(where):
+        if not any(name in command for name in _OUR_COMMANDS):
+            continue
+        scripts = _script_tokens(command, root)
+        if scripts and not any(candidate.is_file() for candidate in scripts):
+            found.append((command, str(scripts[0]), hook_source))
+    return found
 
 
 def _enabled_plugins(home: Path) -> dict[str, bool]:
@@ -508,7 +564,16 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             else f"SessionEnd capture hook found: {command}"
         )
     else:
-        detail = "NO capture hook is registered; sessions are not being captured"
+        stale = _hooks_with_missing_scripts(where)
+        if stale:
+            command, missing, hook_source = stale[0]
+            via = f" via {hook_source}" if hook_source else ""
+            detail = (
+                f"capture hook is registered{via} but its script is MISSING: "
+                f"{missing} (registered as: {command})"
+            )
+        else:
+            detail = "NO capture hook is registered; sessions are not being captured"
     checks.append(Check("hook", bool(matches), detail))
 
     last = _last_capture(config.root)

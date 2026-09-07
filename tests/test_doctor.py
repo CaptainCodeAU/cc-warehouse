@@ -656,3 +656,135 @@ def test_a_tampered_folder_is_never_pending_even_inside_the_grace_window(
     assert pending == 0, "a hash-mismatch problem was wrongly excused as pending"
     assert problems >= 1, "tampering inside the grace window was not caught"
     assert first is not None and folder.name in first
+
+
+def test_a_registered_hook_whose_script_is_gone_is_not_reported_ok(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """THE FALSE GREEN THIS PINS (found 2026-09-07, by the fifty-shades-of-dotfiles
+    session red-teaming its own watcher, then proved here by execution).
+
+    The plugin runs from a CACHED clone at a recorded installPath. If that
+    directory goes missing, `enabledPlugins` still says true, the hooks.json entry
+    is still there, nothing errors, and capture is dead.
+
+    `_mentions_ccw` had two paths and only the second touched the filesystem. The
+    first returned True as soon as the command STRING contained "ccw", and our own
+    registration is `python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py` - where "ccw"
+    is in the FILENAME. So the string path fired and returned before the is_file()
+    check on the second path was ever reached, and the `hook` line stayed green for
+    a plugin root that did not exist.
+
+    That is a false green in the tool whose whole job is to stop a broken thing
+    looking healthy, and it is the same shape 0.1.2 fixed one instance of.
+    """
+    configure(ccw_env, tmp_path / "archive")
+    plugin = (
+        Path(ccw_env["HOME"]) / ".claude" / "plugins" / "cache" / "mp" / "p" / "v1"
+    )
+    (plugin / "hooks").mkdir(parents=True)
+    # hooks.json exists and registers our real command shape. The script does NOT.
+    (plugin / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_enabled_plugins(ccw_env, {"p@mp": True})
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert not hook_line.strip().startswith("ok"), (
+        f"doctor called a missing hook script ok: {hook_line!r}"
+    )
+    assert result.code != 0, f"a missing hook script exited 0: {result.out!r}"
+
+
+def test_the_missing_script_is_named_as_such_not_as_nothing_registered(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """"Registered but its file is gone" and "nothing is registered at all" are
+    different problems with different fixes. The first is repaired by a `/plugin`
+    update; the second by registering a hook. Reporting the first as the second
+    sends the reader to the wrong repair."""
+    configure(ccw_env, tmp_path / "archive")
+    plugin = (
+        Path(ccw_env["HOME"]) / ".claude" / "plugins" / "cache" / "mp" / "p" / "v1"
+    )
+    (plugin / "hooks").mkdir(parents=True)
+    (plugin / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_enabled_plugins(ccw_env, {"p@mp": True})
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "missing" in hook_line.lower(), (
+        f"the detail did not say the script is missing: {hook_line!r}"
+    )
+    assert "ccw-hook.py" in hook_line, (
+        f"the detail did not name the file that is gone: {hook_line!r}"
+    )
+
+
+def test_a_bare_ccw_hook_command_is_still_accepted(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """THE REGRESSION THE FIX ABOVE COULD EASILY CAUSE. Requiring a file
+    unconditionally would break a legitimate registration: `ccw hook` in
+    settings.json names NO script path at all, because the command resolves from
+    PATH. The string-match branch exists precisely to accept that form, and the
+    new rule must only bite when the command actually names a script."""
+    configure(ccw_env, tmp_path / "archive")
+    settings = Path(ccw_env["HOME"]) / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {"hooks": [{"type": "command", "command": "ccw hook"}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_ccw(["doctor"], ccw_env)
+    hook_line = next((ln for ln in result.out.splitlines() if " hook " in ln), "")
+
+    assert "NO capture hook" not in hook_line, (
+        f"a bare `ccw hook` registration was rejected: {hook_line!r}"
+    )
