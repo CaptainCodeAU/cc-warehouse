@@ -542,19 +542,49 @@ def _note_unknown_siblings(
         return
     if not scan.has_anomaly:
         return
+    announce_unarchived_siblings(config, parsed.session_uuid, transcript_path.name, scan)
+
+
+def announce_unarchived_siblings(
+    config: Config, session_uuid: str | None, fallback: str, scan: sidecars.SidecarScan
+) -> None:
+    """Say once, in three places, that something beside a transcript is uncopied.
+
+    Ruling (e). The audit log is the durable half; the desktop notification and
+    the spoken sentence are the half that actually reaches a human, because the
+    `sidecars` doctor line is non-blocking by design and therefore never paints a
+    banner. Shared by the hook path and the sweep's third pass rather than written
+    twice (R9): they announce the same fact and must word it the same way.
+
+    THE CALLER OWNS THE DEDUP. Both call sites reach here only when the session's
+    notice file CHANGED to a non-empty set, so this fires at most once per new
+    anomaly and can never become a daily nag (the ticket 24.7 lesson).
+
+    Every sink is best-effort and none may raise into capture (DESIGN 12).
+    """
     names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
-    short = (parsed.session_uuid or "")[:8]
-    notify.append_log(
-        config,
-        {
-            "at": datetime.now(UTC).isoformat(),
-            "status": "unarchived-sibling",
-            "session": short or None,
-            "project": None,
-            "message": f"unarchived sibling(s) beside {short or transcript_path.name}: {names}",
-            "elapsed_ms": None,
-        },
+    short = (session_uuid or "")[:8]
+    where = short or fallback
+    sentence = (
+        f"cc-warehouse: unarchived sibling(s) beside {where}: {names}."
+        " Add a copier in sidecars.py."
     )
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "unarchived-sibling",
+                "session": short or None,
+                "project": None,
+                "message": f"unarchived sibling(s) beside {where}: {names}",
+                "elapsed_ms": None,
+            },
+        )
+        notify.alert(config, "cc-warehouse", sentence)
+        notify.speak(config, sentence)
+    except Exception:  # noqa: BLE001 - a signal never fails a capture (DESIGN 12)
+        return
 
 
 def capture_transcript(

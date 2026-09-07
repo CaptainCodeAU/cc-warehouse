@@ -417,9 +417,12 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
     wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
     present = [name for name in wanted if (directory / name).is_dir()]
     scan = sidecars.scan(path, parsed.session_uuid)
-    if not present and not scan.has_anomaly:
-        return None
-
+    # NO EARLY RETURN when there is nothing to copy and no anomaly, and the
+    # missing one was a real bug: a session whose anomaly has been FIXED has
+    # nothing to copy and nothing to flag, and skipping it here left its
+    # `sidecars.json` claiming the anomaly forever. `write_sidecar_notice` is the
+    # one that decides whether to write, and it already knows to leave a clean
+    # session with no notice at all.
     label = registry.derive_label(str(path.parent))
     try:
         conn = catalog.open_catalog(config.root)
@@ -437,6 +440,11 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
             config.archive_root, label, parsed.session_uuid, config.archive_timezone
         )
         if folder is None:
+            # Reported only when there was something to do. A session with an
+            # empty sidecar dir and no archive folder is not a problem worth a
+            # line in a 24,000-item report.
+            if not present and not scan.has_anomaly:
+                return None
             return ItemOutcome(path.name, "skipped-sidecars-no-parent", str(directory))
         refused: list[str] = []
         written = 0
@@ -462,31 +470,17 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
 def _log_sidecar_anomaly(
     config: Config, session_uuid: str | None, path: Path, scan: "object"
 ) -> None:
-    """One audit line when a sweep is the thing that FINDS a new unknown sibling.
+    """Announce a new unknown sibling the sweep found, through capture's own
+    announcer rather than a second copy of the same three sinks (R9).
 
-    Guarded by the notice having actually changed, so the daily job announces an
+    Guarded by the notice having actually CHANGED, so the daily job announces an
     anomaly once and then stays quiet about it forever after - the ticket 24.7
     lesson, which this project learned by printing ALERT every session on a
     perfectly healthy install."""
     from cc_warehouse import sidecars
 
     assert isinstance(scan, sidecars.SidecarScan)
-    names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
-    short = (session_uuid or "")[:8]
-    try:
-        notify.append_log(
-            config,
-            {
-                "at": datetime.now(UTC).isoformat(),
-                "status": "unarchived-sibling",
-                "session": short or None,
-                "project": None,
-                "message": f"unarchived sibling(s) beside {short or path.name}: {names}",
-                "elapsed_ms": None,
-            },
-        )
-    except Exception:
-        return
+    capture.announce_unarchived_siblings(config, session_uuid, path.name, scan)
 
 
 def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:

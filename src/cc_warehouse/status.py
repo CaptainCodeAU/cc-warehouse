@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, catalog, store, sweep
+from cc_warehouse import build, catalog, sidecars, store, sweep
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -154,6 +154,93 @@ def gap_line(gap: UncapturedGap) -> str:
     )
 
 
+@dataclass(frozen=True)
+class SidecarGap:
+    """What is sitting beside the transcripts that nothing has copied.
+
+    Two INDEPENDENT figures, kept apart because they have different owners.
+    `notices` counts archive folders whose `sidecars.json` names something
+    unarchived - a name the product does not know about yet, which is a job for
+    whoever adds a copier. `stranded` counts source dirs with no transcript
+    beside them, which is a property of `~/.claude`'s own layout and is expected
+    to sit at a small non-zero number forever. One combined figure would hide the
+    first behind the second.
+    """
+
+    notices: int
+    stranded: int
+    first: str | None
+    strangers: tuple[str, ...]
+    archive_root: Path | None
+
+
+def sidecar_gap(config: Config, source: Path | None = None) -> SidecarGap:
+    """Count what nothing is copying, across the WHOLE corpus (ticket 38).
+
+    CORPUS-WIDE, not a recency sample, and that is the whole point. `doctor`'s
+    desync check looks at the 25 most recently captured folders because it
+    re-hashes each one; this opens `sidecars.json` and nothing else, so it can
+    afford to ask every folder. The failure it exists to catch was four months
+    old before anyone noticed, and a check that only looks at recent sessions
+    could not have found it and would not find the next one either.
+
+    NEVER HASHES and never opens a payload (F5/R6). One `stat` plus, for the few
+    folders that have one, one small JSON read.
+    """
+    walk_root = source if source is not None else Path.home() / ".claude" / "projects"
+    strangers: list[str] = []
+    stranded = 0
+    for project_dir in _project_dirs(walk_root):
+        strangers.extend(sidecars.scan_project_dir(project_dir))
+        stranded += len(sidecars.stranded_dirs(project_dir))
+    if config.archive_root is None or not config.archive_root.is_dir():
+        return SidecarGap(0, stranded, None, tuple(sorted(strangers)), config.archive_root)
+
+    from cc_warehouse import archive
+
+    notices = 0
+    first: str | None = None
+    for folder in archive.walk_folders(config.archive_root):
+        body = archive.read_sidecar_notice(folder)
+        if body is None:
+            continue
+        named = [
+            str(name)
+            for key in ("unarchived", "unknown_inside_subagents", "refused")
+            for name in cast(list[object], body.get(key) or [])
+        ]
+        if not named:
+            continue
+        notices += 1
+        if first is None:
+            first = f"{folder.parent.name}/{folder.name}: {', '.join(named)}"
+    return SidecarGap(notices, stranded, first, tuple(sorted(strangers)), config.archive_root)
+
+
+def _project_dirs(walk_root: Path) -> list[Path]:
+    try:
+        return sorted(p for p in walk_root.iterdir() if p.is_dir())
+    except OSError:
+        return []
+
+
+def sidecar_line(gap: SidecarGap) -> str:
+    """One line an operator can read at a glance, in `status` and in `doctor`.
+
+    It NAMES the first offender rather than only counting, because a count alone
+    cannot be acted on: the operator would have to run a second command to find
+    out where to look, and a signal that costs a follow-up command does not get
+    followed up.
+    """
+    head = f"{gap.notices} folder(s) with unarchived siblings"
+    if gap.first is not None:
+        head += f", e.g. {gap.first}"
+    line = f"{head}; {gap.stranded} sidecar dir(s) without a transcript"
+    if gap.strangers:
+        line += f"; project-level: {', '.join(gap.strangers)}"
+    return line
+
+
 def status_text(config: Config) -> str:
     """Human summary: recent captures, session count, stored size, recent errors.
 
@@ -187,6 +274,13 @@ def status_text(config: Config) -> str:
     # gap is the only figure that distinguishes "nothing to do" from "nothing is
     # working", which is exactly the confusion that let ten days pass unnoticed.
     lines.append(gap_line(uncaptured_gap(config)))
+    # Ticket 38: the second thing the catalog cannot see. A session can be
+    # captured, rendered and verified while a directory of its tool output sits
+    # beside it in ~/.claude that nothing has ever copied.
+    gap = sidecar_gap(config)
+    lines.append(
+        f"Sidecars: {gap.notices} unarchived, {gap.stranded} without transcript"
+    )
     lines.append("Recent captures:")
     if recent:
         for listing in recent:

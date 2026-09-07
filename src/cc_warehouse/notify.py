@@ -188,6 +188,44 @@ def speak(config: Config, message: str) -> None:
         return
 
 
+def alert(config: Config, title: str, message: str) -> None:
+    """Raise ONE desktop notification, best-effort (ticket 38, ruling (e)).
+
+    WHAT IT IS FOR, and why it is not just another log line. The `sidecars` doctor
+    line is deliberately non-blocking: it never moves an exit code, so it never
+    paints a red banner, so it can report a chronic figure without training the
+    operator to ignore banners (the ticket 24.7 lesson). That leaves nothing to
+    INTERRUPT with when a genuinely new unknown sibling appears, and this is it.
+    Callers fire it only when the session's notice file changed to a non-empty
+    set, so it is at most one notification per new anomaly and never a daily nag.
+
+    FIRE AND FORGET, the same shape `_open_with_system_default` below uses, and
+    for a stronger reason: this can be reached from the capture hook, where a sink
+    that blocks is a sink that delays every session end on the machine. A detached
+    child cannot block and needs no timeout to prove it. Any failure to spawn is
+    swallowed (DESIGN 12): a notification must never raise into capture.
+
+    macOS ONLY today, and a no-op everywhere else rather than a guess. The
+    AppleScript is assembled as source text, so double quotes in a directory name
+    are escaped - an unescaped one would end the string early and change what runs.
+    """
+    if not config.desktop_alerts or sys.platform != "darwin":
+        return
+    body = message.replace("\\", "\\\\").replace('"', '\\"')
+    heading = title.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'display notification "{body}" with title "{heading}"'
+    try:
+        subprocess.Popen(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        return
+
+
 def _open_with_system_default(path: str) -> None:
     """Hand PATH to the platform's default opener: `open` on macOS reveals a
     FOLDER in Finder but opens a FILE with its registered app (a browser, for

@@ -123,3 +123,33 @@ def test_a_broken_report_survives_ccw_watchs_real_grep_command(
         f"ccw-watch's own grep command found no FAIL line to show the "
         f"operator, from:\n{result.out}"
     )
+
+
+@pytest.mark.skipif(shutil.which("grep") is None, reason="grep not on PATH")
+def test_an_unarchived_sibling_adds_no_line_to_ccw_watchs_FAIL_list(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Ticket 38, ruling (e). The new `sidecars` check is informational: it may
+    report a non-zero figure forever on a healthy machine, so it must never reach
+    the list ccw-watch shows the operator as things that are broken. Proved with
+    the REAL grep command, not a Python re-implementation of its regex."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0
+    folder = sorted(archive_root.glob(f"*/*_{UUID_A}"))[0]
+    (folder / "sidecars.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "refused": [],
+                "unarchived": ["zzz-probe"],
+                "unknown_inside_subagents": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = run_ccw(["doctor"], ccw_env)
+    assert result.code == 0, result.out
+    assert _grep_fail_lines(result.out) == []

@@ -616,6 +616,23 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     checks.append(Check("desync", problems == 0, desync_detail))
 
+    # Ticket 38, ruling (e). NEVER BLOCKING, and that is the decision rather than
+    # a softness: an unarchived sibling is worth knowing about and is not a broken
+    # capture, so it must not move the exit code that `ccw-freshness-check.py`
+    # escalates on. It is also the ticket 24.7 lesson applied - this machine's
+    # `Uncaptured` figure sits permanently at 250-350 on a healthy install, and a
+    # chronic red banner is one nobody reads. The interruption is `notify.alert`,
+    # fired once per NEW anomaly, not this line.
+    sidecar = status.sidecar_gap(config, walk_root)
+    checks.append(
+        Check(
+            "sidecars",
+            sidecar.notices == 0,
+            status.sidecar_line(sidecar),
+            blocking=False,
+        )
+    )
+
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)
     checks.append(

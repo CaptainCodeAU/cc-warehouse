@@ -7,7 +7,7 @@ The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for 
 render toggles): top-level `root`, `archive_root`, `archive_timezone`,
 `keep_projections`, `keep_objects`, `archive_subagents` and `archive_tool_results`
 (the four `archive_*` keys were missing from this list until 2026-09-08, ticket 38);
-[notify] voice_url voice_id open_folder;
+[notify] voice_url voice_id open_folder desktop_alerts;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
 attachments_compact commands_compact extras_compact tool_output_compact, and the
@@ -183,6 +183,13 @@ class Config:
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
+    # Whether a NEW unarchived sibling raises a desktop notification (ticket 38,
+    # ruling (e)). DEFAULTS ON: an attention sink that defaults off is the F6
+    # shape this project exists to remove - it parses, it is tested, and it does
+    # nothing at all for anyone who did not already know to switch it on. It
+    # cannot nag, because the alert fires only when the notice file CHANGES to a
+    # non-empty set, at most once per new anomaly.
+    desktop_alerts: bool = True
     webhooks: tuple[WebhookSink, ...] = ()
     render_breadcrumbs: bool = False
     render_reminders_full: str = "collapse"
@@ -495,6 +502,7 @@ def load_config(
     voice_url = _str_or_none(notify.get("voice_url"))
     voice_id = _str_or_none(notify.get("voice_id"))
     open_folder = _bool(notify.get("open_folder"), False)
+    desktop_alerts = _bool(notify.get("desktop_alerts"), True)
     if "CCW_VOICE_URL" in resolved_env:
         voice_url = _str_or_none(resolved_env["CCW_VOICE_URL"])
     if "CCW_VOICE_ID" in resolved_env:
@@ -539,6 +547,7 @@ def load_config(
         voice_url=voice_url,
         voice_id=voice_id,
         open_folder=open_folder,
+        desktop_alerts=desktop_alerts,
         webhooks=_webhooks_from_config(merged),
         render_breadcrumbs=_flag_bool(
             flag_map, "breadcrumbs", _bool(render.get("breadcrumbs"), False)
