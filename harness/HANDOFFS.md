@@ -84,6 +84,26 @@ The attention comes from `notify.alert`, fired only when a session's notice CHAN
 non-empty, so a permanent anomaly is announced once and never again. This is the ticket
 24.7 lesson being obeyed rather than re-learned.
 
+**The release caught something the whole build had not, and it was not about
+sidecars.** `v0.1.3` failed its first run on two tests that pass on macOS. Measured
+before changing anything, because the obvious reading was that ticket 38 had broken
+the archive verb: it had not. The capture hook renders in a DETACHED child, so
+`ccw hook` returns before any projection exists (probed: 0 files the instant it
+returned, 7 files five seconds later), and both tests snapshot immediately after
+capturing. A pre-existing race that a fast laptop always wins, exposed because
+capture got slightly slower. `conftest.settle_render` polls for the finished state
+instead of sleeping.
+
+**THE REAL FINDING IS THE GAP THAT LET IT REACH A RELEASE.** Until today the only
+workflow in this repo fired on a `v*` tag, so the FIRST Linux run of any change was
+its release run - the most expensive place to learn anything, because the version
+number is chosen and the tag is pushed first. `.github/workflows/gates.yml` now
+runs the same three gates on every push to master and every PR. It went green on
+the runner BEFORE the tag was moved, which is what made moving it a decision rather
+than a hope. The tag move itself was put to the operator, since that is the one git
+operation this project gates; the failed run had published nothing, so no v0.1.3
+artifact existed to supersede. PyPI now serves 0.1.3.
+
 **Ticket 39 is unblocked** and is the next task. `store.write_if_absent`,
 `archive.copy_sidecar_dir`, `archive.write_sidecar_notice`, the doctor line and
 `notify.alert` are all built for it to reuse.

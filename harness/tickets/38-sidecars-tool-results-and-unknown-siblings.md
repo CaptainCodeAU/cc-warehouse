@@ -688,3 +688,45 @@ covered by four oracle tests that count `notify.alert` calls in-process across t
 sweeps, which is a stronger instrument than watching a banner; what is genuinely
 unverified is that macOS itself renders the notification on this machine. That is a
 one-command check the operator can make whenever the next real anomaly appears.
+
+## The release, and the one thing it caught that the whole build had not
+
+`v0.1.3` FAILED its first release run, on two tests that pass on macOS and had
+passed on CI for every previous release. Both assert the source warehouse is
+byte-identical after `ccw archive --to`.
+
+**Measured before anything was changed, because the obvious reading was that this
+ticket had broken the archive verb.** It had not. A probe captured one session,
+waited, then ran the verb:
+
+    projections right after `ccw hook` returned:   0 files
+    projections five seconds later:                7 files
+    `ccw archive --to` changed the source:         False
+
+The hook renders in a DETACHED child (SPEC 2.5/5), so it returns before any
+projection exists, and both tests snapshot immediately after capturing. `before`
+was a picture of a tree still being written. The CI failure said so once read:
+"Left contains 6 more items", all of them one session's projection folder. A
+pre-existing race that a fast laptop always wins and a slower runner always loses,
+exposed because ticket 38 made capture slightly slower.
+
+Closed by `conftest.settle_render` (`8100da6`), which POLLS for the finished state
+rather than sleeping, and takes two conditions because neither alone is enough: a
+floor of N folders rules out returning before any child has started, and a quiet
+period rules out returning between two children. It fails loudly on timeout, so a
+genuinely stuck child cannot pass as settled. Neither test's assertion changed,
+only its precondition. Stressed 15 times locally, 0 failures.
+
+**THE REAL FINDING IS THE GAP THAT LET IT REACH A RELEASE AT ALL.** Until
+2026-09-08 the only workflow in this repository fired on a `v*` tag, so the FIRST
+Linux run of any change was its release run - the most expensive possible place to
+discover a failure, because the version number is chosen and the tag is pushed
+before anyone learns anything. `.github/workflows/gates.yml` (`7a30615`, operator
+approved) now runs the same three gates on every push to master and on pull
+requests. It went green on the runner before the tag was moved, which is what made
+moving it a decision rather than a hope.
+
+**Tag moved with the operator's explicit word**, the one git operation this project
+gates. The failed run published nothing, so no `v0.1.3` artifact ever existed to be
+superseded. Released and verified from outside: PyPI serves 0.1.3 with 2 files, and
+`uvx --refresh --from cc-warehouse ccw version` reports `0.1.3`.
