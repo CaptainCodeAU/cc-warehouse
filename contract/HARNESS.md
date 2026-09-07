@@ -898,6 +898,16 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   clothes. Named here rather than fixed a fourth time, on the observation of the
   `fifty-shades-of-dotfiles` session that the two recorded instances shared a form
   nobody had generalised.
+  **AND THE PART THAT MAKES IT ACTIONABLE HERE, from the same session: A GREEN
+  CONTROL DOES NOT VALIDATE THE KEY.** This repo's own rule is that a grep may
+  LOCATE but only `census` may CONCLUDE, and `census` refuses to report until a
+  control token has hit. That control proves the INSTRUMENT fired and the
+  population was non-empty. It says nothing about whether the thing it fired on
+  was keyed correctly. All three occurrences above would have passed a control
+  cleanly, because the files were there and the search worked; the key was wrong,
+  not the instrument. So the control answers "did I look?" and this lesson answers
+  "did I look at the right property?", and a measurement needs both before it is
+  allowed to support a destructive decision.
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
