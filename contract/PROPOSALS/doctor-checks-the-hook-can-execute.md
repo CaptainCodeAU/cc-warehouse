@@ -127,8 +127,9 @@ build on is the half that already gets it right.
 ### Why this is NOT a one-line fix, which is why it is filed rather than shipped
 
 Requiring a file unconditionally would BREAK a legitimate registration. A hook registered
-as a bare `ccw hook` in settings.json names no script path at all - the command is resolved
-from PATH - and the string-match path exists precisely to accept it. The correct rule is
+as a bare `ccw hook` in settings.json names no script path at all, because the command is
+resolved from PATH. The string-match path exists precisely to accept that form. The
+correct rule is
 narrower than "always require a file":
 
 > if the command contains a token that LOOKS like a script path (one of the known script
@@ -137,7 +138,7 @@ narrower than "always require a file":
 That is a real behaviour change to a check two external tools have depended on, so it
 needs the principal's scoping, not a session's judgment. Note also that it converts a
 current false `ok` into a real FAIL, which changes `ccw doctor`'s exit code on an affected
-machine - the signal `ccw-freshness-check.py` escalates on.
+machine, and that exit code is the signal `ccw-freshness-check.py` escalates on.
 
 ### Cheap and separate
 
