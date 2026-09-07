@@ -52,9 +52,31 @@ edits to the principal instead.
   permission. Older notes in this repo say `~/.claude` "is scheduled to be
   wiped" and use it to justify urgency; that is SUPERSEDED. The archive being a
   proven second copy is the win, and a second copy is added, never traded.
-- **DO NOT DELETE `~/CODE/my-claude-code-transcripts` (6.5 GB).** It looks like the
-  retired exporter's leftovers and was called "dead weight" in-session on 2026-08-03.
-  It is not. Measured that day: of its 7,698 session folders, **4,756 are in NEITHER
+- **CLOSED 2026-09-07. `~/CODE/my-claude-code-transcripts` HAS BEEN DELETED, BY THE
+  PRINCIPAL, AND THIS RULE IS DISCHARGED. DO NOT RE-ADD IT AS A LIVE PROHIBITION.**
+  He said so in his own words, unprompted, when asked directly: he deleted it believing
+  the transcripts had already been absorbed. The 2026-08-21 sweep recorded below is what
+  turns that belief into evidence, and it is strong (6,460 of 6,462 exact sha256 matches,
+  2 strict supersets, 0 genuinely absent). Verified absent 2026-09-07: not at that path,
+  nowhere under `$HOME` at depth 3, not in `~/.Trash`. `~/CODE/claude-code-transcripts`
+  (the other name, below) is gone from that path too. The ONLY survivor is
+  `~/CODE/CaptainCodeAU/claude-code-transcripts`, which is the frozen SPECIMEN repo and a
+  different thing entirely, so the naming warning below still matters.
+  **WHAT WAS NEVER MEASURED, recorded so nobody later claims full proof:** the sweep
+  predates the deletion, so it proves the content was absorbed AS OF 2026-08-21, not that
+  nothing arrived afterwards and went with the tree. Bounding evidence, gathered
+  2026-09-07: a census of all 108,568 files under `~/CODE` found 157 mentions of the
+  path and exactly TWO that are scripts rather than prose, both hand-run CLI tools inside
+  the frozen specimen (`migrate_project.py` takes it as an `--archive-path` DEFAULT,
+  `reconcile_sessions.py` names it only in `--help` text). No launchd job, hook or cron
+  referenced it. The tree was already static at sweep time. A human hand-running
+  `migrate_project.py` in that window is NOT excluded by any of this; it is judged
+  unlikely, and that judgement is an inference, not a measurement.
+  **THE RECORD BELOW IS KEPT IN FULL** because it is why the delete was safe, and because
+  the reasoning is reusable. Everything from here down is the state as it stood BEFORE
+  the deletion.
+  It looked like the retired exporter's leftovers and was called "dead weight"
+  in-session on 2026-08-03. It was not. Measured that day: of its 7,698 session folders, **4,756 are in NEITHER
   `~/.claude/projects` NOR the archive**, 4,754 of them with a recoverable `.jsonl`
   (392.2 MiB), spanning 2026-02-14 to 2026-07-03, and **4,141 predate the warehouse's
   first capture (2026-05-01)**. Instrument: distinct UUID folder names minus both other
@@ -81,9 +103,11 @@ edits to the principal instead.
   No session folder left any project dir after 2026-07-24 (all 54 project mtimes are
   <= that date), and the root mtime of 2026-08-14 is indistinguishable from a Finder
   `.DS_Store` rewrite. It does not move the verdict, because the rescue import ran
-  2026-08-04, before that date. **A SATISFIED GATE IS NOT CONSENT.** This bullet no longer
-  blocks a delete on missing data, but the delete itself still needs the principal's
-  explicit word at the moment of running, same as ticket 27.4.
+  2026-08-04, before that date. **A SATISFIED GATE IS NOT CONSENT, AND THAT PRINCIPLE
+  STANDS UNCHANGED FOR EVERY FUTURE DESTRUCTIVE STEP even though this particular gate is
+  now closed.** It was honoured here: the measurements did not authorise the delete, the
+  principal did, in his own words, and no agent performed it. Same standard as ticket
+  27.4, and the same standard applies next time.
 - **`ccw` IS INSTALLED AS A FROZEN SNAPSHOT, so editing this repo does NOT change what
   the capture hook runs.** After any change you want the hook to pick up, from the repo
   root with the venv active: **`uv_tool_reinstall_current_project --no-extras`**.
