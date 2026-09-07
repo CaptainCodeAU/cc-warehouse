@@ -73,6 +73,18 @@ _TODO_NAME = re.compile(
 )
 
 
+def home_for_transcript(transcript_path: Path) -> Path:
+    """The `.claude` directory a source transcript lives under.
+
+    `<claude>/projects/<encoded-project>/<uuid>.jsonl`, so two levels above the
+    project directory. Derived from the transcript rather than from `Path.home()`
+    because a sweep can be pointed at any source root and both callers must agree
+    about which tree they are reading; a `$HOME`-relative answer would silently
+    read the real machine's stores while the sweep walked a different one.
+    """
+    return transcript_path.parents[2]
+
+
 def _entries(directory: Path) -> list[os.DirEntry[str]]:
     """Directory entries, or nothing at all when the directory cannot be listed.
 

@@ -272,7 +272,11 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
 # `cli.py` reads this to decide whether the post-sweep build has to run: a
 # back-fill stores 0 sessions, and without it the manifest would never list the
 # files that were just copied.
-SIDECAR_ARCHIVED_ACTIONS = frozenset({"archived-sidecars", "archived-stranded-sidecars"})
+SIDECAR_ARCHIVED_ACTIONS = frozenset({
+    "archived-sidecars",
+    "archived-stranded-sidecars",
+    "archived-stranded-file-history",
+})
 
 
 def _project_dirs(walk_root: Path) -> list[Path]:
@@ -309,14 +313,22 @@ def _sidecar_dir_names(project_dir: Path) -> frozenset[str]:
         return frozenset()
 
 
-def _sidecar_candidate(path: Path, names: frozenset[str]) -> bool:
-    """Whether this transcript is worth opening for the sidecar pass.
+def _sidecar_candidate(path: Path, names: frozenset[str], keyed: frozenset[str]) -> bool:
+    """Whether this transcript is worth opening for the companion pass.
 
-    Two spellings, because Claude Code writes both. `<uuid>.jsonl` gives the stem;
-    `<uuid>.orphaned-<n>-<hash>.jsonl` (one exists live) gives the first
-    dot-separated component. Neither is used to decide identity.
+    Two spellings of the local name, because Claude Code writes both:
+    `<uuid>.jsonl` gives the stem, and `<uuid>.orphaned-<n>-<hash>.jsonl` (one
+    exists live) gives the first dot-separated component. `keyed` adds the session
+    ids that the SESSION-KEYED stores hold, so a session with file-history but no
+    sidecar directory at all is still opened (ticket 39, 39b).
+
+    All three are FILTERS on a source layout deciding which files are worth
+    reading, never identity (F4). What a candidate actually is gets decided from
+    its content a few lines later.
     """
-    return path.stem in names or path.name.split(".", 1)[0] in names
+    stem = path.stem
+    head = path.name.split(".", 1)[0]
+    return stem in names or head in names or stem in keyed or head in keyed
 
 
 def _archived_session_folders(archive_root: Path) -> dict[str, Path]:
@@ -412,10 +424,8 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
         return ItemOutcome(path.name, "error", f"unreadable: {exc}")
     parsed = parser.parse_session(data)
     directory = sidecars.locate(path, parsed.session_uuid)
-    if directory is None:
-        return None
     wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
-    present = [name for name in wanted if (directory / name).is_dir()]
+    present = [name for name in wanted if (directory / name).is_dir()] if directory else []
     scan = sidecars.scan(path, parsed.session_uuid)
     # NO EARLY RETURN when there is nothing to copy and no anomaly, and the
     # missing one was a real bug: a session whose anomaly has been FIXED has
@@ -445,11 +455,13 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
             # line in a 24,000-item report.
             if not present and not scan.has_anomaly:
                 return None
-            return ItemOutcome(path.name, "skipped-sidecars-no-parent", str(directory))
+            return ItemOutcome(path.name, "skipped-sidecars-no-parent", str(directory or path))
         refused: list[str] = []
         written = 0
+        written += _gather_external(config, folder, path, parsed)
+        assert directory is not None or not present  # `present` is empty without a dir
         for name in present:
-            copied = archive.copy_companion_dir(folder, name, directory / name)
+            copied = archive.copy_companion_dir(folder, name, cast(Path, directory) / name)
             written += copied.written
             refused.extend(f"{name}/{item}" for item in copied.refused)
             # THE AUDIT LOG, not only the report and the notice. The hook path has
@@ -477,6 +489,56 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
     if scan.has_anomaly:
         return ItemOutcome(path.name, "sidecar-anomaly", ", ".join(scan.unknown))
     return None
+
+
+def _session_keyed_ids(walk_root: Path) -> frozenset[str]:
+    """Session ids that the SESSION-KEYED stores hold, read once per sweep.
+
+    Two scandirs for the whole machine (1,056 + 3 entries measured 2026-09-08),
+    instead of two stats per catalogued session. It exists so pass three can OPEN a
+    session that has file-history but no sidecar directory of its own, which the
+    original candidate gate could not see at all.
+    """
+    from cc_warehouse import external
+
+    home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
+    return frozenset(external.file_history_by_session(home)) | frozenset(
+        external.todos_by_session(home)
+    )
+
+
+def _gather_external(
+    config: Config, folder: Path, path: Path, parsed: "parser.ParsedSession"
+) -> int:
+    """Copy this session's file-history and todos into its archive folder (39b).
+
+    Returns how many files were newly written, so the caller's own report and the
+    build trigger both count them. Best-effort per item (R10): one unreadable
+    snapshot must not cost the other seven.
+    """
+    from cc_warehouse import archive, external
+
+    if not config.archive_file_history:
+        return 0
+    home = external.home_for_transcript(path)
+    written = 0
+    snapshots = external.file_history_dir(home, parsed.session_uuid)
+    if snapshots is not None:
+        copied = archive.copy_companion_dir(folder, external.FILE_HISTORY_DIR, snapshots)
+        written += copied.written
+        for item in copied.refused:
+            capture.log_sidecar_trouble(
+                config, parsed, "refused", external.FILE_HISTORY_DIR, item
+            )
+    for todo in external.todo_files(home, parsed.session_uuid):
+        try:
+            outcome = archive.write_companion_file(
+                folder, external.TODOS_DIR, Path(todo.name), todo.read_bytes()
+            )
+        except OSError:  # noqa: PERF203 - R10: name it and carry on
+            continue
+        written += 1 if outcome == "wrote" else 0
+    return written
 
 
 def _log_sidecar_anomaly(
@@ -511,6 +573,7 @@ def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
     known = _archived_session_folders(config.archive_root)
     wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
     outcomes: list[ItemOutcome] = []
+    outcomes.extend(_archive_stranded_file_history(config, walk_root, known))
     for project_dir in _project_dirs(walk_root):
         for stranded in sidecars.stranded_dirs(project_dir):
             try:
@@ -542,6 +605,40 @@ def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
     return outcomes
 
 
+def _archive_stranded_file_history(
+    config: Config, walk_root: Path, known: "dict[str, Path]"
+) -> list[ItemOutcome]:
+    """Snapshots whose session the archive does not hold (39b, 42 of the live 1,056).
+
+    Their session left `~/.claude/projects` before the archive ever saw it, so
+    there is no folder to nest under and no transcript to decide identity from.
+    Landed under `_not-sessions/` with the directory name recorded as a label,
+    never used to invent a session folder - the same call ticket 38's ruling (d)
+    made, for the same reason.
+    """
+    from cc_warehouse import archive, external
+
+    if config.archive_root is None or not config.archive_file_history:
+        return []
+    home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
+    outcomes: list[ItemOutcome] = []
+    for stranded in external.stranded_file_history(home, set(known)):
+        try:
+            copied = archive.write_stranded_file_history(config.archive_root, stranded)
+        except Exception as exc:  # noqa: BLE001, PERF203 - R10: name it and carry on
+            outcomes.append(ItemOutcome(stranded.name, "error", f"{type(exc).__name__}: {exc}"))
+            continue
+        if copied.written:
+            outcomes.append(
+                ItemOutcome(
+                    stranded.name,
+                    "archived-stranded-file-history",
+                    f"{copied.written} file(s)",
+                )
+            )
+    return outcomes
+
+
 def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> list[ItemOutcome]:
     """What pass three WOULD do, writing nothing (`--dry-run`).
 
@@ -555,9 +652,10 @@ def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> lis
         return []
     outcomes: list[ItemOutcome] = []
     names_by_dir: dict[Path, frozenset[str]] = {}
+    keyed = _session_keyed_ids(walk_root)
     for path in wanted:
         names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
-        if not _sidecar_candidate(path, names):
+        if not _sidecar_candidate(path, names, keyed):
             continue
         directory = path.parent / (path.stem if path.stem in names else path.name.split(".", 1)[0])
         present = [
@@ -779,9 +877,10 @@ def sweep(
         # four months. Runs LAST because a sidecar nests inside its session's
         # folder and the folder has to exist first (ticket 21.4's lesson).
         names_by_dir: dict[Path, frozenset[str]] = {}
+        keyed = _session_keyed_ids(walk_root)
         for path in wanted:
             names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
-            if not _sidecar_candidate(path, names):
+            if not _sidecar_candidate(path, names, keyed):
                 continue
             handled = _archive_sidecars(config, path)
             if handled is not None:

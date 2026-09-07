@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import catalog, notify, parser, registry, sidecars, store
+from cc_warehouse import catalog, external, notify, parser, registry, sidecars, store
 from cc_warehouse.config import Config
 
 # DESIGN section 4: a re-fire whose latest capture_event landed within this window is a
@@ -241,6 +241,10 @@ def _capture_locked(
         refused = _archive_sidecars_of(config, conn, project_id, transcript_path, parsed)
     except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
         refused = ()
+    try:
+        _archive_external_of(config, conn, project_id, transcript_path, parsed)
+    except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
+        pass
     try:
         _note_unknown_siblings(config, conn, project_id, transcript_path, parsed, refused)
     except Exception:  # noqa: BLE001 - a signal must never be what fails a capture
@@ -482,6 +486,59 @@ def _archive_sidecars_of(
         for item in copied.errors:
             log_sidecar_trouble(config, parsed, "error", name, item)
     return tuple(refused)
+
+
+def _archive_external_of(
+    config: Config,
+    conn: sqlite3.Connection,
+    project_id: int,
+    transcript_path: Path,
+    parsed: parser.ParsedSession,
+) -> None:
+    """Bring the stores keyed by SESSION ID with the session (ticket 39, 39b).
+
+    `~/.claude/file-history/<uuid>/` and this session's own `todos/` files. The
+    twin of `_archive_sidecars_of`, and the difference is only WHERE the bytes are
+    found: those live beside the transcript, these live in a store shared by every
+    session on the machine and are reached by id. Everything after that - mirrored
+    under the session folder, recorded in the manifest, refused rather than
+    overwritten - is the same code.
+
+    THE ID IS THE WHOLE SAFETY ARGUMENT. A copier that read the directory instead
+    would put one session's file history into another session's folder, across
+    1,056 directories on this machine. `parsed.session_uuid` comes from the
+    payload's own content (ruling (a)), never from a path.
+
+    Never fatal (DESIGN 12): the session is already stored by the time this runs.
+    """
+    if config.archive_root is None or not config.archive_file_history:
+        return
+    from cc_warehouse import archive
+
+    home = external.home_for_transcript(transcript_path)
+    snapshots = external.file_history_dir(home, parsed.session_uuid)
+    todos = external.todo_files(home, parsed.session_uuid)
+    if snapshots is None and not todos:
+        return
+    label = _label_of(conn, project_id)
+    folder = archive.session_folder(
+        config.archive_root, label, parsed.session_uuid, config.archive_timezone
+    )
+    if folder is None:
+        return
+    if snapshots is not None:
+        copied = archive.copy_companion_dir(folder, external.FILE_HISTORY_DIR, snapshots)
+        for item in copied.refused:
+            log_sidecar_trouble(config, parsed, "refused", external.FILE_HISTORY_DIR, item)
+        for item in copied.errors:
+            log_sidecar_trouble(config, parsed, "error", external.FILE_HISTORY_DIR, item)
+    for path in todos:
+        try:
+            archive.write_companion_file(
+                folder, external.TODOS_DIR, Path(path.name), path.read_bytes()
+            )
+        except OSError as exc:  # noqa: PERF203 - R10: name it and carry on
+            log_sidecar_trouble(config, parsed, "error", external.TODOS_DIR, f"{path.name}: {exc}")
 
 
 def log_sidecar_trouble(
