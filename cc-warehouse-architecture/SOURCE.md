@@ -421,6 +421,29 @@
 
 ## Provenance and change log
 
+- **2026-09-08 - NOT A REVIEW, a targeted note from ticket 38.** No card was re-derived
+  and no ranking moved; the board's snapshot anchor is unchanged. Three facts a future
+  review needs so it does not have to rediscover them:
+  - **`src/cc_warehouse/sidecars.py` is a NEW leaf module** (no peer imports, fenced by
+    test). It owns the one list of what may sit beside a session transcript, plus the
+    `COPIERS` fence asserting every known name has a copier and every copier has a name.
+    `archive`, `capture`, `sweep`, `status` and `doctor` all import it.
+  - **C12 gained a fourth member of the compare-before-write family**:
+    `store.write_if_absent`, beside `atomic_write` and `write_if_changed`. It is
+    deliberately NOT a variant of replace-if-larger - it refuses on any difference,
+    because a copied tool result has no larger-is-better ordering. Adding it INSIDE
+    `store.py` rather than in `archive.py` is C12's own recommendation being followed
+    rather than a fifth divergent copy, and is worth recording as evidence that the card
+    is being acted on.
+  - **`archive.py` grew again** (constants, `write_sidecar_file`, `_mirror_tree`,
+    `copy_sidecar_dir`, `sidecar_records`, `write_sidecar_notice`, `read_sidecar_notice`,
+    `write_stranded_sidecars`, `_with_sidecars`, `_sidecar_problems`, plus a public
+    `session_folder` alias). C13 (`folder_is_current`: pure decision logic welded to the
+    filesystem) is now WORSE, not better: that function used to do one manifest read plus
+    one `subagents/` listing, and now adds two full `rglob` walks (one per sidecar name),
+    each of which HASHES every file it finds. The next review should re-rank it upward
+    rather than re-derive it.
+
 - **2026-08-23 - FRESH REVIEW, snapshot moved 1517bba -> 4824098** (not a normal re-anchor:
   the previous commit was destroyed by a 2026-08-10 repository rebuild, so this could not be
   a diff against it). 5 parallel Explore agents (the mattpocock-skills review skill is not

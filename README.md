@@ -157,8 +157,21 @@ my-archive/
         ├── transcript.compact.md                         prose only
         ├── conversation.html                             full, self-contained
         ├── conversation.compact.html                     prose only, self-contained
-        └── manifest.json                                 what produced these files
+        ├── manifest.json                                 what produced these files
+        ├── tool-results/                                 output too big to inline
+        │   └── hook-<id>-stdout.txt                      copied, byte for byte
+        └── workflows/                                    workflow definitions
 ```
+
+`tool-results/` and `workflows/` are the other folders Claude Code writes beside a
+transcript, mirrored here under their original relative paths. They matter more
+than they look: measured across one real corpus, roughly half of what
+`tool-results/` holds appears in NO transcript at all, so the archive is the only
+place it survives. `subagents/` sits beside them when a session spawned any.
+
+If Claude Code ever writes a sibling this tool does not know about, the session
+folder gains a `sidecars.json` naming it, `ccw doctor` reports it, and you get one
+desktop notification the first time it appears. Nothing is skipped in silence.
 
 The folder name is `<YYYYMMDD-HHMMSS><offset>_<session-uuid>`. The UTC instant is
 converted using a timezone pinned in config rather than read from the machine
@@ -166,8 +179,9 @@ clock, so the same session produces the same folder name anywhere. The offset is
 part of the name because zones with daylight saving make a bare local timestamp
 ambiguous once the tool that wrote it is gone.
 
-`manifest.json` records `config`, `counts`, `source_hash`, `subagents`, and three
-separate accounting keys that are deliberately not merged:
+`manifest.json` records `config`, `counts`, `source_hash`, `subagents`,
+`tool_results`, `workflows`, and three separate accounting keys that are
+deliberately not merged:
 
 | Key | Means |
 |---|---|

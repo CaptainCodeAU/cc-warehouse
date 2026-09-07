@@ -144,6 +144,50 @@ else entirely (e.g. desync) - a real weakness in the message clarity, not the de
 logic, confirmed during a 2026-09-01 investigation (ticket 34's own account has the
 detail).
 
+## The `sidecars` line, and the alert that is not a banner (ticket 38, 2026-09-08)
+
+`ccw doctor` gained a THIRD kind of line in 0.1.3, and its whole design is about not
+becoming a fourth thing that shouts:
+
+```
+  ok   sidecars    0 folder(s) with unarchived siblings; 39 sidecar dir(s) without a transcript
+       sidecars    3 folder(s) with unarchived siblings, e.g. widget/2026...: zzz-probe; 39 sidecar dir(s) without a transcript
+```
+
+**It is NEVER blocking.** It does not move `ccw doctor`'s exit code, so neither
+consumer above ever sees it: `ccw-watch` branches on the exit code and greps for
+`^\s*FAIL`, and `ccw-freshness-check.py` escalates on the exit code. Both are pinned
+by tests that run their REAL sed and grep commands against a report carrying an
+anomaly. This is deliberate, and it is the ticket 24.7 lesson: the `Uncaptured: N`
+figure on this machine sits between 200 and 350 permanently on a healthy install, and
+a threshold on a figure like that printed ALERT at every session start until it was
+corrected. A chronic red banner is one nobody reads.
+
+**The attention comes from a macOS notification instead.** `notify.alert` fires only
+when a session's `sidecars.json` CHANGES to a non-empty set, so a permanent anomaly is
+announced on the run that finds it and never again. It is a detached `osascript`
+child, so it cannot block the capture hook, and it is a no-op off macOS. The same
+sentence also goes to the voice sink this machine already has configured. Turn it off
+with `[notify] desktop_alerts = false`.
+
+**Two figures, not one.** `N folder(s) with unarchived siblings` is a job for whoever
+adds a copier to `src/cc_warehouse/sidecars.py`. `M sidecar dir(s) without a
+transcript` is a property of `~/.claude`'s own layout and is expected to sit at a
+small non-zero number forever (39 here); the daily sweep copies them under
+`<archive>/_not-sessions/stranded-sidecars/`, so the figure being non-zero is not a
+backlog.
+
+**Cost.** The check is corpus-wide (every archive folder, not the 25-folder recency
+sample the desync check uses), because the failure it exists to catch was four months
+old before anyone saw it. It can afford that because it opens `sidecars.json` and
+nothing else: no payload is read and nothing is hashed, pinned by a test that
+monkeypatches `store.sha256_hex` to raise.
+
+**What the daily sweep now does extra.** A third pass over every session path,
+including the ones reported `skipped_unchanged`, mirroring `tool-results/` and
+`workflows/` into their session folders. It reads about 135 MB and writes nothing on a
+steady-state run; the archive grew about 135 MB once, on the back-fill.
+
 ## Real incident this session traced end to end (2026-09-01)
 
 `ccw doctor`'s desync check flagged "110 problems in the 25 most recently captured

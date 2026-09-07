@@ -435,3 +435,9 @@ SELECT worktree_name, COUNT(*) FROM session WHERE is_worktree = 1 GROUP BY 1;
   measurement. Change it and re-run if it does not match how you work.
 - Local date and hour use this machine's current timezone. Sessions recorded in
   another zone are converted, not relabelled.
+- The sibling walk only looks at `subagents/` (`collect.py`'s sub-agent pass). It
+  does not see `tool-results/` or `workflows/`, which `ccw` started archiving in
+  0.1.3 (ticket 38). Nothing here is wrong because of that - the stats are about
+  conversations, not tool output - but a future panel that counted "files this
+  session produced" would need widening, and would want `sidecars.SESSION_SIDECARS`
+  rather than a second hardcoded list.

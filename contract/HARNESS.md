@@ -910,6 +910,39 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   allowed to support a destructive decision.
 ---
 
+### Ticket 38 retro (2026-09-08): the standing lesson has a sharper form now
+
+**"Census the class" was not enough. The class has to be given a NAME the code
+knows.** The standing lesson says the same defect recurs across modules, so census
+it. Ticket 38 is a case that lesson could not have caught: there was no defect to
+census, because nothing had ever been WRITTEN about the other sidecar folders. The
+product did not have a wrong answer for `tool-results/`; it had no question. Four
+months of data went uncopied not because a rule was applied inconsistently, but
+because `capture.py` asked for one name and looked no further.
+
+So the fix is not a broader search. It is `sidecars.py` plus the `COPIERS` fence:
+one place that ENUMERATES what may exist, and a test that a name without a copier
+fails the suite. The general form: **when code consumes a directory it does not
+own, list what is allowed to be in it and fail on the rest, rather than naming the
+one thing you want.** A grep can only find code that exists; a fence finds code
+that should.
+
+**Also confirmed again, on the other side of the coin: an alert that fires on a
+healthy machine is worse than no alert.** Ruling (e) exists because ticket 24.7
+already paid for that lesson here, and this ticket had every temptation to repeat
+it - the stranded-dir figure sits at 39 permanently on this machine. The doctor
+line reports it and never touches the exit code; the alert fires once per NEW
+anomaly and never on a repeat.
+
+**Two bugs that only appeared once tests existed**, worth recording because in
+both cases the code read as obviously correct:
+- Pass three returned early when there was nothing to copy and no anomaly, so a
+  session whose anomaly had been FIXED kept a notice claiming it forever. An early
+  return that is right for the normal case and wrong for the recovery case.
+- The refusal test on the hook path could not fire at all, because capture is
+  idempotent by hash and a second fire on unchanged bytes short-circuits before
+  any archive write. The test was wrong, not the code - but only running it said so.
+
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
 
 The mattpocock-skills flow composes into this harness at fixed altitudes; it never

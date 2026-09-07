@@ -22,6 +22,51 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Releases
 
+### 0.1.3 - 2026-09-08
+
+**Data that was never being archived now is.** Claude Code writes several folders
+beside every session transcript. cc-warehouse copied exactly one of them
+(`subagents/`) and asked for it BY NAME, so it never noticed the others arriving.
+
+- `tool-results/` has existed since 2026-05-08. Measured on one real corpus before
+  this release: 1,067 directories, 2,084 files, 135.7 MB, of which **65.4 MB
+  appears in no transcript at all**. That half existed only in `~/.claude`. It is
+  now mirrored to `<session>/tool-results/<original relative path>`, nesting kept,
+  and listed in `manifest.json` under a new `tool_results` key.
+- `workflows/` is archived the same way, under a new `workflows` manifest key.
+- `agent-<id>.forked-skill.json` and its marker sibling now travel with their
+  sub-agent, like `meta.json` already did.
+
+**The general defect, which is bigger than those two names.** Nothing in the
+product ever ENUMERATED what sits beside a transcript, so a new sibling could
+appear and the archive would quietly stop being complete. There is now one list of
+known names (`sidecars.py`) with a fence asserting every name has a copier and
+every copier has a name. Anything else is recorded in a `sidecars.json` notice in
+the session folder, reported by a new informational `ccw doctor` line, and
+announced once with a desktop notification. The doctor line is NEVER blocking: it
+does not move the exit code, so it cannot become a banner nobody reads.
+
+**Three hook-path bugs found while doing it, all fixed.**
+
+- The sub-agent directory was located from the transcript's FILE STEM, so a
+  `<uuid>.orphaned-<n>-<hash>.jsonl` transcript found none of its sidecars. It is
+  located from the payload's own session uuid now, with the stem as a fallback.
+- The sub-agent glob was not recursive, so Workflow-tool sub-agents at
+  `subagents/workflows/wf_<id>/agent-*.jsonl` were reached only by the daily sweep.
+- `ccw sweep` ran its post-sweep build only when a session had been STORED, and a
+  back-fill stores none, so a sweep that copied sidecars would never record them
+  in any manifest.
+
+**New config keys**, both defaulting ON: `archive_tool_results` (top level) and
+`[notify] desktop_alerts`.
+
+**New in `ccw status`**: a `Sidecars:` line.
+
+**Upgrading.** The version bump makes every existing archive folder stale, so the
+first `ccw build` or `ccw sweep` after upgrading re-renders the whole tree once.
+That is the run that populates the two new manifest keys. Existing folders raise no
+verify problems in the meantime.
+
 ### 0.1.2 - 2026-08-18
 
 **Bug fix.** `ccw doctor`'s `hook` check could report the wrong hook as "the

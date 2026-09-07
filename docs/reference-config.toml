@@ -21,7 +21,8 @@
 #   CCW_VOICE_ID       -> [notify].voice_id
 #   CCW_OPEN_FOLDER=1  -> [notify].open_folder
 # That is the COMPLETE list. `archive_root`, `archive_timezone`, `keep_objects`,
-# `keep_projections`, `archive_subagents`, and every [render]/[share]/[relocate]/
+# `keep_projections`, `archive_subagents`, `archive_tool_results`, and every
+# [render]/[share]/[relocate]/
 # [import] key have NO environment-variable equivalent - they can only be set in a
 # config.toml file (or a [project.<id>.*] override inside one). An installer that
 # tries to set archive_root via an env var will silently do nothing; ccw will keep
@@ -57,6 +58,13 @@
 # Whether sub-agent transcripts are archived at all. Default: true.
 # archive_subagents = true
 
+# Whether the OTHER sidecar folders Claude Code writes beside a transcript are
+# archived: `tool-results/` and `workflows/`. Default: true, and leave it true
+# unless you have a reason. Measured on one real corpus: roughly HALF of what
+# `tool-results/` holds appears in no transcript at all, so anything this does not
+# copy exists only in ~/.claude. One switch for the hook and the sweep alike.
+# archive_tool_results = true
+
 [notify]
 # Endpoint and voice for spoken failure alerts, if you run one. Default: unset.
 # voice_url = "http://localhost:8888/notify"
@@ -65,6 +73,14 @@
 # Whether a captured session's folder is revealed (opened) after each capture.
 # Default: false.
 # open_folder = false
+
+# Whether a desktop notification is raised the FIRST time cc-warehouse finds
+# something beside a transcript that it has no copier for. Default: true. It
+# cannot nag: it fires only when that session's `sidecars.json` changes to a
+# non-empty set, so a permanent anomaly is announced once and then stays quiet.
+# The matching `ccw doctor` line is informational and never moves the exit code,
+# which is exactly why this sink exists.
+# desktop_alerts = true
 
 # [[notify.webhook]]
 # name = "example"
