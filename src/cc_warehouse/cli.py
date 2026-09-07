@@ -702,7 +702,16 @@ def _run_sweep(args: Sequence[str]) -> int:
     # it already mirrors into the archive, and it prunes nothing outside
     # projections/. One detached child per item is not an option at this scale;
     # this sweep would have spawned 2,064 processes.
-    if stored:
+    #
+    # TICKET 38: a BACK-FILL stores zero sessions. This condition used to be
+    # `if stored:` alone, so a sweep that copied 1,067 sidecar directories would
+    # skip the build entirely and no manifest would ever list what had just
+    # arrived - and that listing is the only thing making a later deletion of
+    # those files detectable.
+    archived_sidecars = sum(
+        1 for outcome in report.outcomes if outcome.action in sweep.SIDECAR_ARCHIVED_ACTIONS
+    )
+    if stored or archived_sidecars:
         build_report = build.build(config)
         build_failures = build_report.failures
         for outcome in build_failures:
@@ -713,7 +722,11 @@ def _run_sweep(args: Sequence[str]) -> int:
         # --quiet drops STDOUT only. Failures are already on stderr above, and the
         # exit code is untouched, so a scheduled sweep stays silent when it works
         # and still speaks when it does not (ticket 23, 24.5).
-        print(f"sweep: {len(report.outcomes)} items, {stored} stored, {len(failures)} failed")
+        sidecar_note = f", {archived_sidecars} with sidecars" if archived_sidecars else ""
+        print(
+            f"sweep: {len(report.outcomes)} items, {stored} stored{sidecar_note},"
+            f" {len(failures)} failed"
+        )
     return 1 if failures else 0
 
 

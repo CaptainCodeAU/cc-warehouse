@@ -181,6 +181,22 @@ def _is_subagent_file(path: Path) -> bool:
         return False
 
 
+def _project_dir_of_subagent(path: Path) -> Path:
+    """The project directory a sub-agent transcript belongs to.
+
+    Walks UP to the `subagents/` directory rather than counting a fixed number of
+    levels, because Claude Code writes two depths: `subagents/agent-*.jsonl` and
+    `subagents/workflows/wf_<id>/agent-*.jsonl`. The fixed count was right for the
+    first and wrong for the second, and the second is 211 real transcripts.
+    """
+    from cc_warehouse import archive
+
+    for ancestor in path.parents:
+        if ancestor.name == archive.SUBAGENTS_DIR:
+            return ancestor.parent.parent
+    return path.parent.parent.parent
+
+
 def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
     """A sub-agent transcript goes to its session's folder, not to the store.
 
@@ -203,11 +219,16 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
         return None
     if config.archive_root is None:
         return ItemOutcome(path.name, "skipped", "sub-agent, but no archive_root is set")
-    meta_path = path.with_suffix(".meta.json")
+    meta_path = path.parent / f"{path.stem}.meta.json"
     meta = meta_path.read_bytes() if meta_path.is_file() else None
     # The project dir is two levels above `subagents/`; deriving from the
     # sub-agent's own parent would produce a label made of the session uuid.
-    project_dir = path.parent.parent.parent
+    #
+    # FOUND BY `subagents/` ITSELF (ticket 38): a Workflow-tool sub-agent sits at
+    # `subagents/workflows/wf_<id>/agent-*.jsonl`, two levels deeper, so a fixed
+    # `parent.parent.parent` computed a label from `wf_<id>` for 211 of them. The
+    # catalog lookup below usually rescued it; that is a net, not a plan.
+    project_dir = _project_dir_of_subagent(path)
     label = registry.derive_label(str(project_dir))
     try:
         conn = catalog.open_catalog(config.root)
@@ -223,7 +244,12 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
         if row:
             label = str(row[0])
         result = archive.write_subagent(
-            config.archive_root, label, data, config.archive_timezone, meta=meta
+            config.archive_root,
+            label,
+            data,
+            config.archive_timezone,
+            meta=meta,
+            companions=capture.forked_skill_companions(path),
         )
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
@@ -240,6 +266,87 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
         return ItemOutcome(path.name, "refused-subagent", f"{why}: {result.directory}")
     action = "archived-subagent-orphaned" if result.orphaned else "archived-subagent"
     return ItemOutcome(path.name, action, str(result.directory))
+
+
+# The outcomes that mean "the archive grew, even though nothing was stored".
+# `cli.py` reads this to decide whether the post-sweep build has to run: a
+# back-fill stores 0 sessions, and without it the manifest would never list the
+# files that were just copied.
+SIDECAR_ARCHIVED_ACTIONS = frozenset({"archived-sidecars", "archived-stranded-sidecars"})
+
+
+def _project_dirs(walk_root: Path) -> list[Path]:
+    """The project directories directly under the source root.
+
+    Derived from the ROOT rather than from `{p.parent for p in transcripts}`,
+    which is the tempting shortcut and is wrong for exactly the case the stranded
+    pass exists for: a project dir holding sidecar dirs and no transcript at all
+    contributes no parent to that set, so it would be invisible to the one pass
+    that was supposed to find it.
+    """
+    try:
+        return sorted(p for p in walk_root.iterdir() if p.is_dir())
+    except OSError:
+        return []
+
+
+def _sidecar_dir_names(project_dir: Path) -> frozenset[str]:
+    """The names of the `<uuid>/` dirs in one project dir, listed once.
+
+    THE CHEAP PRE-FILTER for pass three, and it has to be cheap: the pass runs
+    for every one of ~24,000 source transcripts on a daily sweep, and only ~1,196
+    of them have a sidecar dir at all. Reading and parsing every transcript to ask
+    "what is your session uuid" would be 4.2 GB of I/O to answer a question a
+    single scandir per project dir answers for free.
+
+    A NAME MATCH IS A FILTER, NEVER AN IDENTITY (F4, and ruling (c) says so in as
+    many words). A hit here only means "open this one file"; what actually decides
+    where a sidecar lands is the uuid parsed from the transcript's own content.
+    """
+    try:
+        return frozenset(p.name for p in project_dir.iterdir() if p.is_dir())
+    except OSError:
+        return frozenset()
+
+
+def _sidecar_candidate(path: Path, names: frozenset[str]) -> bool:
+    """Whether this transcript is worth opening for the sidecar pass.
+
+    Two spellings, because Claude Code writes both. `<uuid>.jsonl` gives the stem;
+    `<uuid>.orphaned-<n>-<hash>.jsonl` (one exists live) gives the first
+    dot-separated component. Neither is used to decide identity.
+    """
+    return path.stem in names or path.name.split(".", 1)[0] in names
+
+
+def _archived_session_folders(archive_root: Path) -> dict[str, Path]:
+    """Every archived session's uuid mapped to its folder.
+
+    One two-level listing, the same shape `doctor._overdue` already pays for. It
+    exists for the stranded pass: "no transcript BESIDE this dir" is NOT the same
+    question as "no transcript anywhere", and 4 of the 39 real stranded dirs have
+    a session folder in the archive already. Filing those under `_not-sessions/`
+    would put a known session's data in the drawer reserved for unknowns.
+    """
+    from cc_warehouse import build
+
+    out: dict[str, Path] = {}
+    try:
+        label_dirs = sorted(p for p in archive_root.iterdir() if p.is_dir())
+    except OSError:
+        return out
+    for label_dir in label_dirs:
+        if label_dir.name in build.RESERVED_LABELS:
+            continue
+        try:
+            folders = sorted(p for p in label_dir.iterdir() if p.is_dir())
+        except OSError:  # noqa: PERF203 - one unreadable label never costs the rest
+            continue
+        for folder in folders:
+            _stamp, _sep, tail = folder.name.partition("_")
+            if tail:
+                out.setdefault(tail, folder)
+    return out
 
 
 def _log_item_failure(config: Config, path: Path, exc: Exception) -> None:
@@ -281,6 +388,187 @@ def _capture_item(config: Config, path: Path) -> ItemOutcome:
         _log_item_failure(config, path, exc)
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
     return ItemOutcome(path.name, result.action, result.detail)
+
+
+def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
+    """Pass three for ONE transcript: mirror its sidecar dirs into its folder.
+
+    Returns None when there is nothing to do, so the caller records nothing rather
+    than filling a 24,000-item report with no-ops.
+
+    THE LABEL COMES FROM THE CATALOG, not from the sidecar's own path. A stranded
+    dir's transcript can live under a DIFFERENT project dir than the sidecar (2 do
+    in the live tree), and deriving a label from where the files sit would compute
+    an archive folder that does not exist. When no folder is found the files are
+    LEFT WHERE THEY ARE and reported, never given an invented home (R5, F4).
+    """
+    from cc_warehouse import archive, sidecars
+
+    if config.archive_root is None or not config.archive_tool_results:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return ItemOutcome(path.name, "error", f"unreadable: {exc}")
+    parsed = parser.parse_session(data)
+    directory = sidecars.locate(path, parsed.session_uuid)
+    if directory is None:
+        return None
+    wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
+    present = [name for name in wanted if (directory / name).is_dir()]
+    scan = sidecars.scan(path, parsed.session_uuid)
+    if not present and not scan.has_anomaly:
+        return None
+
+    label = registry.derive_label(str(path.parent))
+    try:
+        conn = catalog.open_catalog(config.root)
+        try:
+            row = conn.execute(
+                "SELECT p.label FROM session s JOIN project p ON p.id = s.project_id"
+                " WHERE s.session_uuid = ? LIMIT 1",
+                (parsed.session_uuid,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row:
+            label = str(row[0])
+        folder = archive.session_folder(
+            config.archive_root, label, parsed.session_uuid, config.archive_timezone
+        )
+        if folder is None:
+            return ItemOutcome(path.name, "skipped-sidecars-no-parent", str(directory))
+        refused: list[str] = []
+        written = 0
+        for name in present:
+            copied = archive.copy_sidecar_dir(folder, name, directory / name)
+            written += copied.written
+            refused.extend(f"{name}/{item}" for item in copied.refused)
+        changed = archive.write_sidecar_notice(folder, scan, refused)
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
+
+    if changed and scan.has_anomaly:
+        _log_sidecar_anomaly(config, parsed.session_uuid, path, scan)
+    if refused:
+        return ItemOutcome(path.name, "refused-sidecar", ", ".join(refused))
+    if written:
+        return ItemOutcome(path.name, "archived-sidecars", f"{written} file(s) -> {folder}")
+    if scan.has_anomaly:
+        return ItemOutcome(path.name, "sidecar-anomaly", ", ".join(scan.unknown))
+    return None
+
+
+def _log_sidecar_anomaly(
+    config: Config, session_uuid: str | None, path: Path, scan: "object"
+) -> None:
+    """One audit line when a sweep is the thing that FINDS a new unknown sibling.
+
+    Guarded by the notice having actually changed, so the daily job announces an
+    anomaly once and then stays quiet about it forever after - the ticket 24.7
+    lesson, which this project learned by printing ALERT every session on a
+    perfectly healthy install."""
+    from cc_warehouse import sidecars
+
+    assert isinstance(scan, sidecars.SidecarScan)
+    names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
+    short = (session_uuid or "")[:8]
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "unarchived-sibling",
+                "session": short or None,
+                "project": None,
+                "message": f"unarchived sibling(s) beside {short or path.name}: {names}",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
+def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
+    """Sidecar dirs with no transcript beside them (ruling (d)).
+
+    Two destinations, and telling them apart is the refinement execution forced.
+    A dir whose name matches a session the archive already holds goes into THAT
+    session's folder - it is not homeless, its transcript simply moved. Only a dir
+    the archive has never heard of goes under `_not-sessions/stranded-sidecars/`,
+    where its name is recorded as a label and never trusted as identity (F4).
+    """
+    from cc_warehouse import archive, sidecars
+
+    if config.archive_root is None or not config.archive_tool_results:
+        return []
+    known = _archived_session_folders(config.archive_root)
+    wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
+    outcomes: list[ItemOutcome] = []
+    for project_dir in _project_dirs(walk_root):
+        for stranded in sidecars.stranded_dirs(project_dir):
+            try:
+                folder = known.get(stranded.name)
+                if folder is not None:
+                    written = sum(
+                        archive.copy_sidecar_dir(folder, name, stranded / name).written
+                        for name in wanted
+                        if (stranded / name).is_dir()
+                    )
+                    if written:
+                        outcomes.append(
+                            ItemOutcome(
+                                stranded.name, "archived-sidecars", f"{written} file(s) -> {folder}"
+                            )
+                        )
+                    continue
+                copied = archive.write_stranded_sidecars(config.archive_root, stranded)
+                if copied.written:
+                    outcomes.append(
+                        ItemOutcome(
+                            stranded.name,
+                            "archived-stranded-sidecars",
+                            f"{copied.written} file(s)",
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001, PERF203 - R10: name it and carry on
+                outcomes.append(ItemOutcome(stranded.name, "error", f"{type(exc).__name__}: {exc}"))
+    return outcomes
+
+
+def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> list[ItemOutcome]:
+    """What pass three WOULD do, writing nothing (`--dry-run`).
+
+    Reads directory entries only and never opens the catalog, so it cannot
+    materialise the warehouse it is describing - the property `plan()`'s own
+    docstring exists to protect.
+    """
+    from cc_warehouse import sidecars
+
+    if config.archive_root is None or not config.archive_tool_results:
+        return []
+    outcomes: list[ItemOutcome] = []
+    names_by_dir: dict[Path, frozenset[str]] = {}
+    for path in wanted:
+        names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
+        if not _sidecar_candidate(path, names):
+            continue
+        directory = path.parent / (path.stem if path.stem in names else path.name.split(".", 1)[0])
+        present = [
+            name
+            for name in sorted(sidecars.SESSION_SIDECARS - {"subagents"})
+            if (directory / name).is_dir()
+        ]
+        if present:
+            outcomes.append(
+                ItemOutcome(path.name, "would-archive-sidecars", ", ".join(present))
+            )
+    for project_dir in _project_dirs(walk_root):
+        outcomes.extend(
+            ItemOutcome(d.name, "would-archive-sidecars", "no transcript beside this dir")
+            for d in sidecars.stranded_dirs(project_dir)
+        )
+    return outcomes
 
 
 def _in_window(path: Path, keep: "Callable[[str | None], bool] | None") -> bool:
@@ -383,7 +671,8 @@ def plan(
         walk_root, skip_agents=not config.archive_subagents, limit=limit
     )
     already = cataloged_hashes_readonly(config.root)
-    for path in (p for p in transcripts if _in_window(p, window)):
+    wanted = [p for p in transcripts if _in_window(p, window)]
+    for path in wanted:
         try:
             digest = store.sha256_hex(path.read_bytes())
         except OSError as exc:
@@ -391,6 +680,7 @@ def plan(
             continue
         action = "would-skip" if digest in already else "would-store"
         outcomes.append(ItemOutcome(path.name, action, str(path)))
+    outcomes.extend(_plan_sidecars(config, walk_root, wanted))
     outcomes.extend(
         ItemOutcome(path.name, "would-store", str(path))
         for path in _orphan_object_paths(config.root, already)
@@ -475,6 +765,22 @@ def sweep(
         for path in deferred:
             handled = _archive_subagent(config, path)
             outcomes.append(handled if handled is not None else _capture_item(config, path))
+        # PASS THREE (ticket 38), over EVERY session path the walk yielded,
+        # including the ones the pre-filter reported `skipped_unchanged`. A
+        # sidecar can arrive after the last capture with the transcript's hash
+        # unchanged, so a pass that only looked at newly stored sessions would
+        # never see it - which is exactly how 1,067 directories went uncopied for
+        # four months. Runs LAST because a sidecar nests inside its session's
+        # folder and the folder has to exist first (ticket 21.4's lesson).
+        names_by_dir: dict[Path, frozenset[str]] = {}
+        for path in wanted:
+            names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
+            if not _sidecar_candidate(path, names):
+                continue
+            handled = _archive_sidecars(config, path)
+            if handled is not None:
+                outcomes.append(handled)
+        outcomes.extend(_archive_stranded(config, walk_root))
         cataloged = _cataloged_hashes(config.root)
         outcomes.extend(
             _capture_item(config, path)

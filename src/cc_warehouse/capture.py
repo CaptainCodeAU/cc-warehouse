@@ -408,13 +408,13 @@ def _archive_subagents_of(
                 payload,
                 config.archive_timezone,
                 meta=meta_path.read_bytes() if meta_path.is_file() else None,
-                companions=_forked_skill_companions(child),
+                companions=forked_skill_companions(child),
             )
         except Exception:  # noqa: BLE001, PERF203 - one bad sub-agent never costs the capture
             continue
 
 
-def _forked_skill_companions(transcript: Path) -> tuple[tuple[str, bytes], ...]:
+def forked_skill_companions(transcript: Path) -> tuple[tuple[str, bytes], ...]:
     """The `.forked-skill.json` / `.forked-skill.marker.json` files beside one
     sub-agent transcript (ticket 38; 10 of each in the live tree, copied by
     nothing until now).
