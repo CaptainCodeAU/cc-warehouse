@@ -78,3 +78,70 @@ parse (`ccw-watch`, and this repo's own `ccw-freshness-check.py`). Adding a line
 lower risk than changing one, but neither is free. See
 `contract/PROPOSALS/doctor-json-config-fields.md`, which is blocked behind the same
 constraint.
+
+---
+
+## ADDENDUM 2026-09-07: a THIRD question sits before the other two, and it is a live false green
+
+Filed after the `fifty-shades-of-dotfiles` session red-teamed its own narrowed watcher and
+found that a `true` in `enabledPlugins` plus a registry entry are not evidence the code is
+present, because the plugin runs from a cached clone at a recorded `installPath` that can
+simply be gone. Handed over as an observation about their side. It is also true of ours,
+and PROVED here by execution rather than accepted on report.
+
+### The chain, in order
+
+1. Is a hook REGISTERED? Doctor answers this.
+2. Is the file it names still THERE? **Doctor does not reliably answer this.**
+3. Can that file EXECUTE? Doctor does not answer this (the original body of this proposal).
+
+### The measurement
+
+`_mentions_ccw` (doctor.py:121) has two paths and only the second checks the filesystem:
+
+```python
+if any(name in command for name in _OUR_COMMANDS):   # ("ccw", "cc-warehouse")
+    return True                                       # <- no file check at all
+for token in command.split():
+    ...
+    if candidate.suffix not in {".py", ".sh", ".ts", ".js"} or not candidate.is_file():
+        continue                                      # <- this path DOES check
+```
+
+Our own registered command is `python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py`. The
+substring `ccw` appears in the FILENAME, so the first path fires and returns before the
+second is ever reached. Run directly on 2026-09-07:
+
+```
+_OUR_COMMANDS = ('ccw', 'cc-warehouse')
+string-match path fires on our command? True ['ccw']
+_mentions_ccw(cmd, Path('/nonexistent/plugin/root')) -> True
+```
+
+So `ccw doctor` reports `ok  hook  SessionEnd capture hook found via
+cc-capture@cc-warehouse: ...` for a plugin root that does not exist. Delete the cache
+folder and the `hook` line stays green. That is a false green of exactly the shape 0.1.2
+fixed one instance of, and the wrapper-following path this proposal's own machinery would
+build on is the half that already gets it right.
+
+### Why this is NOT a one-line fix, which is why it is filed rather than shipped
+
+Requiring a file unconditionally would BREAK a legitimate registration. A hook registered
+as a bare `ccw hook` in settings.json names no script path at all - the command is resolved
+from PATH - and the string-match path exists precisely to accept it. The correct rule is
+narrower than "always require a file":
+
+> if the command contains a token that LOOKS like a script path (one of the known script
+> suffixes), that file must exist, whatever else the command string mentions.
+
+That is a real behaviour change to a check two external tools have depended on, so it
+needs the principal's scoping, not a session's judgment. Note also that it converts a
+current false `ok` into a real FAIL, which changes `ccw doctor`'s exit code on an affected
+machine - the signal `ccw-freshness-check.py` escalates on.
+
+### Cheap and separate
+
+The registry already records `installPath`. Doctor already reads that registry to name the
+live plugin in its `hook` line (the `enabledPlugins` gate added 2026-08-23). Reporting
+whether that recorded path still exists is a third field using machinery doctor already
+has, and it answers question 2 without touching `_mentions_ccw` at all.
