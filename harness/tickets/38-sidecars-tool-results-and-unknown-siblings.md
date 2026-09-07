@@ -667,9 +667,20 @@ write; both are a single JSON line of `gh issue list` output that differs in con
 WHAT CAUSED THE REWRITE IS NOT MEASURED and is not claimed here. What is measured is
 that a persisted-output filename in a live session held two different payloads twenty
 minutes apart, and that `store.write_if_absent` did the right thing with it: kept the
-archived copy, wrote nothing, named the file in `sidecars.json`'s `refused` list, wrote a
-`refused` line to the audit log, and surfaced it on `ccw doctor`'s new line without
-moving the exit code.
+archived copy, wrote nothing, named the file in `sidecars.json`'s `refused` list, and
+surfaced it on `ccw doctor`'s new line without moving the exit code.
+
+**CORRECTED 2026-09-08, and the correction is a defect this ticket shipped.** The
+sentence above originally also claimed the refusal wrote a `refused` line to the
+audit log. It did not. The HOOK path logged refusals; the SWEEP path recorded them
+only in the report and the notice. Proved with a control before the zero was
+believed: `"status": "ok"` matched 669 lines in `logs/capture.jsonl` and `refused`
+matched none, on a machine whose `sidecars.json` was showing a refusal. That split
+matters because the two records answer different questions - the notice says what is
+true NOW for one session, the log says what HAPPENED and when across all of them, and
+only the log can be counted afterwards. Fixed by making `capture.log_sidecar_trouble`
+public and calling it from the sweep (R9: one line, one implementation), with an
+oracle test written red first.
 
 **THIS CHANGED THE CODE.** `announce_unarchived_siblings` became
 `announce_sidecar_anomaly` and now alerts on a refusal too, not only on an unknown

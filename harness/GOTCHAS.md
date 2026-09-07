@@ -51,10 +51,15 @@ facts" while actually holding five - fixed here.)
   the function file is sourced.** The wrapper is on PATH as a shell function but
   its private helper is not, so the first call dies with
   `uv_tool_reinstall_current_project:19: command not found: _uv_tool_parse_flags`.
-  Source the file first (it lives in the dotfiles repo, not in `$HOME`):
-  `source ~/CODE/Scaffoldings/fifty-shades-of-dotfiles/home/.zsh_python_functions`
-  then run `uv_tool_reinstall_current_project --no-extras` as normal. Harmless but
-  it reads like the frozen-install rule is broken when it is not; seen 2026-09-08.
+  Source the shell function file that defines it first (it lives in the operator's
+  dotfiles repo and is not installed into `$HOME`; find it with
+  `grep -rl _uv_tool_parse_flags` over the dotfiles checkout), then run
+  `uv_tool_reinstall_current_project --no-extras` as normal. Harmless, but it reads
+  like the frozen-install rule is broken when it is not; seen 2026-09-08.
+  The concrete path is deliberately NOT written here: `test_packaging.py`'s leak
+  scan fails on any `/home/<name>` segment, and that dotfiles repo has a literal
+  `home/` directory, so naming the path trips the fence with a FALSE positive. The
+  fence is right to fail closed; the path simply does not belong in a public repo.
 - **This repository had NO push-to-master CI until 2026-09-08.** The only workflow
   fired on a `v*` tag, so the first Linux run of any change was its release run,
   and a Linux-only failure cost a failed release before anyone saw it (see

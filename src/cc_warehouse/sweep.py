@@ -452,6 +452,18 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
             copied = archive.copy_sidecar_dir(folder, name, directory / name)
             written += copied.written
             refused.extend(f"{name}/{item}" for item in copied.refused)
+            # THE AUDIT LOG, not only the report and the notice. The hook path has
+            # always logged these; this path did not, so the one real refusal on
+            # the operator's machine left `logs/capture.jsonl` empty while
+            # `sidecars.json` and `ccw doctor` both showed it (found 2026-09-08,
+            # by watching the live log with a control). The two records answer
+            # different questions: the notice says what is true NOW for one
+            # session, the log says what HAPPENED and when, across all of them,
+            # and only the log can be counted afterwards.
+            for item in copied.refused:
+                capture.log_sidecar_trouble(config, parsed, "refused", name, item)
+            for item in copied.errors:
+                capture.log_sidecar_trouble(config, parsed, "error", name, item)
         changed = archive.write_sidecar_notice(folder, scan, refused)
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")

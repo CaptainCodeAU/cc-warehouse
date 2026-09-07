@@ -383,3 +383,32 @@ def test_a_workflow_tool_subagent_is_archived_by_the_sweep(
     sweep(ccw_env)
     landed = sorted(session_folder(archive_root).glob("subagents/*_b7c2e9f10a3b4c5d6"))
     assert len(landed) == 1, landed
+
+
+def test_a_sweep_refusal_reaches_the_audit_log_like_the_hooks_does(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """FOUND BY WATCHING THE REAL LOG, 2026-09-08, right after shipping.
+
+    The hook path logs every refusal through `_log_sidecar_trouble`. The sweep
+    path recorded it in the report and in `sidecars.json` and wrote NO log line at
+    all, so the one real refusal on this machine left the audit log with nothing in
+    it. Proved with a control before believing the zero: `"status": "ok"` matched
+    669 lines in the same file, `refused` matched none.
+
+    That split matters because the two records answer different questions. The
+    notice says what is true NOW for one session; the log says what HAPPENED and
+    when, across all of them, and it is the only one a later reader can count.
+    A refusal visible in one and not the other is the F6 shape this ticket exists
+    to remove, shipped inside the ticket that removes it."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    plant_session(ccw_env)
+    plant_tool_result(ccw_env)
+    sweep(ccw_env)
+    plant_tool_result(ccw_env, data=b"a completely different capture")
+    sweep(ccw_env)
+    records = log_lines(ccw_env, "refused")
+    assert len(records) == 1, records
+    assert STDOUT_NAME in str(records[0]["message"])
+    assert set(records[0]) == {"at", "status", "session", "project", "message", "elapsed_ms"}

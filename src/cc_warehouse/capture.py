@@ -478,20 +478,28 @@ def _archive_sidecars_of(
         copied = archive.copy_sidecar_dir(parent, name, source)
         refused.extend(f"{name}/{item}" for item in copied.refused)
         for item in copied.refused:
-            _log_sidecar_trouble(config, parsed, "refused", name, item)
+            log_sidecar_trouble(config, parsed, "refused", name, item)
         for item in copied.errors:
-            _log_sidecar_trouble(config, parsed, "error", name, item)
+            log_sidecar_trouble(config, parsed, "error", name, item)
     return tuple(refused)
 
 
-def _log_sidecar_trouble(
+def log_sidecar_trouble(
     config: Config, parsed: parser.ParsedSession, status: str, sidecar: str, detail: str
 ) -> None:
     """One audit line per refused or unreadable sidecar file (F6, R10).
 
     `notify.append_log` rather than `notify.report`: this is a durable local
     record, not an event worth a webhook or a spoken sentence. The attention sink
-    is reserved for an UNKNOWN sibling, which is the thing a human has to act on.
+    is a separate decision made by `announce_sidecar_anomaly`.
+
+    PUBLIC because the sweep's third pass needs the SAME line (R9). It did not
+    have one until 2026-09-08: the hook path logged every refusal and the sweep
+    path logged none, so the first real refusal on the operator's machine showed
+    up in `sidecars.json` and in `ccw doctor` and left the audit log empty. The
+    two records answer different questions and a reader needs both - the notice
+    says what is true NOW for one session, the log says what HAPPENED and when,
+    across all of them, and only the log can be counted afterwards.
     """
     verb = "refused" if status == "refused" else "could not read"
     notify.append_log(
@@ -594,7 +602,7 @@ def announce_sidecar_anomaly(
     try:
         if scan.has_anomaly:
             # Only the UNKNOWN-sibling half logs here. A refusal already has its
-            # own `refused` line from `_log_sidecar_trouble`, and logging it twice
+            # own `refused` line from `log_sidecar_trouble`, and logging it twice
             # would make the audit log disagree with itself about how many
             # happened.
             names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
