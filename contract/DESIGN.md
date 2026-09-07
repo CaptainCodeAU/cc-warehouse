@@ -1692,6 +1692,39 @@ change. `ccw repair`'s log calls fire regardless of `--quiet`, by design -
 quiet only ever controlled the human-readable summary. Full account:
 `harness/tickets/35-durable-logging-for-build-and-repair.md`.
 
+**2026-09-07: a hook command that NAMES a script must have that script present
+(`ccw doctor`'s `hook` check).** `_mentions_ccw` had two paths and only the second
+touched the filesystem: the first returned True as soon as the command STRING
+contained `ccw` or `cc-warehouse`. Our own registration is
+`python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-hook.py`, and `ccw` is a substring of the
+FILENAME, so the string path fired and returned before the `is_file()` check on the
+second path was ever reached. Proved by execution before being fixed:
+`_mentions_ccw(cmd, Path('/nonexistent/plugin/root'))` returned True. The plugin runs
+from a CACHED clone that can simply be deleted, so doctor printed `ok hook` while
+capture was dead - a false green in the tool whose whole job is to stop a broken thing
+looking healthy, and the same shape 0.1.2 fixed one instance of.
+
+THE DECISION, and why it is narrow rather than absolute: requiring a file
+unconditionally would BREAK a legitimate registration, because a bare `ccw hook` in
+settings.json names no script path at all (the command resolves from PATH) and the
+string-match branch exists precisely to accept that form. So the rule is: if a command
+contains a token that LOOKS like a script path, that file must exist, whatever else the
+string mentions. That case is pinned by its own control test rather than left to
+reasoning, because requiring a file unconditionally was the first instinct.
+
+CONSEQUENCE ACCEPTED DELIBERATELY: this converts a current false `ok` into a real FAIL,
+which MOVES `ccw doctor`'s exit code on an affected machine. That exit code is the signal
+`ccw-freshness-check.py` escalates on, and it is the intended behaviour - an unrunnable
+hook should reach that escalation. `ccw-watch` no longer parses doctor at all (narrowed
+by its own project the same day), so the text change reaches no other consumer;
+`tests/test_doctor_external_contract.py` passes unchanged.
+
+Found by the `fifty-shades-of-dotfiles` session red-teaming its OWN watcher and handing
+the observation over as an observation about their side, then verified here rather than
+accepted on report. The related requirement that doctor also check the hook can EXECUTE
+(not merely that it is registered) stays FILED, not built:
+`contract/PROPOSALS/doctor-checks-the-hook-can-execute.md`.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

@@ -72,6 +72,16 @@ personal paths.
 
 ## Unreleased
 
+### Fixes waiting for the next release cut
+
+- **`ccw doctor` no longer reports a hook ok when the script it names is gone**
+  (`03f7921`, 2026-09-07). A false green: the `hook` check matched on the command
+  STRING and returned before its own `is_file()` test, so a deleted plugin cache still
+  read healthy. Converts a false `ok` into a real FAIL, so doctor's EXIT CODE moves on an
+  affected machine. Recorded here because the version was not bumped that day and 0.1.2
+  once sat unreleased for three weeks unnoticed; whoever cuts the next version owes this
+  a `## Releases` entry. Full reasoning: `contract/DESIGN.md` section 15, 2026-09-07.
+
 ### v1.1 flag groups, closed 2026-08-01
 
 The four deferred flag groups, each landing the day it was defined: the per-variant
