@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/ccw-freshness-check.py",
-            "timeout": 20
+            "timeout": 55
           }
         ]
       }

@@ -69,6 +69,37 @@ _UNCAPTURED = re.compile(r"Uncaptured:\s*(\d+)\s*session")
 _WARN_AT = 2
 _ALERT_AT = 5
 
+# How long to let `ccw doctor` think before giving up on it. Doctor has to
+# walk ~/.claude/projects to count uncaptured sessions, so its cost tracks the
+# size of that tree, not the health of capture. Measured on the operator's
+# machine 2026-09-07: 2.75s warm against 27,277 files / 4.2 GB - but it went
+# over the previous 15s budget TWICE at 12:55 local, minutes after ccw-sweep
+# wrote 486 archive folders and left the page cache cold, while capture itself
+# was perfectly healthy (a session had been archived 24ms earlier). 45s is
+# roughly 16x the warm figure and still well inside what a SessionStart hook
+# can afford to block for. See the timeout handling in main(): going over this
+# budget is now a streak, not an alarm.
+_DOCTOR_TIMEOUT = 45
+
+# Per `launchctl print` call in broken_jobs(). Measured 2026-09-07: all three
+# calls together return in 0.03s, because launchctl is local IPC and never
+# touches the projects tree the way `ccw doctor` does. 2s is ~66x that. It was
+# 5s, which cost nothing while the timeout path still returned early and never
+# reached these calls; it does now, so this budget stacks on _DOCTOR_TIMEOUT
+# and has to fit under the outer kill with it (see the invariant test named in
+# the comment below).
+_JOB_TIMEOUT = 2
+
+# THE INVARIANT BOTH NUMBERS ABOVE LIVE UNDER: Claude Code kills this whole
+# process at the `timeout` declared for SessionStart in this plugin's own
+# hooks.json, so _DOCTOR_TIMEOUT + 3 * _JOB_TIMEOUT must stay strictly under
+# it, or the hard kill lands before the graceful except branch below and skips
+# the "unreachable" log line, the streak write and broken_jobs() - the exact
+# silent-early-exit shape the timeout fix exists to close. The two files
+# cannot see each other, so the relationship is pinned by
+# tests/test_cc_capture_freshness.py's
+# test_the_freshness_hook_budgets_fit_inside_its_own_outer_kill.
+
 # Watch the 3 real launchd background jobs `ccw doctor` never looks at at all
 # (operator-approved follow-up, 2026-08-24). Real incident THIS closes: the
 # weekly ccw-archive job silently failed every real session it touched for two
@@ -256,7 +287,7 @@ def _job_last_exit(label: str) -> int | None:
             ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_JOB_TIMEOUT,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -291,26 +322,64 @@ def job_health_message(broken: list[tuple[str, int]]) -> str | None:
     return f"cc-warehouse: scheduled job failing: {named}. Check its log under ~/.claude/logs/."
 
 
-def freshness_message(streak: int, uncaptured: int | None) -> str | None:
+def _tier(streak: int) -> int:
+    """Which escalation tier a streak falls in: 0 mild, 1 WARNING, 2 ALERT.
+    One definition, shared by every kind of trouble this script reports, so
+    the boundaries can never drift apart per-case (caught in review
+    2026-09-07, when the unreachable-doctor wording arrived with its own
+    copy-pasted ladder over the same two constants)."""
+    if streak < _WARN_AT:
+        return 0
+    if streak < _ALERT_AT:
+        return 1
+    return 2
+
+
+def freshness_message(
+    streak: int, uncaptured: int | None, unreachable: str | None = None
+) -> str | None:
     """The escalating line to print, or None to stay quiet.
 
     Streak 0 (doctor healthy) stays silent no matter how large the chronic
     backlog is: this signal clears the moment the real problem is fixed, not
-    merely once it has been seen (ticket 24.7)."""
+    merely once it has been seen (ticket 24.7).
+
+    `unreachable` names why `ccw doctor` could not be ASKED at all - a
+    timeout, an OSError, any SubprocessError. It changes the WORDING only,
+    never the tiering. A probe that got no answer produced no verdict, so it
+    must not be reported as "capture failed": on the 2026-09-07 incident that
+    made this parameter exist, capture was working perfectly and had archived
+    a session 24ms earlier, while doctor merely lost a race against a sweep
+    that had just written 486 archive folders. It DOES share the same streak,
+    because a doctor nobody can reach for five session-starts running is a
+    real problem, and the branch this replaced could never say so - it never
+    touched the counter, so it shouted one flat line forever and never
+    escalated (operator-approved fix, 2026-09-07).
+
+    The uncaptured figure is deliberately left out of the unreachable wording:
+    doctor never printed the line, so it is always "count unknown" there, and
+    a phrase that can only ever say "unknown" is noise on an alert."""
     if streak <= 0:
         return None
-    detail = f"{uncaptured} uncaptured" if uncaptured is not None else "count unknown"
-    if streak < _WARN_AT:
-        return f"cc-warehouse: capture check failed ({detail}). Run `ccw doctor`."
-    if streak < _ALERT_AT:
+    tier = _tier(streak)
+    if unreachable is not None:
+        subject = f"could not check capture ({unreachable})"
         return (
-            f"cc-warehouse: WARNING - capture check has failed {streak} times in a row "
-            f"({detail}). Run `ccw doctor`."
-        )
+            f"cc-warehouse: {subject}. Capture may well be fine; the check got "
+            f"no answer. Run `ccw doctor`.",
+            f"cc-warehouse: WARNING - {subject}, {streak} session-starts in a "
+            f"row. Run `ccw doctor`.",
+            f"cc-warehouse: ALERT - {subject}, {streak} session-starts in a row. "
+            f"`ccw doctor` has not answered once. Run it by hand now.",
+        )[tier]
+    detail = f"{uncaptured} uncaptured" if uncaptured is not None else "count unknown"
     return (
+        f"cc-warehouse: capture check failed ({detail}). Run `ccw doctor`.",
+        f"cc-warehouse: WARNING - capture check has failed {streak} times in a row "
+        f"({detail}). Run `ccw doctor`.",
         f"cc-warehouse: ALERT - capture has been broken for {streak} session-starts in a "
-        f"row ({detail}). Run `ccw doctor` now."
-    )
+        f"row ({detail}). Run `ccw doctor` now.",
+    )[tier]
 
 
 def main() -> int:
@@ -323,30 +392,47 @@ def main() -> int:
         report("error", "ccw is not installed; freshness check skipped")
         return 0
 
+    # A doctor that could not be ASKED and a doctor that answered FAIL are
+    # different facts, but they share one property: neither is evidence that
+    # capture is healthy. So both fall through to the same streak below.
+    # They used to not: the except branch spoke immediately (report("error")
+    # is the only status report() says out loud) and then `return 0`-ed,
+    # which never touched the streak counter AND skipped broken_jobs()
+    # entirely. One slow moment therefore shouted a raw Python traceback,
+    # while a permanently unreachable doctor could never escalate past that
+    # same flat line. Fixed 2026-09-07 after both halves fired for real.
+    result: subprocess.CompletedProcess[str] | None = None
+    unreachable: str | None = None
     try:
         result = subprocess.run(
             [executable, "doctor"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=_DOCTOR_TIMEOUT,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        report("error", f"{executable} doctor did not run: {type(exc).__name__}: {exc}")
-        return 0
+        unreachable = type(exc).__name__
+        # Keep the full detail durably in the log, at a status report() does
+        # not speak, so nothing this branch used to record is lost. The short
+        # type name is what rides along in the banner message below.
+        report(
+            "unreachable",
+            f"{executable} doctor did not answer: {type(exc).__name__}: {exc}",
+        )
 
-    uncaptured = extract_uncaptured(result.stdout)
+    uncaptured = extract_uncaptured(result.stdout) if result is not None else None
     now = datetime.now(timezone.utc)
     prev_count, prev_at = read_backlog_snapshot(STATE_PATH)
     rate = backlog_growth(prev_count, prev_at, uncaptured, now) if uncaptured is not None else None
 
-    if result.returncode == 0:
+    if result is not None and result.returncode == 0:
         write_streak(STATE_PATH, 0)
         report("ok", f"uncaptured={uncaptured}")
     else:
         streak = read_streak(STATE_PATH) + 1
         write_streak(STATE_PATH, streak)
-        message = freshness_message(streak, uncaptured)
+        message = freshness_message(streak, uncaptured, unreachable)
         if message is not None:
             message += growth_context(rate)
             report("warn" if streak < _ALERT_AT else "alert", message)

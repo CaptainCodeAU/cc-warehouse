@@ -22,12 +22,18 @@ file. The raw uncaptured figure still rides along as detail in the message;
 it just does not drive the alarm.
 """
 
+import json
 import re
+import subprocess
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
-from conftest import HOOKS_DIR, load_hook_module
+import pytest
+
+from conftest import HOOKS_DIR, UrlopenStub, load_hook_module
 
 
 def _freshness() -> ModuleType:
@@ -295,3 +301,237 @@ def test_every_env_var_a_wrapper_sets_is_a_real_ccw_name() -> None:
             if name not in ENV_VARS:
                 offenders.append(f"{path.name}: {name}")
     assert offenders == [], f"CCW_* names cc-warehouse never reads: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# A doctor that could not be ASKED is not a doctor that said FAIL
+# (operator-approved fix, 2026-09-07). Real incident THIS closes: on
+# 2026-09-07 `ccw doctor` was healthy and takes 2.75s, but had to cold-walk
+# 27,277 files in ~/.claude/projects (4.2 GB) immediately after ccw-sweep
+# wrote 486 archive folders in fifteen minutes. It went over the 15s budget
+# twice, and the hook spoke a raw Python traceback aloud both times, at full
+# volume, on the first occurrence, with no streak behind it.
+#
+# That is the opposite of what this file's own module docstring promises
+# ("how many CONSECUTIVE session-starts in a row that verdict has been
+# broken") and it contradicts broken_jobs()'s own stated principle, three
+# functions further down the same file: "absence of evidence is not evidence
+# of failure here". A probe that timed out produced NO verdict at all.
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreachable_doctor_does_not_claim_capture_is_broken() -> None:
+    """The wording must say the check could not get an answer, NOT that
+    capture failed - on the real incident capture was working perfectly and
+    had just archived a session in 24ms."""
+    message = _freshness().freshness_message(1, None, unreachable="TimeoutExpired")
+    assert message is not None
+    assert "could not" in message.lower()
+
+
+def test_unreachable_and_failed_verdict_read_differently() -> None:
+    """Two genuinely different situations - doctor ran and said FAIL, versus
+    doctor never answered - must not print the same line, or the log cannot
+    tell them apart afterwards."""
+    freshness = _freshness()
+    failed = freshness.freshness_message(2, 5)
+    unreachable = freshness.freshness_message(2, 5, unreachable="TimeoutExpired")
+    assert failed is not None
+    assert unreachable is not None
+    assert failed != unreachable
+
+
+def test_an_unreachable_doctor_still_escalates_on_the_streak() -> None:
+    """The half of the defect that was NOT about noise: because the timeout
+    branch never touched the streak counter, a doctor that timed out every
+    single session-start would have shouted the same flat line forever and
+    never reached ALERT."""
+    freshness = _freshness()
+    mild = freshness.freshness_message(1, None, unreachable="TimeoutExpired")
+    warn = freshness.freshness_message(3, None, unreachable="TimeoutExpired")
+    alert = freshness.freshness_message(6, None, unreachable="TimeoutExpired")
+    assert mild and warn and alert
+    assert "WARNING" not in mild
+    assert "ALERT" not in mild
+    assert "WARNING" in warn
+    assert "ALERT" not in warn
+    assert "ALERT" in alert
+
+
+def test_a_healthy_doctor_stays_silent_even_with_an_unreachable_argument() -> None:
+    """Streak 0 is silent on every axis this function has - the property the
+    whole signal rests on (it clears when fixed, not when seen)."""
+    assert _freshness().freshness_message(0, 298, unreachable="TimeoutExpired") is None
+
+
+def test_the_named_cause_rides_along_in_the_message() -> None:
+    """Whoever reads the banner needs to know WHY there was no answer -
+    a timeout and a missing binary are not the same problem."""
+    message = _freshness().freshness_message(1, None, unreachable="TimeoutExpired")
+    assert message is not None
+    assert "TimeoutExpired" in message
+
+
+# ---------------------------------------------------------------------------
+# main() routing for an unreachable doctor. These drive the real entry point
+# through a fake `subprocess.run`, because the three defects being closed here
+# all lived in main()'s except branch and none of them were reachable from a
+# pure function: it spoke on the FIRST occurrence, it never touched the streak
+# counter, and it `return 0`-ed early, which silently skipped broken_jobs() -
+# so the launchd job watch died at exactly the moment things looked worst.
+# ---------------------------------------------------------------------------
+
+
+def _timed_out() -> subprocess.TimeoutExpired:
+    """The exact failure the operator hit on 2026-09-07: `ccw doctor` alive and
+    healthy, but not finished inside its budget."""
+    return subprocess.TimeoutExpired(cmd=["/fake/bin/ccw", "doctor"], timeout=45)
+
+
+def _drive_main(
+    freshness: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    doctor: BaseException | subprocess.CompletedProcess[str],
+) -> tuple[list[dict[str, Any]], list[list[str]], dict[str, float]]:
+    """Run main() with every outside edge faked. `doctor` is either an
+    exception to raise for the `ccw doctor` call, or a CompletedProcess to
+    return. Yields (things spoken aloud, argv of every subprocess call,
+    timeout budget per call)."""
+    spoken: list[dict[str, Any]] = []
+    calls: list[list[str]] = []
+    budgets: dict[str, float] = {}
+
+    monkeypatch.setattr(freshness, "LOG", tmp_path / "ccw-hook.log")
+    monkeypatch.setattr(freshness, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(freshness, "find_ccw", lambda: "/fake/bin/ccw")
+
+    def fake_run(
+        argv: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        timeout = kwargs.get("timeout")
+        if isinstance(timeout, (int, float)):
+            budgets["doctor" if argv[0] == "/fake/bin/ccw" else argv[0]] = float(timeout)
+        if argv[0] == "/fake/bin/ccw":
+            if isinstance(doctor, BaseException):
+                raise doctor
+            return doctor
+        return subprocess.CompletedProcess(argv, 0, "\tlast exit code = 0\n", "")
+
+    def fake_urlopen(
+        request: urllib.request.Request, timeout: float = 0
+    ) -> UrlopenStub:
+        body = request.data
+        assert isinstance(body, bytes)
+        spoken.append(json.loads(body.decode("utf-8")))
+        return UrlopenStub()
+
+    monkeypatch.setattr(freshness.subprocess, "run", fake_run)
+    monkeypatch.setattr(freshness.urllib.request, "urlopen", fake_urlopen)
+
+    assert freshness.main() == 0
+    return spoken, calls, budgets
+
+
+def test_a_single_timeout_says_nothing_out_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported symptom: one slow moment produced a spoken raw Python
+    traceback. report() speaks only on status "error", so the fix is that a
+    timeout no longer takes that path."""
+    freshness = _freshness()
+    spoken, _, _ = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
+    assert spoken == []
+
+
+def test_a_timeout_increments_the_streak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The half of the defect that was not about noise: the old branch never
+    wrote the counter, so a permanently unreachable doctor could never reach
+    WARNING, let alone ALERT."""
+    freshness = _freshness()
+    _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
+    assert freshness.read_streak(tmp_path / "state.json") == 1
+
+
+def test_a_timeout_still_checks_the_scheduled_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The third defect in the same branch: `return 0` skipped broken_jobs()
+    entirely. The archive-job incident that check exists to catch would have
+    gone unnoticed again, for as long as doctor stayed slow."""
+    freshness = _freshness()
+    _, calls, _ = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
+    assert any(argv[0] == "launchctl" for argv in calls)
+
+
+def test_a_healthy_doctor_still_clears_the_streak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control: the fix must not break the property the whole signal rests on."""
+    freshness = _freshness()
+    freshness.write_streak(tmp_path / "state.json", 4)
+    healthy = subprocess.CompletedProcess(
+        ["/fake/bin/ccw", "doctor"], 0, "Uncaptured: 36 session(s)\n", ""
+    )
+    spoken, _, _ = _drive_main(freshness, tmp_path, monkeypatch, healthy)
+    assert freshness.read_streak(tmp_path / "state.json") == 0
+    assert spoken == []
+
+
+def test_the_doctor_budget_fits_a_cold_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured on the operator's machine 2026-09-07: `ccw doctor` is 2.75s
+    warm, but has to walk 27,277 files / 4.2 GB under ~/.claude/projects, and
+    lost that race twice inside the old 15s budget minutes after ccw-sweep
+    wrote 486 archive folders. 45s is roughly 16x the warm figure."""
+    freshness = _freshness()
+    healthy = subprocess.CompletedProcess(
+        ["/fake/bin/ccw", "doctor"], 0, "Uncaptured: 36 session(s)\n", ""
+    )
+    _, _, budgets = _drive_main(freshness, tmp_path, monkeypatch, healthy)
+    assert budgets["doctor"] >= 45
+    assert budgets["launchctl"] == freshness._JOB_TIMEOUT
+
+
+# ---------------------------------------------------------------------------
+# The budget invariant. Every timeout this script sets is INNER: Claude Code
+# kills the whole hook process at the `timeout` its own hooks.json declares,
+# and an inner budget larger than that outer one can never fire on its own
+# terms - the hard kill lands first, so the graceful except branch, the
+# "unreachable" log line, the streak write and broken_jobs() are all skipped.
+# That is the same silent-early-exit shape this file's timeout fix exists to
+# close, just one layer up, which is exactly why it needs a test and not a
+# comment: the two numbers live in different files and nothing else relates
+# them. Caught in review 2026-09-07, after the first draft of that fix set an
+# inner 45s against an outer 20s.
+# ---------------------------------------------------------------------------
+
+
+def _outer_budget(event: str) -> int:
+    """The `timeout` Claude Code enforces on the whole hook process for one
+    event, read from the plugin's real hooks.json."""
+    config = json.loads((HOOKS_DIR / "hooks.json").read_text(encoding="utf-8"))
+    matchers = config["hooks"][event]
+    return int(matchers[0]["hooks"][0]["timeout"])
+
+
+def test_the_freshness_hook_budgets_fit_inside_its_own_outer_kill() -> None:
+    freshness = _freshness()
+    worst_case = freshness._DOCTOR_TIMEOUT + len(freshness._WATCHED_JOBS) * freshness._JOB_TIMEOUT
+    assert worst_case < _outer_budget("SessionStart"), (
+        f"inner budgets total {worst_case}s but Claude Code kills the hook at "
+        f"{_outer_budget('SessionStart')}s"
+    )
+
+
+def test_the_capture_hook_obeys_the_same_invariant() -> None:
+    """Control: prove the test reads real numbers, using the sibling hook that
+    already had this right (inner 40 under outer 45) before the rule existed."""
+    text = (HOOKS_DIR / "ccw-hook.py").read_text(encoding="utf-8")
+    inner = max(int(m) for m in re.findall(r"timeout=(\d+),", text))
+    assert inner == 40
+    assert inner < _outer_budget("SessionEnd")
