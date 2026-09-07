@@ -875,6 +875,29 @@ section-4 diagnosis: when a loop will not converge, suspect the slice boundary f
   instrument, read its callers too before writing anything; the ticket's own
   framing of "where this fails" is a hypothesis, not a boundary.
 
+- 2026-09-07: **PATH-AS-IDENTITY IS A LESSON ABOUT THE ANALYST, NOT ONLY ABOUT THE
+  PRODUCT. THIRD OCCURRENCE, AND THE FIRST TWO WERE ALREADY WRITTEN DOWN.** FINDINGS
+  F4 makes the PRODUCT refuse to treat a path as an identity, and it does. Every
+  recurrence since has been in a THROWAWAY MEASUREMENT SCRIPT written to check the
+  product, by someone who knew the rule: ticket 25's acceptance census keyed on the
+  directory name and read 8 payloads as absent when all 8 were present (CLAUDE.md
+  records the verdict "fix the census, never the import"); ticket 27.4's exercise hit
+  it again, 7 reading as absent, re-resolved by content hash to 6 filed under the
+  payload's own sessionId and 1 under `_not-sessions/`. Today it happened a third
+  time, in a script written to answer whether it is safe to DELETE 23,844 real
+  sessions: matching `~/.claude/projects` payloads to archive payloads by FILENAME
+  reported 2,228 with no archive copy. Re-resolved by sha256 against archive files of
+  matching size: all 2,228 present under other names, genuinely absent 0. The wrong
+  number was one message away from a destructive decision, and it was caught only
+  because CLAUDE.md's own account of the earlier two occurrences said to expect it.
+  **The general form, which is what the earlier entries lacked:** an ad-hoc script
+  written to VERIFY a product is held to the product's own identity rules, because it
+  is making the same claim about the same data. Whenever a measurement answers "is X
+  present", the key must be CONTENT unless the schema guarantees otherwise. A
+  filename, a directory name, and a path are all the same mistake wearing different
+  clothes. Named here rather than fixed a fourth time, on the observation of the
+  `fifty-shades-of-dotfiles` session that the two recorded instances shared a form
+  nobody had generalised.
 ---
 
 ## 9. External tooling (decided 2026-07-17: compose, don't replace)
