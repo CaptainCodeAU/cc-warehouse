@@ -47,3 +47,19 @@ facts" while actually holding five - fixed here.)
   highlighted (the default). Send the option's actual wording as text
   instead, or use `herdr agent send-keys <name> <key>` for real arrow-key
   navigation.
+- **`uv_tool_reinstall_current_project` fails from an agent's Bash tool until
+  the function file is sourced.** The wrapper is on PATH as a shell function but
+  its private helper is not, so the first call dies with
+  `uv_tool_reinstall_current_project:19: command not found: _uv_tool_parse_flags`.
+  Source the file first (it lives in the dotfiles repo, not in `$HOME`):
+  `source ~/CODE/Scaffoldings/fifty-shades-of-dotfiles/home/.zsh_python_functions`
+  then run `uv_tool_reinstall_current_project --no-extras` as normal. Harmless but
+  it reads like the frozen-install rule is broken when it is not; seen 2026-09-08.
+- **This repository had NO push-to-master CI until 2026-09-08.** The only workflow
+  fired on a `v*` tag, so the first Linux run of any change was its release run,
+  and a Linux-only failure cost a failed release before anyone saw it (see
+  `harness/tickets/38-*.md`). `.github/workflows/gates.yml` now runs the same three
+  gates on every push to master and every PR. If you are about to tag a release,
+  the useful check is that the gates run on the commit you are tagging is already
+  green - not that the suite passes on your laptop, which is a different runner
+  with different timing.
