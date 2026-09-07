@@ -40,6 +40,24 @@ see the ruff exclusion for `plugins/` in pyproject.toml. Kept portable by
 hand, same as ccw-hook.py.
 """
 
+# WHY THIS IMPORT IS THE FIRST LINE OF CODE IN THE FILE. These hooks do not
+# choose their own interpreter: hooks.json invokes them as a bare `python3`,
+# so whichever one the hook process's PATH resolves is the one that runs, and
+# that is not the PATH of any shell the operator can inspect. On the author's
+# own Mac `/usr/bin/python3` is 3.9.6. Without this line, PEP 604 annotations
+# (`str | None`) are evaluated at import and raise TypeError while the file is
+# still being read - ABOVE every guard below, so report() is never reached,
+# nothing is logged, nothing is spoken, capture silently does not happen, and
+# `ccw doctor` still calls the hook ok because registration is intact and
+# doctor only asks whether a hook is REGISTERED, never whether it can EXECUTE.
+# This makes annotations lazy strings, which costs nothing and removes the
+# whole failure class. Measured 2026-09-07: with it, this file runs its full
+# path under 3.9.6; without it, it dies at find_ccw's signature writing
+# nothing. Pinned by tests/test_cc_capture_freshness.py's
+# test_every_hook_defers_its_annotations.
+
+from __future__ import annotations  # 3.9 safety: see the note at the end of this docstring
+
 import json
 import os
 import re

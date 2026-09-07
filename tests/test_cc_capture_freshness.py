@@ -535,3 +535,53 @@ def test_the_capture_hook_obeys_the_same_invariant() -> None:
     inner = max(int(m) for m in re.findall(r"timeout=(\d+),", text))
     assert inner == 40
     assert inner < _outer_budget("SessionEnd")
+
+
+# ---------------------------------------------------------------------------
+# The hooks must survive an OLD python3, because they do not choose their own
+# interpreter. `hooks.json` invokes them as a bare `python3` and the hook
+# process's PATH decides which one answers - a PATH no shell the operator can
+# see is authoritative about. `/usr/bin/python3` on the author's Mac is 3.9.6.
+#
+# The failure this prevents is the worst shape available: the file dies while
+# being PARSED, above every guard it contains, so `report()` is never reached.
+# Nothing is logged, nothing is spoken, capture silently never runs - and
+# `ccw doctor` still says the hook is fine, because registration is intact and
+# doctor never asks whether the thing it found can EXECUTE.
+#
+# `from __future__ import annotations` makes every annotation a lazy string,
+# so PEP 604 (`str | None`) costs nothing at import. Measured 2026-09-07: with
+# that one line, ccw-freshness-check.py runs its FULL unreachable-doctor path
+# under 3.9.6 - logs "unreachable" with detail, logs "warn", writes
+# consecutive_broken=1, prints the banner. Without it, it dies at find_ccw's
+# signature and writes nothing at all.
+# ---------------------------------------------------------------------------
+
+_FUTURE = "from __future__ import annotations"
+# `match`/`case` are real 3.10+ SYNTAX; no __future__ import defers them.
+_MATCH_STMT = re.compile(r"^\s*(match|case)\b.*:\s*$", re.M)
+
+
+def test_every_hook_defers_its_annotations() -> None:
+    offenders = [
+        path.name
+        for path in sorted(HOOKS_DIR.glob("*.py"))
+        if _FUTURE not in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], f"hooks that would die on an old python3: {offenders}"
+
+
+def test_the_hooks_glob_is_not_an_empty_haystack() -> None:
+    """Control for the fence above: a pass means nothing if there are no hooks."""
+    assert len(list(HOOKS_DIR.glob("*.py"))) >= 2
+
+
+def test_no_hook_uses_syntax_no_future_import_can_defer() -> None:
+    """The fence above only buys 3.9 compatibility for ANNOTATIONS. A match
+    statement is parsed as syntax and would reintroduce the same silent death."""
+    offenders = [
+        path.name
+        for path in sorted(HOOKS_DIR.glob("*.py"))
+        if _MATCH_STMT.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"3.10+ syntax a __future__ import cannot defer: {offenders}"
