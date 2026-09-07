@@ -1,0 +1,52 @@
+# Run the three merge gates on every push to master and on pull requests.
+#
+# WHY THIS EXISTS, and it is not "because every repo has one". Until 2026-09-08
+# the ONLY workflow in this repository was `release`, which fires on a `v*` tag.
+# So the first Linux run of any change was its release run, and a failure there
+# is the most expensive place to find one: the version number is already chosen,
+# the tag is already pushed, and fixing it means either moving a tag or burning a
+# version.
+#
+# That happened, once, and it is what this file is for. The v0.1.3 release failed
+# on two tests that pass on macOS and had passed on CI for every previous release.
+# They snapshot the warehouse immediately after a capture, but the capture hook
+# renders in a DETACHED child (SPEC 2.5/5), so the snapshot was taken while the
+# tree was still being written. Measured rather than assumed: 0 files under
+# `projections/` the instant the hook returned, 7 files five seconds later. A race
+# that a fast laptop always wins and a slower runner always loses.
+#
+# The gates are exactly the three `release` runs, in the same order, on the same
+# runner image. Deliberately a COPY rather than a shared reusable workflow: the
+# release job must be able to run its gates even if this file is broken or
+# deleted, and two short lists that are meant to be identical are cheaper to keep
+# honest than one indirection that hides which gates a release actually ran.
+name: gates
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: ruff
+        run: uv run ruff check
+      - name: pyright (strict)
+        run: uv run pyright
+      - name: oracle suite
+        # Includes tests/test_packaging.py, which builds a real sdist and fails if
+        # the artifact carries anything the repository would not.
+        run: uv run pytest
