@@ -1810,6 +1810,55 @@ THE GUARD THIS RULING DEPENDS ON: the release must ship `tool-results` and
 things we already know about. That is why ticket 38 archives `workflows/` rather
 than deferring it, despite it being 9 dirs and 1.1 MB.
 
+### 2026-09-08, ticket 39: how a session-keyed store is discovered
+
+**THE QUESTION THIS SETTLES.** Ticket 38's stores sit BESIDE a transcript, so the
+transcript's own directory leads to them. Ticket 39's sit beside `projects/`:
+`~/.claude/file-history/<uuid>/` is one store shared by every session on the
+machine, 1,056 directories deep. Location cannot identify anything there, so the
+join has to be on the SESSION ID, which comes from the payload's content (ruling
+(a)) and never from a path.
+
+**THE PLAN SAID CATALOG-DRIVEN. THE CODE SCANS AND JOINS, and the difference is
+worth recording rather than leaving as a silent deviation.** The plan required
+walking the catalog's session list and stat-ing each uuid, on the stated ground
+that a directory NAME must not become an identity (F4). Scanning the store once and
+joining second reaches the same join from the other end and keeps exactly that
+guarantee: the name is still only a filter deciding which directory is worth
+reading, and what decides where the bytes land is the archive folder that uuid
+resolves to.
+
+What scanning ADDS is the reason it was chosen, and both halves are rows in the
+plan's own risk table. Iterating the catalog can only ever find directories it
+already knows about, so two cases are invisible to it by construction: a directory
+whose name is not a session id at all, and a session's snapshots whose session
+left `~/.claude/projects` before the archive saw it. **42 of the live 1,056 are in
+the second state.** A discovery method that cannot see the thing the risk table
+requires reporting is the wrong method, however correct its motive.
+
+It is also 30 times cheaper: two scandirs for the whole machine against two stats
+per catalogued session, of which there are 29,567.
+
+**TWO MEASUREMENTS CORRECTED THE PLAN, both taken on the live tree 2026-09-08.**
+The plan expected roughly 5% of `file-history/` directories not to be bare session
+uuids; today NONE are (1,056 of 1,056, same regex as the control), and they are
+flat rather than nested. And `todos/` is 3 files of 2 bytes. It is archived anyway:
+a store the code NAMES but nothing copies is the "parses, is tested, does nothing"
+shape ticket 38's fence exists to forbid, and the mechanism is free once the
+companion machinery is shared.
+
+**`~/.claude/MEMORY/` IS EXCLUDED and stays excluded here.** It is not session
+keyed, so it does not fit this mechanism at all, and its destination was being
+moved by another session on the day this was planned. Ticket 40 owns it.
+
+**ONE MAP, FOUR NAMES.** `archive.SIDECAR_MANIFEST_KEYS` became
+`COMPANION_MANIFEST_KEYS` covering `tool-results`, `workflows`, `file-history` and
+`todos`, so `_with_companions`, `_companion_problems`, `folder_is_current` and
+`companion_records` cover the new stores with no new code. Where the bytes come
+from differs; everything after they are found is identical, and a parallel set of
+`*_external_*` twins would have drifted from the originals the first time either
+was touched (the architecture board's C12, applied rather than cited).
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

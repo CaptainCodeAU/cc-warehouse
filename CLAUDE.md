@@ -598,9 +598,26 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
   DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
 
-- **Ticket 39 PLANNED 2026-09-07, NOT STARTED. ITS BLOCKER IS GONE: ticket 38 shipped
-  2026-09-08, so `store.write_if_absent` and the notice/doctor/alert scaffolding it
-  reuses all exist.** The archive keeps
+- **Ticket 39: SLICE 39b IS DONE 2026-09-08, NOT YET RELEASED. 39c-39g remain.** 39b
+  archives the stores keyed by SESSION ID rather than by location:
+  `~/.claude/file-history/` (**1,056 dirs, 929,845,225 bytes**, and 23 sampled
+  snapshots appear in their own session's transcript ZERO times) and `~/.claude/todos/`.
+  New leaf module `src/cc_warehouse/external.py`, new config key
+  `archive_file_history` (default ON), new manifest keys `file_history` and `todos`.
+  **The live back-fill has NOT been run and must not be until 39b ships**: the
+  installed frozen `ccw` is 0.1.3 and does not write those keys, so two versions would
+  churn every folder's manifest. Order: version bump, frozen reinstall, then one
+  back-fill.
+  **The plan was corrected twice by measurement** (recorded in the ticket): it expected
+  ~5% of `file-history/` dirs not to be bare session uuids and today NONE are (1,056 of
+  1,056, control-proven); and it expected catalog-driven discovery, which cannot see
+  either of the two cases its own risk table requires reporting, so the code scans and
+  joins instead (DESIGN 15, "2026-09-08, ticket 39"). 42 dirs are stranded.
+  Ticket 38's machinery was WIDENED, not twinned: one `COMPANION_MANIFEST_KEYS` map
+  over four names.
+  Full account: that ticket's `39b DONE` block.
+
+- **Ticket 39's remaining slices, PLANNED and NOT STARTED.** The archive keeps
   what a session SAID and not what it POINTED AT. Measured: `~/.claude` is 6.7 GB, ccw
   archives the 4.2 GB of `projects/` only. Outside it and unhandled:
   `file-history/` (1,010 session-keyed entries, 911 MB, bytes verified absent from the

@@ -5,11 +5,17 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**ACTIVE: ticket 39, archive everything a session points at. Its blocker is gone.**
-Read `harness/tickets/39-archive-what-a-session-points-at.md`; it is PLANNED, APPROVED
-(2026-09-07) and NOT STARTED. **START AT SLICE 39b, not 39a** (operator ruling
-2026-09-07): the `file-history/` mirror is 911 MB of protection that needs none of the
-`history.jsonl` work. Oracle tests first, as always.
+**ACTIVE: ticket 39. SLICE 39b IS DONE (2026-09-08); 39c is next.**
+Read `harness/tickets/39-archive-what-a-session-points-at.md` and its `39b DONE`
+block at the bottom before anything else. 39b built `external.py` plus the gather
+for `file-history/` and `todos/`, wired into both the hook and the sweep, and it is
+verified against the real source tree (54 of 54 snapshots byte-identical).
+**THE LIVE BACK-FILL HAS NOT BEEN RUN AND MUST NOT BE UNTIL 39b IS RELEASED.** The
+installed frozen `ccw` is 0.1.3 and does not write the two new manifest keys, so
+running the repo's copy against the live archive would leave two versions churning
+every folder's manifest back and forth. Correct order: 39g's version bump, one
+frozen reinstall, then one back-fill.
+39c onward is the `history.jsonl` work, which 39b deliberately does not touch.
 The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
 the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
 discovery rather than a scan beside the transcript. Measured 2026-09-07:

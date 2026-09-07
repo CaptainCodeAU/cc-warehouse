@@ -254,3 +254,93 @@ env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/bin:/bin" ~/.local/bin/ccw doctor
 - `CLAUDE.md` `## OPEN / next` - one bold-led pointer paragraph appended at the end of the
   list, before `## Standing lessons`.
 - `harness/tickets/28-backlog.md` - MEMORY/ as a backlog note pending ticket 40.
+
+---
+
+# 39b DONE 2026-09-08. Slices 39a (partial), 39c-39g NOT STARTED.
+
+Two commits, oracle tests red before green in both: `a7dbf70` (the locator and the
+archive side) and `56db14f` (the hook and sweep wiring). Test count 1,367 -> 1,418.
+Ruff and pyright strict clean.
+
+**929,845,225 bytes are now gatherable**, and the code that does it has been run
+against the real source tree. What has NOT happened is the live back-fill; see
+"Not done, deliberately" below.
+
+## The plan's own numbers, re-measured before building against them
+
+| Claim in the plan | Measured 2026-09-08 | Verdict |
+|---|---|---|
+| `file-history/` 1,010 entries, 911 MB | **1,056 dirs, 929,845,225 bytes** | grown, consistent |
+| "~5% are not bare session uuids" | **0 of 1,056.** All match, control-proven with the same regex | **WRONG, corrected** |
+| entries are `<hash>@v1..@v7` | `@v1..@v8`, and **flat, no nesting** | confirmed and sharpened |
+| snapshot bytes are not in the JSONL | 23 snapshots across 12 sessions, first 200 bytes each: **found 0 times** | confirmed independently |
+| `todos/` "trivial, rides along free" | **3 files, 2 bytes each.** Six bytes of empty JSON arrays from June | true, and generous |
+| stranded dirs | **42** have no archived session | new number, was not in the plan |
+
+## The one deliberate deviation, and why it is not a dodge
+
+The plan required **catalog-driven discovery** (walk the catalog, stat each uuid),
+on the stated ground that a directory NAME must not become an identity (F4).
+`external.py` **scans the store once and joins second**.
+
+It keeps the F4 guarantee exactly: the name is still only a filter deciding which
+directory is worth reading, and what decides where bytes land is the archive folder
+that uuid resolves to. What it adds is the reason it was chosen. Iterating the
+catalog can only find directories it ALREADY KNOWS ABOUT, so two cases are
+invisible to it by construction, and **both are rows in this plan's own risk
+table**: a directory whose name is not a session id, and a session's snapshots
+whose session left `~/.claude/projects` before the archive saw it. 42 of the live
+1,056 are the second case. A discovery method that cannot see what the risk table
+requires reporting is the wrong method however good its motive. It is also 30x
+cheaper (two scandirs against 29,567 stats).
+
+Recorded in `contract/DESIGN.md` section 15, "2026-09-08, ticket 39".
+
+## What was reused rather than rebuilt
+
+`archive.SIDECAR_MANIFEST_KEYS` became `COMPANION_MANIFEST_KEYS` over four names, so
+`_with_companions`, `_companion_problems`, `folder_is_current` and
+`companion_records` all cover the new stores with **no new code**. The copier was
+widened (`copy_sidecar_dir` -> `copy_companion_dir`) rather than twinned. Where the
+bytes come from differs; everything after they are found is identical, and a
+parallel `*_external_*` family would have drifted the first time either half was
+touched. That is the architecture board's C12 applied rather than cited.
+
+The sweep's candidate gate had to widen too, and the reason is worth keeping: it
+opened a transcript only when the project directory held a matching sidecar
+directory, so **a session with file-history and no sidecars was invisible to it**.
+It now also carries the session ids the keyed stores hold, read with two scandirs
+for the whole machine.
+
+## Verified against the real source tree, live archive untouched
+
+Run read-only against `~/.claude`, writing only into a scratch directory that was
+removed afterwards, and **without reinstalling the frozen `ccw`** - so nothing the
+capture hook runs was changed by this verification.
+
+```
+file-history dirs found:          1056
+todo sessions found:              3
+unknown children, file-history:   ()          <- the anomaly signal, silent as expected
+unknown children, todos:          ()
+stranded (no archived session):   42
+3 real sessions:                  54 files, 1,013,927 bytes
+sha256 identical:                 54          MISMATCH: 0
+second copy of the same dir:      written=0  unchanged=18
+```
+
+## NOT DONE, deliberately, and this is the thing to pick up next
+
+**The live back-fill has NOT been run, and it must not be until 39b is released.**
+The reason is a version-mixing hazard rather than caution for its own sake: 39b
+adds `file_history` and `todos` to the manifest, but the installed frozen `ccw` is
+0.1.3 and does not write them. Running the repo's copy against the live archive
+would leave two versions writing the same folders - one adding the keys, the other
+dropping them on the next capture - churning every session folder's manifest back
+and forth. The correct order is 39g's version bump, then one frozen reinstall, then
+one back-fill.
+
+Also not done: **39a's census paperwork** (its DESIGN 15 entry IS done, above), and
+slices **39c-39g** in full. 39c onward all concern `history.jsonl` and
+`paste-cache/`, which 39b deliberately does not touch.
