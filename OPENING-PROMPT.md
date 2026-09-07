@@ -5,36 +5,34 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**ACTIVE: ticket 38, archive the `tool-results/` and `workflows/` sidecars and add an
-unknown-sibling signal. The plan is complete, red-teamed and approved (2026-09-06):
-read `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md` first (the same
-text also sits in the gitignored `Plans/can-i-get-you-compiled-pumpkin.md`), then start
-at its section 9 (housekeeping is already done by the planning session: this pointer and handoff 23) and
-build slices 38a-38f in order, oracle tests first.** The short version: Claude Code has
-written `<uuid>/tool-results/` beside every big-output session since 2026-05-08 (1,067
-dirs, 135.7 MB, 65.4 MB of it in no JSONL) and nothing in `src/` ever looked at it; the
-plan adds a generic sidecar copier, a `sidecars.py` known-names list with a fence, a
-`sidecars.json` notice + log line + desktop/voice alert for any future unknown sibling,
-an informational `sidecars` doctor line, and version 0.1.3. Three rulings are already
-taken by the operator and recorded in the plan (copy stranded dirs under
-`_not-sessions/`, informational doctor line plus OS alert, all three sidecars in scope);
-ruling (c) still needs its DESIGN 15 entry. The ticket file exists and holds the plan;
-slice 38f appends its DONE block.
+**ACTIVE: ticket 39, archive everything a session points at. Its blocker is gone.**
+Read `harness/tickets/39-archive-what-a-session-points-at.md`; it is PLANNED, APPROVED
+(2026-09-07) and NOT STARTED. **START AT SLICE 39b, not 39a** (operator ruling
+2026-09-07): the `file-history/` mirror is 911 MB of protection that needs none of the
+`history.jsonl` work. Oracle tests first, as always.
+The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
+the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
+discovery rather than a scan beside the transcript. Measured 2026-09-07:
+`~/.claude/file-history/` is 1,010 session-keyed entries / 911 MB whose bytes are in no
+JSONL, `history.jsonl` is 18,295 rows that 100% carry a `sessionId`, and `paste-cache/`
+is reachable only by joining through it, where 272 of 2,186 referenced hashes ARE ALREADY
+GONE. Two operator rulings are recorded in the ticket (archive all of file-history;
+`~/.claude/MEMORY/` becomes ticket 40, not 39).
+**What 38 left you to build on**, all shipped 2026-09-08 in 0.1.3:
+`store.write_if_absent` (refuse on any difference, never overwrite a copy),
+`archive.copy_sidecar_dir` / `_mirror_tree` (recursive, ignores `.DS_Store` at any
+depth), `archive.write_sidecar_notice` (a per-session anomaly record with NO timestamp,
+deliberately), the non-blocking `ccw doctor` `sidecars` line, and `notify.alert`
+(a detached desktop notification, fired only when a notice changes to non-empty).
+Reuse them rather than writing twins.
 
-**NEXT AFTER 38: ticket 39, archive everything a session points at.** Read
-`harness/tickets/39-archive-what-a-session-points-at.md`; it is PLANNED, APPROVED
-(2026-09-07), NOT STARTED, and HARD-BLOCKED on 38 shipping `store.write_if_absent` plus
-the notice/doctor/alert scaffolding it reuses. The short version: ticket 38 covers the
-sidecars INSIDE a session directory; 39 covers the stores OUTSIDE it, which are siblings
-of `projects/` and so need catalog-driven discovery rather than a scan beside the
-transcript. Measured 2026-09-07: `~/.claude/file-history/` is 1,010 session-keyed
-entries / 911 MB whose bytes are in no JSONL, `history.jsonl` is 18,295 rows that 100%
-carry a `sessionId`, and `paste-cache/` is reachable only by joining through it, where
-272 of 2,186 referenced hashes ARE ALREADY GONE. Two operator rulings are recorded in the
-ticket (archive all of file-history; `~/.claude/MEMORY/` becomes ticket 40, not 39).
-**Two operator rulings, 2026-09-07:** ticket 38 ships FIRST and UNCHANGED (not merged,
-not rescoped), and 39 STARTS AT SLICE 39b, not 39a, because the `file-history/` mirror is
-911 MB of protection that needs none of the `history.jsonl` work. Oracle tests first.
+**TICKET 38 IS DONE (2026-09-08), shipped as 0.1.3.** Slices 38a-38f landed in one
+session, six commits `2a041f4`..`36940f0`, test count 1,269 -> 1,364. `tool-results/` and
+`workflows/` are archived, unknown siblings announce themselves, and three sub-agent bugs
+nobody was looking for got fixed on the way. **38g is NOT DONE** (a render marker for
+`<persisted-output>` plus a `persisted` manifest key) and needs its own ruling, because it
+moves default output and therefore re-baselines the golden matrix anchor. Full account:
+that ticket file's DONE block.
 
 **Ticket 37 Part B row 1 IS LIVE** (the check handoff 22 asked for): the newest plugin
 cache copy `~/.claude/plugins/cache/cc-warehouse/cc-capture/2f374c2eddf9/hooks/ccw-hook.py`

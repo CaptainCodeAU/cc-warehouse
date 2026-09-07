@@ -540,15 +540,17 @@ def _note_unknown_siblings(
     scan = sidecars.scan(transcript_path, parsed.session_uuid)
     if not archive.write_sidecar_notice(parent, scan, refused):
         return
-    if not scan.has_anomaly:
-        return
-    announce_unarchived_siblings(config, parsed.session_uuid, transcript_path.name, scan)
+    announce_sidecar_anomaly(config, parsed.session_uuid, transcript_path.name, scan, refused)
 
 
-def announce_unarchived_siblings(
-    config: Config, session_uuid: str | None, fallback: str, scan: sidecars.SidecarScan
+def announce_sidecar_anomaly(
+    config: Config,
+    session_uuid: str | None,
+    fallback: str,
+    scan: sidecars.SidecarScan,
+    refused: Sequence[str] = (),
 ) -> None:
-    """Say once, in three places, that something beside a transcript is uncopied.
+    """Say once, through every sink, that data beside a transcript is not in the archive.
 
     Ruling (e). The audit log is the durable half; the desktop notification and
     the spoken sentence are the half that actually reaches a human, because the
@@ -556,31 +558,57 @@ def announce_unarchived_siblings(
     banner. Shared by the hook path and the sweep's third pass rather than written
     twice (R9): they announce the same fact and must word it the same way.
 
+    TWO KINDS OF ANOMALY, and they get DIFFERENT SENTENCES because they need
+    different actions. An unknown sibling means nobody has written a copier yet.
+    A refusal means the copier exists and two different files claimed one name, so
+    "add a copier" would be wrong advice.
+
+    REFUSALS WERE NOT EXPECTED TO HAPPEN AT ALL, and that is why they are here.
+    The plan reasoned that a persisted-output filename is per invocation, so a
+    natural collision should be impossible. The first acceptance sweep on the real
+    corpus produced one inside twenty minutes: a live session's file held 38,537
+    bytes when it was copied and 38,519 DIFFERENT bytes under the same name on the
+    next sweep - not a prefix, so not a truncated write. Data that exists and that
+    the archive is declining to hold is exactly what ruling (e) exists to surface.
+
     THE CALLER OWNS THE DEDUP. Both call sites reach here only when the session's
-    notice file CHANGED to a non-empty set, so this fires at most once per new
-    anomaly and can never become a daily nag (the ticket 24.7 lesson).
+    notice file CHANGED, so this fires at most once per new anomaly and can never
+    become a daily nag (the ticket 24.7 lesson).
 
     Every sink is best-effort and none may raise into capture (DESIGN 12).
     """
-    names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
     short = (session_uuid or "")[:8]
     where = short or fallback
-    sentence = (
-        f"cc-warehouse: unarchived sibling(s) beside {where}: {names}."
-        " Add a copier in sidecars.py."
-    )
-    try:
-        notify.append_log(
-            config,
-            {
-                "at": datetime.now(UTC).isoformat(),
-                "status": "unarchived-sibling",
-                "session": short or None,
-                "project": None,
-                "message": f"unarchived sibling(s) beside {where}: {names}",
-                "elapsed_ms": None,
-            },
+    parts: list[str] = []
+    if scan.has_anomaly:
+        names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
+        parts.append(f"unarchived sibling(s) beside {where}: {names}. Add a copier in sidecars.py.")
+    if refused:
+        parts.append(
+            f"sidecar(s) beside {where} refused, a different file already holds that name:"
+            f" {', '.join(sorted(refused))}."
         )
+    if not parts:
+        return
+    sentence = "cc-warehouse: " + " ".join(parts)
+    try:
+        if scan.has_anomaly:
+            # Only the UNKNOWN-sibling half logs here. A refusal already has its
+            # own `refused` line from `_log_sidecar_trouble`, and logging it twice
+            # would make the audit log disagree with itself about how many
+            # happened.
+            names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
+            notify.append_log(
+                config,
+                {
+                    "at": datetime.now(UTC).isoformat(),
+                    "status": "unarchived-sibling",
+                    "session": short or None,
+                    "project": None,
+                    "message": f"unarchived sibling(s) beside {where}: {names}",
+                    "elapsed_ms": None,
+                },
+            )
         notify.alert(config, "cc-warehouse", sentence)
         notify.speak(config, sentence)
     except Exception:  # noqa: BLE001 - a signal never fails a capture (DESIGN 12)

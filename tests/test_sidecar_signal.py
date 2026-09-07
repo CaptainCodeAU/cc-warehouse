@@ -437,3 +437,77 @@ def test_the_notice_is_rewritten_to_empty_lists_when_the_anomaly_goes(
     folder = sorted(archive_root.glob(f"*/*_{UUID_A}"))[0]
     body = cast(dict[str, object], json.loads((folder / "sidecars.json").read_text("utf-8")))
     assert body["unarchived"] == []
+
+
+# ---------------------------------------------------------------------------
+# A refusal is an anomaly too (found by the real-data acceptance run, 2026-09-08)
+# ---------------------------------------------------------------------------
+
+
+def test_a_refused_sidecar_also_raises_one_alert(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FOUND BY RUNNING IT, not by reading the plan. The first acceptance sweep on
+    the real corpus produced one refusal within twenty minutes: a live session's
+    persisted-output file held 38,537 bytes when it was copied and 38,519
+    DIFFERENT bytes (not a prefix, so not a truncated write) under the same name
+    on the next sweep.
+
+    The plan predicted zero refusals and reasoned that natural collisions should
+    not happen. They do. So a refusal has to reach a human the same way an unknown
+    sibling does: it is data that exists and that the archive is declining to
+    hold, which is exactly the thing ruling (e) exists to surface.
+
+    The SENTENCE differs, because the action does. "Add a copier in sidecars.py"
+    is right for an unknown name and wrong for a refusal, where the copier already
+    exists and two files claimed one name.
+    """
+    from conftest import run_cli
+
+    fired: list[str] = []
+
+    def record(_config: Config, _title: str, message: str) -> None:
+        fired.append(message)
+
+    monkeypatch.setattr(notify, "alert", record)
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    results = Path(ccw_env["HOME"]) / ".claude" / "projects" / ENCODED / UUID_A / "tool-results"
+    results.mkdir(parents=True)
+    (results / "b3ace6uqd.txt").write_bytes(b"the first capture of this command\n")
+    assert run_cli(["sweep", "--quiet"]).code == 0
+    assert fired == []
+
+    (results / "b3ace6uqd.txt").write_bytes(b"a different capture entirely\n")
+    assert run_cli(["sweep", "--quiet"]).code == 0
+    assert len(fired) == 1, fired
+    assert "b3ace6uqd.txt" in fired[0]
+    assert "copier" not in fired[0], "a refusal is not a missing copier"
+
+
+def test_a_repeated_refusal_does_not_alert_twice(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same dedup as an unknown sibling: the notice compare. A source file that
+    stays different forever must not announce itself on every daily sweep."""
+    from conftest import run_cli
+
+    fired: list[str] = []
+
+    def record(_config: Config, _title: str, message: str) -> None:
+        fired.append(message)
+
+    monkeypatch.setattr(notify, "alert", record)
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    results = Path(ccw_env["HOME"]) / ".claude" / "projects" / ENCODED / UUID_A / "tool-results"
+    results.mkdir(parents=True)
+    (results / "b3ace6uqd.txt").write_bytes(b"the first capture\n")
+    assert run_cli(["sweep", "--quiet"]).code == 0
+    (results / "b3ace6uqd.txt").write_bytes(b"a different capture\n")
+    assert run_cli(["sweep", "--quiet"]).code == 0
+    fired.clear()
+    assert run_cli(["sweep", "--quiet"]).code == 0
+    assert fired == []

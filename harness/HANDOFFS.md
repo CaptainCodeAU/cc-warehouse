@@ -21,6 +21,73 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Twenty-ninth handoff, 2026-09-08 (ticket 38 built end to end, 0.1.3, and three sub-agent bugs nobody was looking for)
+
+**One session, six slices, six commits, all pushed on green.** `2a041f4` (38a) ->
+`cdda77a` (38b) -> `a7779e1` (38c) -> `f159de8` (38d) -> `b6439cb` (38e) -> `36940f0`
+(38f). Oracle tests first in every slice, shown red for the right reason before the code
+existed. Test count 1,269 -> 1,364; ruff and pyright strict clean at every commit; the
+golden matrix anchor never moved.
+
+**What the ticket was actually about, and it is not "tool-results was not archived".**
+That is the symptom. The defect is that nothing in the product ever ENUMERATED what sits
+beside a transcript: `capture.py` asked for `subagents/` BY NAME and ignored the rest of
+the directory, so Claude Code could start writing a new sibling and the archive would
+quietly stop being complete. It did, on 2026-05-08, and it took four months to notice.
+`src/cc_warehouse/sidecars.py` is the fix: one leaf module holding the list of known
+names, with `archive.COPIERS` fenced by two tests - a name without a copier fails the
+suite, and so does a copier naming a function that does not exist.
+
+**The sharpened lesson, written into `contract/HARNESS.md` section 8.** The standing
+lesson says the same defect recurs across modules, so census the class. That could not
+have caught this one: there was no wrong answer to census, because nothing had ever been
+written about these folders at all. The general form is stronger. **When code consumes a
+directory it does not own, enumerate what may be in it and fail on the rest, rather than
+naming the one thing you want.** A grep finds code that exists; a fence finds code that
+should.
+
+**Three sub-agent bugs found while doing something else, all real, all fixed.** None
+were in the ticket's title:
+- `capture.py` located the sub-agent directory from the transcript's FILE STEM, so a
+  `<uuid>.orphaned-<n>-<hash>.jsonl` transcript (one exists live) found none of its
+  sidecars. Ruling (c) settles it: content uuid first, stem second.
+- the hook's sub-agent glob was not recursive, so Workflow-tool sub-agents at
+  `subagents/workflows/wf_<id>/agent-*.jsonl` (432 files, 33 MB, 211 transcripts) were
+  reached only by the daily sweep's `os.walk`. A working net, but a net is not a plan.
+- `sweep._archive_subagent` computed the project dir as a fixed three levels up, which is
+  right for `subagents/agent-*.jsonl` and wrong for the nested ones, so 211 transcripts
+  had a label derived from `wf_<id>`. The catalog lookup usually rescued it.
+
+**Two bugs the oracle tests found in code that read as correct.** Worth recording
+because in both cases the code looked obviously right:
+- the sweep's third pass returned early when there was nothing to copy and no anomaly,
+  which is exactly the state a session is in once its anomaly has been REMOVED - so
+  `sidecars.json` went on claiming it forever. An early return that is right for the
+  normal case and wrong for the recovery case.
+- a refusal test on the hook path could not fire at all: capture is idempotent by hash
+  (R14), so a second fire on unchanged bytes short-circuits before any archive write.
+  The test was wrong, not the code, but only running it said so.
+
+**The plan was followed, with three deviations and one correction, all recorded in the
+ticket's DONE block rather than left to be rediscovered.** The correction is the one that
+matters: ruling (d) treated every `<uuid>/` dir with no transcript beside it as homeless,
+but "no transcript BESIDE this dir" is not "no transcript ANYWHERE" - four of the 39 real
+ones have a session folder in the archive already, and filing those under `_not-sessions/`
+would put a known session's data in the drawer for unknowns. The sweep builds a
+`uuid -> folder` map now and files them where they belong.
+
+**Ruling (e) in practice: the doctor line reports, the notification interrupts.** The new
+`sidecars` line is non-blocking by design, so neither `ccw-watch` (greps `^\s*FAIL`) nor
+`ccw-freshness-check.py` (reads the exit code) can ever see it. Both are pinned by tests
+that run those tools' REAL sed and grep commands against a report carrying an anomaly.
+The attention comes from `notify.alert`, fired only when a session's notice CHANGES to
+non-empty, so a permanent anomaly is announced once and never again. This is the ticket
+24.7 lesson being obeyed rather than re-learned.
+
+**Ticket 39 is unblocked** and is the next task. `store.write_if_absent`,
+`archive.copy_sidecar_dir`, `archive.write_sidecar_notice`, the doctor line and
+`notify.alert` are all built for it to reuse.
+
 ### Twenty-eighth handoff, 2026-09-07 (a false green in doctor, a hook that was never 3.9-safe, and ticket 39 planned)
 
 Same day as the twenty-seventh, continuing from it. Five things shipped and one plan

@@ -20,6 +20,7 @@ construction" is a property of the current code and not of the next change to it
 
 import json
 from pathlib import Path
+from typing import cast
 
 from conftest import basic_session, hook_payload, run_ccw, warehouse_root, write_transcript
 
@@ -152,10 +153,11 @@ def test_a_rebuild_keeps_the_manifest_listing_the_sidecar(
     configure(ccw_env, archive_root)
     folder = plant_and_capture(ccw_env, archive_root)
     assert run_ccw(["build", "--rebuild"], ccw_env).code == 0
-    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-    listed = manifest["tool_results"]
-    assert isinstance(listed, list)
-    assert len(listed) == 1
+    manifest = cast(
+        dict[str, object], json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    )
+    listed = cast(list[dict[str, object]], manifest["tool_results"])
+    assert [r["name"] for r in listed] == [STDOUT_NAME]
 
 
 def test_a_rebuild_never_touches_a_sidecar_notice(

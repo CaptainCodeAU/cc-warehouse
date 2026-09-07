@@ -517,3 +517,174 @@ BEFORE the reinstall so the byte-identical diff has a baseline.
 tests), oracle tests shown red before green in the commit message. Commit and push per
 slice; tag `ticket-38` after section 7 passes. No em-dashes anywhere; placeholders only in
 fixtures and docs; nothing under `~/.claude` is ever written by this work.
+
+---
+
+# DONE 2026-09-08. Slices 38a-38f shipped; 38g NOT DONE and still needs its own ruling.
+
+Built in one session, oracle tests first in every slice, six commits each pushed on
+green. Version 0.1.3.
+
+| Slice | Commit | What landed |
+|---|---|---|
+| 38a | `2a041f4` | `sidecars.py` (the known-names list, `locate`/`scan`/`stranded_dirs`), `store.write_if_absent`, DESIGN 15 rulings (c)(d)(e), DESIGN 14 R1 note |
+| 38b | `cdda77a` | `copy_sidecar_dir`, `write_sidecar_notice`, `sidecar_records`, `_with_sidecars`, `_sidecar_problems`, `write_stranded_sidecars`, sub-agent companions, DESIGN 6 |
+| 38c | `a7779e1` | `archive_tool_results` config key, the hook path, three sub-agent bugs, SPEC 8 |
+| 38d | `f159de8` | the sweep's third pass, the stranded pass, `cli.py`'s build condition |
+| 38e | `b6439cb` | the `sidecars` doctor line, `ccw status`'s line, `notify.alert`, `desktop_alerts` |
+| 38f | `36940f0` | the three boundary fences, 0.1.3, CHANGELOG, README, docs, HARNESS retro, board note |
+
+Test count moved 1,269 -> 1,364. Ruff and pyright strict clean at every commit. The
+golden matrix anchor was never touched.
+
+## FINDINGS re-derived by execution (the plan's own numbers, checked)
+
+**Held exactly.** 39 stranded sidecar dirs, measured live by the shipped code
+(`ccw sweep --dry-run` names 39 items that are not `*.jsonl`). `ccw doctor`'s new line
+reports the same 39 independently.
+
+**Moved with the corpus, as expected.** The plan said 1,067 dirs holding
+`tool-results/`; the live dry-run two days later reports **1,060 sessions with a
+sidecar to copy**, plus the 39 stranded, 1,099 items in total. The difference is
+sessions ending in between, not a disagreement about what exists.
+
+**CORRECTED, and it changed the design.** The plan's `write_stranded_sidecars` treats
+every `<uuid>/` dir with no transcript beside it as homeless. That conflates two
+questions: "no transcript BESIDE this dir" is not "no transcript ANYWHERE", and the
+plan's own section 1 says four of the 39 match an archived session by uuid. Filing
+those under `_not-sessions/` would put a KNOWN session's data in the drawer reserved
+for unknowns. The sweep now builds one `uuid -> archive folder` map (the same
+two-level listing `doctor._overdue` already pays for) and files those into their real
+session folder; only the genuinely homeless get `stranded-sidecars/`. Recorded in
+DESIGN 15 beside ruling (d).
+
+**DEVIATION, deliberate, with the reason.** The plan's decision 8 wanted a refusal
+message carrying `archived N bytes, offered M bytes`. `SidecarCopy.refused` carries
+names only. Producing the byte counts would mean stat-ing both sides again after the
+compare that already read them, to put a number in a log line beside a filename that
+already identifies the two files exactly. The notice file records the same names, so
+nothing is lost and nothing is silent (F6 is satisfied by naming, not by counting).
+
+**DEVIATION, structural.** The plan put the three cross-cutting guards into the
+existing share, relocate and build regression suites. They live in one new file,
+`tests/test_sidecar_boundaries.py`, because they are one question asked of three verbs
+and each of those files opens with a curated list of the findings IT pins. Splitting
+the question across three docstrings would have made it harder to find, not easier.
+
+**DEVIATION, mechanism.** The plan routed the desktop alert through
+`_spawn_notify_helper`'s detached child with a 3-second `subprocess.run` timeout.
+`notify.alert` uses a detached `Popen` instead, the same shape
+`_open_with_system_default` already uses in that module. It cannot block by
+construction, so it needs no timeout to prove it, and it needs no new field on the
+helper's record.
+
+## Two bugs the oracle tests found, both in code that read as correct
+
+1. **A fixed anomaly kept its notice forever.** The sweep's third pass returned early
+   when there was nothing to copy and no anomaly - which is exactly the state a
+   session is in once its anomaly has been REMOVED, so `sidecars.json` went on
+   claiming it. `write_sidecar_notice` owns that decision now; the early return
+   survives only for the "no archive folder" case, where there is genuinely nothing
+   to say. An early return that is right for the normal case and wrong for the
+   recovery case.
+2. **A refusal test on the hook path could not fire at all.** Capture is idempotent by
+   hash (R14), so a second hook fire on unchanged bytes short-circuits before any
+   archive write. The test, not the code, was wrong - but only running it said so. It
+   grows the transcript to force a fresh identity, and the docstring now records why.
+
+## Three sub-agent bugs found while doing something else
+
+None were in the ticket's title, all were real, all are fixed:
+
+- `capture.py` located the sub-agent directory from the transcript's FILE STEM, so a
+  `<uuid>.orphaned-<n>-<hash>.jsonl` transcript (one exists live) found none of its
+  sidecars. Ruling (c) fixed it: content uuid first, stem second.
+- the hook's sub-agent glob was not recursive, so Workflow-tool sub-agents at
+  `subagents/workflows/wf_<id>/agent-*.jsonl` (432 files, 211 transcripts) were reached
+  only by the daily sweep's `os.walk`. A working net, but a net is not a plan.
+- `sweep._archive_subagent` computed the project dir as a fixed three levels up, right
+  for `subagents/agent-*.jsonl` and wrong for the nested ones, so 211 transcripts had
+  a label derived from `wf_<id>`. The catalog lookup usually rescued it. It walks up to
+  `subagents/` now.
+
+## NOT DONE: 38g, and the constraints it inherits
+
+The render marker and the `persisted` manifest key are NOT built and need their own
+ruling. What a future session has to respect:
+
+- It moves DEFAULT rendered output, so it re-baselines `tests/golden/matrix-anchor`.
+  That anchor moves only by a recorded principal ruling with the delta measured first;
+  the two previous rulings are written beside it in `tests/test_matrix.py`.
+- It must NOT emit the link in `ccw share` output. `tests/test_sidecar_boundaries.py`
+  pins that a shared bundle carries none of a tool result's bytes; 38g must keep that
+  test green rather than update it.
+- The detection points are `parser.py`'s `tool_result` handling (the
+  `<persisted-output>` text and `toolUseResult.persistedOutputPath`) and
+  `render._render_tool_result`.
+
+## Real-data acceptance, run 2026-09-08 from OUTSIDE the repo after the frozen reinstall
+
+Every figure below was produced by the shipped 0.1.3 binary
+(`env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/bin:/bin" ~/.local/bin/ccw ...`),
+against the live corpus. `direct_url.json` reads `"dir_info":{}`, so the install is
+genuinely frozen and this is the code the capture hook runs.
+
+| Check | Result |
+|---|---|
+| `ccw doctor` install line | `frozen`, 0.1.3, running from the uv tools tree |
+| `ccw doctor` sidecars line, before the sweep | `ok` - 0 folders with unarchived siblings; **39** sidecar dirs without a transcript |
+| `ccw sweep --dry-run` | 28,653 items, **1,099 would-archive-sidecars** (1,060 sessions + 39 stranded), 0 written |
+| `ccw sweep` | 28,648 items, 279 stored, **1,094 with sidecars, 0 failed**, exit 0 |
+| tool-results files landed | **2,141 files, 138,054,979 bytes** |
+| workflow files landed | 20 |
+| stranded copies under `_not-sessions/stranded-sidecars/` | **35** |
+| `ccw archive --verify` | **29,570 folders checked, 0 problems** |
+| second `ccw sweep`, files touched under any sidecar path | **3, all in one session that was still being written** |
+| `ccw doctor` after, wording | every pre-existing line **byte-identical**; the only diff is the added `sidecars` line |
+| `ccw doctor` exit code with an anomaly present | **0**, and the line renders without `FAIL` |
+| 20 sampled folders, `persistedOutputPath` basenames | 8 links resolved, **0 unresolved** |
+
+**35 stranded copies out of 39 stranded dirs is the ruling-(d) refinement working,
+measured rather than argued.** Four of the 39 had a session folder in the archive
+already and were filed there instead. That is exactly the number the plan's section 1
+predicted for that case, arrived at independently by the shipped code.
+
+**THE SECOND SWEEP TOUCHED 3 FILES, NOT 0, AND THAT IS NOT CHURN.** All three belong to
+one session that was still being written by a live Claude Code session on this machine
+between the two runs: a new tool result, a new sub-agent's `meta.json`, and the notice
+below. Nothing outside that one folder moved. The idempotence property is about
+UNCHANGED sessions, and it holds.
+
+### The plan predicted zero refusals. There was one, inside twenty minutes.
+
+The plan's decision 4 reasoned that hook uuids are per invocation "so natural collisions
+should be 0". The first acceptance sweep produced one, on live data:
+`tool-results/b3ace6uqd.txt` in that same live session held **38,537 bytes** when the
+archive copied it and **38,519 different bytes** under the same name on the next sweep.
+Measured, not inferred: neither is a byte prefix of the other, so this is not a truncated
+write; both are a single JSON line of `gh issue list` output that differs in content.
+
+WHAT CAUSED THE REWRITE IS NOT MEASURED and is not claimed here. What is measured is
+that a persisted-output filename in a live session held two different payloads twenty
+minutes apart, and that `store.write_if_absent` did the right thing with it: kept the
+archived copy, wrote nothing, named the file in `sidecars.json`'s `refused` list, wrote a
+`refused` line to the audit log, and surfaced it on `ccw doctor`'s new line without
+moving the exit code.
+
+**THIS CHANGED THE CODE.** `announce_unarchived_siblings` became
+`announce_sidecar_anomaly` and now alerts on a refusal too, not only on an unknown
+sibling, because ruling (e)'s own wording is "the notice changed to a non-empty set" and
+a refusal is exactly that. The SENTENCE differs, because the action does: "add a copier
+in sidecars.py" is right for an unknown name and wrong for a refusal, where the copier
+already exists and two files claimed one name. Two oracle tests were written red first
+(`test_a_refused_sidecar_also_raises_one_alert`,
+`test_a_repeated_refusal_does_not_alert_twice`); the second pins that the same dedup
+applies, so a source file that stays different forever does not announce itself daily.
+
+**Not run, and stated rather than left implied.** The plan's scratch-tree probe (plant a
+`zzz-probe` in a `~/.claude/projects`-shaped scratch tree, sweep, watch the macOS banner
+appear, sweep again, watch it not appear) was NOT performed by hand. The behaviour is
+covered by four oracle tests that count `notify.alert` calls in-process across two real
+sweeps, which is a stronger instrument than watching a banner; what is genuinely
+unverified is that macOS itself renders the notification on this machine. That is a
+one-command check the operator can make whenever the next real anomaly appears.

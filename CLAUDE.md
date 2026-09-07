@@ -561,7 +561,46 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   sub-agent, bad folder name) is always real regardless of timing. Full
   account: `harness/tickets/34-swallowed-render-errors-and-batch-false-alarms.md`.
 
-- **Ticket 39 PLANNED 2026-09-07, NOT STARTED, blocked on ticket 38.** The archive keeps
+- **Ticket 38 DONE 2026-09-08, shipped as 0.1.3. Slices 38a-38f; 38g is NOT DONE and
+  needs its own ruling.** Claude Code writes several folders beside every transcript and
+  this product copied exactly one of them (`subagents/`), asking for it BY NAME, so it
+  never noticed the others arriving. `tool-results/` had been accumulating since
+  2026-05-08: measured before the fix, 1,067 dirs / 2,084 files / 135.7 MB, of which
+  **65.4 MB appears in no transcript at all**. `tool-results/` and `workflows/` are now
+  mirrored into the session folder under their original relative paths and listed in
+  `manifest.json` as `tool_results` and `workflows`.
+  **THE GENERAL DEFECT MATTERS MORE THAN THE TWO NAMES, and it is what the fix is
+  shaped around.** Nothing in the product ever ENUMERATED what sits beside a transcript,
+  so a new sibling could appear and the archive would quietly stop being complete.
+  `src/cc_warehouse/sidecars.py` is now the one list of known names, and
+  `archive.COPIERS` is fenced by two oracle tests: a name without a copier fails the
+  suite, and so does a copier naming a function that does not exist. Anything else beside
+  a transcript lands in a `sidecars.json` NOTICE in the session folder, is reported by a
+  new informational `ccw doctor` line, and raises ONE desktop notification the first time
+  it appears. **The doctor line is deliberately NON-BLOCKING**: it never moves the exit
+  code, so neither `ccw-watch` (greps `^\s*FAIL`) nor `ccw-freshness-check.py` (reads the
+  exit code) can ever see it, both pinned by tests running their REAL sed/grep commands.
+  That is the ticket 24.7 lesson: a figure that sits permanently non-zero on a healthy
+  install must not paint a banner.
+  **Three sub-agent bugs were found while doing it, none of them in the ticket's
+  title:** the sub-agent dir was located from the transcript's FILE STEM (so a
+  `<uuid>.orphaned-<n>-<hash>.jsonl` found none of its sidecars); the hook's glob was not
+  recursive, so `subagents/workflows/wf_<id>/agent-*.jsonl` (432 files, 211 transcripts)
+  was reached only by the daily sweep; and `sweep._archive_subagent` computed the project
+  dir as a fixed three levels up, deriving a label from `wf_<id>` for those same 211.
+  **Ruling (d) was refined by execution and the refinement is recorded**: "no transcript
+  BESIDE this dir" is not "no transcript ANYWHERE", so a stranded dir whose uuid the
+  archive already holds goes into its real session folder rather than into
+  `_not-sessions/stranded-sidecars/`. New config keys, both default ON:
+  `archive_tool_results` and `[notify] desktop_alerts`.
+  **0.1.3 bumps `renderer_version`, so the first build or sweep after upgrading
+  re-renders the whole tree once** - that is the run that populates the two new manifest
+  keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
+  DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
+
+- **Ticket 39 PLANNED 2026-09-07, NOT STARTED. ITS BLOCKER IS GONE: ticket 38 shipped
+  2026-09-08, so `store.write_if_absent` and the notice/doctor/alert scaffolding it
+  reuses all exist.** The archive keeps
   what a session SAID and not what it POINTED AT. Measured: `~/.claude` is 6.7 GB, ccw
   archives the 4.2 GB of `projects/` only. Outside it and unhandled:
   `file-history/` (1,010 session-keyed entries, 911 MB, bytes verified absent from the

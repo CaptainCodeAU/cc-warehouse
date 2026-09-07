@@ -456,8 +456,8 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
 
-    if changed and scan.has_anomaly:
-        _log_sidecar_anomaly(config, parsed.session_uuid, path, scan)
+    if changed:
+        _log_sidecar_anomaly(config, parsed.session_uuid, path, scan, refused)
     if refused:
         return ItemOutcome(path.name, "refused-sidecar", ", ".join(refused))
     if written:
@@ -468,7 +468,7 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
 
 
 def _log_sidecar_anomaly(
-    config: Config, session_uuid: str | None, path: Path, scan: "object"
+    config: Config, session_uuid: str | None, path: Path, scan: "object", refused: "list[str]"
 ) -> None:
     """Announce a new unknown sibling the sweep found, through capture's own
     announcer rather than a second copy of the same three sinks (R9).
@@ -480,7 +480,7 @@ def _log_sidecar_anomaly(
     from cc_warehouse import sidecars
 
     assert isinstance(scan, sidecars.SidecarScan)
-    capture.announce_unarchived_siblings(config, session_uuid, path.name, scan)
+    capture.announce_sidecar_anomaly(config, session_uuid, path.name, scan, refused)
 
 
 def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
