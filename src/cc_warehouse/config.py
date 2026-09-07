@@ -4,7 +4,10 @@ built-in defaults -> XDG file -> data-root file -> [project.<id>] sections ->
 CCW_* environment variables -> CLI flags. Slice 13.
 
 The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for the
-render toggles): top-level `root`; [notify] voice_url voice_id open_folder;
+render toggles): top-level `root`, `archive_root`, `archive_timezone`,
+`keep_projections`, `keep_objects`, `archive_subagents` and `archive_tool_results`
+(the four `archive_*` keys were missing from this list until 2026-09-08, ticket 38);
+[notify] voice_url voice_id open_folder;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
 attachments_compact commands_compact extras_compact tool_output_compact, and the
@@ -170,6 +173,13 @@ class Config:
     # changed: ~/.claude is being cleared, so anything a sweep declines to take
     # is destroyed rather than deferred.
     archive_subagents: bool = True
+    # Whether the OTHER sidecar folders are archived (ticket 38): `tool-results/`
+    # and `workflows/`. One switch for both, and for the hook AND the sweep alike,
+    # for the reason `archive_subagents` states above: a key that turned them off
+    # in one place and on in another would be a setting nobody could reason about.
+    # DEFAULTS ON. 65.4 MB of the live corpus's tool-results exists in no JSONL,
+    # so anything not copied is a copy that does not exist anywhere else.
+    archive_tool_results: bool = True
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -524,6 +534,7 @@ def load_config(
         keep_projections=_keep_projections(merged, problems),
         keep_objects=_keep_objects(merged, problems),
         archive_subagents=_bool(merged.get("archive_subagents"), True),
+        archive_tool_results=_bool(merged.get("archive_tool_results"), True),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

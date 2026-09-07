@@ -402,6 +402,20 @@ def _parent_folder(
     return None
 
 
+def session_folder(
+    archive_root: Path, label: str, session_uuid: str | None, timezone: str
+) -> Path | None:
+    """Public alias of the session-folder locator (ticket 38).
+
+    `capture` and `sweep` both need the SAME answer to "where does this session's
+    folder live" that `write_subagent` uses to nest a sub-agent, and a second
+    implementation would be the F8 class: two ways to compute one truth, drifting
+    apart the first time either is touched. Same shape and same argument as
+    `sole_jsonl` above.
+    """
+    return _parent_folder(archive_root, label, session_uuid, timezone)
+
+
 def subagent_records(session_dir: Path) -> list[dict[str, object]]:
     """This session's sub-agents, as the manifest records them (ticket 21e).
 

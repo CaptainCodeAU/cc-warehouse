@@ -10,13 +10,13 @@ exactly one object, one row, and one `stored` event (F3/R14).
 
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import catalog, notify, parser, registry, store
+from cc_warehouse import catalog, notify, parser, registry, sidecars, store
 from cc_warehouse.config import Config
 
 # DESIGN section 4: a re-fire whose latest capture_event landed within this window is a
@@ -232,7 +232,19 @@ def _capture_locked(
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
     _archive_source(config, conn, project_id, data)
-    _archive_subagents_of(config, conn, project_id, transcript_path, data)
+    _archive_subagents_of(config, conn, project_id, transcript_path, parsed)
+    # Ticket 38. Both are wrapped in the never-fatal posture `_archive_project_file`
+    # already uses (DESIGN 12): the session is stored by this point, and neither a
+    # copier nor a signal may turn that into a reported failure.
+    refused: tuple[str, ...] = ()
+    try:
+        refused = _archive_sidecars_of(config, conn, project_id, transcript_path, parsed)
+    except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
+        refused = ()
+    try:
+        _note_unknown_siblings(config, conn, project_id, transcript_path, parsed, refused)
+    except Exception:  # noqa: BLE001 - a signal must never be what fails a capture
+        pass
     meta = catalog.SessionMeta(
         sha256=digest,
         source_kind=_SOURCE_KIND,
@@ -339,12 +351,19 @@ def _archive_project_file(
         return
 
 
+def _label_of(conn: sqlite3.Connection, project_id: int) -> str:
+    """This project's archive label, or the unlabeled fallback. One reader rather
+    than the three copies of this two-line query the module had grown (R9)."""
+    row = conn.execute("SELECT label FROM project WHERE id = ?", (project_id,)).fetchone()
+    return str(row[0]) if row else "_unlabeled"
+
+
 def _archive_subagents_of(
     config: Config,
     conn: sqlite3.Connection,
     project_id: int,
     transcript_path: Path,
-    data: bytes,
+    parsed: parser.ParsedSession,
 ) -> None:
     """Bring this session's sub-agent transcripts with it (ticket 21d).
 
@@ -363,28 +382,179 @@ def _archive_subagents_of(
     """
     if config.archive_root is None or not config.archive_subagents:
         return
-    subagents = transcript_path.parent / transcript_path.stem / "subagents"
-    if not subagents.is_dir():
+    directory = sidecars.locate(transcript_path, parsed.session_uuid)
+    if directory is None:
         return
     from cc_warehouse import archive
 
-    row = conn.execute("SELECT label FROM project WHERE id = ?", (project_id,)).fetchone()
-    label = str(row[0]) if row else "_unlabeled"
-    for child in sorted(subagents.glob("*.jsonl")):
+    subagents = directory / archive.SUBAGENTS_DIR
+    if not subagents.is_dir():
+        return
+    label = _label_of(conn, project_id)
+    # RECURSIVE since ticket 38. Claude Code also writes Workflow-tool sub-agents
+    # at `subagents/workflows/wf_<id>/agent-*.jsonl` - 432 files, 33 MB, 211
+    # distinct transcripts - and a non-recursive glob reached none of them. The
+    # daily sweep's os.walk did, so all 211 are already in the archive: a hook-path
+    # gap with a working net. Fixed anyway, because a net is not a plan.
+    for child in sorted(subagents.rglob("*.jsonl")):
         try:
             payload = child.read_bytes()
             if not archive.is_subagent(payload):
                 continue
-            meta_path = child.with_suffix(".meta.json")
+            meta_path = child.parent / f"{child.stem}.meta.json"
             archive.write_subagent(
                 config.archive_root,
                 label,
                 payload,
                 config.archive_timezone,
                 meta=meta_path.read_bytes() if meta_path.is_file() else None,
+                companions=_forked_skill_companions(child),
             )
         except Exception:  # noqa: BLE001, PERF203 - one bad sub-agent never costs the capture
             continue
+
+
+def _forked_skill_companions(transcript: Path) -> tuple[tuple[str, bytes], ...]:
+    """The `.forked-skill.json` / `.forked-skill.marker.json` files beside one
+    sub-agent transcript (ticket 38; 10 of each in the live tree, copied by
+    nothing until now).
+
+    Same argument as `meta.json`: they are the only record of what the agent was
+    set up to be. An unreadable one is skipped rather than raised - a companion is
+    an extra, and losing it must not cost the transcript itself (R5).
+    """
+    out: list[tuple[str, bytes]] = []
+    for suffix in (".forked-skill.json", ".forked-skill.marker.json"):
+        path = transcript.parent / f"{transcript.stem}{suffix}"
+        try:
+            out.append((path.name, path.read_bytes()))
+        except OSError:  # noqa: PERF203 - an extra never costs the transcript
+            continue
+    return tuple(out)
+
+
+def _archive_sidecars_of(
+    config: Config,
+    conn: sqlite3.Connection,
+    project_id: int,
+    transcript_path: Path,
+    parsed: parser.ParsedSession,
+) -> tuple[str, ...]:
+    """Bring this session's OTHER sidecar folders with it: `tool-results/` and
+    `workflows/` (ticket 38). Returns the relative paths that were refused.
+
+    The twin of `_archive_subagents_of`, with one deliberate difference: EVERY
+    refusal and every per-file error is recorded. A sub-agent has a folder of its
+    own and a `SubagentResult` a caller can read; a tool result has neither, and
+    silence about it is precisely what let this whole class of data sit
+    uncollected for four months.
+
+    Ordering is free here, as it is for sub-agents: the parent's own folder was
+    written moments ago by `_archive_source`, so there is always somewhere for
+    these to land. A None parent means that write failed, and the conservative
+    branch is to leave the files where they are (R5) rather than invent a home.
+
+    Never fatal (DESIGN 12): the session is already stored, and a copier must not
+    turn that into a reported failure.
+    """
+    if config.archive_root is None or not config.archive_tool_results:
+        return ()
+    directory = sidecars.locate(transcript_path, parsed.session_uuid)
+    if directory is None:
+        return ()
+    from cc_warehouse import archive
+
+    label = _label_of(conn, project_id)
+    parent = archive.session_folder(
+        config.archive_root, label, parsed.session_uuid, config.archive_timezone
+    )
+    if parent is None:
+        return ()
+    refused: list[str] = []
+    for name in sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR}):
+        source = directory / name
+        if not source.is_dir():
+            continue
+        copied = archive.copy_sidecar_dir(parent, name, source)
+        refused.extend(f"{name}/{item}" for item in copied.refused)
+        for item in copied.refused:
+            _log_sidecar_trouble(config, parsed, "refused", name, item)
+        for item in copied.errors:
+            _log_sidecar_trouble(config, parsed, "error", name, item)
+    return tuple(refused)
+
+
+def _log_sidecar_trouble(
+    config: Config, parsed: parser.ParsedSession, status: str, sidecar: str, detail: str
+) -> None:
+    """One audit line per refused or unreadable sidecar file (F6, R10).
+
+    `notify.append_log` rather than `notify.report`: this is a durable local
+    record, not an event worth a webhook or a spoken sentence. The attention sink
+    is reserved for an UNKNOWN sibling, which is the thing a human has to act on.
+    """
+    verb = "refused" if status == "refused" else "could not read"
+    notify.append_log(
+        config,
+        {
+            "at": datetime.now(UTC).isoformat(),
+            "status": status,
+            "session": (parsed.session_uuid or "")[:8] or None,
+            "project": None,
+            "message": f"{verb} sidecar {sidecar}/{detail}",
+            "elapsed_ms": None,
+        },
+    )
+
+
+def _note_unknown_siblings(
+    config: Config,
+    conn: sqlite3.Connection,
+    project_id: int,
+    transcript_path: Path,
+    parsed: parser.ParsedSession,
+    refused: Sequence[str],
+) -> None:
+    """Record anything beside this transcript that nothing copied, and say so once.
+
+    THE DEDUP IS THE NOTICE COMPARE, not a timer and not a counter.
+    `write_sidecar_notice` returns True only when the file's bytes actually
+    changed, so a machine with a permanent anomaly logs it on the run that finds
+    it and then stays quiet. That is the ticket 24.7 lesson, learned here the hard
+    way: a threshold on a figure that sits permanently non-zero on a healthy
+    install printed an ALERT every single session.
+
+    A notice that changed to EMPTY is not announced. The anomaly going away is
+    good news, and good news does not need an interruption.
+    """
+    if config.archive_root is None:
+        return
+    from cc_warehouse import archive
+
+    label = _label_of(conn, project_id)
+    parent = archive.session_folder(
+        config.archive_root, label, parsed.session_uuid, config.archive_timezone
+    )
+    if parent is None:
+        return
+    scan = sidecars.scan(transcript_path, parsed.session_uuid)
+    if not archive.write_sidecar_notice(parent, scan, refused):
+        return
+    if not scan.has_anomaly:
+        return
+    names = ", ".join((*scan.unknown, *scan.unknown_inside_subagents))
+    short = (parsed.session_uuid or "")[:8]
+    notify.append_log(
+        config,
+        {
+            "at": datetime.now(UTC).isoformat(),
+            "status": "unarchived-sibling",
+            "session": short or None,
+            "project": None,
+            "message": f"unarchived sibling(s) beside {short or transcript_path.name}: {names}",
+            "elapsed_ms": None,
+        },
+    )
 
 
 def capture_transcript(

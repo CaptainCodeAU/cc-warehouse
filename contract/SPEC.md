@@ -260,6 +260,28 @@ different mechanics (difference stated inline) | `DROP` not carried (reason inli
   the parent's transcript. Sub-agents are archived into
   `<session>/subagents/<stamp>_<agentId>/` and get no catalog row, no markdown
   and no HTML; rendering them is recorded as future work behind its own flag.
+  **AMENDED 2026-09-08 (ticket 38).** `subagents/` was one of FOUR things Claude
+  Code writes beside a transcript, and the product asked for it by name and
+  ignored the rest. The other two that carry data are archived now under one
+  switch, `archive_tool_results`, DEFAULTS ON, governing the hook and the sweep
+  alike for the same reason `archive_subagents` does: 65.4 MB of the live corpus's
+  `tool-results/` exists in NO JSONL, so anything not copied is a copy that
+  exists nowhere else. They are mirrored to
+  `<session>/tool-results/<original relative path>` and
+  `<session>/workflows/<original relative path>`, listed in the manifest as
+  `tool_results` and `workflows`, and never rendered.
+  A sidecar file carries no `sessionId` of its own, so ruling (c) settles its
+  parent: the session whose transcript sits BESIDE the sidecar dir, with that dir
+  located by the transcript's content uuid first and its file stem second. The dir
+  NAME is a source-layout filter, never an identity (F4). Two corrections ride
+  with this one too. A sub-agent transcript points at its PARENT'S sidecar dir,
+  and there is no per-sub-agent `tool-results/`. And the hook's sub-agent glob is
+  now RECURSIVE, because Claude Code also writes Workflow-tool sub-agents at
+  `subagents/workflows/wf_<id>/agent-*.jsonl` (432 files, 211 transcripts) which a
+  flat glob reached none of.
+  Anything ELSE beside a transcript is recorded in a `sidecars.json` NOTICE in the
+  session folder and announced once, so the next unknown sibling says so on the
+  day it appears rather than four months later.
 
 ## 9. Batch failure posture
 
