@@ -448,6 +448,13 @@ is logged, never raised (capture must survive notification infrastructure).
   the same session", and size answers a third, "which of two payloads KNOWN to differ
   is larger". Using UUID or size for either of those is not an R1 breach; using either
   to decide byte-equality still is, and remains the bug F1 exists to prevent.
+  SIDECAR FILES (added 2026-09-08, ticket 38, ruling (c) in section 15): a copied
+  sidecar file - a tool result, a workflow script - is identified by its own sha256
+  like every other file the archive holds. What ruling (c) settles is a different
+  question R1 never spoke to: WHICH SESSION FOLDER it belongs in. A sidecar carries no
+  `sessionId`, so that answer comes from the transcript sitting beside its directory,
+  whose own identity is still decided from content. The directory NAME is a
+  source-layout filter, never an identity (F4).
 - R2 `atomic_write` is the only write path for files; direct `write_text`/`open("w")`
   on final paths is a rejection (F2). Sanctioned exceptions, closed list: SQLite's own
   catalog writes, the O_APPEND audit log, O_EXCL lock create/remove (section 13).
@@ -1724,6 +1731,70 @@ the observation over as an observation about their side, then verified here rath
 accepted on report. The related requirement that doctor also check the hook can EXECUTE
 (not merely that it is registered) stays FILED, not built:
 `contract/PROPOSALS/doctor-checks-the-hook-can-execute.md`.
+
+### 2026-09-08, ticket 38: the three sidecar rulings
+
+**RULING (c), SIDECAR IDENTITY.** Ruling (a) (2026-08-02) decides identity from
+CONTENT: a file is a session if any entry carries a `sessionId`. A sidecar file
+cannot answer that question at all - a `hook-<uuid>-stdout.txt` under
+`tool-results/` is captured stdout, carrying no identity of its own. So:
+
+> A sidecar file belongs to the session whose transcript sits beside the sidecar
+> dir. The transcript's identity is still decided from its content (ruling (a));
+> the sidecar dir is located by that content uuid first (`<proj>/<session_uuid>/`)
+> and by the file stem second. The dir name is a source-layout FILTER, the same
+> exemption `sweep.py` already has for the `agent-` prefix under the F4 fence. It
+> is never used to file a sidecar whose transcript is absent as if it were a
+> session.
+
+THE ORDER IS NOT COSMETIC and one real file shape proves it:
+`<uuid>.orphaned-<n>-<hash>.jsonl`, whose stem is not the bare uuid. Exactly one
+exists in the live source tree, and a stem-keyed lookup misses its `<uuid>/` dir
+entirely - the gap `capture.py` has carried since ticket 21. The stem fallback
+still exists for a payload whose content carries no uuid.
+
+R1 IS UNAFFECTED. A sidecar file is still identified by its own sha256 like every
+other file the archive holds; what ruling (c) decides is only WHICH SESSION FOLDER
+it lands in, which R1 never spoke to.
+
+**RULING (d), STRANDED SIDECARS.** 91 `<uuid>/` dirs in the live source tree have
+no `<uuid>.jsonl` beside them; 39 hold `tool-results/`, 0.9 MB in total. They are
+copied to `<archive>/_not-sessions/stranded-sidecars/<dir_name>/` with a
+`stranded.json` note recording the dir name as a LABEL, never claimed as identity.
+Why copy rather than merely count them: `_not-sessions/` already exists for
+payloads with no session identity (ticket 25.6), the archive is the deliverable,
+and 0.9 MB is the entire cost. The alternative - leave them where they are and
+report the number - loses nothing TODAY only because `~/.claude` is never deleted,
+and leaves the archive knowingly incomplete against the day that changes.
+
+REFINED DURING EXECUTION, 2026-09-08, and the refinement is load-bearing. "No
+transcript BESIDE this dir" is not the same question as "no transcript ANYWHERE":
+of the 39, four have a session folder in the archive already (their transcript
+moved, or was captured from another project dir). Filing those under
+`_not-sessions/` would put a KNOWN session's data in the drawer reserved for
+unknowns. The sweep therefore builds one `uuid -> archive folder` map from the
+two-level listing it already pays for, files those into their real session folder,
+and reserves `stranded-sidecars/` for the genuinely homeless.
+
+**RULING (e), HOW AN UNKNOWN SIBLING GETS ATTENTION.** Taken 2026-09-06 by the
+principal: an informational `ccw doctor` line PLUS an OS-level alert.
+
+The `sidecars` doctor line is NEVER BLOCKING. It does not move doctor's exit code,
+so `ccw-freshness-check.py`'s escalation and `ccw-watch`'s banner are untouched by
+it. That is deliberate and it is the ticket 24.7 lesson applied: a chronic non-zero
+figure that paints a red banner every session teaches the operator to stop reading
+banners, and the `Uncaptured: N` figure on this machine (250-350, permanently, on a
+healthy install) is the proof that this shape occurs in practice.
+
+Attention comes instead from a new desktop-notification sink fired at the MOMENT a
+new anomaly is recorded - the notice file changed to a non-empty set - once per
+session per change. The dedup is the notice compare itself, so it cannot nag daily.
+The same sentence goes to the existing voice sink.
+
+THE GUARD THIS RULING DEPENDS ON: the release must ship `tool-results` and
+`workflows` in the known-names set, or every install alerts on day one for two
+things we already know about. That is why ticket 38 archives `workflows/` rather
+than deferring it, despite it being 9 dirs and 1.1 MB.
 
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 

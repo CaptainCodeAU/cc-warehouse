@@ -11,6 +11,7 @@ import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 # Address grammar (DESIGN section 1): objects/<hh>/<64-hex><ext>. Both address
 # parts are validated before any path is built from them (F4/F9); nothing
@@ -86,6 +87,42 @@ def write_if_changed(path: Path, data: bytes) -> bool:
         pass
     atomic_write(path, data)
     return True
+
+
+def write_if_absent(path: Path, data: bytes) -> Literal["wrote", "unchanged", "refused"]:
+    """Place COPIED SOURCE bytes at `path`, refusing to disturb anything already there.
+
+    Ticket 38. The sibling of `write_if_changed`, and they differ in exactly one
+    branch, on purpose. `write_if_changed` owns GENERATED files, so a target
+    holding different bytes is stale and falls through to a write. This owns
+    files copied out of `~/.claude` - a tool result, a workflow script - where a
+    target holding different bytes means two different payloads claimed one name,
+    and no rule in this project says which of them wins. Size cannot decide it
+    either: a truncated capture and a full one are not "smaller and larger
+    versions of a transcript", they are two files. So the conservative branch
+    (R5) is the ONLY branch: keep what is there, write nothing, and return
+    `refused` so the caller can record it (F6 - a refusal is never silent).
+
+    An UNREADABLE target is also `refused`, the opposite direction from
+    `write_if_changed`. There, "I cannot read it" resolves to "write a fresh
+    one", which is right for a file that can be regenerated. Here the target may
+    be the only copy of something, so "I cannot tell what is there" must never
+    resolve to "overwrite it".
+
+    The compare reads the full file, never a size or mtime proxy (F1). Directory
+    creation is the caller's job: folding it in here would let a typo materialise
+    a tree.
+    """
+    try:
+        if path.read_bytes() == data:
+            return "unchanged"
+        return "refused"
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return "refused"
+    atomic_write(path, data)
+    return "wrote"
 
 
 def is_sha256_hex(value: str) -> bool:
