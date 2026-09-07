@@ -80,6 +80,32 @@ registered SessionEnd hook - if it doesn't, or if it names something that clearl
 the capture hook (a stale-doctor-version symptom described in CHANGELOG 0.1.2), the
 plugin install step also didn't complete. Same as above: say so, don't silently redo it.
 
+### The interpreter gate: BLOCK on this, do not warn
+
+Both hooks in `plugins/cc-capture/hooks/` need **Python 3.10 or newer**, and
+`hooks.json` invokes them as a bare `python3`. Which interpreter answers is therefore
+decided entirely by the PATH the hook process inherits, which is not the PATH of any
+shell you can see. On the author's own Mac `/usr/bin/python3` is 3.9.6, and under it both
+hooks die on their PEP 604 annotations at import time.
+
+This must BLOCK rather than warn, because of how the failure presents: the hook dies
+before any of its own error handling can log or speak, so capture silently never runs,
+AND `ccw doctor` still reports the hook as ok. Doctor checks that the hook is
+REGISTERED, not that it can EXECUTE. Those are different questions and today only the
+first one is asked (see `contract/PROPOSALS/doctor-checks-the-hook-can-execute.md`).
+
+Resolve it the way a hook would, with no rc files and PATH only:
+
+```
+env -i HOME="$HOME" PATH="$PATH" /bin/sh -c 'command -v python3; python3 -c "import sys; print(sys.version_info >= (3, 10))"'
+```
+
+**Read that with care: it answers about the PATH YOU pass it, not the hook's.** There is
+one instrument that does not depend on guessing, and it is the log. The hooks cannot run
+at all under 3.9, so every successful line in `~/.claude/logs/ccw-hook.log` is itself
+proof the interpreter was 3.10+ at that moment. A machine with recent `status": "ok"`
+lines has already answered this question by execution.
+
 ## Step 2: the actual reason you're here - configuration
 
 The installer handed off to you specifically because `~/.config/cc-warehouse/config.toml`
@@ -141,6 +167,53 @@ it shows before confirming, or ASK FIRST if you can't read the prompt output dir
 Also: **the update needs a restart to take effect.** If you check `ccw doctor` again
 immediately in this same session, it may still report the pre-update state. Tell the human
 a restart is needed to confirm the update took, rather than declaring it done.
+
+### Verify the update by what EXECUTES, not by what you pushed
+
+The plugin runs from a **cached copy**, not from a checkout: `installed_plugins.json`
+puts it under `~/.claude/plugins/cache/cc-warehouse/cc-capture/<gitsha>`, built from a
+clone of this project's GitHub remote. Pushing to the repo changes nothing about what
+runs, and neither does reinstalling `ccw` - this is the frozen-install trap one layer
+over. Never report "hooks updated" on the strength of a commit or a push.
+
+This reads the registry and digests the bytes that will actually execute. Stdlib only,
+read-only, works the same on macOS and Linux:
+
+```
+python3 - <<'EOF'
+import hashlib, json, pathlib, sys
+REG = pathlib.Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+KEY = "cc-capture@cc-warehouse"
+try:
+    entries = json.loads(REG.read_text(encoding="utf-8"))["plugins"][KEY]
+except (OSError, ValueError, KeyError):
+    print(f"{KEY}: NOT INSTALLED (no entry in {REG})")
+    sys.exit(1)
+for entry in entries:
+    root = pathlib.Path(entry["installPath"])
+    hooks = root / "hooks"
+    files = sorted(p for p in hooks.glob("*") if p.is_file()) if hooks.is_dir() else []
+    digest = hashlib.sha256()
+    for f in files:
+        digest.update(f.name.encode("utf-8"))
+        digest.update(f.read_bytes())
+    print(f"scope        {entry.get('scope', '?')}")
+    print(f"installPath  {root}")
+    print(f"recorded sha {entry.get('gitCommitSha', '(none recorded)')}")
+    print(f"exists       {root.is_dir()}")
+    print(f"live hooks   {len(files)} file(s), bytes digest {digest.hexdigest()[:16]}")
+EOF
+```
+
+**Two numbers, and you need both.** `recorded sha` is what the marketplace says it
+installed. `bytes digest` is what is on disk and will run. A moved `recorded sha` with an
+unmoved digest means the update did not actually land. To prove a specific change
+arrived, digest the same files in your checkout and compare: they should match exactly.
+
+Tested three ways on 2026-09-07 before being written down here: against the real registry
+(reports the live path and sha), against a sandbox copy where appending one comment moved
+the digest, and against an empty HOME where it exits 1 saying NOT INSTALLED. Never run
+the mutation test against the live cache; use a copy.
 
 ## Step 4: scheduled catch-up jobs (optional, ASK FIRST)
 
