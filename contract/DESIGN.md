@@ -1859,6 +1859,59 @@ from differs; everything after they are found is identical, and a parallel set o
 `*_external_*` twins would have drifted from the originals the first time either
 was touched (the architecture board's C12, applied rather than cited).
 
+### 2026-09-08, ticket 39 continued (39c-39g): three decisions worth keeping
+
+**One sweep pass, not three, for everything `history.jsonl` touches.** 39c (the
+whole-file snapshot) and 39d (the per-session split) started as separate
+functions and were consolidated into one, `sweep._process_history`, that reads
+`~/.claude/history.jsonl` exactly once and does both from that single read - 39e
+(paste-cache) then hangs its own gather off the same per-session loop. The
+alternative (three independent passes, each re-reading and re-parsing the file)
+would have tripled a cost measured at 0.11s for the whole file - cheap enough
+that the consolidation is about not reopening an 18k-line JSON parse three times
+a day forever, not about correctness.
+
+**Paste-hash extraction got its OWN parse pass rather than widening
+`split_history_by_session`'s return shape.** The literal plan text said 39e
+should reuse "39d's in-memory sessionId index rather than re-parsing." Read
+strictly, that would mean widening `split_history_by_session` (39d, already
+shipped and independently red-teamed by two reviewers) to also emit
+paste-content-hash groupings from the same loop. Decided against: the function's
+existing shape had just been verified line-by-line against real data, and the
+saving from merging the two loops is a second 0.11s parse - the exact same
+"already cheap at real scale" observation to the letter above, so there was no
+correctness or cost reason to reopen already-verified code. `paste_hashes_by_session`
+is a second, independent pass over the same bytes `_process_history` already
+read once from disk; only the JSON-parse loop repeats, not the disk read.
+
+**A refusal-visibility gap was fixed as a class, across two tickets at once,
+because two independent red-team reviews converged on it.** A refused
+same-name-different-bytes write (R5) inside both `_gather_external` (file-history/
+todos, 39b) and the new `_gather_pastes` (pastes, 39e) reached
+`logs/capture.jsonl` and nowhere else - not an `ItemOutcome`, and for
+`_gather_external` specifically, never the persistent `sidecars.json` notice a
+`copy_companion_dir` refusal already reaches. Two reviewers, attacking from
+different angles (test-coverage gap; behavior-visibility gap), landed on the
+same root cause independently - the RedTeam skill's own convergence rule
+("weaknesses that many agents independently land on are your critical
+findings") is why this was fixed immediately rather than filed as a follow-up:
+fixing only the new (39e) half while knowingly leaving the old (39b) half broken
+would have been the instance fix this project's own standing lesson explicitly
+warns against ("extract the class, not the patch").
+
+**A full persistent-notice-plus-desktop-alert mechanism for paste-cache
+anomalies was scoped OUT of 39f, deliberately, not overlooked.** Sidecars get
+this treatment because `_archive_sidecars` already owns a per-transcript
+`SidecarScan`/`write_sidecar_notice` call to hang it off. `_process_history` is a
+structurally separate whole-file pass with no equivalent call to hang anything
+off; giving pastes the same persistent-notice treatment would mean merging two
+sweep passes that currently have no reason to know about each other - a bigger
+architecture change than one config-key-and-doctor-line slice warrants. The
+transient per-run sweep-report outcomes (`"pastes-refused"`/`"pastes-missing"`)
+are real, non-nothing visibility in the meantime; a future ticket that wants
+full parity with sidecars' persistent treatment would need to merge the passes
+first.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

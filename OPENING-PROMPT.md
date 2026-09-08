@@ -16,6 +16,12 @@ reports `29593 folders checked, 0 problems`. Real post-run numbers:
 files`. Full account: `harness/tickets/39-archive-what-a-session-points-at.md`'s
 "TICKET 39 IS SHIPPED AND LIVE" block at the very bottom.
 
+**`v0.1.4` is also released to PyPI**, tagged and pushed via `/wrap-up`'s own
+release step: gates + publish both green
+(`https://github.com/CaptainCodeAU/cc-warehouse/actions/runs/34198334692`), and
+the published wheel/sdist sha256 hashes match a local `uv build` exactly -
+verified from the outside, not just a green CI run.
+
 **Nothing is queued as the next task right now** - ticket 39 closes this track.
 Read the ticket file's full history for context if picking up new work here;
 otherwise check `CLAUDE.md`'s `## OPEN / next` for the standing backlog (ticket 28,
