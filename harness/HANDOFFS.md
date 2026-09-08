@@ -21,6 +21,36 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-fifth handoff, 2026-09-08 (ticket 39: slice 39g, repo-only release paperwork)
+
+**Version bump only, no code behaviour changed. Full suite, pyright strict and ruff
+all still clean.** This slice was deliberately scoped to the safe, reversible,
+in-repo part of "make ticket 39 a real release": `pyproject.toml`'s `version` moved
+`0.1.3` -> `0.1.4`, `uv.lock` was re-synced with `uv lock` (its own `cc-warehouse`
+entry now reads `0.1.4` too), and a new `0.1.4` entry was added to `CHANGELOG.md`
+above the `0.1.3` entry, summarizing 39b-39f's real shipped scope (file-history/todos
+mirror, the `history.jsonl` whole-file snapshot, the per-session `prompts.jsonl`
+split, the paste-cache gather, and the cross-cutting refusal-visibility fix), in the
+same voice and with the same "first build/sweep after upgrading re-renders the whole
+tree once" upgrading note 0.1.3's own entry carries - the mechanism is identical,
+since bumping `__version__` is what makes `folder_is_current` treat every existing
+archive folder as stale.
+
+**The frozen reinstall and the live back-fill were NOT run, on purpose.** Bumping
+the version in the repo is a different event from installing it system-wide, which
+is a different event again from running it against the real 28,924-session archive.
+Both of those steps are exactly the kind of production-affecting, hard-to-reverse
+action this repo's own `CLAUDE.md` requires the operator's explicit word for at the
+moment of running, not a background session's call - and they were asked about
+separately from this slice, not delegated to it. Nothing under `~/cc-warehouse-data`
+or `~/cc-warehouse-archive` was touched at any point.
+
+Docs updated to match: `harness/tickets/39-archive-what-a-session-points-at.md`
+gained a closing "FUNCTIONALLY DONE, NOT YET RELEASED" block at the bottom stating
+this plainly; `OPENING-PROMPT.md`'s "Next task" section now leads with the same
+state instead of pointing at 39g as still-open work; `CLAUDE.md`'s ticket 39
+paragraph got one closing sentence recording the same thing.
+
 ### Thirty-fourth handoff, 2026-09-08 (ticket 39: slice 39f, config gate and corpus-wide visibility)
 
 **Test count 1,507 -> 1,518 (11 new). Ruff and pyright strict clean; full suite

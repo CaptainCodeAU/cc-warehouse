@@ -5,10 +5,15 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39f ARE DONE (2026-09-08); 39g is
-next and is the FINAL slice.** Read
-`harness/tickets/39-archive-what-a-session-points-at.md` and its `39f DONE` block at
-the bottom before anything else. 39f added the config switch
+**TICKET 39 IS CODE COMPLETE (39a-39f) AND VERSION-BUMPED (39g's repo-only half),
+2026-09-08. NOT YET RELEASED.** `pyproject.toml` is `0.1.4` (was `0.1.3`), `uv.lock`
+is synced, `CHANGELOG.md` has the 0.1.4 entry. **The ONLY remaining step is the
+operator-gated frozen reinstall (`uv_tool_reinstall_current_project --no-extras`)
+followed by one live back-fill against the real archive** - deliberately NOT run by
+this session, being asked about separately. Read
+`harness/tickets/39-archive-what-a-session-points-at.md`'s bottom two blocks (`39f
+DONE` and the "FUNCTIONALLY DONE, NOT YET RELEASED" block above it) before anything
+else. 39f added the config switch
 `archive_history_prompts` (one early-return added to `sweep._process_history`'s and
 `_plan_history`'s existing early-return chain, gating the whole combined
 snapshot+split+gather pass together) and one new corpus-wide, non-blocking check -
@@ -19,11 +24,12 @@ the per-session `prompts.jsonl` split, and the paste-cache gather); see the tick
 own `39b`/`39c`/`39d`/`39e DONE` blocks for that detail rather than duplicating it
 here.
 **THE LIVE BACK-FILL STILL HAS NOT BEEN RUN.** The installed frozen `ccw` is still
-0.1.3 and writes none of the new manifest keys, so 39g's job is: version bump, one
-frozen reinstall, ONE back-fill, CHANGELOG. Confirmed 2026-09-08 by running
+0.1.3 and writes none of the new manifest keys. The repo-only half of 39g (version
+bump, `uv.lock` sync, CHANGELOG) is done; what's left is the frozen reinstall and
+ONE back-fill, both operator-gated. Confirmed 2026-09-08 by running
 `status.paste_gap` directly against the real 28,924-session archive: it reports
 0/28924 sessions have `prompts.jsonl` yet, which is the expected and correct answer
-until 39g runs, not a bug in the new check.
+until the reinstall and back-fill run, not a bug in the new check.
 The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
 the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
 discovery rather than a scan beside the transcript. Measured 2026-09-07:

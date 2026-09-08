@@ -22,6 +22,41 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Releases
 
+### 0.1.4 - 2026-09-08
+
+**More data that was never being archived now is.** `~/.claude` holds several stores
+that are siblings of `projects/`, not descendants of any one transcript, so nothing
+inside a session directory could ever point at them. Measured before this release:
+`file-history/` alone (911 MB, versioned file snapshots) had bytes in no JSONL at all,
+and `paste-cache/` had already lost 272 of 2,186 referenced pastes to some unknown
+pruning, unnoticed the whole time.
+
+- `~/.claude/file-history/` and `~/.claude/todos/` are now mirrored per session,
+  discovered by walking the archive's own catalog rather than scanning `~/.claude`
+  (there is no parent transcript directory to scan from). New config key
+  `archive_file_history`, default ON.
+- `~/.claude/history.jsonl` is backed up whole, byte-for-byte, content-addressed,
+  under `_not-sessions/history-jsonl-snapshots/<hash>.jsonl` every sweep. This is the
+  backstop: it catches every row, including the ones no session folder can claim.
+- Each archived session also gets its own `prompts.jsonl` (a bare content split of
+  the whole-file snapshot, sliced by raw line bytes so nothing is re-encoded) and a
+  `pastes/` folder holding the `paste-cache/` files that session actually referenced.
+- New config key `archive_history_prompts`, default ON, gates the snapshot, the
+  split and the paste gather together, since all three come from one read of
+  `history.jsonl`.
+- New in `ccw status` and `ccw doctor`: a `Prompts:` line reporting how many
+  archived sessions have `prompts.jsonl` and how many reference a paste, always
+  non-blocking so it can never turn a healthy install red.
+- A refused sidecar write (same name, different bytes, per the existing
+  never-overwrite rule) is now visible in the sweep's own report for file-history,
+  todos, and pastes, not only in the internal audit log.
+
+**Upgrading.** Same mechanism as 0.1.3: the version bump makes every existing
+archive folder stale, so the first `ccw build` or `ccw sweep` after upgrading
+re-renders the whole tree once. That is the run that populates the new `prompts`
+and `pastes` manifest keys. Existing folders raise no verify problems in the
+meantime.
+
 ### 0.1.3 - 2026-09-08
 
 **Data that was never being archived now is.** Claude Code writes several folders

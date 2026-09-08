@@ -695,3 +695,29 @@ slice, and none of it is safe to do from inside this one (see the version-mixing
 hazard 39b's own write-up already flags, which still applies verbatim). 39g is
 next: version bump, frozen reinstall, one live back-fill, CHANGELOG, real-data
 acceptance script.
+
+---
+
+# TICKET 39 IS FUNCTIONALLY DONE (39b-39f), NOT YET RELEASED, 2026-09-08
+
+**39g's repo-only half is done: version bumped, `uv.lock` synced, `CHANGELOG.md`
+entry written, docs updated.** `pyproject.toml` moved `0.1.3` -> `0.1.4`; `uv lock`
+was re-run so `uv.lock`'s own `cc-warehouse` entry matches. Full suite, pyright
+strict, and ruff all still pass (see the commit for the exact numbers).
+
+**STATED PLAINLY: the live back-fill and the frozen reinstall have deliberately NOT
+been run.** Nothing under `~/cc-warehouse-data` or `~/cc-warehouse-archive` was
+touched, and `uv_tool_reinstall_current_project` was not run. This matches the exact
+caution 39b's own DONE block already recorded before it shipped ("the live back-fill
+has NOT been run, and it must not be until 39b is released... the correct order is
+39g's version bump, then one frozen reinstall, then one back-fill") - that reasoning
+still holds verbatim for 39g itself: bumping the version in the repo is not the same
+event as installing it, and installing it is not the same event as running it against
+the real archive. Those two remaining steps are the operator's call at the moment of
+running, not something a background session should do on its own authority, and they
+are being asked about separately from this slice.
+
+The ticket is therefore **code complete and tested, not released and not live.**
+`ccw doctor` / `ccw status` on this machine will keep reporting the pre-39 figures
+(0 sessions with `prompts.jsonl`) until the operator runs the reinstall and the
+back-fill.

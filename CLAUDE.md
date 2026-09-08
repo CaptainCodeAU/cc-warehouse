@@ -679,6 +679,11 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   `~/.claude`. Rulings: archive ALL of file-history; `~/.claude/MEMORY/` (317 MB) is
   ticket 40, not this one. Full plan and slices 39a-39g:
   `harness/tickets/39-archive-what-a-session-points-at.md`.
+  **UPDATE 2026-09-08 (ticket 39g, repo-only half): code complete (39a-39f), version
+  bumped `0.1.3` -> `0.1.4` in `pyproject.toml` and `uv.lock`, CHANGELOG entry written.
+  The frozen reinstall and the live back-fill are still pending the operator's explicit
+  go-ahead at the moment of running** and were deliberately NOT done as part of this
+  paperwork slice.
 
 ## Standing lessons (full form in HARNESS section 8)
 
