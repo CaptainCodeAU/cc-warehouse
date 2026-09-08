@@ -21,6 +21,37 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-sixth handoff, 2026-09-08 (ticket 39: shipped and live - the reinstall and back-fill)
+
+Continuation of the same day's session that built 39b-39g. With the operator's explicit
+go-ahead (asked separately from every build slice, via a structured decision brief - a
+green test suite is not consent to touch live infrastructure, the standing rule this
+repo has applied at every prior destructive/production-affecting juncture), the two
+remaining steps were run for real:
+
+`uv_tool_reinstall_current_project --no-extras` reinstalled the frozen `ccw` at `0.1.4`.
+The wrapper's first invocation failed with `command not found: _uv_tool_parse_flags` -
+that helper is only defined via the interactive zsh's autoloaded functions, which this
+session's non-interactive Bash tool does not source; re-running through `zsh -i -c '...'`
+picked it up and the reinstall succeeded. Verified two independent ways, both agreeing:
+`ccw doctor`'s `install` line (`frozen: running from .../cc_warehouse`) and PEP 610's
+`direct_url.json` (`"dir_info":{}`, no `editable` key).
+
+`ccw sweep` against the real `~/.claude/projects`, via the newly-frozen binary: real
+output `31031 items, 16 stored, 3344 with sidecars, 0 failed`. The nonzero sidecar count
+triggered the existing post-sweep `build.build()` call, which re-rendered every one of
+the ~29,580 existing archive folders once (the version bump is what makes
+`folder_is_current` see each one's manifest as stale) - zero render failures.
+
+`ccw archive --to ~/cc-warehouse-archive --verify` (the first attempt, without `--to`,
+failed with a usage error, not a data problem - `--to` is required even in `--verify`
+mode): `29593 folders checked, 0 problems`. Post-run `ccw doctor`:
+`Prompts: 1489/28940 session(s) have prompts.jsonl, 649 reference paste-cache files` -
+spot-checked directly on disk, not just trusted from the report text.
+
+Ticket 39 is closed. Full account: the ticket file's own "TICKET 39 IS SHIPPED AND
+LIVE" block.
+
 ### Thirty-fifth handoff, 2026-09-08 (ticket 39: slice 39g, repo-only release paperwork)
 
 **Version bump only, no code behaviour changed. Full suite, pyright strict and ruff

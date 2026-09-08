@@ -5,15 +5,23 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**TICKET 39 IS CODE COMPLETE (39a-39f) AND VERSION-BUMPED (39g's repo-only half),
-2026-09-08. NOT YET RELEASED.** `pyproject.toml` is `0.1.4` (was `0.1.3`), `uv.lock`
-is synced, `CHANGELOG.md` has the 0.1.4 entry. **The ONLY remaining step is the
-operator-gated frozen reinstall (`uv_tool_reinstall_current_project --no-extras`)
-followed by one live back-fill against the real archive** - deliberately NOT run by
-this session, being asked about separately. Read
-`harness/tickets/39-archive-what-a-session-points-at.md`'s bottom two blocks (`39f
-DONE` and the "FUNCTIONALLY DONE, NOT YET RELEASED" block above it) before anything
-else. 39f added the config switch
+**TICKET 39 IS SHIPPED, LIVE, AND CLOSED, 2026-09-08.** All of 39a-39g landed,
+including the operator-gated reinstall and back-fill. `ccw` on this machine is the
+frozen `0.1.4` (confirmed both by `ccw doctor`'s `install` line and PEP 610's
+`direct_url.json`), a real `ccw sweep` ran against the real archive
+(`31031 items, 16 stored, 3344 with sidecars, 0 failed`) and triggered a clean
+full-corpus re-render, and `ccw archive --to ~/cc-warehouse-archive --verify`
+reports `29593 folders checked, 0 problems`. Real post-run numbers:
+`Prompts: 1489/28940 session(s) have prompts.jsonl, 649 reference paste-cache
+files`. Full account: `harness/tickets/39-archive-what-a-session-points-at.md`'s
+"TICKET 39 IS SHIPPED AND LIVE" block at the very bottom.
+
+**Nothing is queued as the next task right now** - ticket 39 closes this track.
+Read the ticket file's full history for context if picking up new work here;
+otherwise check `CLAUDE.md`'s `## OPEN / next` for the standing backlog (ticket 28,
+version cuts not yet started, etc).
+
+For historical detail on how 39 was built, 39f added the config switch
 `archive_history_prompts` (one early-return added to `sweep._process_history`'s and
 `_plan_history`'s existing early-return chain, gating the whole combined
 snapshot+split+gather pass together) and one new corpus-wide, non-blocking check -
@@ -23,13 +31,11 @@ file-history/todos mirror, `history.jsonl`'s whole-file content-addressed snapsh
 the per-session `prompts.jsonl` split, and the paste-cache gather); see the ticket's
 own `39b`/`39c`/`39d`/`39e DONE` blocks for that detail rather than duplicating it
 here.
-**THE LIVE BACK-FILL STILL HAS NOT BEEN RUN.** The installed frozen `ccw` is still
-0.1.3 and writes none of the new manifest keys. The repo-only half of 39g (version
-bump, `uv.lock` sync, CHANGELOG) is done; what's left is the frozen reinstall and
-ONE back-fill, both operator-gated. Confirmed 2026-09-08 by running
-`status.paste_gap` directly against the real 28,924-session archive: it reports
-0/28924 sessions have `prompts.jsonl` yet, which is the expected and correct answer
-until the reinstall and back-fill run, not a bug in the new check.
+**CORRECTED: THE LIVE BACK-FILL HAS BEEN RUN, 2026-09-08, same day as the paragraph
+above this one was originally written.** It read "still has not been run" for a
+short window earlier the same day while the operator's go-ahead was pending; that
+is no longer the state. See the "TICKET 39 IS SHIPPED AND LIVE" block for the real
+numbers.
 The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
 the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
 discovery rather than a scan beside the transcript. Measured 2026-09-07:

@@ -598,7 +598,17 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
   DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
 
-- **Ticket 39: SLICES 39b-39f ARE DONE 2026-09-08, NOT YET RELEASED. 39g remains.**
+- **Ticket 39 IS SHIPPED, LIVE, AND CLOSED, 2026-09-08.** 39g's reinstall and live
+  back-fill were run with the operator's explicit go-ahead: `ccw` is frozen `0.1.4`
+  on this machine (confirmed via `ccw doctor`'s `install` line and PEP 610's
+  `direct_url.json`), a real `ccw sweep` against the real archive reported
+  `31031 items, 16 stored, 3344 with sidecars, 0 failed` and triggered a clean
+  full-corpus re-render, and `ccw archive --to ~/cc-warehouse-archive --verify`
+  reports `29593 folders checked, 0 problems`. Real post-run coverage:
+  `Prompts: 1489/28940 session(s) have prompts.jsonl, 649 reference paste-cache
+  files`. Full account: the ticket's "TICKET 39 IS SHIPPED AND LIVE" block at its
+  very end. Everything below this point is the build history leading up to that,
+  kept for the record.
   **39f added the `archive_history_prompts` config key** (gating the combined
   `_process_history`/`_plan_history` pass in one line, same shape as its three
   siblings) **and one new corpus-wide, non-blocking check**: `status.paste_gap`/

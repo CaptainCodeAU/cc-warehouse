@@ -721,3 +721,60 @@ The ticket is therefore **code complete and tested, not released and not live.**
 `ccw doctor` / `ccw status` on this machine will keep reporting the pre-39 figures
 (0 sessions with `prompts.jsonl`) until the operator runs the reinstall and the
 back-fill.
+
+---
+
+# TICKET 39 IS SHIPPED AND LIVE, 2026-09-08
+
+The operator gave the explicit go-ahead for the reinstall and back-fill (asked and
+answered separately from every code slice above, per the standing rule that a green
+gate is not consent). Both steps were then run for real, against the real machine,
+and verified with real command output rather than taken on faith.
+
+**Reinstall.** `uv_tool_reinstall_current_project --no-extras`, run from the repo
+root under the active venv (the wrapper's own dependency,
+`_uv_tool_parse_flags`, is only defined in an interactive zsh - the plain
+non-interactive shell this session's Bash tool starts does not autoload it, so the
+first attempt failed with `command not found`; re-run via `zsh -i -c '...'`, which
+does load it, and it worked cleanly). Verified independently two ways, matching
+this repo's own documented instrument: `ccw doctor`'s `install` line reports
+`frozen: running from .../cc_warehouse` and PEP 610's `direct_url.json` reports
+`"dir_info":{}` (no `editable` key) - both agree. `ccw --version` went `0.1.3` ->
+`0.1.4`.
+
+**Back-fill.** `ccw sweep` (via the newly-frozen binary, not the repo's own `.venv`
+copy) against the real `~/.claude/projects`, run once. Real output:
+`sweep: 31031 items, 16 stored, 3344 with sidecars, 0 failed`. The `3344 with
+sidecars` figure is what triggered `cli.py`'s existing post-sweep
+`build.build(config)` call (the same mechanism ticket 38 built), which walked
+every one of the ~29,580 existing archive folders, found each one's manifest
+missing the new `renderer_version` (the version bump is exactly what makes
+`folder_is_current` see this), and re-rendered it once to add the `prompts`/
+`pastes` manifest keys - with 0 render failures.
+
+**Real numbers after the run**, from `ccw doctor` on the live machine:
+`Prompts: 1489/28940 session(s) have prompts.jsonl, 649 reference paste-cache
+files`. Spot-checked directly on disk, not just trusted from the report: a real
+`prompts.jsonl` exists with a real prompt row inside it, and a real `pastes/`
+directory exists holding real content-hash-named files. The `history` doctor line
+correctly reported "not yet snapshotted" immediately after the run for a NEWER
+hash than the one actually captured - expected and correct, not a bug: this very
+session kept typing into `history.jsonl` while the sweep was running, so the live
+file changed again after its snapshot was taken.
+
+**Full-corpus integrity, the ticket's own final acceptance criterion.**
+`ccw archive --to ~/cc-warehouse-archive --verify` (note: `--to` is required even
+in `--verify` mode, not optional - the first attempt without it failed with
+`Error: archive requires --to DIR`, a usage mistake, not a data problem, caught
+and corrected before it became a false alarm). Real output:
+`archive: 29593 folders checked, 0 problems`.
+
+**Nothing was skipped, nothing was destructive.** The whole run only ever added
+files or refused-and-recorded a collision (R5); nothing under `~/.claude` was
+touched (confirmed by design throughout every slice, not re-verified again here
+since nothing in the reinstall/sweep/verify sequence reads or writes there beyond
+the ordinary read-only capture path that was already running before this ticket).
+Disk stayed comfortable throughout (14 GiB free measured before the run).
+
+**Ticket 39 is CLOSED.** Every slice (39b-39g) shipped, tested, red-teamed where the
+risk warranted it, and is now the thing actually running on this machine.
