@@ -21,6 +21,62 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-first handoff, 2026-09-08 (ticket 39 slice 39d: the per-session prompts split)
+
+**One commit, oracle tests red before green.** Slice 39d: `history.jsonl`'s rows split
+per session into each archived folder's own `prompts.jsonl`. Test count 1,437 -> 1,465;
+ruff and pyright strict clean.
+
+**The real change is a consolidation, not just a new file.** 39e (paste-cache) needs the
+same parsed rows 39d groups, and re-parsing an 18k-line file a second time per sweep
+would defeat the "scan once, join second" principle this whole ticket leans on. So 39c's
+`sweep._snapshot_history`/`_plan_history_snapshot` were RENAMED to `_process_history`/
+`_plan_history` and now do both jobs - the whole-file snapshot and the per-session split
+- from one read. `archive.write_history_snapshot`/`history_snapshot_path` themselves are
+untouched.
+
+**New in `archive.py`:** `split_history_by_session` (raw-line grouping by `sessionId`,
+never re-serialized), `write_prompts` (fixed-name `prompts.jsonl`, `write_if_changed`
+since a later extraction fix must be allowed to rewrite it - unlike the content-addressed
+snapshot, which never is), and `prompts_record` (a NEW manifest shape,
+`{present, sha256, bytes, lines}`, because a single per-session file cannot reuse
+`COMPANION_MANIFEST_KEYS`'s list-of-records shape built for directories). Wired into
+`_with_prompts` (manifest write), `folder_is_current` (a `prompts.jsonl` arriving OR
+disappearing after the last render both force a rebuild), and `_prompts_problems`
+(verify - same "never start a problem string with `missing `" rule the sidecar checks
+already follow, for the same `doctor._desync` pending-render carve-out).
+
+**`SIDECAR_ARCHIVED_ACTIONS` gained `"archived-prompts"`, proved load-bearing by
+deliberately breaking it**: removed the entry, watched
+`test_a_sweep_added_prompts_file_is_reflected_in_the_manifest_the_same_run` go red
+(the manifest stayed at `{"present": false}` after a sweep that DID write the file),
+put it back, watched it go green again. Without it, a session already rendered before
+its `prompts.jsonl` arrives would need a SECOND sweep to pick it up.
+`"archived-history-snapshot"` stays out of that set, unchanged from 39c - it never
+touches a session folder, so there is nothing for the post-sweep build to catch up on.
+
+**No stranded-prompts bucket, on purpose.** A `sessionId` in `history.jsonl` with no
+matching archived folder (~14% by the ticket's own measurement) is silently skipped.
+39c's whole-file snapshot is the backstop for exactly that case; splitting is allowed
+to be wrong or incomplete because the snapshot beside it never is.
+
+**Verified against the real source tree, nothing live touched.** Called
+`split_history_by_session` directly on the real `~/.claude/history.jsonl`
+(6,602,393 bytes, 18,358 lines): **1,649 distinct sessionIds, 18,358 lines grouped, 0
+skipped** - every line found a home. Spot-checked one real session's grouped lines
+against the source and confirmed each is an exact substring, not a re-encoding. Built
+one real session folder in a scratch `archive_root` (removed afterward) with that
+session's real grouped bytes and walked the whole chain by hand:
+`write_prompts` -> `prompts_record` -> `folder_is_current` (False before a rebuild,
+True after) -> `verify_folder` (0 problems). The real `history.jsonl`'s line and byte
+counts were unchanged afterward; the live archive was never opened for writing at any
+point in this verification.
+
+Full account: `harness/tickets/39-archive-what-a-session-points-at.md`'s `39d DONE`
+block. Next: 39e (paste-cache), which the ticket file itself now notes will still need
+to parse each grouped line once for its `pastedContents` field - the reuse 39d buys is
+the single read-and-group pass, not a pre-parsed row structure.
+
 ### Thirtieth handoff, 2026-09-08 (ticket 39 slice 39c: the `history.jsonl` snapshot)
 
 **One commit, oracle tests first.** Slice 39c: a whole-file, content-addressed snapshot

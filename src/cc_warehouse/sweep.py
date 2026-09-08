@@ -276,6 +276,7 @@ SIDECAR_ARCHIVED_ACTIONS = frozenset({
     "archived-sidecars",
     "archived-stranded-sidecars",
     "archived-stranded-file-history",
+    "archived-prompts",
 })
 
 
@@ -639,33 +640,62 @@ def _archive_stranded_file_history(
     return outcomes
 
 
-def _snapshot_history(config: Config, walk_root: Path) -> ItemOutcome | None:
-    """Protect the CURRENT `~/.claude/history.jsonl` bytes, once per run (39c).
+def _process_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
+    """Protect and split `~/.claude/history.jsonl`, once per run (39c/39d).
 
-    Unlike every other pass in this module, this is not per-transcript: the
-    file is shared by every session on the machine, so there is nothing to key
-    a per-item pass on. Returns None on an ordinary machine with no history yet
-    or with no archive configured, and again once the current bytes are already
-    snapshotted - a stable file must cost nothing on every later sweep.
+    Unlike every other pass in this module, the whole-file half is not
+    per-transcript: the file is shared by every session on the machine, so
+    there is nothing to key a per-item pass on. Reads it exactly ONCE per
+    sweep - the whole-file snapshot (39c) and the per-session split into
+    `prompts.jsonl` (39d) both come from this same read, because a future
+    paste-cache gather (39e) will need the same parsed rows too, and a second
+    parse of an 18k-line file per sweep is exactly the cost `external.py`'s own
+    "scan once, join second" principle exists to avoid - reapplied here to a
+    file's rows rather than a directory's entries.
+
+    Returns `[]` on an ordinary machine with no history yet or with no archive
+    configured. The snapshot half reports nothing further once the current
+    bytes are already snapshotted. The split half writes only into folders the
+    archive already holds; a `sessionId` with no matching folder (a session
+    that left `~/.claude/projects` before the archive saw it, ~14% measured in
+    the ticket's own census) is silently skipped - it is not lost, because the
+    whole-file snapshot just above is the backstop for exactly that case, and
+    the ticket's own design notes say the split is allowed to be wrong and
+    fixed later precisely because the snapshot is never touched.
     """
     from cc_warehouse import archive, external
 
     if config.archive_root is None:
-        return None
+        return []
     home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
     try:
         data = (home / "history.jsonl").read_bytes()
     except OSError:
-        return None
+        return []
+
+    outcomes: list[ItemOutcome] = []
     target = archive.history_snapshot_path(config.archive_root, data)
-    if target.is_file():
-        return None
-    archive.write_history_snapshot(config.archive_root, data)
-    return ItemOutcome("history.jsonl", "archived-history-snapshot", str(target))
+    if not target.is_file():
+        archive.write_history_snapshot(config.archive_root, data)
+        outcomes.append(ItemOutcome("history.jsonl", "archived-history-snapshot", str(target)))
+
+    known = _archived_session_folders(config.archive_root)
+    for uuid, lines in archive.split_history_by_session(data).items():
+        folder = known.get(uuid)
+        if folder is None:
+            continue
+        try:
+            changed = archive.write_prompts(folder, lines)
+        except OSError as exc:  # noqa: PERF203 - R10: name it and carry on
+            outcomes.append(ItemOutcome(uuid, "error", f"{type(exc).__name__}: {exc}"))
+            continue
+        if changed:
+            outcomes.append(ItemOutcome(uuid, "archived-prompts", str(folder)))
+    return outcomes
 
 
-def _plan_history_snapshot(config: Config, walk_root: Path) -> list[ItemOutcome]:
-    """What `_snapshot_history` WOULD do, writing nothing (`--dry-run`)."""
+def _plan_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
+    """What `_process_history` WOULD do, writing nothing (`--dry-run`)."""
     from cc_warehouse import archive, external
 
     if config.archive_root is None:
@@ -675,10 +705,22 @@ def _plan_history_snapshot(config: Config, walk_root: Path) -> list[ItemOutcome]
         data = (home / "history.jsonl").read_bytes()
     except OSError:
         return []
+
+    outcomes: list[ItemOutcome] = []
     target = archive.history_snapshot_path(config.archive_root, data)
-    if target.is_file():
-        return []
-    return [ItemOutcome("history.jsonl", "would-archive-history-snapshot", str(target))]
+    if not target.is_file():
+        outcomes.append(ItemOutcome("history.jsonl", "would-archive-history-snapshot", str(target)))
+
+    known = _archived_session_folders(config.archive_root)
+    for uuid, lines in archive.split_history_by_session(data).items():
+        folder = known.get(uuid)
+        if folder is None:
+            continue
+        prompts_path = folder / archive.PROMPTS_FILE
+        existing = prompts_path.read_bytes() if prompts_path.is_file() else None
+        if existing != lines:
+            outcomes.append(ItemOutcome(uuid, "would-archive-prompts", str(folder)))
+    return outcomes
 
 
 def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> list[ItemOutcome]:
@@ -827,7 +869,7 @@ def plan(
         action = "would-skip" if digest in already else "would-store"
         outcomes.append(ItemOutcome(path.name, action, str(path)))
     outcomes.extend(_plan_sidecars(config, walk_root, wanted))
-    outcomes.extend(_plan_history_snapshot(config, walk_root))
+    outcomes.extend(_plan_history(config, walk_root))
     outcomes.extend(
         ItemOutcome(path.name, "would-store", str(path))
         for path in _orphan_object_paths(config.root, already)
@@ -929,11 +971,11 @@ def sweep(
             if handled is not None:
                 outcomes.append(handled)
         outcomes.extend(_archive_stranded(config, walk_root))
-        # ONE PASS, WHOLE-MACHINE (ticket 39c). `history.jsonl` is not session-
-        # keyed like everything above it, so there is nothing to loop over.
-        history_outcome = _snapshot_history(config, walk_root)
-        if history_outcome is not None:
-            outcomes.append(history_outcome)
+        # ONE READ, WHOLE-MACHINE (ticket 39c/39d). `history.jsonl` is not
+        # session-keyed like everything above it: it is read once here, after
+        # every session folder above already exists, so the per-session split
+        # has somewhere to write.
+        outcomes.extend(_process_history(config, walk_root))
         cataloged = _cataloged_hashes(config.root)
         outcomes.extend(
             _capture_item(config, path)

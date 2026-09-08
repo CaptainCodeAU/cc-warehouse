@@ -384,3 +384,69 @@ the write. The real file's byte count was re-checked afterward and had not moved
 `renderer_version` bump - this slice touches nothing inside a session folder or its
 manifest, so the version-mixing hazard 39b's own write-up flags does not apply here.
 39d (the per-session `prompts.jsonl` split, verified against this snapshot) is next.
+
+---
+
+# 39d DONE 2026-09-08. Slices 39e-39g NOT STARTED.
+
+One commit, oracle tests red before green. Test count 1,437 -> 1,465. Ruff and
+pyright strict clean.
+
+**The sweep-side functions from 39c were RENAMED and merged, not left standing next
+to a new pair.** `_snapshot_history`/`_plan_history_snapshot` became
+`_process_history`/`_plan_history`, because 39e's own dependency line ("reusing 39d's
+in-memory sessionId index rather than re-parsing") only holds if 39d reads
+`history.jsonl` from the SAME place 39c did, once. Splitting it into a second
+function that re-reads and re-parses the same 18k-line file would have been the exact
+cost `external.py`'s "scan once, join second" principle exists to avoid, reapplied
+here to a file's rows instead of a directory's entries. `archive.write_history_snapshot`
+and `archive.history_snapshot_path` are untouched.
+
+**New in `archive.py`:** `split_history_by_session` (parses each line only to read
+`sessionId`, returns the ORIGINAL LINE BYTES grouped by uuid - never round-trips
+through `json.dumps`), `write_prompts` (fixed name `prompts.jsonl`,
+`store.write_if_changed` since a later fix to the extraction must be allowed to
+rewrite it, unlike the content-addressed snapshot), and `prompts_record` (the new
+manifest shape `{present, sha256, bytes, lines}` - a single file, not a companion
+directory, so it does not reuse `COMPANION_MANIFEST_KEYS`'s list-of-records shape).
+Wired into `_with_prompts` (manifest write), `folder_is_current` (a `prompts.jsonl`
+written by the sweep after the last render now forces a rebuild, both on arrival and
+on deletion), and `_prompts_problems` (verify - a deleted or hash-mismatched file is
+reported, with a problem string that never starts with "missing ", per doctor's
+pending-render carve-out).
+
+**`SIDECAR_ARCHIVED_ACTIONS` gained `"archived-prompts"`.** Without it, a sweep that
+split a `prompts.jsonl` into an already-rendered folder would leave the manifest
+stale until a SECOND sweep noticed the mismatch via `folder_is_current` - confirmed by
+temporarily removing it and watching
+`test_a_sweep_added_prompts_file_is_reflected_in_the_manifest_the_same_run` go red.
+`"archived-history-snapshot"` deliberately stays OUT of that set (unchanged from
+39c): it never touches a session folder or manifest, so there is nothing for a
+post-sweep build to pick up.
+
+**No stranded-prompts bucket, and that is a scope decision, not an oversight.** A
+`sessionId` in `history.jsonl` with no matching archived folder (~14% measured in
+the ticket's own census) is silently skipped. The whole-file snapshot from 39c is the
+backstop for exactly this case - it is never touched, so nothing is lost, only left
+unsplit, exactly as the ticket's own design notes say.
+
+**Verified against the real source tree, live archive and live `history.jsonl`
+untouched.** Read the real file (6,602,393 bytes, 18,358 lines, grown since 39c's
+6,599,428/2026-09-08 measurement) and called `split_history_by_session` on it
+directly: **1,649 distinct sessionIds, 18,358 lines grouped, 0 skipped** - every
+line found a session. Spot-checked one real session's grouped lines against the
+source file: every one is an exact substring, not a re-encoding. Built a real
+session folder in a scratch `archive_root` (removed afterward) using one real
+session's actual grouped bytes: `write_prompts` -> `prompts_record` ->
+`folder_is_current` (False before rebuild, True after) -> `verify_folder` (0
+problems) all behaved correctly end to end. The real `history.jsonl`'s line/byte
+count was re-checked afterward and had not moved; the live archive was never
+touched at any point.
+
+**Scope held to 39d, deliberately.** No `CHANGELOG.md` edit, no version bump, no
+`archive_history_prompts` config key (that arrives in 39f alongside the doctor/status/
+alert wiring the plan groups it with). **Note for 39e**: `split_history_by_session`
+groups raw LINE BYTES, not parsed rows, so a paste-cache gather that needs a row's
+`pastedContents` field will still need to parse each grouped line once - the reuse
+this slice buys 39e is the single read-and-group pass over `history.jsonl` inside
+`_process_history`, not a pre-parsed structure. 39e is next.

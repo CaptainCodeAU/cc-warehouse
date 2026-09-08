@@ -1,22 +1,30 @@
-"""Oracle tests: the sweep snapshots `history.jsonl` once per run (39c).
+"""Oracle tests: the sweep snapshots AND splits `history.jsonl` once per run
+(39c/39d).
 
-ONE PASS, WHOLE-MACHINE, not per-transcript. Unlike `file-history/` and `todos/`
-(39b), which are keyed by session id and gathered per session, `history.jsonl` is
-a single file shared by every session on the machine, so there is nothing to key
-a per-transcript pass on. The sweep reads it once and writes at most one new
-content-addressed snapshot per run.
+ONE READ, WHOLE-MACHINE, not per-transcript. Unlike `file-history/` and
+`todos/` (39b), which are keyed by session id and gathered per session,
+`history.jsonl` is a single file shared by every session on the machine, so
+there is nothing to key a per-transcript pass on. The sweep reads it exactly
+once: it writes at most one new content-addressed whole-file snapshot (39c),
+then groups the same bytes by `sessionId` and writes each archived session's
+own slice into `prompts.jsonl` (39d). A `sessionId` with no matching archived
+folder is silently skipped - the whole-file snapshot is the backstop for that
+case, so nothing is lost, only left unsplit.
 
-Contract: DESIGN R2, R5, R9, R10; FINDINGS F6, F9; ticket 39's constraint that
-nothing under `~/.claude` is ever written.
+Contract: DESIGN R2, R5, R9, R10; FINDINGS F1, F4, F6, F9; ticket 39's
+constraint that nothing under `~/.claude` is ever written.
 """
 
+import json
 from pathlib import Path
+from typing import cast
 
 from cc_warehouse import store
 from conftest import basic_session, run_ccw, tree_snapshot, warehouse_root, write_transcript
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+UUID_B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
 HISTORY_BYTES = b'{"display":"fix the flux capacitor","sessionId":"aaaa"}\n'
 
 
@@ -142,3 +150,125 @@ def test_a_normal_session_sweep_still_works_alongside_a_history_file(
     found = sorted(archive_root.glob(f"*/*_{UUID_A}"))
     assert len(found) == 1
     assert (snapshots_dir(archive_root) / f"{store.sha256_hex(HISTORY_BYTES)[:12]}.jsonl").is_file()
+
+
+# ---------------------------------------------------------------------------
+# 39d: the per-session split into prompts.jsonl, from the same read
+# ---------------------------------------------------------------------------
+
+
+def session_folder(archive_root: Path, uuid: str) -> Path:
+    found = sorted(archive_root.glob(f"*/*_{uuid}"))
+    assert len(found) == 1, found
+    return found[0]
+
+
+def test_a_sweep_splits_prompts_for_two_sessions_and_still_snapshots(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    write_transcript(
+        ccw_env,
+        basic_session(session_id=UUID_B),
+        session_id=UUID_B,
+        encoded_dir="-home-alice-projects-b",
+    )
+    row_a = f'{{"display":"prompt for A","sessionId":"{UUID_A}"}}\n'.encode()
+    row_b = f'{{"display":"prompt for B","sessionId":"{UUID_B}"}}\n'.encode()
+    data = row_a + row_b
+    plant_history(ccw_env, data)
+    sweep(ccw_env)
+
+    assert (session_folder(archive_root, UUID_A) / "prompts.jsonl").read_bytes() == row_a
+    assert (session_folder(archive_root, UUID_B) / "prompts.jsonl").read_bytes() == row_b
+    assert (snapshots_dir(archive_root) / f"{store.sha256_hex(data)[:12]}.jsonl").is_file()
+
+
+def test_a_session_id_with_no_archived_folder_is_silently_skipped(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The whole-file snapshot is the backstop for exactly this case, so
+    nothing about it is an error, and nothing invents a folder for it (F4)."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    orphan_uuid = "99999999-0000-4000-8000-000000000000"
+    orphan_row = f'{{"display":"no session archived","sessionId":"{orphan_uuid}"}}\n'.encode()
+    plant_history(ccw_env, orphan_row)
+    result = run_ccw(["sweep", "--quiet"], ccw_env)
+    assert result.code == 0, result.err + result.out
+    assert not any(archive_root.glob("**/prompts.jsonl"))
+    assert (snapshots_dir(archive_root) / f"{store.sha256_hex(orphan_row)[:12]}.jsonl").is_file()
+
+
+def test_a_second_sweep_writes_no_new_prompts(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    row_a = f'{{"display":"prompt for A","sessionId":"{UUID_A}"}}\n'.encode()
+    plant_history(ccw_env, row_a)
+    sweep(ccw_env)
+    folder = session_folder(archive_root, UUID_A)
+    before = (folder / "prompts.jsonl").stat().st_mtime_ns
+    sweep(ccw_env)
+    assert (folder / "prompts.jsonl").stat().st_mtime_ns == before
+    assert (folder / "prompts.jsonl").read_bytes() == row_a
+
+
+def test_a_dry_run_reports_would_archive_prompts_and_writes_nothing(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    sweep(ccw_env)  # archive the session first, with no history.jsonl yet
+    row_a = f'{{"display":"prompt for A","sessionId":"{UUID_A}"}}\n'.encode()
+    plant_history(ccw_env, row_a)
+    folder = session_folder(archive_root, UUID_A)
+    result = run_ccw(["sweep", "--dry-run"], ccw_env)
+    assert result.code == 0, result.err
+    assert "would-archive-prompts" in result.out, result.out
+    assert not (folder / "prompts.jsonl").exists()
+
+
+def test_a_sweep_added_prompts_file_is_reflected_in_the_manifest_the_same_run(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The listing is the only thing that makes a later deletion detectable, so
+    a split that never reaches a manifest is half a feature - mirrors
+    test_the_manifest_lists_the_snapshots_after_a_sweep in
+    test_external_capture.py, proving the SAME cli.py post-sweep rebuild
+    trigger (SIDECAR_ARCHIVED_ACTIONS) picks up `archived-prompts` too."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    sweep(ccw_env)  # archive AND render the session first, before any history exists
+    folder = session_folder(archive_root, UUID_A)
+    manifest_before = cast(
+        dict[str, object], json.loads((folder / "manifest.json").read_text("utf-8"))
+    )
+    assert manifest_before["prompts"] == {"present": False}
+
+    row_a = f'{{"display":"prompt for A","sessionId":"{UUID_A}"}}\n'.encode()
+    plant_history(ccw_env, row_a)
+    sweep(ccw_env)
+
+    manifest_after = cast(
+        dict[str, object], json.loads((folder / "manifest.json").read_text("utf-8"))
+    )
+    record = cast(dict[str, object], manifest_after["prompts"])
+    assert record["present"] is True
+    assert record["sha256"] == store.sha256_hex(row_a)
+
+
+def test_the_split_preserves_exact_bytes_including_unicode(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    row = f'{{"display":"emoji \U0001f680 and café","sessionId":"{UUID_A}"}}\n'.encode()
+    plant_history(ccw_env, row)
+    sweep(ccw_env)
+    assert (session_folder(archive_root, UUID_A) / "prompts.jsonl").read_bytes() == row

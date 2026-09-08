@@ -598,7 +598,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
   DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
 
-- **Ticket 39: SLICES 39b AND 39c ARE DONE 2026-09-08, NOT YET RELEASED. 39d-39g remain.** 39b
+- **Ticket 39: SLICES 39b, 39c AND 39d ARE DONE 2026-09-08, NOT YET RELEASED. 39e-39g remain.** 39b
   archives the stores keyed by SESSION ID rather than by location:
   `~/.claude/file-history/` (**1,056 dirs, 929,845,225 bytes**, and 23 sampled
   snapshots appear in their own session's transcript ZERO times) and `~/.claude/todos/`.
@@ -627,6 +627,26 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   a scratch archive_root. No version bump and no manifest change, so none of 39b's
   live-back-fill hazard applies to this slice.
   Full account: that ticket's `39c DONE` block.
+  **39d adds the per-session split: `archive.split_history_by_session` groups
+  `history.jsonl`'s RAW LINES by `sessionId` (never re-serialized through
+  `json.dumps`), `archive.write_prompts` writes each session's slice to
+  `prompts.jsonl` (fixed name, `store.write_if_changed` so a later extraction fix
+  can rewrite it), and `archive.prompts_record` gives it its own manifest shape
+  `{present, sha256, bytes, lines}` - a single file, not a companion directory, so it
+  is wired separately into `_with_prompts`/`folder_is_current`/`_prompts_problems`
+  rather than reusing `COMPANION_MANIFEST_KEYS`.** 39c's sweep functions were RENAMED
+  (`_snapshot_history`/`_plan_history_snapshot` -> `_process_history`/`_plan_history`)
+  to do both jobs from the SAME read of `history.jsonl`, since 39e needs the same
+  parsed rows too and a second parse per sweep would defeat the point.
+  `SIDECAR_ARCHIVED_ACTIONS` gained `"archived-prompts"` so a sweep that splits into
+  an already-rendered folder is re-rendered in the same run, not the next one -
+  confirmed by removing it and watching the corresponding test go red.
+  A `sessionId` with no matching archived folder (~14% measured) is silently
+  skipped: 39c's whole-file snapshot is the backstop, so nothing is lost. Verified
+  against the real 6,602,393-byte source file: 1,649 distinct sessionIds, 18,358
+  lines grouped, 0 skipped, one real session's grouped bytes exercised end to end
+  in a scratch archive_root (removed afterward). Test count 1,437 -> 1,465.
+  Full account: that ticket's `39d DONE` block.
 
 - **Ticket 39's remaining slices, PLANNED and NOT STARTED.** The archive keeps
   what a session SAID and not what it POINTED AT. Measured: `~/.claude` is 6.7 GB, ccw

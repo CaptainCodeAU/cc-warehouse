@@ -5,20 +5,25 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39c ARE DONE (2026-09-08); 39d is
-next.** Read `harness/tickets/39-archive-what-a-session-points-at.md` and its `39c
+**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39d ARE DONE (2026-09-08); 39e is
+next.** Read `harness/tickets/39-archive-what-a-session-points-at.md` and its `39d
 DONE` block at the bottom before anything else. 39b built `external.py` plus the
 gather for `file-history/` and `todos/`, wired into both the hook and the sweep, and
 it is verified against the real source tree (54 of 54 snapshots byte-identical). 39c
 added a whole-file, content-addressed snapshot of `~/.claude/history.jsonl` (one pass
 inside `ccw sweep`, since that file is not session-keyed) plus a non-blocking `ccw
-doctor` line, verified against the real 6,599,428-byte source file.
+doctor` line. 39d added the per-session split into `prompts.jsonl`
+(`archive.split_history_by_session`/`write_prompts`/`prompts_record`), reusing the
+SAME read 39c's snapshot uses - 39c's `_snapshot_history`/`_plan_history_snapshot`
+were renamed to `_process_history`/`_plan_history` to do both jobs from one read, since
+39e needs the same parsed rows too. Verified against the real 6,602,393-byte source
+file (1,649 distinct sessionIds, 0 lines skipped).
 **THE LIVE BACK-FILL HAS NOT BEEN RUN AND MUST NOT BE UNTIL 39b IS RELEASED.** The
 installed frozen `ccw` is 0.1.3 and does not write the two new manifest keys, so
 running the repo's copy against the live archive would leave two versions churning
 every folder's manifest back and forth. Correct order: 39g's version bump, one
 frozen reinstall, then one back-fill.
-39c-39g is the rest of the `history.jsonl` work, which 39b deliberately does not touch.
+39e-39g is the rest of the `history.jsonl`/paste-cache work, which 39b deliberately does not touch.
 The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
 the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
 discovery rather than a scan beside the transcript. Measured 2026-09-07:

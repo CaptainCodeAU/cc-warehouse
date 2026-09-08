@@ -868,6 +868,80 @@ def write_history_snapshot(archive_root: Path, data: bytes) -> Path:
     return target
 
 
+# The per-session slice of `history.jsonl` (ticket 39d), a sibling of
+# `<uuid>.jsonl` rather than a companion directory: there is exactly one of
+# these per session, never a list of files, so it cannot reuse
+# COMPANION_MANIFEST_KEYS' list-of-records shape and gets its own small one.
+PROMPTS_FILE = "prompts.jsonl"
+
+
+def split_history_by_session(data: bytes) -> dict[str, bytes]:
+    """Group `history.jsonl`'s raw lines by the sessionId each one carries.
+
+    Parses each line ONLY to read `sessionId` for routing; the bytes returned
+    per session are the ORIGINAL LINES, verbatim and concatenated in file
+    order. Nothing round-trips through `json.dumps` - unicode escaping, key
+    order and float formatting all drift, and the whole point of the split is
+    that a reader can diff a `prompts.jsonl` line against the source file and
+    find it byte-for-byte, not a re-encoding of it.
+
+    A line that fails to parse, is not a JSON object, or carries no string
+    `sessionId` is skipped (best-effort, R10): this function is pure and
+    reports nothing itself, a caller counts skips if it wants to.
+    """
+    grouped: dict[str, list[bytes]] = {}
+    for line in data.splitlines(keepends=True):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        session_id = cast(dict[str, object], row).get("sessionId")
+        if isinstance(session_id, str) and session_id:
+            normalized = line if line.endswith(b"\n") else line + b"\n"
+            grouped.setdefault(session_id, []).append(normalized)
+    return {uuid: b"".join(lines) for uuid, lines in grouped.items()}
+
+
+def write_prompts(session_dir: Path, data: bytes) -> bool:
+    """Write this session's slice of `history.jsonl` into its archive folder.
+
+    `store.write_if_changed`, deliberately NOT `write_if_absent`: unlike the
+    content-addressed whole-file snapshot, this file's own name is fixed
+    (`prompts.jsonl`), so a later fix to the extraction - a parsing bug, a new
+    field to key on - must be able to legitimately rewrite it. The snapshot
+    stays the one thing in this pair that is never rewritten; this is the one
+    allowed to be wrong and fixed later, exactly as the ticket's own design
+    notes state.
+    """
+    return store.write_if_changed(session_dir / PROMPTS_FILE, data)
+
+
+def prompts_record(session_dir: Path) -> dict[str, object]:
+    """This session's `prompts.jsonl` as the manifest records it.
+
+    Always a manifest key once this feature ships, never a `loss` amendment
+    (DESIGN 6): `present: False` when this session has none (a session that
+    predates `history.jsonl` tracking, or simply has no matching rows), so a
+    reader can tell "no prompts" from "this manifest predates the feature"
+    (`manifest.get('prompts') is None`) the same way `subagents`/companions
+    already draw that line with `[]` versus a missing key.
+    """
+    path = session_dir / PROMPTS_FILE
+    if not path.is_file():
+        return {"present": False}
+    payload = path.read_bytes()
+    return {
+        "present": True,
+        "sha256": store.sha256_hex(payload),
+        "bytes": len(payload),
+        "lines": payload.count(b"\n"),
+    }
+
+
 def _current_manifest(
     directory: Path, source_hash: str, options: render.RenderOptions
 ) -> dict[str, object] | None:
@@ -966,6 +1040,12 @@ def folder_is_current(
     for name, key in COMPANION_MANIFEST_KEYS.items():
         if manifest.get(key) != companion_records(directory, name):
             return False
+    # Ticket 39d: a `prompts.jsonl` written by the sweep's split pass AFTER
+    # this folder was last rendered must force a rebuild, the same reasoning
+    # as the companion loop just above - without this a later deletion of the
+    # file would be undetectable too, since nothing else compares it.
+    if manifest.get("prompts") != prompts_record(directory):
+        return False
     return manifest.get("subagents") == subagent_records(directory)
 
 
@@ -1105,6 +1185,7 @@ def write_session_folder(
             # predates the feature" (F6).
             payload = _with_subagents(payload, subagent_records(directory))
             payload = _with_companions(payload, directory)
+            payload = _with_prompts(payload, directory)
             if refused_smaller:
                 payload = _with_refusal(
                     payload, jsonl.stat().st_size, len(data),
@@ -1127,6 +1208,19 @@ def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> 
     """Record this session's sub-agents in its manifest (ticket 21e)."""
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
     manifest["subagents"] = records
+    return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+
+def _with_prompts(manifest_bytes: bytes, directory: Path) -> bytes:
+    """Record this session's `prompts.jsonl` in its manifest (ticket 39d).
+
+    Same shape as `_with_subagents`/`_with_companions`: computed from the
+    ARCHIVE FOLDER, not from `history.jsonl` itself, because a re-render long
+    after the sweep's split pass wrote the file can see no source data at all -
+    only what already sits in the folder.
+    """
+    manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
+    manifest["prompts"] = prompts_record(directory)
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
@@ -1516,6 +1610,7 @@ def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
             )
         problems.extend(_subagent_problems(directory, manifest_path))
         problems.extend(_companion_problems(directory, manifest_path))
+        problems.extend(_prompts_problems(directory, manifest_path))
     problems.extend(_name_problems(directory, meta, timezone))
     return problems
 
@@ -1588,6 +1683,33 @@ def _companion_problems(directory: Path, manifest_path: Path) -> list[FolderProb
             elif want and live[name] != want:
                 out.append(FolderProblem(directory, f"{noun} {name} does not match its hash"))
     return out
+
+
+def _prompts_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+    """`prompts.jsonl` must still match what the manifest recorded (ticket 39d).
+
+    Same "NO PROBLEM STRING MAY START WITH `missing `" constraint
+    `_companion_problems` states, for the same reason (`doctor._desync`'s
+    pending-render carve-out). A manifest with no `prompts` key at all yields
+    NOTHING - it predates this feature, same as an old manifest with no
+    companion keys.
+    """
+    try:
+        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+    recorded = manifest.get("prompts")
+    if not isinstance(recorded, dict):
+        return []
+    recorded = cast(dict[str, object], recorded)
+    live = prompts_record(directory)
+    if recorded.get("present") and not live.get("present"):
+        return [FolderProblem(directory, "prompts.jsonl is missing")]
+    if recorded.get("present") and recorded.get("sha256") != live.get("sha256"):
+        return [FolderProblem(directory, "prompts.jsonl does not match its hash")]
+    if not recorded.get("present") and live.get("present"):
+        return [FolderProblem(directory, "prompts.jsonl exists but the manifest says none")]
+    return []
 
 
 def _name_problems(directory: Path, meta: object, timezone: str) -> list[FolderProblem]:
