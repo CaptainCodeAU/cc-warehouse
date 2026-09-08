@@ -272,6 +272,14 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
 # `cli.py` reads this to decide whether the post-sweep build has to run: a
 # back-fill stores 0 sessions, and without it the manifest would never list the
 # files that were just copied.
+#
+# INVARIANT (found in red-team review): this set must stay a SUPERSET of every
+# sweep action that writes a file into an already-existing, already-rendered
+# session folder's manifest-tracked contents. A future action that does this
+# and forgets to list itself here would silently reopen, for one extra sweep
+# cycle, the same-run manifest-staleness window this set exists to close
+# - and nothing currently fences that omission, so a new action name added
+# below this comment without also being added to the set is easy to miss.
 SIDECAR_ARCHIVED_ACTIONS = frozenset({
     "archived-sidecars",
     "archived-stranded-sidecars",
@@ -558,7 +566,9 @@ def _log_sidecar_anomaly(
     capture.announce_sidecar_anomaly(config, session_uuid, path.name, scan, refused)
 
 
-def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
+def _archive_stranded(
+    config: Config, walk_root: Path, known: "dict[str, Path]"
+) -> list[ItemOutcome]:
     """Sidecar dirs with no transcript beside them (ruling (d)).
 
     Two destinations, and telling them apart is the refinement execution forced.
@@ -566,12 +576,16 @@ def _archive_stranded(config: Config, walk_root: Path) -> list[ItemOutcome]:
     session's folder - it is not homeless, its transcript simply moved. Only a dir
     the archive has never heard of goes under `_not-sessions/stranded-sidecars/`,
     where its name is recorded as a label and never trusted as identity (F4).
+
+    `known` is `_archived_session_folders(config.archive_root)`, scanned ONCE by
+    the caller and shared with `_process_history` (fix for the "scan once, join
+    second" principle `_session_keyed_ids` already documents - this pass and that
+    one used to each pay for their own full two-level archive-tree listing).
     """
     from cc_warehouse import archive, sidecars
 
     if config.archive_root is None or not config.archive_tool_results:
         return []
-    known = _archived_session_folders(config.archive_root)
     wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
     outcomes: list[ItemOutcome] = []
     outcomes.extend(_archive_stranded_file_history(config, walk_root, known))
@@ -640,7 +654,9 @@ def _archive_stranded_file_history(
     return outcomes
 
 
-def _process_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
+def _process_history(
+    config: Config, walk_root: Path, known: "dict[str, Path]"
+) -> list[ItemOutcome]:
     """Protect and split `~/.claude/history.jsonl`, once per run (39c/39d).
 
     Unlike every other pass in this module, the whole-file half is not
@@ -651,7 +667,17 @@ def _process_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
     paste-cache gather (39e) will need the same parsed rows too, and a second
     parse of an 18k-line file per sweep is exactly the cost `external.py`'s own
     "scan once, join second" principle exists to avoid - reapplied here to a
-    file's rows rather than a directory's entries.
+    file's rows rather than a directory's entries. `known`
+    (`_archived_session_folders(config.archive_root)`) is scanned once by the
+    caller and shared with `_archive_stranded` for the same reason: both used
+    to run their own full archive-tree listing per sweep.
+
+    `--limit` bounds the transcript WALK only (see `sweep`'s own docstring);
+    it never bounds this pass, which always reads and splits the whole
+    `history.jsonl` regardless of how few transcripts a run was asked to
+    consider. That is fine at any realistic or measured scale - a red-team
+    review timed a synthetic 500k-session worst case at a couple of seconds -
+    so there is no limiting logic here to bound something that costs nothing.
 
     Returns `[]` on an ordinary machine with no history yet or with no archive
     configured. The snapshot half reports nothing further once the current
@@ -679,7 +705,6 @@ def _process_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
         archive.write_history_snapshot(config.archive_root, data)
         outcomes.append(ItemOutcome("history.jsonl", "archived-history-snapshot", str(target)))
 
-    known = _archived_session_folders(config.archive_root)
     for uuid, lines in archive.split_history_by_session(data).items():
         folder = known.get(uuid)
         if folder is None:
@@ -970,12 +995,21 @@ def sweep(
             handled = _archive_sidecars(config, path)
             if handled is not None:
                 outcomes.append(handled)
-        outcomes.extend(_archive_stranded(config, walk_root))
+        # SCAN ONCE, JOIN TWICE: `_archive_stranded` and `_process_history` both
+        # need "every archived session's uuid mapped to its folder", so it is
+        # read here, once, instead of each pass paying for its own full
+        # two-level archive-tree listing.
+        known = (
+            _archived_session_folders(config.archive_root)
+            if config.archive_root is not None
+            else {}
+        )
+        outcomes.extend(_archive_stranded(config, walk_root, known))
         # ONE READ, WHOLE-MACHINE (ticket 39c/39d). `history.jsonl` is not
         # session-keyed like everything above it: it is read once here, after
         # every session folder above already exists, so the per-session split
         # has somewhere to write.
-        outcomes.extend(_process_history(config, walk_root))
+        outcomes.extend(_process_history(config, walk_root, known))
         cataloged = _cataloged_hashes(config.root)
         outcomes.extend(
             _capture_item(config, path)

@@ -121,6 +121,60 @@ def test_a_line_missing_its_trailing_newline_still_gets_one() -> None:
     assert grouped["aaaa"] == ROW_A
 
 
+# A prompt whose own text carries the literal word "sessionId", an escaped
+# quote, and an escaped `\n` - the routing must still come from the real
+# top-level `sessionId` key, parsed as JSON, never from a text match against
+# the substring appearing (twice) inside the prompt's own value.
+ROW_TRICKY = (
+    b'{"display":"field named \\"sessionId\\" and a line break \\n inline",'
+    b'"sessionId":"aaaa"}\n'
+)
+
+
+def test_a_prompt_containing_sessionid_substring_and_json_escapes_routes_correctly() -> None:
+    grouped = archive.split_history_by_session(ROW_TRICKY + ROW_B)
+    assert set(grouped) == {"aaaa", "bbbb"}
+    assert grouped["aaaa"] == ROW_TRICKY
+    assert grouped["bbbb"] == ROW_B
+
+
+def test_crlf_line_endings_group_and_keep_their_bytes_verbatim() -> None:
+    """Not the lone-`\\r` case (real `history.jsonl` is Node-written and never
+    produces that) - this is the line ending Node.js CAN write, `\\r\\n`, and
+    the returned bytes must keep the `\\r` rather than normalizing it away."""
+    row_a = b'{"display":"crlf one","sessionId":"aaaa"}\r\n'
+    row_b = b'{"display":"crlf two","sessionId":"bbbb"}\r\n'
+    row_a2 = b'{"display":"crlf three","sessionId":"aaaa"}\r\n'
+    grouped = archive.split_history_by_session(row_a + row_b + row_a2)
+    assert set(grouped) == {"aaaa", "bbbb"}
+    assert grouped["aaaa"] == row_a + row_a2
+    assert grouped["bbbb"] == row_b
+
+
+def test_one_very_long_line_is_grouped_without_choking() -> None:
+    """A regression pin, not a benchmark: a several-MB single line must still
+    parse and route, standing in for a giant pasted value in one prompt."""
+    huge_value = "x" * (3 * 1024 * 1024)
+    line = json.dumps({"display": huge_value, "sessionId": "aaaa"}).encode() + b"\n"
+    grouped = archive.split_history_by_session(line)
+    assert set(grouped) == {"aaaa"}
+    assert grouped["aaaa"] == line
+
+
+def test_thousands_of_distinct_session_ids_group_correctly() -> None:
+    """A regression pin against an accidental O(n^2) in the grouping loop -
+    thousands, not the reviewer's 500k, is enough to prove the shape."""
+    lines = [
+        json.dumps({"display": f"prompt {i}", "sessionId": f"session-{i}"}).encode() + b"\n"
+        for i in range(5000)
+    ]
+    grouped = archive.split_history_by_session(b"".join(lines))
+    assert len(grouped) == 5000
+    assert grouped["session-0"] == lines[0]
+    assert grouped["session-2500"] == lines[2500]
+    assert grouped["session-4999"] == lines[4999]
+
+
 # ---------------------------------------------------------------------------
 # write_prompts / prompts_record
 # ---------------------------------------------------------------------------

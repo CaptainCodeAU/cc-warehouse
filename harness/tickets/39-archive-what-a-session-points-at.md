@@ -450,3 +450,15 @@ groups raw LINE BYTES, not parsed rows, so a paste-cache gather that needs a row
 `pastedContents` field will still need to parse each grouped line once - the reuse
 this slice buys 39e is the single read-and-group pass over `history.jsonl` inside
 `_process_history`, not a pre-parsed structure. 39e is next.
+
+**39d hardening follow-up, same day.** Four parallel red-team reviews of 39c/39d found
+zero confirmed correctness or data-loss bugs. Three small fixes went in as a result:
+`sweep()` now scans `_archived_session_folders(config.archive_root)` ONCE and threads
+it into both `_archive_stranded` and `_process_history`, instead of each pass paying
+for its own full archive-tree listing; `test_prompts_split.py` gained regression pins
+for behavior already verified correct by hand (a prompt containing the literal
+substring `"sessionId"` plus escaped quotes/`\n`, CRLF line endings, one very long
+line, and a few thousand distinct sessionIds in one file); and two docstring/comment
+notes were added (`--limit` never bounds the history pass, and `SIDECAR_ARCHIVED_ACTIONS`
+must stay a superset of every sweep action writing into an already-rendered folder).
+No behavior changed. Test count 1,465 -> 1,469; ruff and pyright strict stayed clean.
