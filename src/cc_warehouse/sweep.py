@@ -735,8 +735,10 @@ def _process_history(
     review timed a synthetic 500k-session worst case at a couple of seconds -
     so there is no limiting logic here to bound something that costs nothing.
 
-    Returns `[]` on an ordinary machine with no history yet or with no archive
-    configured. The snapshot half reports nothing further once the current
+    Returns `[]` on an ordinary machine with no history yet, with no archive
+    configured, or with `config.archive_history_prompts` off (ticket 39f: one
+    switch for the whole pass, same shape as `archive_file_history` above it).
+    The snapshot half reports nothing further once the current
     bytes are already snapshotted. The split half writes only into folders the
     archive already holds; a `sessionId` with no matching folder (a session
     that left `~/.claude/projects` before the archive saw it, ~14% measured in
@@ -749,7 +751,7 @@ def _process_history(
     """
     from cc_warehouse import archive, external
 
-    if config.archive_root is None:
+    if config.archive_root is None or not config.archive_history_prompts:
         return []
     home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
     try:
@@ -801,7 +803,7 @@ def _plan_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
     """What `_process_history` WOULD do, writing nothing (`--dry-run`)."""
     from cc_warehouse import archive, external
 
-    if config.archive_root is None:
+    if config.archive_root is None or not config.archive_history_prompts:
         return []
     home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
     try:

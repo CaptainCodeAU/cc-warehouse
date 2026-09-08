@@ -662,6 +662,18 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     history_ok, history_detail = _history_staleness(config, where)
     checks.append(Check("history", history_ok, history_detail, blocking=False))
 
+    # Ticket 39f. Same never-blocking posture as `sidecars`/`history` above:
+    # corpus-wide coverage of prompts.jsonl (39d) and referenced paste-cache
+    # files (39e) is worth knowing, and is not itself a broken capture.
+    checks.append(
+        Check(
+            "prompts",
+            True,
+            status.paste_line(status.paste_gap(config)),
+            blocking=False,
+        )
+    )
+
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)
     checks.append(

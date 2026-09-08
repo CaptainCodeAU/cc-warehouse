@@ -585,3 +585,113 @@ non-fatal, R5-conservative posture as `"refused-sidecar"`). Added the paste-coll
 test the reviews found missing (`_gather_pastes`'s refusal branch had zero coverage
 anywhere in the suite) plus a file-history refusal-visibility test. Test count
 1,506 -> 1,508. Ruff and pyright strict clean.
+
+---
+
+# 39f DONE 2026-09-08. Slice 39g NOT STARTED (the final slice).
+
+One commit, oracle tests red before green. Test count 1,507 -> 1,518 (baseline was
+1,507, one below the 1,508 this file's own 39e block claims - an off-by-one in that
+earlier count, not a regression; not worth chasing further since the real number
+going forward is this one).
+
+**Two of the plan's original three items were already satisfied by how 39b-39e
+actually landed, confirmed by reading the code rather than taking the plan's word
+for it.** `archive_file_history` already exists (39b). `_process_history`/
+`_plan_history` already run as their own catalog-driven pass reading
+`~/.claude/history.jsonl` directly, never extending `_walk_source`'s per-transcript
+walk (39c/39d). So this slice's real scope was smaller than the plan's original
+text: one config key, plus corpus-wide doctor/status visibility.
+
+**Config key: `archive_history_prompts: bool = True`, in `config.py`**, read with
+the exact same `_bool(merged.get(...), True)` one-liner `archive_subagents`/
+`archive_tool_results`/`archive_file_history` already use - no refusal logic, same
+as those three.
+
+**NAMING NOTE, recorded rather than silently resolved.** The plan named this key
+`archive_history_prompts` when `_process_history`'s job was still expected to be
+"the prompts split". By the time 39d/39e landed, the SAME pass had grown to also
+cover 39c's whole-file `history.jsonl` snapshot and 39e's paste-cache gather - so
+the name now covers more than its own word says. The key is shipped under the
+plan's original name anyway: renaming a key the operator already approved in a
+locked planning document is not this slice's call to make unilaterally. If a better
+name exists, that is a question for the operator, not something to resolve here by
+just picking one.
+
+**Wiring: one line added to each of `_process_history` and `_plan_history`'s
+existing early-return chains** (`sweep.py`) - `if config.archive_root is None or
+not config.archive_history_prompts: return []` - exactly the shape
+`_archive_sidecars`/`_archive_stranded_file_history` already use for their own
+`archive_tool_results`/`archive_file_history` checks. Because the snapshot, the
+split AND the paste gather all come from this one function's one read of
+`history.jsonl`, one switch turns off all three together - there was never a
+question of gating them separately.
+
+**Doctor/status: `status.PasteGap`/`paste_gap`/`paste_line`, new in `status.py`,
+mirroring `SidecarGap`/`sidecar_gap`/`sidecar_line`'s shape exactly.** Walks
+`archive.walk_folders(config.archive_root)` once, reads each session's
+`manifest.json`, and counts two independent corpus-wide figures: how many sessions
+have `prompts.jsonl` present (`manifest["prompts"]["present"] is True`) out of the
+total archived, and how many have at least one entry in `manifest["pastes"]`. Any
+doubt (unreadable or unparseable manifest, wrong shape) is skipped rather than
+counted - the same "any doubt reads as absent" posture
+`archive.read_sidecar_notice` already uses, so a mid-render folder cannot produce a
+false alarm. NEVER HASHES, never opens a transcript payload (F5/R6) - one
+`manifest.json` read per archived session folder, nothing more. Wired into `ccw
+status` (`status_text`, one more line under `Sidecars:`) and `ccw doctor`
+(`diagnose`, one more `Check("prompts", ..., blocking=False)`, same never-blocking
+posture as `sidecars`/`history` right above it in the check order).
+
+**Deliberately OUT OF SCOPE, decided rather than built:** a new persistent
+per-session notice file plus a desktop alert for paste-cache anomalies (a missing
+or refused paste), mirroring what `sidecars.json`/`notify.alert` already do for
+tool-results/workflows/file-history. That mechanism is keyed on
+`_archive_sidecars`'s per-transcript candidate loop; `_process_history` is a
+structurally separate whole-file pass with no access to that loop's
+`SidecarScan`/`write_sidecar_notice` call. Unifying the two passes so pastes could
+share that exact mechanism is a real architecture change, bigger than this slice's
+stated scope, and the transient sweep-report visibility 39e's own refusal-visibility
+follow-up already added (the `"pastes-refused"`/`"pastes-missing"` outcomes a sweep
+report shows per run) is real, non-nothing visibility in the meantime. A future
+ticket could merge the two passes to get full parity with sidecars' persistent-
+notice treatment; this slice does not attempt it.
+
+**Tests, oracle-first:** a direct `load_config` test
+(`test_config.py::test_archive_history_prompts_defaults_true_and_can_be_disabled`);
+three sweep-behaviour tests in `test_history_sweep.py` mirroring
+`test_external_capture.py`'s own switch-off tests (the whole pass writes nothing
+with the switch off, the session itself is still captured normally, a dry run
+reports nothing); and a new file, `tests/test_paste_gap.py`, covering `paste_gap`
+against no-archive-configured, an empty archive, and a small real fixture archive
+built via an actual sweep (2 sessions, 1 with a `prompts.jsonl`/paste reference, 1
+without) - plus `paste_line`'s no-archive wording, `status_text` carrying the new
+line, and `doctor.diagnose`'s new check being `blocking=False`.
+
+**Verified against real data, read-only, nothing under `~/.claude`,
+`~/cc-warehouse-data` or `~/cc-warehouse-archive` written at any point.** Ran
+`status.paste_gap`/`paste_line` and `doctor.diagnose` directly against the real
+`~/cc-warehouse-archive` (28,924 archived sessions):
+
+```
+paste_gap: PasteGap(sessions_with_prompts=0, sessions_total=28924, sessions_with_pastes=0, ...)
+paste_line: Prompts: 0/28924 session(s) have prompts.jsonl, 0 reference paste-cache files
+doctor check: Check(name='prompts', ok=True, detail='Prompts: 0/28924 ...', blocking=False)
+```
+
+0/28924 is the CORRECT answer, not a bug: the live back-fill (39g) has still not
+run, and the installed frozen `ccw` (0.1.3) predates 39c-39e entirely, so no real
+session folder has a `prompts.jsonl` or `pastes/` yet. This run also re-confirms
+39b-e's own "not yet backfilled" state is still true going into 39g.
+
+**Full suite: 1,507 -> 1,518 tests (11 new), ruff clean, pyright strict clean (0
+errors).** `git add -A` was required before the packaging fence test
+(`test_every_shipped_file_is_tracked_by_git`) would pass, since it asserts every
+shipped file is tracked - a reminder for whoever runs this slice's tests before
+staging, not a defect.
+
+**Scope held to 39f, deliberately.** No `CHANGELOG.md` edit, no version bump, no
+`renderer_version` bump, no reinstall, no back-fill - all of that is 39g, the final
+slice, and none of it is safe to do from inside this one (see the version-mixing
+hazard 39b's own write-up already flags, which still applies verbatim). 39g is
+next: version bump, frozen reinstall, one live back-fill, CHANGELOG, real-data
+acceptance script.

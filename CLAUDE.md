@@ -598,7 +598,13 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
   DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
 
-- **Ticket 39: SLICES 39b-39e ARE DONE 2026-09-08, NOT YET RELEASED. 39f-39g remain.** 39b
+- **Ticket 39: SLICES 39b-39f ARE DONE 2026-09-08, NOT YET RELEASED. 39g remains.**
+  **39f added the `archive_history_prompts` config key** (gating the combined
+  `_process_history`/`_plan_history` pass in one line, same shape as its three
+  siblings) **and one new corpus-wide, non-blocking check**: `status.paste_gap`/
+  `paste_line`, wired into `ccw status` and a new `ccw doctor` "prompts" line,
+  mirroring `sidecar_gap` exactly. Full account: that ticket's `39f DONE` block.
+  39b
   archives the stores keyed by SESSION ID rather than by location:
   `~/.claude/file-history/` (**1,056 dirs, 929,845,225 bytes**, and 23 sampled
   snapshots appear in their own session's transcript ZERO times) and `~/.claude/todos/`.

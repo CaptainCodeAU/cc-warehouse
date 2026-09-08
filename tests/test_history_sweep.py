@@ -516,3 +516,68 @@ def test_a_paste_collision_is_refused_and_reported(
     records = log_lines(ccw_env, "refused")
     assert len(records) == 1, records
     assert HASH_1 in str(records[0]["message"])
+
+
+# ---------------------------------------------------------------------------
+# 39f: the config switch gates the whole combined pass
+# ---------------------------------------------------------------------------
+
+
+def configure_off(env: dict[str, str], archive_root: Path) -> None:
+    cfg = Path(env["HOME"]) / ".config" / "cc-warehouse"
+    cfg.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f'root = "{warehouse_root(env)}"',
+        f'archive_timezone = "{ZONE}"',
+        f'archive_root = "{archive_root}"',
+        "archive_history_prompts = false",
+    ]
+    (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env["XDG_CONFIG_HOME"] = str(cfg.parent)
+
+
+def test_the_switch_off_stops_the_whole_history_pass(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """archive_history_prompts = false suppresses the snapshot (39c), the
+    prompts split (39d) AND the paste-cache gather (39e) together, since all
+    three come from the one `_process_history` read (ticket 39f)."""
+    archive_root = tmp_path / "archive"
+    configure_off(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_paste(ccw_env, HASH_1, b"a pasted blob")
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row)
+    sweep(ccw_env)
+
+    folder = session_folder(archive_root, UUID_A)
+    assert not (folder / "prompts.jsonl").exists()
+    assert not (folder / "pastes").exists()
+    assert not snapshots_dir(archive_root).exists()
+
+
+def test_the_session_is_still_captured_when_history_processing_is_off(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure_off(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_history(ccw_env, history_row(UUID_A, {}))
+    sweep(ccw_env)
+    assert (session_folder(archive_root, UUID_A) / f"{UUID_A}.jsonl").is_file()
+
+
+def test_a_dry_run_reports_nothing_when_the_switch_is_off(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure_off(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_paste(ccw_env, HASH_1, b"a pasted blob")
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row)
+    result = run_ccw(["sweep", "--dry-run"], ccw_env)
+    assert result.code == 0, result.err
+    assert "would-archive-history-snapshot" not in result.out, result.out
+    assert "would-archive-prompts" not in result.out, result.out
+    assert "would-archive-pastes" not in result.out, result.out

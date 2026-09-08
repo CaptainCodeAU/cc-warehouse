@@ -221,3 +221,12 @@ def test_unsuffixed_keys_keep_their_v1_meaning(tmp_path: Path) -> None:
     cfg = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
     assert cfg.render_subagents is False
     assert cfg.render_subagents_compact is False, "an unsuffixed key reached compact"
+
+
+def test_archive_history_prompts_defaults_true_and_can_be_disabled(tmp_path: Path) -> None:
+    """Ticket 39f: gates the combined history.jsonl pass (39c's whole-file
+    snapshot, 39d's prompts.jsonl split, 39e's paste-cache gather)."""
+    assert load_config(env={"HOME": "/home/alice"}).archive_history_prompts is True
+    xdg = write_xdg(tmp_path, "archive_history_prompts = false\n")
+    cfg = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+    assert cfg.archive_history_prompts is False

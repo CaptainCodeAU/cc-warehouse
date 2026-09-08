@@ -5,32 +5,25 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39e ARE DONE (2026-09-08); 39f is
-next.** Read `harness/tickets/39-archive-what-a-session-points-at.md` and its `39e
-DONE` block at the bottom before anything else. 39e added the paste-cache gather
-(`archive.paste_hashes_by_session`/`PASTES_DIR`, `sweep._gather_pastes`), reusing
-39d's `_process_history` read of `history.jsonl` rather than re-parsing, and widened
-`COMPANION_MANIFEST_KEYS` to a fifth name instead of inventing a new manifest shape -
-a shared paste-cache hash referenced by two sessions lands under both. 39b built
-`external.py` plus the
-gather for `file-history/` and `todos/`, wired into both the hook and the sweep, and
-it is verified against the real source tree (54 of 54 snapshots byte-identical). 39c
-added a whole-file, content-addressed snapshot of `~/.claude/history.jsonl` (one pass
-inside `ccw sweep`, since that file is not session-keyed) plus a non-blocking `ccw
-doctor` line. 39d added the per-session split into `prompts.jsonl`
-(`archive.split_history_by_session`/`write_prompts`/`prompts_record`), reusing the
-SAME read 39c's snapshot uses - 39c's `_snapshot_history`/`_plan_history_snapshot`
-were renamed to `_process_history`/`_plan_history` to do both jobs from one read, since
-39e needs the same parsed rows too. Verified against the real 6,602,393-byte source
-file (1,649 distinct sessionIds, 0 lines skipped).
-**THE LIVE BACK-FILL HAS NOT BEEN RUN AND MUST NOT BE UNTIL 39b IS RELEASED.** The
-installed frozen `ccw` is 0.1.3 and does not write the two new manifest keys, so
-running the repo's copy against the live archive would leave two versions churning
-every folder's manifest back and forth. Correct order: 39g's version bump, one
-frozen reinstall, then one back-fill.
-39f-39g is what remains: doctor/status/alert wiring and config keys (39f), then docs,
-version bump and the real-data acceptance script (39g). 39b deliberately does not touch
-any of the `history.jsonl`/paste-cache work.
+**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39f ARE DONE (2026-09-08); 39g is
+next and is the FINAL slice.** Read
+`harness/tickets/39-archive-what-a-session-points-at.md` and its `39f DONE` block at
+the bottom before anything else. 39f added the config switch
+`archive_history_prompts` (one early-return added to `sweep._process_history`'s and
+`_plan_history`'s existing early-return chain, gating the whole combined
+snapshot+split+gather pass together) and one new corpus-wide, non-blocking check -
+`status.paste_gap`/`paste_line` - wired into `ccw status` and a new `ccw doctor`
+"prompts" line. 39b-39e built the gather machinery itself (`external.py`'s
+file-history/todos mirror, `history.jsonl`'s whole-file content-addressed snapshot,
+the per-session `prompts.jsonl` split, and the paste-cache gather); see the ticket's
+own `39b`/`39c`/`39d`/`39e DONE` blocks for that detail rather than duplicating it
+here.
+**THE LIVE BACK-FILL STILL HAS NOT BEEN RUN.** The installed frozen `ccw` is still
+0.1.3 and writes none of the new manifest keys, so 39g's job is: version bump, one
+frozen reinstall, ONE back-fill, CHANGELOG. Confirmed 2026-09-08 by running
+`status.paste_gap` directly against the real 28,924-session archive: it reports
+0/28924 sessions have `prompts.jsonl` yet, which is the expected and correct answer
+until 39g runs, not a bug in the new check.
 The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
 the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
 discovery rather than a scan beside the transcript. Measured 2026-09-07:

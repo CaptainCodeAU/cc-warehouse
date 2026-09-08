@@ -5,9 +5,9 @@ CCW_* environment variables -> CLI flags. Slice 13.
 
 The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for the
 render toggles): top-level `root`, `archive_root`, `archive_timezone`,
-`keep_projections`, `keep_objects`, `archive_subagents`, `archive_tool_results`
-and `archive_file_history` (the `archive_*` keys were missing from this list
-entirely until 2026-09-08, ticket 38);
+`keep_projections`, `keep_objects`, `archive_subagents`, `archive_tool_results`,
+`archive_file_history` and `archive_history_prompts` (the `archive_*` keys were
+missing from this list entirely until 2026-09-08, ticket 38);
 [notify] voice_url voice_id open_folder desktop_alerts;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
@@ -188,6 +188,14 @@ class Config:
     # 929,845,225 bytes measured 2026-09-08, of which a sampled 23 snapshots
     # appeared in their own session's transcript zero times.
     archive_file_history: bool = True
+    # Whether the combined `~/.claude/history.jsonl` pass runs at all (ticket
+    # 39f): 39c's whole-file content-addressed snapshot, 39d's per-session
+    # `prompts.jsonl` split, and 39e's paste-cache gather, all one pass inside
+    # `sweep._process_history`/`_plan_history`. Named for the plan's original
+    # scope ("prompts") even though the merged pass now does more than split
+    # prompts - see CLAUDE.md's ticket 39 paragraph for the naming note. DEFAULTS
+    # ON, same reasoning as `archive_file_history` above.
+    archive_history_prompts: bool = True
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -552,6 +560,7 @@ def load_config(
         archive_subagents=_bool(merged.get("archive_subagents"), True),
         archive_tool_results=_bool(merged.get("archive_tool_results"), True),
         archive_file_history=_bool(merged.get("archive_file_history"), True),
+        archive_history_prompts=_bool(merged.get("archive_history_prompts"), True),
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

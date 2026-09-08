@@ -21,6 +21,59 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-fourth handoff, 2026-09-08 (ticket 39: slice 39f, config gate and corpus-wide visibility)
+
+**Test count 1,507 -> 1,518 (11 new). Ruff and pyright strict clean; full suite
+green.** Slice 39f's real remaining scope turned out smaller than the plan's
+original text once the code was actually read: `archive_file_history` already
+existed (39b), and `_process_history`/`_plan_history` already ran as their own
+catalog-driven pass over `~/.claude/history.jsonl` (39c/39d) rather than
+extending `_walk_source`. What was actually missing was one config key and one
+new corpus-wide check.
+
+**Config: `archive_history_prompts: bool = True`** in `config.py`, read with the
+exact same `_bool(merged.get(...), True)` shape `archive_subagents`/
+`archive_tool_results`/`archive_file_history` already use. Wired with a single
+added condition to each of `_process_history`'s and `_plan_history`'s existing
+early-return chains in `sweep.py`, so the snapshot, the prompts split AND the
+paste-cache gather all turn off together with the one switch (they already came
+from the same read, so there was never a reason to gate them separately).
+
+**Naming note, recorded rather than resolved:** the key is named for the plan's
+original scope ("prompts"), even though the pass it now gates also does 39c's
+whole-file snapshot and 39e's paste-cache gather. Kept as-is rather than
+renamed, since the name is a locked planning artifact from an operator-approved
+document, not something this slice had authority to change unilaterally.
+
+**Doctor/status: `status.PasteGap`/`paste_gap`/`paste_line`, new in `status.py`,
+mirroring `SidecarGap`/`sidecar_gap`/`sidecar_line` exactly.** Walks
+`archive.walk_folders` once, reads each session's `manifest.json`, and reports
+two corpus-wide figures: how many archived sessions have `prompts.jsonl`
+present, and how many reference at least one paste. Never hashes, never opens a
+transcript payload (F5/R6) - one small JSON read per session folder. Wired into
+`ccw status` (one more line) and `ccw doctor` (one more non-blocking `Check`,
+same posture as `sidecars`/`history`).
+
+**Deliberately deferred, not built:** a persistent per-session notice file plus
+a desktop alert for paste-cache anomalies, mirroring what `sidecars.json`/
+`notify.alert` already do for tool-results/workflows/file-history. That
+mechanism is keyed on `_archive_sidecars`'s per-transcript loop; `_process_history`
+is a structurally separate whole-file pass with no access to it. Unifying the
+two passes is a bigger architecture change than this slice's scope; the
+transient per-run sweep-report visibility (`"pastes-refused"`/`"pastes-missing"`
+outcomes, added the same day as 39e) is real visibility in the meantime.
+
+**Verified against the real archive, read-only.** Ran the new functions directly
+against the real 28,924-session `~/cc-warehouse-archive`: `paste_gap` reports
+0/28924 sessions have `prompts.jsonl` yet, and the doctor check reports the same
+figure with `blocking=False`. Zero is the correct answer, not a bug - the live
+back-fill (39g) has not run yet, and the installed frozen `ccw` (0.1.3) predates
+39c-39e entirely.
+
+Full account: `harness/tickets/39-archive-what-a-session-points-at.md`'s `39f
+DONE` block. Next: 39g, the final slice (version bump, frozen reinstall, one
+live back-fill, CHANGELOG, real-data acceptance script).
+
 ### Thirty-third handoff, 2026-09-08 (ticket 39: refusal-visibility gap across 39b and 39e)
 
 **Test count 1,506 -> 1,508. Ruff and pyright strict clean; full suite green.** Two

@@ -8,6 +8,7 @@ objects in both directions; it re-implements no hashing (R9/F8) and mutates noth
 the store (R4).
 """
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -241,6 +242,70 @@ def sidecar_line(gap: SidecarGap) -> str:
     return line
 
 
+@dataclass(frozen=True)
+class PasteGap:
+    """Corpus-wide, at-rest coverage of `prompts.jsonl` (39d) and referenced
+    paste-cache files (39e) - ticket 39f.
+
+    COMPLEMENTARY TO `SidecarGap`, not a duplicate: that dataclass counts
+    unarchived siblings a copier does not know about yet. This one counts what
+    the archive already HAS, corpus-wide, which is a different and useful
+    question on its own - it says nothing about whether a hash was missing or
+    refused on any particular run (39e's sweep report already answers that,
+    transiently, per run).
+    """
+
+    sessions_with_prompts: int
+    sessions_total: int
+    sessions_with_pastes: int
+    archive_root: Path | None
+
+
+def paste_gap(config: Config) -> PasteGap:
+    """Count `prompts.jsonl`/`pastes` coverage across the WHOLE archive (39f).
+
+    NEVER HASHES and never opens a transcript payload (F5/R6), same posture as
+    `sidecar_gap`: one small `manifest.json` read per archived session folder,
+    nothing more. A folder with no manifest yet (mid-render) or a manifest that
+    fails to parse is simply not counted, same "any doubt reads as absent"
+    posture `archive.read_sidecar_notice` already uses.
+    """
+    if config.archive_root is None or not config.archive_root.is_dir():
+        return PasteGap(0, 0, 0, config.archive_root)
+
+    from cc_warehouse import archive
+
+    sessions_total = 0
+    with_prompts = 0
+    with_pastes = 0
+    for folder in archive.walk_folders(config.archive_root):
+        try:
+            body = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(body, dict):
+            continue
+        sessions_total += 1
+        typed = cast(dict[str, object], body)
+        prompts = typed.get("prompts")
+        if isinstance(prompts, dict) and cast(dict[str, object], prompts).get("present") is True:
+            with_prompts += 1
+        pastes = typed.get("pastes")
+        if isinstance(pastes, list) and pastes:
+            with_pastes += 1
+    return PasteGap(with_prompts, sessions_total, with_pastes, config.archive_root)
+
+
+def paste_line(gap: PasteGap) -> str:
+    """One line an operator can read at a glance, in `status` and in `doctor`."""
+    if gap.archive_root is None:
+        return "Prompts: (no archive configured; set archive_root to track this)"
+    return (
+        f"Prompts: {gap.sessions_with_prompts}/{gap.sessions_total} session(s) have"
+        f" prompts.jsonl, {gap.sessions_with_pastes} reference paste-cache files"
+    )
+
+
 def status_text(config: Config) -> str:
     """Human summary: recent captures, session count, stored size, recent errors.
 
@@ -281,6 +346,9 @@ def status_text(config: Config) -> str:
     lines.append(
         f"Sidecars: {gap.notices} unarchived, {gap.stranded} without transcript"
     )
+    # Ticket 39f: corpus-wide, at-rest coverage of prompts.jsonl and referenced
+    # paste-cache files, complementary to the Sidecars line just above.
+    lines.append(paste_line(paste_gap(config)))
     lines.append("Recent captures:")
     if recent:
         for listing in recent:
