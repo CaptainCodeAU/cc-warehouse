@@ -482,9 +482,9 @@ def _archive_sidecars_of(
         copied = archive.copy_companion_dir(parent, name, source)
         refused.extend(f"{name}/{item}" for item in copied.refused)
         for item in copied.refused:
-            log_sidecar_trouble(config, parsed, "refused", name, item)
+            log_sidecar_trouble(config, parsed.session_uuid, "refused", name, item)
         for item in copied.errors:
-            log_sidecar_trouble(config, parsed, "error", name, item)
+            log_sidecar_trouble(config, parsed.session_uuid, "error", name, item)
     return tuple(refused)
 
 
@@ -529,20 +529,26 @@ def _archive_external_of(
     if snapshots is not None:
         copied = archive.copy_companion_dir(folder, external.FILE_HISTORY_DIR, snapshots)
         for item in copied.refused:
-            log_sidecar_trouble(config, parsed, "refused", external.FILE_HISTORY_DIR, item)
+            log_sidecar_trouble(
+                config, parsed.session_uuid, "refused", external.FILE_HISTORY_DIR, item
+            )
         for item in copied.errors:
-            log_sidecar_trouble(config, parsed, "error", external.FILE_HISTORY_DIR, item)
+            log_sidecar_trouble(
+                config, parsed.session_uuid, "error", external.FILE_HISTORY_DIR, item
+            )
     for path in todos:
         try:
             archive.write_companion_file(
                 folder, external.TODOS_DIR, Path(path.name), path.read_bytes()
             )
         except OSError as exc:  # noqa: PERF203 - R10: name it and carry on
-            log_sidecar_trouble(config, parsed, "error", external.TODOS_DIR, f"{path.name}: {exc}")
+            log_sidecar_trouble(
+                config, parsed.session_uuid, "error", external.TODOS_DIR, f"{path.name}: {exc}"
+            )
 
 
 def log_sidecar_trouble(
-    config: Config, parsed: parser.ParsedSession, status: str, sidecar: str, detail: str
+    config: Config, session_uuid: str | None, status: str, sidecar: str, detail: str
 ) -> None:
     """One audit line per refused or unreadable sidecar file (F6, R10).
 
@@ -557,6 +563,11 @@ def log_sidecar_trouble(
     two records answer different questions and a reader needs both - the notice
     says what is true NOW for one session, the log says what HAPPENED and when,
     across all of them, and only the log can be counted afterwards.
+
+    Takes `session_uuid` directly rather than a full `parser.ParsedSession`
+    (widened 39e): every existing caller already had one parsed, but the
+    history.jsonl-driven paste gather only ever has the bare uuid a
+    `history.jsonl` row carries, with no transcript to parse at all.
     """
     verb = "refused" if status == "refused" else "could not read"
     notify.append_log(
@@ -564,7 +575,7 @@ def log_sidecar_trouble(
         {
             "at": datetime.now(UTC).isoformat(),
             "status": status,
-            "session": (parsed.session_uuid or "")[:8] or None,
+            "session": (session_uuid or "")[:8] or None,
             "project": None,
             "message": f"{verb} sidecar {sidecar}/{detail}",
             "elapsed_ms": None,

@@ -1,15 +1,17 @@
-"""Oracle tests: the sweep snapshots AND splits `history.jsonl` once per run
-(39c/39d).
+"""Oracle tests: the sweep snapshots, splits AND gathers from `history.jsonl`
+once per run (39c/39d/39e).
 
 ONE READ, WHOLE-MACHINE, not per-transcript. Unlike `file-history/` and
 `todos/` (39b), which are keyed by session id and gathered per session,
 `history.jsonl` is a single file shared by every session on the machine, so
 there is nothing to key a per-transcript pass on. The sweep reads it exactly
 once: it writes at most one new content-addressed whole-file snapshot (39c),
-then groups the same bytes by `sessionId` and writes each archived session's
-own slice into `prompts.jsonl` (39d). A `sessionId` with no matching archived
-folder is silently skipped - the whole-file snapshot is the backstop for that
-case, so nothing is lost, only left unsplit.
+groups the same bytes by `sessionId` and writes each archived session's own
+slice into `prompts.jsonl` (39d), then copies whatever `paste-cache/` files
+that session referenced into its own `pastes/` folder (39e). A `sessionId`
+with no matching archived folder is silently skipped for both the split and
+the gather - the whole-file snapshot is the backstop for that case, so
+nothing is lost, only left unsplit/ungathered.
 
 Contract: DESIGN R2, R5, R9, R10; FINDINGS F1, F4, F6, F9; ticket 39's
 constraint that nothing under `~/.claude` is ever written.
@@ -272,3 +274,187 @@ def test_the_split_preserves_exact_bytes_including_unicode(
     plant_history(ccw_env, row)
     sweep(ccw_env)
     assert (session_folder(archive_root, UUID_A) / "prompts.jsonl").read_bytes() == row
+
+
+# ---------------------------------------------------------------------------
+# 39e: gathering referenced paste-cache files, reusing this same read
+# ---------------------------------------------------------------------------
+
+HASH_1 = "aaaa1111aaaa1111"
+HASH_2 = "bbbb2222bbbb2222"
+HASH_MISSING = "cccc3333cccc3333"
+
+
+def paste_cache_dir(env: dict[str, str]) -> Path:
+    return claude_home(env) / "paste-cache"
+
+
+def plant_paste(env: dict[str, str], content_hash: str, data: bytes = b"pasted text") -> Path:
+    directory = paste_cache_dir(env)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{content_hash}.txt"
+    path.write_bytes(data)
+    return path
+
+
+def history_row(session_id: str, pasted: dict[str, object]) -> bytes:
+    row = {"display": "a prompt", "sessionId": session_id, "pastedContents": pasted}
+    return json.dumps(row).encode() + b"\n"
+
+
+def test_a_referenced_paste_lands_under_the_sessions_pastes_folder(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_paste(ccw_env, HASH_1, b"first pasted blob")
+    plant_paste(ccw_env, HASH_2, b"second pasted blob")
+    row = history_row(
+        UUID_A,
+        {
+            "1": {"id": 1, "type": "text", "contentHash": HASH_1},
+            "2": {"id": 2, "type": "text", "contentHash": HASH_2},
+        },
+    )
+    plant_history(ccw_env, row)
+    sweep(ccw_env)
+
+    folder = session_folder(archive_root, UUID_A)
+    assert (folder / "pastes" / f"{HASH_1}.txt").read_bytes() == b"first pasted blob"
+    assert (folder / "pastes" / f"{HASH_2}.txt").read_bytes() == b"second pasted blob"
+    manifest = cast(dict[str, object], json.loads((folder / "manifest.json").read_text("utf-8")))
+    records = cast(list[dict[str, object]], manifest["pastes"])
+    assert {r["name"] for r in records} == {f"{HASH_1}.txt", f"{HASH_2}.txt"}
+
+
+def test_an_inlined_paste_needs_no_gather_at_all(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The INLINED shape carries its own text in `history.jsonl`; it must not
+    trigger any paste-cache lookup."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "content": "inline text"}})
+    plant_history(ccw_env, row)
+    result = run_ccw(["sweep", "--quiet"], ccw_env)
+    assert result.code == 0, result.err + result.out
+    folder = session_folder(archive_root, UUID_A)
+    assert not (folder / "pastes").exists()
+
+
+def test_a_hash_missing_from_paste_cache_reports_the_gap_without_failing_the_batch(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """272 of roughly 2,186 real externalised references are already missing on
+    the live machine this was measured on - a pre-existing, unrecoverable loss
+    that must be counted, never treated as a batch failure."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_MISSING}})
+    plant_history(ccw_env, row)
+    result = run_ccw(["sweep", "--quiet"], ccw_env)
+    assert result.code == 0, result.err + result.out
+    folder = session_folder(archive_root, UUID_A)
+    assert not (folder / "pastes").exists()
+
+
+def test_a_mix_of_present_and_missing_writes_only_the_present_one(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_paste(ccw_env, HASH_1, b"present blob")
+    row = history_row(
+        UUID_A,
+        {
+            "1": {"id": 1, "type": "text", "contentHash": HASH_1},
+            "2": {"id": 2, "type": "text", "contentHash": HASH_MISSING},
+        },
+    )
+    plant_history(ccw_env, row)
+    sweep(ccw_env)
+
+    folder = session_folder(archive_root, UUID_A)
+    assert (folder / "pastes" / f"{HASH_1}.txt").read_bytes() == b"present blob"
+    assert not (folder / "pastes" / f"{HASH_MISSING}.txt").exists()
+    assert [p.name for p in (folder / "pastes").iterdir()] == [f"{HASH_1}.txt"]
+
+
+def test_two_sessions_referencing_the_same_hash_each_get_their_own_copy(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    write_transcript(
+        ccw_env,
+        basic_session(session_id=UUID_B),
+        session_id=UUID_B,
+        encoded_dir="-home-alice-projects-b",
+    )
+    plant_paste(ccw_env, HASH_1, b"shared blob")
+    row_a = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    row_b = history_row(UUID_B, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row_a + row_b)
+    sweep(ccw_env)
+
+    folder_a = session_folder(archive_root, UUID_A)
+    folder_b = session_folder(archive_root, UUID_B)
+    assert (folder_a / "pastes" / f"{HASH_1}.txt").read_bytes() == b"shared blob"
+    assert (folder_b / "pastes" / f"{HASH_1}.txt").read_bytes() == b"shared blob"
+
+
+def test_a_dry_run_reports_would_archive_pastes_and_writes_nothing(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    sweep(ccw_env)  # archive the session first, with no history.jsonl yet
+    plant_paste(ccw_env, HASH_1, b"a pasted blob")
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row)
+    folder = session_folder(archive_root, UUID_A)
+
+    result = run_ccw(["sweep", "--dry-run"], ccw_env)
+    assert result.code == 0, result.err
+    assert "would-archive-pastes" in result.out, result.out
+    assert not (folder / "pastes").exists()
+
+
+def test_a_dry_run_reports_nothing_once_a_paste_is_already_archived(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_paste(ccw_env, HASH_1, b"a pasted blob")
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row)
+    sweep(ccw_env)
+
+    result = run_ccw(["sweep", "--dry-run"], ccw_env)
+    assert result.code == 0, result.err
+    assert "would-archive-pastes" not in result.out, result.out
+
+
+def test_a_second_sweep_writes_no_new_bytes_for_pastes(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    plant_paste(ccw_env, HASH_1, b"a pasted blob")
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row)
+    sweep(ccw_env)
+
+    folder = session_folder(archive_root, UUID_A)
+    before = (folder / "pastes" / f"{HASH_1}.txt").stat().st_mtime_ns
+    sweep(ccw_env)
+    assert (folder / "pastes" / f"{HASH_1}.txt").stat().st_mtime_ns == before
+    assert (folder / "pastes" / f"{HASH_1}.txt").read_bytes() == b"a pasted blob"

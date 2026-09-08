@@ -285,6 +285,7 @@ SIDECAR_ARCHIVED_ACTIONS = frozenset({
     "archived-stranded-sidecars",
     "archived-stranded-file-history",
     "archived-prompts",
+    "archived-pastes",
 })
 
 
@@ -482,9 +483,9 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
             # session, the log says what HAPPENED and when, across all of them,
             # and only the log can be counted afterwards.
             for item in copied.refused:
-                capture.log_sidecar_trouble(config, parsed, "refused", name, item)
+                capture.log_sidecar_trouble(config, parsed.session_uuid, "refused", name, item)
             for item in copied.errors:
-                capture.log_sidecar_trouble(config, parsed, "error", name, item)
+                capture.log_sidecar_trouble(config, parsed.session_uuid, "error", name, item)
         changed = archive.write_sidecar_notice(folder, scan, refused)
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
@@ -537,7 +538,7 @@ def _gather_external(
         written += copied.written
         for item in copied.refused:
             capture.log_sidecar_trouble(
-                config, parsed, "refused", external.FILE_HISTORY_DIR, item
+                config, parsed.session_uuid, "refused", external.FILE_HISTORY_DIR, item
             )
     for todo in external.todo_files(home, parsed.session_uuid):
         try:
@@ -548,6 +549,41 @@ def _gather_external(
             continue
         written += 1 if outcome == "wrote" else 0
     return written
+
+
+def _gather_pastes(
+    config: Config, folder: Path, home: Path, uuid: str, hashes: "frozenset[str]"
+) -> tuple[int, int]:
+    """Copy this session's referenced paste-cache files into its folder (39e).
+
+    Returns (written, missing). `missing` means the source file is already gone
+    from `paste-cache/` - a pre-existing, unrecoverable gap this code cannot
+    close (272 of roughly 2,186 real externalised references measured already
+    missing on the machine this was scoped against), counted rather than
+    treated as an error (R10/F6: visible, never silent, but also never fatal
+    for something that was already lost before this code ran).
+    """
+    from cc_warehouse import archive
+
+    written = 0
+    missing = 0
+    for content_hash in sorted(hashes):
+        source = home / archive.PASTE_CACHE_DIR / f"{content_hash}.txt"
+        try:
+            data = source.read_bytes()
+        except OSError:
+            missing += 1
+            continue
+        outcome = archive.write_companion_file(
+            folder, archive.PASTES_DIR, Path(f"{content_hash}.txt"), data
+        )
+        if outcome == "wrote":
+            written += 1
+        elif outcome == "refused":
+            capture.log_sidecar_trouble(
+                config, uuid, "refused", archive.PASTES_DIR, f"{content_hash}.txt"
+            )
+    return written, missing
 
 
 def _log_sidecar_anomaly(
@@ -657,20 +693,20 @@ def _archive_stranded_file_history(
 def _process_history(
     config: Config, walk_root: Path, known: "dict[str, Path]"
 ) -> list[ItemOutcome]:
-    """Protect and split `~/.claude/history.jsonl`, once per run (39c/39d).
+    """Protect, split and gather from `~/.claude/history.jsonl`, once per run
+    (39c/39d/39e).
 
     Unlike every other pass in this module, the whole-file half is not
     per-transcript: the file is shared by every session on the machine, so
     there is nothing to key a per-item pass on. Reads it exactly ONCE per
-    sweep - the whole-file snapshot (39c) and the per-session split into
-    `prompts.jsonl` (39d) both come from this same read, because a future
-    paste-cache gather (39e) will need the same parsed rows too, and a second
-    parse of an 18k-line file per sweep is exactly the cost `external.py`'s own
-    "scan once, join second" principle exists to avoid - reapplied here to a
-    file's rows rather than a directory's entries. `known`
-    (`_archived_session_folders(config.archive_root)`) is scanned once by the
-    caller and shared with `_archive_stranded` for the same reason: both used
-    to run their own full archive-tree listing per sweep.
+    sweep - the whole-file snapshot (39c), the per-session split into
+    `prompts.jsonl` (39d), and the paste-cache gather (39e) all come from this
+    same read, because a second parse of an 18k-line file per sweep is exactly
+    the cost `external.py`'s own "scan once, join second" principle exists to
+    avoid - reapplied here to a file's rows rather than a directory's entries.
+    `known` (`_archived_session_folders(config.archive_root)`) is scanned once
+    by the caller and shared with `_archive_stranded` for the same reason:
+    both used to run their own full archive-tree listing per sweep.
 
     `--limit` bounds the transcript WALK only (see `sweep`'s own docstring);
     it never bounds this pass, which always reads and splits the whole
@@ -687,7 +723,9 @@ def _process_history(
     the ticket's own census) is silently skipped - it is not lost, because the
     whole-file snapshot just above is the backstop for exactly that case, and
     the ticket's own design notes say the split is allowed to be wrong and
-    fixed later precisely because the snapshot is never touched.
+    fixed later precisely because the snapshot is never touched. The
+    paste-cache gather has the SAME "no matching folder, silently skipped"
+    behaviour, for the same reason.
     """
     from cc_warehouse import archive, external
 
@@ -716,6 +754,20 @@ def _process_history(
             continue
         if changed:
             outcomes.append(ItemOutcome(uuid, "archived-prompts", str(folder)))
+
+    for uuid, hashes in archive.paste_hashes_by_session(data).items():
+        folder = known.get(uuid)
+        if folder is None:
+            continue
+        written, missing = _gather_pastes(config, folder, home, uuid, hashes)
+        if written:
+            detail = f"{written} file(s) -> {folder}"
+            if missing:
+                detail += f", {missing} missing"
+            outcomes.append(ItemOutcome(uuid, "archived-pastes", detail))
+        elif missing:
+            detail = f"{missing} hash(es) missing from paste-cache"
+            outcomes.append(ItemOutcome(uuid, "pastes-missing", detail))
     return outcomes
 
 
@@ -745,6 +797,22 @@ def _plan_history(config: Config, walk_root: Path) -> list[ItemOutcome]:
         existing = prompts_path.read_bytes() if prompts_path.is_file() else None
         if existing != lines:
             outcomes.append(ItemOutcome(uuid, "would-archive-prompts", str(folder)))
+
+    for uuid, hashes in archive.paste_hashes_by_session(data).items():
+        folder = known.get(uuid)
+        if folder is None:
+            continue
+        would = 0
+        for content_hash in hashes:
+            source = home / archive.PASTE_CACHE_DIR / f"{content_hash}.txt"
+            if not source.is_file():
+                continue
+            target_paste = folder / archive.PASTES_DIR / f"{content_hash}.txt"
+            if target_paste.is_file() and target_paste.read_bytes() == source.read_bytes():
+                continue
+            would += 1
+        if would:
+            outcomes.append(ItemOutcome(uuid, "would-archive-pastes", f"{would} file(s)"))
     return outcomes
 
 

@@ -220,29 +220,38 @@ TODOS_DIR = external.TODOS_DIR
 # Where file-history snapshots go when no archived session holds their id (39b).
 STRANDED_FILE_HISTORY_DIR = "stranded-file-history"
 
+# This session's referenced paste-cache files (39e). Unlike FILE_HISTORY_DIR and
+# TODOS_DIR, its source (`~/.claude/paste-cache/<hash>.txt`) is reached only by
+# joining through `history.jsonl` - see `paste_hashes_by_session` - never by a
+# per-session directory, so it has no home in `external.py`'s SESSION_STORES.
+PASTES_DIR = "pastes"
+
 # Manifest key per COMPANION DIRECTORY, and the noun `verify_folder` uses for it.
 # All are top-level manifest keys per DESIGN 6, never a `loss` amendment: a copied
 # file is not a lost one, the same distinction ticket 18's `unrecognised` key had
 # to make.
 #
-# ONE MAP FOR FOUR NAMES, and that is the point rather than tidiness. Ticket 38
-# built this for two names it owns; ticket 39 adds two whose SOURCE lives somewhere
-# completely different (a sibling of `projects/` rather than a child of the session
-# directory). What they have in common is everything that happens after the bytes
-# are found: mirrored under the session folder, recorded with name/sha256/bytes,
-# hash-verified, never deleted by the rebuilder. A second map would have drifted
-# from this one the first time either was touched, which is C12's whole argument.
+# ONE MAP FOR FIVE NAMES, and that is the point rather than tidiness. Ticket 38
+# built this for two names it owns; ticket 39 adds three whose SOURCE lives
+# somewhere completely different (a sibling of `projects/` rather than a child of
+# the session directory). What they have in common is everything that happens
+# after the bytes are found: mirrored under the session folder, recorded with
+# name/sha256/bytes, hash-verified, never deleted by the rebuilder. A second map
+# would have drifted from this one the first time either was touched, which is
+# C12's whole argument.
 COMPANION_MANIFEST_KEYS = {
     TOOL_RESULTS_DIR: "tool_results",
     WORKFLOWS_DIR: "workflows",
     FILE_HISTORY_DIR: "file_history",
     TODOS_DIR: "todos",
+    PASTES_DIR: "pastes",
 }
 _COMPANION_NOUNS = {
     TOOL_RESULTS_DIR: "tool-result",
     WORKFLOWS_DIR: "workflow file",
     FILE_HISTORY_DIR: "file-history entry",
     TODOS_DIR: "todo file",
+    PASTES_DIR: "paste",
 }
 
 # THE FENCE the operator asked for, in data form: every name `sidecars` says may
@@ -904,6 +913,65 @@ def split_history_by_session(data: bytes) -> dict[str, bytes]:
             normalized = line if line.endswith(b"\n") else line + b"\n"
             grouped.setdefault(session_id, []).append(normalized)
     return {uuid: b"".join(lines) for uuid, lines in grouped.items()}
+
+
+# Where Claude Code externalises a pasted value's text, keyed by its own content
+# hash (39e). A `history.jsonl` row's `pastedContents` entry is either INLINED
+# (`{"id":..,"type":"text","content": <the text>}`, already covered by the 39c
+# snapshot and the 39d split) or EXTERNALISED
+# (`{"id":..,"type":"text","contentHash": <16-hex>}`), whose text lives ONLY
+# here. 272 of roughly 2,186 real externalised references are already missing
+# from this store on the machine this was measured on - a pre-existing,
+# unrecoverable loss this module cannot undo, only report (see
+# sweep._gather_pastes).
+PASTE_CACHE_DIR = "paste-cache"
+
+
+def paste_hashes_by_session(data: bytes) -> dict[str, frozenset[str]]:
+    """Group `history.jsonl`'s referenced paste-cache content hashes by sessionId.
+
+    A second pass over the SAME bytes `_process_history` already read once from
+    disk (one disk read is still shared - only the JSON-parse loop repeats).
+    Deliberately kept SEPARATE from `split_history_by_session` rather than
+    folded into it: that function already shipped and was red-teamed in 39d,
+    and the saving from merging the two loops is negligible at measured
+    real-world size (a whole-file parse costs a fraction of a second).
+
+    Only the EXTERNALISED shape (`{"id":..,"type":..,"contentHash": <str>}`)
+    contributes a hash. The INLINED shape (`{"id":..,"type":..,"content": <str>}`)
+    needs no paste-cache lookup at all - its text is already in `history.jsonl`,
+    already covered by the 39c snapshot and the 39d split.
+
+    A SHARED HASH LANDS UNDER EVERY SESSION THAT REFERENCED IT: two different
+    sessions can paste the same clipboard content, and each session's own
+    `pastes/` folder gets its own copy (companion writers are per-folder, never
+    shared storage). Malformed rows are skipped, best-effort, the same as
+    `split_history_by_session` (R10): this function is pure and reports
+    nothing itself.
+    """
+    grouped: dict[str, set[str]] = {}
+    for line in data.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        session_id = cast(dict[str, object], row).get("sessionId")
+        pasted = cast(dict[str, object], row).get("pastedContents")
+        if not (isinstance(session_id, str) and session_id and isinstance(pasted, dict)):
+            continue
+        hashes: set[str] = set()
+        for entry in cast(dict[str, object], pasted).values():
+            if isinstance(entry, dict):
+                content_hash = cast(dict[str, object], entry).get("contentHash")
+                if isinstance(content_hash, str) and content_hash:
+                    hashes.add(content_hash)
+        if hashes:
+            grouped.setdefault(session_id, set()).update(hashes)
+    return {uuid: frozenset(hashes) for uuid, hashes in grouped.items()}
 
 
 def write_prompts(session_dir: Path, data: bytes) -> bool:

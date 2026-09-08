@@ -79,12 +79,15 @@ def test_every_external_store_is_a_known_companion_directory() -> None:
     assert external.SESSION_STORES <= set(archive.COMPANION_MANIFEST_KEYS)
 
 
-def test_the_companion_key_set_is_exactly_the_four_names() -> None:
+def test_the_companion_key_set_is_exactly_the_five_names() -> None:
+    """39e widens this to a fifth name, `pastes` - see test_paste_cache_archive.py
+    for that companion's own dedicated coverage."""
     assert set(archive.COMPANION_MANIFEST_KEYS) == {
         "tool-results",
         "workflows",
         "file-history",
         "todos",
+        "pastes",
     }
 
 
