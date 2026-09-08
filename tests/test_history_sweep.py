@@ -458,3 +458,61 @@ def test_a_second_sweep_writes_no_new_bytes_for_pastes(
     sweep(ccw_env)
     assert (folder / "pastes" / f"{HASH_1}.txt").stat().st_mtime_ns == before
     assert (folder / "pastes" / f"{HASH_1}.txt").read_bytes() == b"a pasted blob"
+
+
+# ---------------------------------------------------------------------------
+# Refusal visibility (found by two independent red-team reviews, 2026-09-08)
+# ---------------------------------------------------------------------------
+
+
+def log_lines(env: dict[str, str], status: str) -> list[dict[str, object]]:
+    log = warehouse_root(env) / "logs" / "capture.jsonl"
+    if not log.is_file():
+        return []
+    out: list[dict[str, object]] = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        record = cast(object, json.loads(line))
+        if isinstance(record, dict):
+            typed = cast(dict[str, object], record)
+            if typed.get("status") == status:
+                out.append(typed)
+    return out
+
+
+def test_a_paste_collision_is_refused_and_reported(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Nothing in the suite ever triggered `_gather_pastes`'s refusal branch
+    before this, so it - and the refused-count outcome this fix adds - was
+    unexercised. This shape is not hypothetical: ticket 38's acceptance run hit
+    exactly this on live data within twenty minutes (see the sibling comment
+    on test_a_same_name_different_bytes_file_is_refused_and_reported in
+    test_sidecar_sweep.py). Found by two independent red-team reviews,
+    2026-09-08."""
+    from cc_warehouse import sweep as sweep_module
+    from cc_warehouse.config import load_config
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    config = load_config(xdg_config_home=Path(ccw_env["XDG_CONFIG_HOME"]), env=ccw_env)
+    assert sweep_module.sweep(config).failures == ()
+
+    folder = session_folder(archive_root, UUID_A)
+    (folder / "pastes").mkdir()
+    (folder / "pastes" / f"{HASH_1}.txt").write_bytes(b"content A")
+    plant_paste(ccw_env, HASH_1, b"content B")
+    row = history_row(UUID_A, {"1": {"id": 1, "type": "text", "contentHash": HASH_1}})
+    plant_history(ccw_env, row)
+
+    report = sweep_module.sweep(config)
+
+    assert (folder / "pastes" / f"{HASH_1}.txt").read_bytes() == b"content A"
+    refused_outcomes = [
+        o for o in report.outcomes if o.item == UUID_A and o.action == "pastes-refused"
+    ]
+    assert len(refused_outcomes) == 1, report.outcomes
+    assert "1 paste(s) refused" in refused_outcomes[0].detail
+    records = log_lines(ccw_env, "refused")
+    assert len(records) == 1, records
+    assert HASH_1 in str(records[0]["message"])

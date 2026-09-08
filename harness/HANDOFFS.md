@@ -21,6 +21,49 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-third handoff, 2026-09-08 (ticket 39: refusal-visibility gap across 39b and 39e)
+
+**Test count 1,506 -> 1,508. Ruff and pyright strict clean; full suite green.** Two
+independent red-team reviews of 39b/39e (commits `abba0b5`..`f771874`) converged on the
+same real gap: a "refused" write (R5's same-name-different-bytes collision) inside
+`sweep._gather_external` (file-history/todos, 39b) and `sweep._gather_pastes` (pastes,
+39e) reached `logs/capture.jsonl` via `capture.log_sidecar_trouble` and then went
+nowhere else - never an `ItemOutcome` in the sweep report, and for `_gather_external`
+specifically never the persistent per-session `sidecars.json` notice a `tool-results`/
+`workflows` refusal already reaches. Pre-existing in 39b, inherited by 39e, not a new
+defect either slice introduced. One reviewer planted a real collision and watched a
+sweep produce zero visible outcome for it while the audit log quietly recorded a
+"refused" line.
+
+**Fixed both halves without merging the two sweep passes.** `_gather_external`
+(per-transcript) and `_gather_pastes` (whole-`history.jsonl`, once per sweep) run on
+different keys, and merging them would have been a much bigger restructure than this
+gap warrants. `_gather_external` now returns `(written, refused: list[str])` instead of
+a bare `int`, prefixed like `_archive_sidecars`'s own companion-dir refusals
+(`"file-history/<name>"`, `"todos/<name>"`); its one caller folds that list into the
+SAME `refused` list that already feeds the `"refused-sidecar"` outcome and
+`write_sidecar_notice`. `_gather_pastes` now returns `(written, missing, refused: int)`;
+`_process_history` appends a separate `"pastes-refused"` outcome (`"N paste(s)
+refused"`) whenever `refused > 0`, in addition to whatever `"archived-pastes"`/
+`"pastes-missing"` outcome the same session's written/missing counts already produce -
+not added to `SIDECAR_ARCHIVED_ACTIONS` and not counted as a batch failure, matching
+`"refused-sidecar"`'s existing non-fatal posture.
+
+**Added the missing test coverage the reviews flagged**: nothing in the suite had ever
+triggered `_gather_pastes`'s refusal branch, so a paste-collision test went into
+`tests/test_history_sweep.py`, plus a file-history refusal-visibility test in
+`tests/test_external_capture.py`. Both assert the archived copy keeps its original
+bytes (R5), the new outcome appears, and a `"refused"` line lands in
+`logs/capture.jsonl`.
+
+**Also corrected, doc-only:** the `0dac5b7` commit message said "six existing call
+sites" updated for `log_sidecar_trouble`'s widened signature; the diff actually touched
+eight. No code change for that - just a one-line correction in
+`harness/tickets/39-archive-what-a-session-points-at.md`'s 39e section, since this
+repo's convention is a new commit rather than amending a pushed one.
+
+Full account: that ticket file's "39e refusal-visibility follow-up, same round" block.
+
 ### Thirty-second handoff, 2026-09-08 (ticket 39 slice 39e: the paste-cache gather)
 
 **Test count 1,469 -> 1,506 (37 new tests). Ruff and pyright strict clean; full suite

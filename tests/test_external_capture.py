@@ -265,3 +265,60 @@ def test_a_dry_run_gathers_nothing(ccw_env: dict[str, str], tmp_path: Path) -> N
     result = run_ccw(["sweep", "--dry-run"], ccw_env)
     assert result.code == 0, result.err
     assert not archive_root.exists()
+
+
+# ---------------------------------------------------------------------------
+# Refusal visibility (found by two independent red-team reviews, 2026-09-08)
+# ---------------------------------------------------------------------------
+
+
+def log_lines(env: dict[str, str], status: str) -> list[dict[str, object]]:
+    log = warehouse_root(env) / "logs" / "capture.jsonl"
+    if not log.is_file():
+        return []
+    out: list[dict[str, object]] = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        record = cast(object, json.loads(line))
+        if isinstance(record, dict):
+            typed = cast(dict[str, object], record)
+            if typed.get("status") == status:
+                out.append(typed)
+    return out
+
+
+def test_a_file_history_refusal_reaches_the_sidecar_notice_and_outcome(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`_gather_external` already logged a file-history refusal to
+    `logs/capture.jsonl` (8a65723), but never told its own caller, so the
+    refusal reached neither the session's `sidecars.json` notice nor a
+    `refused-sidecar` outcome - only the audit log saw it. The same shape ticket
+    38 already fixed for `tool-results/`; 39b's `_gather_external` inherited it
+    because it never RETURNED what it already knew. Found by two independent
+    red-team reviews, 2026-09-08."""
+    from cc_warehouse import sweep as sweep_module
+    from cc_warehouse.config import load_config
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    transcript = write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    snaps = claude_home(ccw_env) / "file-history" / UUID_A
+    snaps.mkdir(parents=True)
+    (snaps / SNAP).write_bytes(SNAP_BYTES)
+    config = load_config(xdg_config_home=Path(ccw_env["XDG_CONFIG_HOME"]), env=ccw_env)
+    assert sweep_module.sweep(config).failures == ()
+
+    (snaps / SNAP).write_bytes(b"a completely different snapshot")
+    report = sweep_module.sweep(config)
+
+    folder = folder_of(archive_root)
+    assert (folder / "file-history" / SNAP).read_bytes() == SNAP_BYTES
+    notice = cast(
+        dict[str, object], json.loads((folder / "sidecars.json").read_text("utf-8"))
+    )
+    assert notice["refused"] == [f"file-history/{SNAP}"]
+    outcomes = {o.item: o.action for o in report.outcomes}
+    assert outcomes[transcript.name] == "refused-sidecar"
+    records = log_lines(ccw_env, "refused")
+    assert len(records) == 1, records
+    assert SNAP in str(records[0]["message"])

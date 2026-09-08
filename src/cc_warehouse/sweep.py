@@ -466,9 +466,9 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
             if not present and not scan.has_anomaly:
                 return None
             return ItemOutcome(path.name, "skipped-sidecars-no-parent", str(directory or path))
-        refused: list[str] = []
-        written = 0
-        written += _gather_external(config, folder, path, parsed)
+        gathered_written, gathered_refused = _gather_external(config, folder, path, parsed)
+        refused: list[str] = list(gathered_refused)
+        written = gathered_written
         assert directory is not None or not present  # `present` is empty without a dir
         for name in present:
             copied = archive.copy_companion_dir(folder, name, cast(Path, directory) / name)
@@ -519,23 +519,31 @@ def _session_keyed_ids(walk_root: Path) -> frozenset[str]:
 
 def _gather_external(
     config: Config, folder: Path, path: Path, parsed: "parser.ParsedSession"
-) -> int:
+) -> tuple[int, list[str]]:
     """Copy this session's file-history and todos into its archive folder (39b).
 
-    Returns how many files were newly written, so the caller's own report and the
-    build trigger both count them. Best-effort per item (R10): one unreadable
-    snapshot must not cost the other seven.
+    Returns (written, refused): how many files were newly written, so the
+    caller's own report and the build trigger both count them, and which
+    relative names (prefixed like `_archive_sidecars`'s own companion-dir
+    refusals, e.g. "file-history/<name>") were refused under R5, so the caller
+    can fold them into its own `sidecars.json` notice and `refused-sidecar`
+    outcome. Before this, a refusal here reached ONLY `logs/capture.jsonl`
+    (this function already called `capture.log_sidecar_trouble` for it) - found
+    by two independent red-team reviews, 2026-09-08. Best-effort per item
+    (R10): one unreadable snapshot must not cost the other seven.
     """
     from cc_warehouse import archive, external
 
     if not config.archive_file_history:
-        return 0
+        return 0, []
     home = external.home_for_transcript(path)
     written = 0
+    refused: list[str] = []
     snapshots = external.file_history_dir(home, parsed.session_uuid)
     if snapshots is not None:
         copied = archive.copy_companion_dir(folder, external.FILE_HISTORY_DIR, snapshots)
         written += copied.written
+        refused.extend(f"{external.FILE_HISTORY_DIR}/{item}" for item in copied.refused)
         for item in copied.refused:
             capture.log_sidecar_trouble(
                 config, parsed.session_uuid, "refused", external.FILE_HISTORY_DIR, item
@@ -547,26 +555,37 @@ def _gather_external(
             )
         except OSError:  # noqa: PERF203 - R10: name it and carry on
             continue
-        written += 1 if outcome == "wrote" else 0
-    return written
+        if outcome == "wrote":
+            written += 1
+        elif outcome == "refused":
+            refused.append(f"{external.TODOS_DIR}/{todo.name}")
+            capture.log_sidecar_trouble(
+                config, parsed.session_uuid, "refused", external.TODOS_DIR, todo.name
+            )
+    return written, refused
 
 
 def _gather_pastes(
     config: Config, folder: Path, home: Path, uuid: str, hashes: "frozenset[str]"
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Copy this session's referenced paste-cache files into its folder (39e).
 
-    Returns (written, missing). `missing` means the source file is already gone
-    from `paste-cache/` - a pre-existing, unrecoverable gap this code cannot
-    close (272 of roughly 2,186 real externalised references measured already
-    missing on the machine this was scoped against), counted rather than
-    treated as an error (R10/F6: visible, never silent, but also never fatal
-    for something that was already lost before this code ran).
+    Returns (written, missing, refused). `missing` means the source file is
+    already gone from `paste-cache/` - a pre-existing, unrecoverable gap this
+    code cannot close (272 of roughly 2,186 real externalised references
+    measured already missing on the machine this was scoped against), counted
+    rather than treated as an error (R10/F6: visible, never silent, but also
+    never fatal for something that was already lost before this code ran).
+    `refused` is a same-name-different-bytes collision under R5: this already
+    reached `logs/capture.jsonl` via `capture.log_sidecar_trouble` below, but
+    went nowhere else until the caller started counting it too (found by two
+    independent red-team reviews, 2026-09-08).
     """
     from cc_warehouse import archive
 
     written = 0
     missing = 0
+    refused = 0
     for content_hash in sorted(hashes):
         source = home / archive.PASTE_CACHE_DIR / f"{content_hash}.txt"
         try:
@@ -580,10 +599,11 @@ def _gather_pastes(
         if outcome == "wrote":
             written += 1
         elif outcome == "refused":
+            refused += 1
             capture.log_sidecar_trouble(
                 config, uuid, "refused", archive.PASTES_DIR, f"{content_hash}.txt"
             )
-    return written, missing
+    return written, missing, refused
 
 
 def _log_sidecar_anomaly(
@@ -759,7 +779,7 @@ def _process_history(
         folder = known.get(uuid)
         if folder is None:
             continue
-        written, missing = _gather_pastes(config, folder, home, uuid, hashes)
+        written, missing, refused = _gather_pastes(config, folder, home, uuid, hashes)
         if written:
             detail = f"{written} file(s) -> {folder}"
             if missing:
@@ -768,6 +788,12 @@ def _process_history(
         elif missing:
             detail = f"{missing} hash(es) missing from paste-cache"
             outcomes.append(ItemOutcome(uuid, "pastes-missing", detail))
+        # A SEPARATE outcome, appended IN ADDITION to whichever of the two
+        # above fired: a session can have some pastes written, some missing
+        # from paste-cache, and some refused as a collision, all in the same
+        # run, and none of the three should suppress another (F6).
+        if refused:
+            outcomes.append(ItemOutcome(uuid, "pastes-refused", f"{refused} paste(s) refused"))
     return outcomes
 
 

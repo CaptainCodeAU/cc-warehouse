@@ -554,3 +554,34 @@ COUNTED and VISIBLE (`"pastes-missing"`) instead of silent; it does not make it 
 **Scope held to 39e, deliberately.** No `CHANGELOG.md` edit, no version bump, no
 `archive_history_prompts`-style config key for pastes (39f groups the doctor/status/
 alert wiring and config keys together). 39f is next.
+
+**Corrected:** the `0dac5b7` commit message said "six existing call sites" updated for
+`log_sidecar_trouble`'s widened signature; the diff actually touched eight (seven
+existing call sites updated, plus the one new call this slice added for the paste
+refusal path).
+
+**39e refusal-visibility follow-up, same round.** Two independent red-team reviews of
+39b/39e converged on the same gap: a "refused" write (R5's same-name-different-bytes
+collision) inside `sweep._gather_external` (file-history/todos, 39b) and
+`sweep._gather_pastes` (pastes, 39e) was logged to `logs/capture.jsonl` via
+`capture.log_sidecar_trouble` and then went nowhere else - never an `ItemOutcome` the
+sweep report shows, and for `_gather_external` specifically never the persistent
+per-session `sidecars.json` notice `copy_companion_dir` refusals already reach. Not a
+new defect either slice introduced; both inherited it from `_gather_external` and
+`_gather_pastes` never returning what they already knew. Fixed both, without merging
+the two sweep passes (they run on different keys - per-transcript vs.
+whole-`history.jsonl` - and merging them would have been a much bigger restructure than
+the gap warrants): `_gather_external` now returns `(written, refused: list[str])`
+instead of a bare `int`, prefixed like `_archive_sidecars`'s own companion-dir refusals
+(`"file-history/<name>"`, `"todos/<name>"`), and its caller folds that list into the
+SAME `refused` list that already feeds the `"refused-sidecar"` outcome and
+`write_sidecar_notice`. `_gather_pastes` now returns `(written, missing, refused: int)`
+instead of `(written, missing)`, and `_process_history` appends a separate
+`"pastes-refused"` outcome (detail: `"N paste(s) refused"`) whenever `refused > 0`, IN
+ADDITION to whatever `"archived-pastes"`/`"pastes-missing"` outcome the same session's
+written/missing counts already produce - not added to `SIDECAR_ARCHIVED_ACTIONS` (it
+writes nothing new for a rebuild to pick up) and not counted as a batch failure (same
+non-fatal, R5-conservative posture as `"refused-sidecar"`). Added the paste-collision
+test the reviews found missing (`_gather_pastes`'s refusal branch had zero coverage
+anywhere in the suite) plus a file-history refusal-visibility test. Test count
+1,506 -> 1,508. Ruff and pyright strict clean.
