@@ -408,6 +408,30 @@ def desync_detail(
     return folders, broken
 
 
+def _history_staleness(config: Config, home: Path) -> tuple[bool, str]:
+    """Whether the LIVE `~/.claude/history.jsonl` is protected by a matching
+    snapshot (ticket 39c). Reads the file rather than a catalog row: this is a
+    whole-machine file, not a session, so nothing in the catalog can answer for
+    it.
+
+    NEVER BLOCKING (see the `sidecars` check just below this one in `diagnose`,
+    ticket 38 ruling (e), for the same posture): an unsnapshotted file is worth
+    knowing about and is not a broken capture, so it must never move the exit
+    code `ccw-freshness-check.py` escalates on.
+    """
+    path = home / ".claude" / "history.jsonl"
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return True, "no history.jsonl on this machine"
+    if config.archive_root is None:
+        return True, "no archive configured"
+    target = archive.history_snapshot_path(config.archive_root, data)
+    if target.is_file():
+        return True, f"snapshot up to date ({target.stem})"
+    return False, f"live history.jsonl not yet snapshotted (would land at {target.name})"
+
+
 def _batch_render_in_progress(root: Path) -> bool:
     """True while `ccw sweep` or `ccw build` is actively running against this
     warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
@@ -632,6 +656,11 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             blocking=False,
         )
     )
+
+    # Ticket 39c. Same never-blocking posture as `sidecars` just above, and the
+    # same reason: worth knowing, not a broken capture.
+    history_ok, history_detail = _history_staleness(config, where)
+    checks.append(Check("history", history_ok, history_detail, blocking=False))
 
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)

@@ -788,3 +788,79 @@ def test_a_bare_ccw_hook_command_is_still_accepted(
     assert "NO capture hook" not in hook_line, (
         f"a bare `ccw hook` registration was rejected: {hook_line!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Ticket 39c: the `history.jsonl` snapshot staleness line
+# ---------------------------------------------------------------------------
+
+HISTORY_BYTES = b'{"display":"fix the flux capacitor","sessionId":"aaaa"}\n'
+
+
+def test_no_archive_configured_is_not_an_alarm(tmp_path: Path) -> None:
+    config = Config(root=tmp_path / "warehouse")
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "history.jsonl").write_bytes(HISTORY_BYTES)
+    ok, detail = doctor._history_staleness(config, home)  # pyright: ignore[reportPrivateUsage]
+    assert ok is True
+    assert "no archive configured" in detail
+
+
+def test_no_history_file_on_this_machine_is_not_an_alarm(tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    config = Config(root=tmp_path / "warehouse", archive_root=archive_root, archive_timezone=ZONE)
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    ok, detail = doctor._history_staleness(config, home)  # pyright: ignore[reportPrivateUsage]
+    assert ok is True
+    assert "no history.jsonl" in detail
+
+
+def test_an_unsnapshotted_history_file_is_reported_stale(tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    config = Config(root=tmp_path / "warehouse", archive_root=archive_root, archive_timezone=ZONE)
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "history.jsonl").write_bytes(HISTORY_BYTES)
+
+    ok, detail = doctor._history_staleness(config, home)  # pyright: ignore[reportPrivateUsage]
+    assert ok is False
+    assert "not yet snapshotted" in detail
+
+
+def test_a_snapshotted_history_file_reports_up_to_date(tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    config = Config(root=tmp_path / "warehouse", archive_root=archive_root, archive_timezone=ZONE)
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "history.jsonl").write_bytes(HISTORY_BYTES)
+    archive.write_history_snapshot(archive_root, HISTORY_BYTES)
+
+    ok, detail = doctor._history_staleness(config, home)  # pyright: ignore[reportPrivateUsage]
+    assert ok is True
+    assert "up to date" in detail
+
+
+def test_a_stale_history_snapshot_never_flips_doctors_exit_code(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """NEVER BLOCKING (same posture as the `sidecars` check, ticket 38 ruling (e)):
+    an unsnapshotted history file is worth knowing about, not a broken capture,
+    and must not move the exit code `ccw-freshness-check.py` escalates on. A
+    fully healthy install (hook registered, capture fired, nothing overdue) is
+    built here so ONLY the check under test can fail `report.ok` -- the same
+    isolation `install_hook` provides for the desync tests above."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, fresh_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    (Path(ccw_env["HOME"]) / ".claude" / "history.jsonl").write_bytes(HISTORY_BYTES)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    history_check = next(c for c in report.checks if c.name == "history")
+    assert history_check.ok is False
+    assert history_check.blocking is False
+    assert report.ok, "a stale history snapshot alone must not fail doctor"

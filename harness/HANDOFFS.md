@@ -21,6 +21,38 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirtieth handoff, 2026-09-08 (ticket 39 slice 39c: the `history.jsonl` snapshot)
+
+**One commit, oracle tests first.** Slice 39c: a whole-file, content-addressed snapshot
+of `~/.claude/history.jsonl` plus a non-blocking `ccw doctor` line saying whether the
+live file is currently protected. Test count 1,418 -> 1,437; ruff and pyright strict
+clean.
+
+**Why ONE pass rather than per-session, unlike 39b.** `file-history/` and `todos/` (39b)
+are keyed by session id, so the hook and the sweep both gather them per transcript.
+`history.jsonl` is a single file shared by every session on the machine - there is
+nothing to key a per-item pass on, so this ships as one whole-machine pass inside
+`ccw sweep` (`sweep._snapshot_history`), not a hook change at all. New:
+`archive.write_history_snapshot`/`archive.history_snapshot_path` (mirrors
+`write_not_a_session`'s exists()-only shape, since the filename IS the hash),
+`sweep._snapshot_history`/`_plan_history_snapshot`, and `doctor._history_staleness`
+wired as a `"history"` Check right after the existing `"sidecars"` one, same
+never-blocking posture (ticket 38 ruling (e)) so it cannot move the exit code
+`ccw-freshness-check.py` escalates on.
+
+**Verified against the real machine, live archive untouched.** Read the real
+`~/.claude/history.jsonl` (6,599,428 bytes) and wrote its snapshot into a scratch
+`archive_root` under the session scratchpad, deleted afterward: the snapshot is
+byte-identical (sha256 `85a9077daf32...` both sides), a second write touches nothing
+(same mtime), and the doctor line correctly flips from "not yet snapshotted" to
+"snapshot up to date" once the write happens. The real `history.jsonl` was
+byte-count-verified untouched afterward.
+
+**Scope held to 39c only.** No `CHANGELOG.md`, no version bump, no `renderer_version`
+bump - this slice writes nothing inside a session folder or its manifest, so none of the
+39b version-mixing concerns apply here. 39d (the per-session `prompts.jsonl` split) is
+next.
+
 ### Twenty-ninth handoff, 2026-09-08 (ticket 38 built end to end and released as 0.1.3, then ticket 39 slice 39b)
 
 **One session, six slices, six commits, all pushed on green.** `2a041f4` (38a) ->

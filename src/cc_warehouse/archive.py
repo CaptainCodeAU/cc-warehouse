@@ -268,6 +268,13 @@ NOT_SESSIONS_LABEL = "_not-sessions"
 IMPORTED_DIR = "imported"
 _ORPHAN_NOTE = "orphan.json"
 
+# Where whole-file snapshots of `~/.claude/history.jsonl` live (ticket 39c).
+# Unlike every other store this module archives, `history.jsonl` is not keyed
+# by session id at all: it is one file shared by every session on the machine,
+# so there is no session folder to nest a copy under. It lands here instead,
+# content-addressed by its own bytes.
+HISTORY_SNAPSHOTS_DIR = "history-jsonl-snapshots"
+
 
 @dataclass(frozen=True)
 class SubagentResult:
@@ -819,6 +826,43 @@ def write_not_a_session(archive_root: Path, data: bytes, *, stem: str) -> Path:
     directory = archive_root / NOT_SESSIONS_LABEL / IMPORTED_DIR
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{store.sha256_hex(data)[:12]}_{stem}{_JSONL_SUFFIX}"
+    if not target.exists():
+        store.atomic_write(target, data)
+    return target
+
+
+def history_snapshot_path(archive_root: Path, data: bytes) -> Path:
+    """Where a whole-file snapshot of these exact `history.jsonl` bytes lives.
+
+    Pure path computation, no I/O beyond the hash: `ccw doctor` calls this on
+    every run just to check whether the live file is already protected, and a
+    health check must not create the thing it is asking about.
+    """
+    return (
+        archive_root
+        / NOT_SESSIONS_LABEL
+        / HISTORY_SNAPSHOTS_DIR
+        / f"{store.sha256_hex(data)[:12]}{_JSONL_SUFFIX}"
+    )
+
+
+def write_history_snapshot(archive_root: Path, data: bytes) -> Path:
+    """Rescue the CURRENT `~/.claude/history.jsonl` bytes into the archive (39c).
+
+    Whole-file and content-addressed, the same shape as `write_not_a_session`
+    above and for the same reason: the filename IS the hash, so `exists()`
+    genuinely means "these are the same bytes" (F1/F4) and an exists()-only
+    check is correct rather than a shortcut. No stem is needed - only one kind
+    of content ever lands under `HISTORY_SNAPSHOTS_DIR`.
+
+    This is the BACKSTOP for a later per-session split of the same file (ticket
+    39, slice 39d onward): it catches whatever a session-id join can never
+    reach - rows with no archived session, future format drift in the source
+    file, and any bug in the split itself - by keeping the whole thing exactly
+    as Claude Code wrote it.
+    """
+    target = history_snapshot_path(archive_root, data)
+    target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
         store.atomic_write(target, data)
     return target

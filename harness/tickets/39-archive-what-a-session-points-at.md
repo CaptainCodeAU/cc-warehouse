@@ -344,3 +344,43 @@ one back-fill.
 Also not done: **39a's census paperwork** (its DESIGN 15 entry IS done, above), and
 slices **39c-39g** in full. 39c onward all concern `history.jsonl` and
 `paste-cache/`, which 39b deliberately does not touch.
+
+---
+
+# 39c DONE 2026-09-08. Slices 39d-39g NOT STARTED.
+
+One commit, oracle tests red before green: `archive.write_history_snapshot`/
+`history_snapshot_path`, `sweep._snapshot_history`/`_plan_history_snapshot`, and
+`doctor._history_staleness`. Test count 1,418 -> 1,437. Ruff and pyright strict clean.
+
+**Whole-file, content-addressed, under `_not-sessions/history-jsonl-snapshots/
+<sha256_12>.jsonl`** - the exact layout the plan specified, and the exists()-only write
+(mirroring `write_not_a_session`) rather than `store.write_if_absent`, per the plan's
+own reasoning: the filename IS the hash, so `exists()` already means "same bytes".
+
+**ONE pass, not per-session, and that is a real difference from 39b worth stating
+plainly.** `file-history/` and `todos/` are keyed by session id, so 39b's gather runs
+once per transcript in both the hook and the sweep. `history.jsonl` is one file shared
+by the whole machine - there is nothing to key a per-item pass on - so this ships as a
+single whole-machine step inside `ccw sweep` only, run once per run right after the
+existing stranded-sidecars pass. No hook change at all.
+
+**The doctor line is wired exactly like `sidecars`** (same never-blocking posture,
+ticket 38 ruling (e)): a `"history"` Check reporting "no archive configured", "no
+history.jsonl on this machine", "live history.jsonl not yet snapshotted", or "snapshot
+up to date", none of which can move `report.ok` or the exit code
+`ccw-freshness-check.py` escalates on. Proved directly: a fully healthy fixture
+(hook registered, capture fired, nothing overdue) with only an unsnapshotted
+`history.jsonl` added still reports `report.ok is True`.
+
+**Verified against the real source tree, live archive untouched.** Read the real
+`~/.claude/history.jsonl` (6,599,428 bytes, sha256 `85a9077daf32...`) and wrote its
+snapshot into a scratch `archive_root` under the session scratchpad (removed
+afterward): byte-identical both sides, a second write leaves the file's mtime
+unchanged, and the doctor line flips from "not yet snapshotted" to "up to date" across
+the write. The real file's byte count was re-checked afterward and had not moved.
+
+**Scope held to 39c only, deliberately.** No `CHANGELOG.md` edit, no version bump, no
+`renderer_version` bump - this slice touches nothing inside a session folder or its
+manifest, so the version-mixing hazard 39b's own write-up flags does not apply here.
+39d (the per-session `prompts.jsonl` split, verified against this snapshot) is next.

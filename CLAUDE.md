@@ -598,7 +598,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
   DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
 
-- **Ticket 39: SLICE 39b IS DONE 2026-09-08, NOT YET RELEASED. 39c-39g remain.** 39b
+- **Ticket 39: SLICES 39b AND 39c ARE DONE 2026-09-08, NOT YET RELEASED. 39d-39g remain.** 39b
   archives the stores keyed by SESSION ID rather than by location:
   `~/.claude/file-history/` (**1,056 dirs, 929,845,225 bytes**, and 23 sampled
   snapshots appear in their own session's transcript ZERO times) and `~/.claude/todos/`.
@@ -615,7 +615,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   joins instead (DESIGN 15, "2026-09-08, ticket 39"). 42 dirs are stranded.
   Ticket 38's machinery was WIDENED, not twinned: one `COMPANION_MANIFEST_KEYS` map
   over four names.
-  Full account: that ticket's `39b DONE` block.
+  **39c adds the OTHER half of "archive what a session points at": a whole-file,
+  content-addressed snapshot of `~/.claude/history.jsonl`** under
+  `_not-sessions/history-jsonl-snapshots/<sha256_12>.jsonl` (new
+  `archive.write_history_snapshot`/`history_snapshot_path`), taken as ONE pass per
+  `ccw sweep` run rather than per-session - unlike 39b's stores, this file is not
+  keyed by session id at all, so there is nothing to loop a hook or per-transcript
+  pass over. A new non-blocking `ccw doctor` `history` line (same posture as
+  `sidecars`, ticket 38 ruling (e)) reports whether the live file is currently
+  protected. Verified against the real 6,599,428-byte source file, written only into
+  a scratch archive_root. No version bump and no manifest change, so none of 39b's
+  live-back-fill hazard applies to this slice.
+  Full account: that ticket's `39c DONE` block.
 
 - **Ticket 39's remaining slices, PLANNED and NOT STARTED.** The archive keeps
   what a session SAID and not what it POINTED AT. Measured: `~/.claude` is 6.7 GB, ccw

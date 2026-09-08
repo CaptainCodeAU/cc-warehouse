@@ -639,6 +639,48 @@ def _archive_stranded_file_history(
     return outcomes
 
 
+def _snapshot_history(config: Config, walk_root: Path) -> ItemOutcome | None:
+    """Protect the CURRENT `~/.claude/history.jsonl` bytes, once per run (39c).
+
+    Unlike every other pass in this module, this is not per-transcript: the
+    file is shared by every session on the machine, so there is nothing to key
+    a per-item pass on. Returns None on an ordinary machine with no history yet
+    or with no archive configured, and again once the current bytes are already
+    snapshotted - a stable file must cost nothing on every later sweep.
+    """
+    from cc_warehouse import archive, external
+
+    if config.archive_root is None:
+        return None
+    home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
+    try:
+        data = (home / "history.jsonl").read_bytes()
+    except OSError:
+        return None
+    target = archive.history_snapshot_path(config.archive_root, data)
+    if target.is_file():
+        return None
+    archive.write_history_snapshot(config.archive_root, data)
+    return ItemOutcome("history.jsonl", "archived-history-snapshot", str(target))
+
+
+def _plan_history_snapshot(config: Config, walk_root: Path) -> list[ItemOutcome]:
+    """What `_snapshot_history` WOULD do, writing nothing (`--dry-run`)."""
+    from cc_warehouse import archive, external
+
+    if config.archive_root is None:
+        return []
+    home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
+    try:
+        data = (home / "history.jsonl").read_bytes()
+    except OSError:
+        return []
+    target = archive.history_snapshot_path(config.archive_root, data)
+    if target.is_file():
+        return []
+    return [ItemOutcome("history.jsonl", "would-archive-history-snapshot", str(target))]
+
+
 def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> list[ItemOutcome]:
     """What pass three WOULD do, writing nothing (`--dry-run`).
 
@@ -785,6 +827,7 @@ def plan(
         action = "would-skip" if digest in already else "would-store"
         outcomes.append(ItemOutcome(path.name, action, str(path)))
     outcomes.extend(_plan_sidecars(config, walk_root, wanted))
+    outcomes.extend(_plan_history_snapshot(config, walk_root))
     outcomes.extend(
         ItemOutcome(path.name, "would-store", str(path))
         for path in _orphan_object_paths(config.root, already)
@@ -886,6 +929,11 @@ def sweep(
             if handled is not None:
                 outcomes.append(handled)
         outcomes.extend(_archive_stranded(config, walk_root))
+        # ONE PASS, WHOLE-MACHINE (ticket 39c). `history.jsonl` is not session-
+        # keyed like everything above it, so there is nothing to loop over.
+        history_outcome = _snapshot_history(config, walk_root)
+        if history_outcome is not None:
+            outcomes.append(history_outcome)
         cataloged = _cataloged_hashes(config.root)
         outcomes.extend(
             _capture_item(config, path)
