@@ -21,6 +21,67 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-second handoff, 2026-09-08 (ticket 39 slice 39e: the paste-cache gather)
+
+**Test count 1,469 -> 1,506 (37 new tests). Ruff and pyright strict clean; full suite
+green.** Slice 39e: copy each session's referenced `paste-cache/<hash>.txt` files into
+its own `pastes/` folder.
+
+**Reused the companion machinery wholesale rather than inventing a fifth mechanism.**
+Unlike 39d's `prompts.jsonl` (exactly one file per session, needed its own manifest
+shape), `pastes/` holds zero or more files - exactly what `tool-results/`,
+`workflows/`, `file-history/` and `todos/` already are. Adding `PASTES_DIR` to
+`COMPANION_MANIFEST_KEYS` and `_COMPANION_NOUNS` was the whole change on that side:
+`folder_is_current`, `_with_companions`, `_companion_problems`, `verify_folder` and
+`companion_records` all already iterate those two dicts generically, so none of them
+needed touching. Confirmed by reading each one before writing anything, per the
+assigning session's own explicit instruction not to duplicate what they already do.
+
+**`archive.paste_hashes_by_session` is a deliberate SECOND pass over `history.jsonl`,
+not a widening of `split_history_by_session`.** That function shipped in 39d and was
+independently red-teamed by four reviewers the same day; reopening its return shape to
+also carry paste-hash groupings would have cost some of that verification for a saving
+real measurement shows is negligible (the whole 6.6 MB file parses in well under a
+second either way). Only the EXTERNALISED `pastedContents` shape
+(`{"id":..,"type":"text","contentHash": <hash>}`) contributes a hash; the INLINED shape
+already has its text in `history.jsonl`, so it needs no lookup at all. A hash two
+different sessions both referenced lands under BOTH their `pastes/` folders - the
+ticket's own explicit requirement, tested directly.
+
+**`capture.log_sidecar_trouble` was narrowed from a full `parser.ParsedSession`
+parameter to the bare `session_uuid: str | None` it actually used.** The new
+paste-gather loop inside `_process_history` only ever has a bare uuid from a
+`history.jsonl` row, never a parsed transcript - there is nothing to construct a real
+`ParsedSession` from. Six existing call sites (`capture.py`, `sweep.py`) were updated
+to pass `parsed.session_uuid` instead of `parsed`; behavior is unchanged since the
+function only ever read that one field.
+
+**Verified against the real machine, real `~/.claude` untouched throughout, writes
+confined to a scratch `archive_root` removed afterward:**
+
+```
+history.jsonl:                        18,381 lines, 6,609,695 bytes
+sessions with >=1 referenced hash:    742
+distinct referenced content hashes:   2,186
+present in paste-cache:               1,914
+missing from paste-cache:             272
+```
+
+These numbers match the ticket's own original census exactly. Built one real session
+folder in the scratch archive, called `sweep._gather_pastes` with one real present hash
+and one real missing hash: wrote exactly the present one (byte-identical, sha256
+matched the source), counted the missing one without raising, and re-reading the real
+paste-cache source afterward confirmed nothing under `~/.claude` moved.
+
+**The honest limit: a paste-cache source already missing is unrecoverable, and this
+slice does not pretend otherwise.** 272 of 2,186 referenced hashes were already gone
+before this code ran - not even the 39c whole-file snapshot ever held the actual pasted
+text, only the reference to it. `"pastes-missing"` makes that loss visible and counted;
+it cannot undo it.
+
+Full account: `harness/tickets/39-archive-what-a-session-points-at.md`'s `39e DONE`
+block. Next: 39f (doctor/status/alert wiring, config keys).
+
 ### Thirty-first handoff, 2026-09-08 (ticket 39 slice 39d: the per-session prompts split)
 
 **One commit, oracle tests red before green.** Slice 39d: `history.jsonl`'s rows split

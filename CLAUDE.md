@@ -598,7 +598,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   keys. Full account: `harness/tickets/38-sidecars-tool-results-and-unknown-siblings.md`'s
   DONE block; rulings (c)(d)(e) in `contract/DESIGN.md` section 15.
 
-- **Ticket 39: SLICES 39b, 39c AND 39d ARE DONE 2026-09-08, NOT YET RELEASED. 39e-39g remain.** 39b
+- **Ticket 39: SLICES 39b-39e ARE DONE 2026-09-08, NOT YET RELEASED. 39f-39g remain.** 39b
   archives the stores keyed by SESSION ID rather than by location:
   `~/.claude/file-history/` (**1,056 dirs, 929,845,225 bytes**, and 23 sampled
   snapshots appear in their own session's transcript ZERO times) and `~/.claude/todos/`.
@@ -647,6 +647,20 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   lines grouped, 0 skipped, one real session's grouped bytes exercised end to end
   in a scratch archive_root (removed afterward). Test count 1,437 -> 1,465.
   Full account: that ticket's `39d DONE` block.
+  **39e adds the paste-cache gather**: `archive.paste_hashes_by_session` is a
+  SEPARATE second pass over the SAME `history.jsonl` bytes `_process_history`
+  already read, pulling each row's EXTERNALISED `pastedContents` content hashes
+  (the INLINED shape needs no lookup - its text already lives in `history.jsonl`).
+  `sweep._gather_pastes` copies each referenced `paste-cache/<hash>.txt` into the
+  session's own `pastes/` folder, widening `COMPANION_MANIFEST_KEYS` to a fifth
+  name rather than inventing a manifest shape, since `pastes/` holds zero or more
+  files like `tool-results/`/`file-history/` already do - a shared hash lands
+  under every session that referenced it. A hash missing from `paste-cache/` (272
+  of 2,186 measured live) is counted and reported (`"pastes-missing"`), never
+  fatal. Verified against the real machine, writing only into a scratch
+  archive_root: 2,186 distinct referenced hashes, 1,914 present, 272 missing,
+  byte-identical on the present ones. Test count 1,469 -> 1,506. Full account:
+  that ticket's `39e DONE` block.
 
 - **Ticket 39's remaining slices, PLANNED and NOT STARTED.** The archive keeps
   what a session SAID and not what it POINTED AT. Measured: `~/.claude` is 6.7 GB, ccw

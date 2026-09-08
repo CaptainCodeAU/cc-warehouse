@@ -462,3 +462,95 @@ line, and a few thousand distinct sessionIds in one file); and two docstring/com
 notes were added (`--limit` never bounds the history pass, and `SIDECAR_ARCHIVED_ACTIONS`
 must stay a superset of every sweep action writing into an already-rendered folder).
 No behavior changed. Test count 1,465 -> 1,469; ruff and pyright strict stayed clean.
+
+---
+
+# 39e DONE 2026-09-08. Slices 39f-39g NOT STARTED.
+
+One commit, `0dac5b7`, oracle tests red before green. Test count 1,469 -> 1,506 (37
+new tests across three files). Ruff and pyright strict clean. Full suite green.
+
+**`pastes/` is a COMPANION DIRECTORY, not a new manifest shape** - a deliberate
+departure from 39d's own `prompts.jsonl`, and the reason is the shape of the data, not
+convenience. `prompts.jsonl` is exactly one file per session, so it needed its own small
+manifest record. `pastes/` is "zero or more files this session referenced", which is
+EXACTLY what `tool-results/`, `workflows/`, `file-history/` and `todos/` already are.
+So this slice adds two dict entries - `COMPANION_MANIFEST_KEYS[PASTES_DIR] = "pastes"`
+and `_COMPANION_NOUNS[PASTES_DIR] = "paste"` in `archive.py` - and every one of
+`folder_is_current`, `_with_companions`, `_companion_problems`, `verify_folder` and
+`companion_records` picked it up with NO new wiring code, because they all iterate
+those two dicts generically. Confirmed by reading each one before writing anything: none
+of them needed to change.
+
+**`archive.paste_hashes_by_session(data: bytes) -> dict[str, frozenset[str]]` is a
+SEPARATE second pass over `history.jsonl`'s bytes, not folded into
+`split_history_by_session`.** That function shipped in 39d and was independently
+red-teamed by four reviewers the same day; reopening its return type to also carry
+paste-hash groupings would have invalidated some of that verification for a saving real
+measurement shows is not worth it (a whole-file JSON-parse of the live 6.6 MB file costs
+well under a second; a second pass costs about the same again). It reads only the
+EXTERNALISED shape (`{"id":..,"type":"text","contentHash": <hash>}`); the INLINED shape
+(`{"id":..,"type":"text","content": <text>}`) contributes nothing, since its text is
+already in `history.jsonl` and already covered by the 39c snapshot and the 39d split.
+Malformed rows (non-dict `pastedContents`, missing `sessionId`, unparseable JSON) are
+skipped, matching `split_history_by_session`'s own R10 posture. A hash referenced by two
+different sessions lands in BOTH sessions' returned sets, per the ticket's own stated
+requirement - each session's `pastes/` folder gets its own copy, since companion writers
+are per-folder, never shared storage.
+
+**`sweep._gather_pastes(config, folder, home, uuid, hashes) -> (written, missing)`**
+reads each referenced `paste-cache/<hash>.txt`, counting a missing source (`OSError`) as
+`missing` rather than raising, and writing a present one via the existing
+`archive.write_companion_file` (already `store.write_if_absent`-based, so a same-name
+different-bytes collision is refused and logged, never overwritten). Wired into
+`_process_history`'s existing single read of `history.jsonl` as a second per-session
+loop, after the existing prompts-split loop: `"archived-pastes"` (with a `", N missing"`
+suffix when some hashes were also missing) when at least one file was written, or
+`"pastes-missing"` when every referenced hash for that session was already gone -
+visible either way, never a batch failure. `"archived-pastes"` was added to
+`SIDECAR_ARCHIVED_ACTIONS` (it writes into a companion dir under a possibly-already-
+rendered folder, so it needs the same same-run rebuild trigger `"archived-prompts"`
+already gets); `"pastes-missing"` was deliberately left OUT of that set, since nothing
+was actually written for a rebuild to pick up. `_plan_history` (the `--dry-run` twin)
+got the read-only equivalent: compare each referenced hash's source bytes against what
+(if anything) already sits under the folder's `pastes/`, report `"would-archive-pastes"`
+when at least one differs, write nothing.
+
+**`capture.log_sidecar_trouble` was widened from taking a full `parser.ParsedSession` to
+taking `session_uuid: str | None` directly** (its only real dependency - the function
+only ever read `.session_uuid`), and its six existing call sites (`capture.py` and
+`sweep.py`) were updated to pass `parsed.session_uuid`. This was necessary rather than
+cosmetic: `_process_history`'s paste-gather loop only ever has the bare uuid a
+`history.jsonl` row carries, never a full parsed transcript to construct a
+`ParsedSession` from, and fabricating one with dummy field values purely to satisfy the
+old signature would have been worse than the refactor.
+
+**Verified against the real machine, read-only except for a scratch `archive_root`
+removed afterward, nothing under `~/.claude` touched at any point:**
+
+```
+history.jsonl:                        18,381 lines, 6,609,695 bytes
+sessions with >=1 referenced hash:    742
+distinct referenced content hashes:   2,186
+present in paste-cache:               1,914
+missing from paste-cache:             272
+```
+
+Matches the ticket's own original census exactly (2,186 / 1,914 / 272). Built one real
+session folder in a scratch `archive_root`, called `sweep._gather_pastes` directly with
+one real present hash and one real missing hash: `written=1, missing=1`, the written
+file's bytes and sha256 matched the real `paste-cache/` source exactly, no file was
+written for the missing hash, and re-reading the real source file afterward confirmed it
+was never modified.
+
+**The honest limit, stated rather than glossed over: a MISSING paste-cache source is a
+genuine, unrecoverable prior loss this slice cannot undo.** 272 of the 2,186 referenced
+hashes on this machine were already gone from `paste-cache/` before this code ever ran -
+something prunes that cache, and by the time a hash is missing there is nothing left
+anywhere in `~/.claude` (not even the 39c whole-file `history.jsonl` snapshot, which only
+ever held the reference, never the text) to recover it from. This slice makes that loss
+COUNTED and VISIBLE (`"pastes-missing"`) instead of silent; it does not make it go away.
+
+**Scope held to 39e, deliberately.** No `CHANGELOG.md` edit, no version bump, no
+`archive_history_prompts`-style config key for pastes (39f groups the doctor/status/
+alert wiring and config keys together). 39f is next.

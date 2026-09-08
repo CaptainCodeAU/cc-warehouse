@@ -5,9 +5,14 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
-**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39d ARE DONE (2026-09-08); 39e is
-next.** Read `harness/tickets/39-archive-what-a-session-points-at.md` and its `39d
-DONE` block at the bottom before anything else. 39b built `external.py` plus the
+**ACTIVE: ticket 39. SLICES 39a (partial) AND 39b-39e ARE DONE (2026-09-08); 39f is
+next.** Read `harness/tickets/39-archive-what-a-session-points-at.md` and its `39e
+DONE` block at the bottom before anything else. 39e added the paste-cache gather
+(`archive.paste_hashes_by_session`/`PASTES_DIR`, `sweep._gather_pastes`), reusing
+39d's `_process_history` read of `history.jsonl` rather than re-parsing, and widened
+`COMPANION_MANIFEST_KEYS` to a fifth name instead of inventing a new manifest shape -
+a shared paste-cache hash referenced by two sessions lands under both. 39b built
+`external.py` plus the
 gather for `file-history/` and `todos/`, wired into both the hook and the sweep, and
 it is verified against the real source tree (54 of 54 snapshots byte-identical). 39c
 added a whole-file, content-addressed snapshot of `~/.claude/history.jsonl` (one pass
@@ -23,7 +28,9 @@ installed frozen `ccw` is 0.1.3 and does not write the two new manifest keys, so
 running the repo's copy against the live archive would leave two versions churning
 every folder's manifest back and forth. Correct order: 39g's version bump, one
 frozen reinstall, then one back-fill.
-39e-39g is the rest of the `history.jsonl`/paste-cache work, which 39b deliberately does not touch.
+39f-39g is what remains: doctor/status/alert wiring and config keys (39f), then docs,
+version bump and the real-data acceptance script (39g). 39b deliberately does not touch
+any of the `history.jsonl`/paste-cache work.
 The short version: ticket 38 covered the sidecars INSIDE a session directory; 39 covers
 the stores OUTSIDE it, which are siblings of `projects/` and so need catalog-driven
 discovery rather than a scan beside the transcript. Measured 2026-09-07:
