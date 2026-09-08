@@ -741,3 +741,12 @@ moving it a decision rather than a hope.
 gates. The failed run published nothing, so no `v0.1.3` artifact ever existed to be
 superseded. Released and verified from outside: PyPI serves 0.1.3 with 2 files, and
 `uvx --refresh --from cc-warehouse ccw version` reports `0.1.3`.
+
+## Refusal watch, first reading 2026-09-08
+
+The operator was asked to watch for a SECOND refusal, on the ground that one inside
+twenty minutes suggests they are not rare and the mechanism is unmeasured. First
+check, later the same day: **still exactly one**, same file, same live session. The
+hook logged it once that session re-fired, so the audit log and the notice now agree.
+Instrument proven before the count was believed: `"status": "ok"` matched 670 lines in
+the same file. Nothing new to conclude about the mechanism yet.

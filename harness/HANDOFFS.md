@@ -21,7 +21,7 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
-### Twenty-ninth handoff, 2026-09-08 (ticket 38 built end to end, 0.1.3, and three sub-agent bugs nobody was looking for)
+### Twenty-ninth handoff, 2026-09-08 (ticket 38 built end to end and released as 0.1.3, then ticket 39 slice 39b)
 
 **One session, six slices, six commits, all pushed on green.** `2a041f4` (38a) ->
 `cdda77a` (38b) -> `a7779e1` (38c) -> `f159de8` (38d) -> `b6439cb` (38e) -> `36940f0`
@@ -104,9 +104,34 @@ than a hope. The tag move itself was put to the operator, since that is the one 
 operation this project gates; the failed run had published nothing, so no v0.1.3
 artifact existed to supersede. PyPI now serves 0.1.3.
 
-**Ticket 39 is unblocked** and is the next task. `store.write_if_absent`,
-`archive.copy_sidecar_dir`, `archive.write_sidecar_notice`, the doctor line and
-`notify.alert` are all built for it to reuse.
+**THEN TICKET 39 SLICE 39b, in the same session.** `external.py` plus the gather for
+`~/.claude/file-history/` and `todos/`, wired into the hook and the sweep. 929,845,225
+bytes that exist nowhere else are now gatherable; the live back-fill is NOT run and
+must wait for the release, because the installed frozen `ccw` is 0.1.3 and does not
+write the two new manifest keys, so two versions would churn every folder's manifest.
+
+**Measuring before building corrected the plan twice**, which is the standing lesson
+"a ticket's finding list is evidence, not a specification" earning its keep again. The
+plan expected about 5% of `file-history/` directories not to be bare session uuids;
+today none of the 1,056 are. And it required catalog-driven discovery, which cannot
+see either of the two cases its own risk table demands be reported (a non-uuid
+directory, and 42 dirs whose session the archive never got) - iterating the catalog
+only ever finds what it already knows about. The code scans and joins instead, which
+keeps the F4 guarantee identically and is 30x cheaper. Recorded in DESIGN 15 rather
+than left as a silent deviation.
+
+**Watching for a second refusal found a defect in what had just shipped instead.**
+There was no second refusal, but checking properly - with a control, 670 `ok` lines
+matched and `refused` matched none - showed the SWEEP path wrote no audit-log line for
+a refusal at all, while the hook path did. The ticket's own acceptance text had
+claimed otherwise; it is corrected in place with the measurement. The notice says what
+is true now for one session, the log says what happened and when across all of them,
+and only the log can be counted afterwards.
+
+**Ticket 39's remaining slices (39c-39g)** are the `history.jsonl` and `paste-cache/`
+work, which 39b deliberately does not touch. `store.write_if_absent`,
+`archive.copy_companion_dir`, `archive.write_sidecar_notice`, the doctor line and
+`notify.alert` are all built for them to reuse.
 
 ### Twenty-eighth handoff, 2026-09-07 (a false green in doctor, a hook that was never 3.9-safe, and ticket 39 planned)
 
