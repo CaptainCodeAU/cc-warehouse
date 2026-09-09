@@ -76,11 +76,41 @@ def test_env_overrides_files(tmp_path: Path) -> None:
             "CCW_ROOT": str(tmp_path / "env-root"),
             "CCW_VOICE_URL": "http://env-voice",
             "CCW_OPEN_FOLDER": "1",
+            "CCW_DESKTOP_ALERTS": "0",
         },
     )
     assert cfg.root == tmp_path / "env-root"
     assert cfg.voice_url == "http://env-voice"
     assert cfg.open_folder is True
+    assert cfg.desktop_alerts is False
+
+
+def test_ccw_desktop_alerts_env_overrides_a_file_that_turns_it_on(tmp_path: Path) -> None:
+    """The test-suite leak this closes (2026-09-09): a sandboxed test that writes
+    its OWN complete config.toml (never mentioning desktop_alerts, or even
+    explicitly turning it on) must not be able to defeat this override -- env
+    beats file, per this module's own documented precedence order."""
+    xdg = write_xdg(tmp_path, "[notify]\ndesktop_alerts = true\n")
+    cfg = load_config(
+        xdg_config_home=xdg,
+        env={"HOME": "/home/alice", "CCW_DESKTOP_ALERTS": "0"},
+    )
+    assert cfg.desktop_alerts is False
+
+
+def test_ccw_desktop_alerts_env_can_also_turn_it_on(tmp_path: Path) -> None:
+    xdg = write_xdg(tmp_path, "[notify]\ndesktop_alerts = false\n")
+    cfg = load_config(
+        xdg_config_home=xdg,
+        env={"HOME": "/home/alice", "CCW_DESKTOP_ALERTS": "1"},
+    )
+    assert cfg.desktop_alerts is True
+
+
+def test_no_env_override_leaves_the_file_value_alone(tmp_path: Path) -> None:
+    xdg = write_xdg(tmp_path, "[notify]\ndesktop_alerts = false\n")
+    cfg = load_config(xdg_config_home=xdg, env={"HOME": "/home/alice"})
+    assert cfg.desktop_alerts is False
 
 
 def test_flags_override_env(tmp_path: Path) -> None:

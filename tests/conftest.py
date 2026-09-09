@@ -146,7 +146,29 @@ def run_cli(args: Sequence[str], stdin: str | None = None) -> CliResult:
 @pytest.fixture()
 def ccw_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     """Sandboxed HOME, USER, and warehouse root, applied to this process and
-    returned as the full environment for subprocess invocations."""
+    returned as the full environment for subprocess invocations.
+
+    `CCW_DESKTOP_ALERTS=0` is set here for every test, real leak found and fixed
+    2026-09-09: `notify.alert` fires a REAL macOS notification whenever
+    `config.desktop_alerts` is true (the default) and `sys.platform == "darwin"`
+    (real, on this machine) - and a `config.toml` a test writes for its OWN
+    purposes never mentions this key, so the true default silently applied. Two
+    fixture UUIDs/names this suite already used everywhere
+    (`d3111111-2222-3333-4444-555555555551`, `zzz-probe`) leaked as two live
+    desktop popups mid-session, confirmed by reading the exact code that builds
+    both message strings (`capture.announce_sidecar_anomaly`). An env var
+    override survives regardless of what any test's own `config.toml` says
+    (env beats file, DESIGN section 8's own precedence order), which a
+    same-shaped fix scoped to this fixture's own config.toml write could not:
+    a per-file/per-test monkeypatch was tried first and rejected, because
+    `run_ccw`-based tests spawn a REAL subprocess and an in-process monkeypatch
+    cannot reach across that boundary - confirmed live by finding a THIRD,
+    unmocked leak inside `test_sidecar_signal.py` itself, a file that already
+    mocks `notify.alert` carefully for its OTHER (in-process, `run_cli`) tests.
+    A test that wants the REAL alert behavior still can: `test_sidecar_signal.py`'s
+    own `alert()` unit tests construct `Config(...)` directly, bypassing
+    `load_config()` and this env var entirely, and its dedup tests monkeypatch
+    `notify.alert` itself, which never reads this flag either way."""
     home = tmp_path / "home"
     (home / ".claude" / "projects").mkdir(parents=True)
     root = tmp_path / "warehouse"
@@ -155,6 +177,7 @@ def ccw_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         "USER": "alice",
         "PATH": os.environ.get("PATH", ""),
         "CCW_ROOT": str(root),
+        "CCW_DESKTOP_ALERTS": "0",
     }
     for key, value in env.items():
         monkeypatch.setenv(key, value)

@@ -34,6 +34,7 @@ ENV_VARS = (
     "CCW_VOICE_ID",
     "CCW_OPEN_FOLDER",
     "CCW_WEBHOOKS",
+    "CCW_DESKTOP_ALERTS",
 )
 
 _DEFAULT_ROOT_NAME = "cc-warehouse-data"
@@ -525,6 +526,8 @@ def load_config(
         voice_id = _str_or_none(resolved_env["CCW_VOICE_ID"])
     if "CCW_OPEN_FOLDER" in resolved_env:
         open_folder = resolved_env["CCW_OPEN_FOLDER"] == "1"
+    if "CCW_DESKTOP_ALERTS" in resolved_env:
+        desktop_alerts = resolved_env["CCW_DESKTOP_ALERTS"] == "1"
     voice_url = _str_or_none(flag_map.get("voice_url")) or voice_url
 
     redact_patterns = tuple(

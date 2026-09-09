@@ -2103,6 +2103,55 @@ Full suite 1593 passed, ruff and pyright strict clean, project-wide, verified
 twice after the archive-logging revert. Full account:
 `harness/tickets/42-*.md`, `harness/HANDOFFS.md`'s next handoff.
 
+### 2026-09-09: the test suite could pop REAL desktop notifications; new `CCW_DESKTOP_ALERTS` env override
+
+The operator saw two real macOS notifications naming `d3111111`/`zzz-probe` -
+both hardcoded test fixture constants, not real data. Root-caused by reading
+`notify.alert` directly: it fires a real `osascript` call whenever
+`config.desktop_alerts` is true (the default, ticket 38 ruling (e) - correct
+for real users) and `sys.platform == "darwin"` (genuinely true on this
+machine, untouched by any mock). Several test files exercise the exact
+"unarchived sibling"/"refused sidecar" anomaly this alert exists for, and
+their own `configure()` helpers write a complete `config.toml` that never
+mentions `desktop_alerts`, so the true default applied for real.
+
+**Two fix shapes were tried and rejected before landing on the right one.**
+A per-file `monkeypatch.setattr(notify, "alert", ...)` fix (the pattern
+`test_sidecar_signal.py` already uses correctly for its OWN dedup tests) only
+protects `run_cli` (in-process) tests - `run_ccw` spawns a REAL subprocess,
+and an in-process monkeypatch cannot reach across that boundary. Confirmed by
+finding a THIRD, unmocked leak inside `test_sidecar_signal.py` ITSELF (a file
+that already mocks `alert` carefully elsewhere): `test_the_notice_is_
+rewritten_to_empty_lists_when_the_anomaly_goes` uses `run_ccw` and was never
+protected. A per-fixture config.toml write (pre-seed `ccw_env`'s own file
+with `desktop_alerts = false`) was rejected too: a test's own later,
+complete `config.toml` write simply overwrites it.
+
+**Shipped: `CCW_DESKTOP_ALERTS`, a new honored env var mirroring
+`CCW_OPEN_FOLDER`'s exact pattern** (`config.py`'s `ENV_VARS` tuple and
+`load_config()`'s override block). Env beats file per this module's own
+documented precedence order, so it survives regardless of what any test's
+own `config.toml` says - the property the other two shapes lacked.
+`tests/conftest.py`'s `ccw_env` fixture now sets `CCW_DESKTOP_ALERTS=0` for
+every test that uses it. Real users are unaffected: nothing sets this
+variable on a real machine, so `config.toml`/the field default (`True`)
+still governs exactly as ticket 38 ruling (e) intended. A test that wants
+the REAL `alert()` behavior still can: `test_sidecar_signal.py`'s own unit
+tests construct `Config(...)` directly, bypassing `load_config()` and this
+env var entirely, and its dedup tests monkeypatch `notify.alert` itself,
+which never reads this flag either way.
+
+Proven, not just argued: `tests/test_config.py` gained three oracle tests
+(env overrides a file that turns it on, env can also turn it on, no env
+leaves the file value alone); `tests/test_sidecar_signal.py` gained
+`test_a_real_anomaly_never_pops_a_real_notification_in_the_test_sandbox`,
+which spies on the exact `subprocess.Popen` call `notify.alert` would make,
+with `sys.platform` left as this machine's REAL value (not monkeypatched
+away, so a false pass from mocking the wrong thing is not possible), and
+confirms the anomaly is still correctly recorded in `sidecars.json` - only
+the OS-level side effect is suppressed. Full suite 1597 passed (up from
+1593), ruff and pyright strict clean.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

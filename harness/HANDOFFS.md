@@ -21,6 +21,51 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-third handoff, 2026-09-09 (real desktop notifications leaking from the test suite)
+
+Triggered by the operator: two REAL macOS notifications appeared naming
+`d3111111` and `zzz-probe`, right after the forty-second handoff's own test
+runs. Both are hardcoded fixture constants (`PARENT`/`STDOUT_NAME`/probe dir
+names reused across several sidecar test files), not real data - confirmed
+by grepping the whole repo for both strings and reading the exact code
+(`capture.announce_sidecar_anomaly`) that builds both message texts,
+matching word for word.
+
+Root cause: `notify.alert` fires a real `osascript` call whenever
+`config.desktop_alerts` is true (the default, correct for real users - ticket
+38 ruling (e)) and `sys.platform == "darwin"` (genuinely true here, no mock
+involved). `tests/test_sidecar_capture.py` and `tests/test_sidecar_sweep.py`
+both exercise the exact anomaly this alert exists for, via a REAL `run_ccw`
+subprocess call, and neither mocks the sink.
+
+Two fix shapes tried and rejected before the right one, both disproven by
+direct evidence rather than assumed: a per-test `monkeypatch.setattr(notify,
+"alert", ...)` only protects IN-PROCESS (`run_cli`) tests - `run_ccw` spawns
+a real subprocess a same-process monkeypatch cannot reach, proven by finding
+a THIRD live leak inside `test_sidecar_signal.py` ITSELF, a file that already
+mocks `alert` carefully for its own dedup tests but has one unrelated
+`run_ccw`-based test with no such protection. Pre-seeding the sandbox's own
+`config.toml` with `desktop_alerts = false` was rejected too: several tests'
+own `configure()` helpers later write a COMPLETE `config.toml` of their own,
+overwriting any pre-seeded default.
+
+Shipped: a new `CCW_DESKTOP_ALERTS` env var (`config.py`, mirroring
+`CCW_OPEN_FOLDER`'s exact pattern), set to `"0"` for every test by
+`tests/conftest.py`'s `ccw_env` fixture. Env beats file per this project's
+own documented config precedence, so it survives regardless of what any
+test's own config.toml says - real users are unaffected, since nothing sets
+this variable outside a test sandbox. Four new oracle tests, one of them
+spying on the real `subprocess.Popen` call with the machine's REAL
+`sys.platform` left untouched (not monkeypatched away, so a false pass from
+mocking the wrong thing is not possible), confirming zero calls while the
+anomaly itself is still correctly recorded. Full suite 1597 passed (up from
+1593), ruff and pyright strict clean.
+
+Committed and pushed. No plugin/reinstall step needed - this only changes
+test-time behaviour and `config.py`'s honored env-var list, neither of which
+the hook wrapper reads. Full account: `contract/DESIGN.md` section 15,
+"2026-09-09: the test suite could pop REAL desktop notifications" entry.
+
 ### Forty-second handoff, 2026-09-09 (ticket 42 #2/#3/#7: the logs stop lying, ccw archive stays out of scope)
 
 Picked up `OPENING-PROMPT.md`'s priority-order item 5 (ticket 42's remaining

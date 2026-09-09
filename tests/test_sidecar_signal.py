@@ -362,6 +362,43 @@ def test_desktop_alerts_defaults_to_true(tmp_path: Path) -> None:
     assert Config(root=tmp_path).desktop_alerts is True
 
 
+def test_a_real_anomaly_never_pops_a_real_notification_in_the_test_sandbox(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE REAL LEAK THIS CLOSES, 2026-09-09: this exact scenario -- an unarchived
+    `zzz-probe` sibling beside `d3111111`/`aaaaaaaa-...` -- fired a REAL macOS
+    desktop notification mid-session, because `config.desktop_alerts` defaults to
+    True, `sys.platform` is genuinely `darwin` on this machine, and `configure()`
+    below (like several other test files' own config helpers) never mentions
+    `desktop_alerts` at all. `ccw_env` now sets `CCW_DESKTOP_ALERTS=0`, which
+    OVERRIDES the file's silence on the matter (env beats file) -- proven here by
+    spying on the exact `subprocess.Popen` call `notify.alert` would make, real
+    `sys.platform` UNTOUCHED (this is the actual machine's real value, not a
+    monkeypatched stand-in, so a false pass from mocking away the wrong thing is
+    not possible)."""
+    from conftest import run_cli
+
+    calls: list[list[str]] = []
+
+    def spy_popen(args: list[str], **kwargs: object) -> object:
+        calls.append(args)
+        return object()
+
+    monkeypatch.setattr(subprocess, "Popen", spy_popen)
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    probe = Path(ccw_env["HOME"]) / ".claude" / "projects" / ENCODED / UUID_A / "zzz-probe"
+    probe.mkdir(parents=True)
+
+    assert run_cli(["sweep", "--quiet"]).code == 0
+
+    assert calls == [], f"a real osascript Popen call was made: {calls}"
+    folder = sorted(archive_root.glob(f"*/*_{UUID_A}"))[0]
+    body = cast(dict[str, object], json.loads((folder / "sidecars.json").read_text("utf-8")))
+    assert body["unarchived"] == ["zzz-probe"], "the anomaly itself must still be recorded"
+
+
 # ---------------------------------------------------------------------------
 # The dedup, end to end: one alert per NEW anomaly, not one per run
 # ---------------------------------------------------------------------------
