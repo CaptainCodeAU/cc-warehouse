@@ -44,9 +44,15 @@ with existing open tickets, so those are merged in rather than duplicated:
 5. **Rest of ticket 42's ranked list** (#2, #3, #6, #7, plus the two
    unranked design-tradeoff items) - see
    `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
-6. **Ticket 41 Finding 1** - stop a live SessionStart hook from silently
-   running this repo's dev checkout instead of the installed `ccw` (small,
-   standalone, can be done any time in this sequence).
+6. **Ticket 41 Finding 1 - DONE and LIVE (2026-09-09).** Picked up out of
+   order after a live SessionStart timeout led straight to it (4th same-day
+   recurrence). Both `find_ccw()` copies now skip a `.venv` PATH hit and
+   fall back to the frozen `~/.local/bin/ccw` shim; shipped `971bbc4`,
+   pushed, plugin cache updated and verified to hold the new code. Not yet
+   re-confirmed whether the 45s timeouts themselves stop recurring - check
+   `~/.claude/logs/ccw-freshness-state.json`'s `consecutive_broken` after a
+   few more session-starts. Full account: `harness/HANDOFFS.md`'s
+   thirty-eighth handoff, `harness/tickets/41-*.md`'s Finding 1.
 7. **The standing backlog below, unchanged** - ticket 28's remaining items,
    version cuts, ticket 19 leftovers, etc.
 

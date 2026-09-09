@@ -62,7 +62,27 @@ at all - confirmed in the addendum), with `ccw repair` 15 minutes later
 finishing incomplete renders - the sweep half of that story still has no
 durable log evidence of its own, which is Finding 2 below.
 
-## Finding 1 (HIGH): a live hook can silently run the dev checkout instead of production
+## Finding 1 (HIGH): a live hook can silently run the dev checkout instead of production - DONE 2026-09-09
+
+**Fixed and verified live the same day it was investigated further** - a 4th same-day
+recurrence (session `4c934843-9283-459a-be57-7224d9c8ea58`, plus the freshness-check's own
+`consecutive_broken` streak hitting 5) triggered a direct root-cause pass. `find_ccw()` in
+both `plugins/cc-capture/hooks/ccw-hook.py` and `ccw-freshness-check.py` now skips any
+`shutil.which()` hit under `/.venv/` and falls through to the frozen `~/.local/bin/ccw`
+shim instead of trusting whatever PATH resolves; the explicit `CCW_BIN` override is
+unaffected. Oracle tests first (`tests/test_find_ccw_skips_dev_checkout.py`, red before,
+green after), full suite 1531 passed, ruff/pyright clean. Shipped as `971bbc4`, pushed,
+`claude plugin marketplace update` + `claude plugin update cc-capture@cc-warehouse` run,
+and verified live by grepping the actual plugin cache copy
+(`~/.claude/plugins/cache/cc-warehouse/cc-capture/971bbc4e43de/hooks/`) for the new line -
+present in both files. Full account: `harness/HANDOFFS.md`'s thirty-eighth handoff.
+**Not yet re-measured**: whether this actually stops the 45s timeouts recurring (a
+separate, unproven angle - the data disk was measured at 95% full during the same
+investigation - was also raised and is not ruled out as a contributing factor). A future
+session should check whether `~/.claude/logs/ccw-freshness-state.json`'s
+`consecutive_broken` resets after a few more session-starts.
+
+Original finding, kept for the record:
 
 CLAUDE.md already documents this trap for INTERACTIVE `ccw doctor` runs from
 inside this repo. This incident shows it also fires for the `ccw-freshness-check.py`

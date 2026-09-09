@@ -21,6 +21,48 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-eighth handoff, 2026-09-09 (ticket 41 Finding 1 shipped and verified live)
+
+Picked up out of the stated queue order (item #6, moved ahead of #2/#4) after the
+principal asked to investigate a live SessionStart hook warning ("could not check
+capture, 4 session-starts in a row") rather than proceed straight to ticket 42 #4. Root
+cause, confirmed not inferred: `find_ccw()` in both `plugins/cc-capture/hooks/ccw-hook.py`
+and `ccw-freshness-check.py` resolves `ccw` via `shutil.which("ccw")`, and this repo's
+own `.envrc` puts `.venv/bin` ahead of `~/.local/bin` on PATH for any process whose cwd
+is under the repo - so a hook fired from a cc-warehouse session silently ran the editable
+dev checkout instead of the frozen install. Direct evidence: session
+`4c934843-9283-459a-be57-7224d9c8ea58`'s `ccw-hook.log` "started" line names
+`.../cc-warehouse/.venv/bin/python3` as its interpreter (a 4th same-day instance of the
+already-tracked ticket 37 Part B "started with no ok/error" pattern - it got captured
+anyway, later, by a sweep, not by the hook completing), and `~/.claude/logs/ccw-freshness-
+state.json` showed `consecutive_broken` climbing to 5 while the timeouts happened - all
+against that same dev copy (`_DOCTOR_TIMEOUT=45`). Manually running the frozen install
+correctly (`env -u VIRTUAL_ENV PATH=... ~/.local/bin/ccw doctor`) answered in a few
+seconds both times, ruling out doctor itself being slow.
+
+Fix: both `find_ccw()` copies now skip a `shutil.which()` hit under `/.venv/` and fall
+through to the frozen `~/.local/bin/ccw` shim; the explicit `CCW_BIN` override is
+untouched. Oracle tests first (`tests/test_find_ccw_skips_dev_checkout.py`, 6 cases across
+both modules): confirmed red before the fix, green after. Full suite 1531 passed, ruff and
+pyright both clean. One thing the new test file itself violated on the first pass and had
+to be corrected before commit: it hardcoded the real machine's home-directory path,
+tripping `test_packaging.py::test_no_forbidden_content_in_the_artifact` - replaced with
+`tmp_path`-relative and generic system paths per this repo's own "never commit personal
+data" rule.
+
+**SHIPPED AND VERIFIED LIVE, not just committed.** Pushed `971bbc4`, then
+`claude plugin marketplace update cc-warehouse` followed by
+`claude plugin update cc-capture@cc-warehouse` (`a7815557d7b2` -> `971bbc4e43de`,
+"restart required to apply"), then verified by grepping the actual plugin cache copy at
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/971bbc4e43de/hooks/{ccw-hook,ccw-
+freshness-check}.py` for the new `"/.venv/" not in found` line directly - present in both.
+Not yet re-measured post-restart whether the 45s timeout itself stops recurring (the disk-
+at-95%-full angle raised during investigation is a real but unproven contributing factor,
+separate from this fix); a future session should check `~/.claude/logs/ccw-freshness-
+state.json`'s `consecutive_broken` after a few more session-starts. Ticket 41's own file
+should have Finding 1 marked closed with this account; `OPENING-PROMPT.md`'s priority
+list item #6 updated to point here instead of restating it.
+
 ### Thirty-seventh handoff, 2026-09-09 (ticket 42 #1 shipped; ticket 37 Part B found chronic)
 
 Ticket 42 item #1 (real desktop/voice notification on `ccw-freshness-check.py`'s
