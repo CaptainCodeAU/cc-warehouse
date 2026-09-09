@@ -54,6 +54,18 @@ reasoning in `contract/DESIGN.md` section 15 ("2026-09-10, ticket 42's last unra
 item") and closed the ticket file. **Ticket 42 is now fully closed - every item done or
 explicitly declined.**
 
+Asked "what's next", swept the remaining queue for anything else genuinely ready to act
+on, and found a third stale note of the same shape: `OPENING-PROMPT.md` said ticket
+28.11 (sub-agent markdown/HTML rendering) was "coded and committed locally, NOT yet
+pushed or reinstalled - pending review." Checked directly: `git log
+origin/master..HEAD` showed nothing ahead (already pushed) and the installed
+`render.py` is byte-identical to the repo copy (already reinstalled). Corrected the
+paragraph. Also checked ticket 31.4's revisit condition (not ready - only ~1 day of
+real signal since the fix that would settle it) and the session's flagged Critical risk
+register item (already mid-mitigation, review booked 2026-09-23, nothing due now) -
+both left as-is, nothing to fix there. Everything above needed the operator's own call
+at each step; nothing was pushed without asking first.
+
 ### Forty-fifth handoff, 2026-09-09 (ticket 28.11: markdown and HTML for sub-agents; and two calls made without asking)
 
 Continuation of the same session as the forty-fourth handoff. After ticket

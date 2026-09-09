@@ -200,12 +200,15 @@ filter, zero console errors - and against a headless Node probe (9 tests) for th
 pure-data half. Full account: `harness/HANDOFFS.md`'s twentieth handoff, and
 `tools/ccstats/README.md`'s "The 3D companion page" section.
 
-**28.11 (markdown/HTML for sub-agents) is DONE 2026-09-09**: new opt-in
+**28.11 (markdown/HTML for sub-agents) is DONE 2026-09-09, and confirmed
+PUSHED + REINSTALLED/LIVE as of 2026-09-10**: new opt-in
 `[render] subagent_projections` config key (default OFF, zero effect on any
 existing install), oracle-tested (7 new tests, full suite 1607 passed),
-verified against a real scratch-archive sweep. Coded and committed locally,
-NOT yet pushed or reinstalled - pending review. See
-`harness/tickets/28-backlog.md`'s 28.11 DONE block.
+verified against a real scratch-archive sweep. This paragraph previously said
+it was still local-only and pending review; that was stale - `git log
+origin/master..HEAD` shows nothing ahead, and the installed `render.py`
+is byte-identical to the repo's copy. See `harness/tickets/28-backlog.md`'s
+28.11 DONE block.
 
 **Standing backlog candidates, none picked yet** (ticket 28's other open items):
 secret redaction on personal projections (28.2, scoped 2026-09-09 and found to be
