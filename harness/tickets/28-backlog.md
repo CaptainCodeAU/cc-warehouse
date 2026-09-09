@@ -486,9 +486,40 @@ here into their own ticket when they are taken up.
   sessions). Design it once, covering both this item's test-gap framing and
   42's alerting need, rather than building two separate reconciliation passes.
 
-- **28.11  Markdown and HTML for sub-agents.** Purely additive now that each
-  sub-agent has its own folder: a config key, a flag, and the files appear
-  beside the JSONL.
+- **28.11  DONE 2026-09-09.** Markdown and HTML for sub-agents. Purely additive
+  now that each sub-agent has its own folder: a config key, a flag, and the
+  files appear beside the JSONL.
+  **Shipped as a new `[render] subagent_projections` config key (default
+  OFF, `Config.render_subagent_projections`), extending `archive.write_subagent`
+  with an optional `render_options` parameter.** When given, the same four
+  files a session gets (`transcript.md`, `transcript.compact.md`,
+  `conversation.html`, `conversation.compact.html`, reusing `GENERATED_NAMES`
+  rather than a second definition, R9) are written beside the sub-agent's own
+  JSONL via `store.write_if_changed` - idempotent by construction, so no new
+  incremental-skip machinery was needed the way `write_session_folder` has
+  one for its five files. No manifest.json for a sub-agent, matching today's
+  state (it has none to begin with). On a refusal (the replace-if-larger rule
+  a sub-agent already had), rendering reads the JSONL back off disk rather
+  than the declined payload - the same "the payload that renders is the one
+  that survived" lesson ticket 29 already paid for in the session writer,
+  applied here on the same day it was scoped rather than repeated as a live
+  bug later. Both callers wired: `capture.py`'s `_archive_subagents_of` (the
+  detached companions child, ticket 37 Part B) and `sweep.py`'s
+  `_archive_subagent`, each building a `render.RenderOptions` via
+  `build.render_options(config)` only when the flag is on.
+  7 new oracle tests in `tests/test_subagent_capture.py` (opt-in renders the
+  four files with real content, sweeping twice is idempotent, the hook path
+  renders too via the detached companions child), all confirmed to fail
+  against a `git stash` of just the production diff before being confirmed
+  green after. Full suite 1607 passed (was 1604), ruff and pyright strict
+  clean project-wide. **Verified against real data**: a real, limited `ccw
+  sweep --limit 200` into a scratch archive (never the real
+  `~/cc-warehouse-archive`) rendered a real sub-agent's actual transcript
+  correctly (readable markdown header, project/session/branch metadata,
+  turns count) and a second sweep confirmed idempotence (0 stored, no
+  errors) - scratch directory deleted afterward, nothing touched in the real
+  archive. Default stays OFF, so this ships with zero effect on any existing
+  install until an operator opts in.
 
 - **28.12  Re-homing an orphaned sub-agent when its parent arrives.**
   Unreachable today (0 orphans) and it collides with R4 as amended: moving a

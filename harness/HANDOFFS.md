@@ -21,6 +21,49 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-fifth handoff, 2026-09-09 (ticket 28.11: markdown and HTML for sub-agents; and two calls made without asking)
+
+Continuation of the same session as the forty-fourth handoff. After ticket
+42 #6 shipped, pushed, and was reinstalled live (operator go-ahead given),
+the operator said "you pick" for what to do next. Two judgment calls were
+made and documented rather than asked about, per that instruction:
+
+1. Ticket 42's last open item (registering capture logic directly in
+   `settings.json` as a hedge against Claude Code issue #16288) was reviewed
+   and DEFERRED, not built. The addendum's own research found #16288 is not
+   confirmed to be what caused this incident (that was a different bug,
+   already fixed by ticket 37 Part B); doubling every session's hook
+   overhead forever to hedge an unconfirmed risk was judged not worth it.
+2. Ticket 28.2 (secret redaction on personal projections) was scoped and
+   also set aside: closer reading of `share.py` showed its redaction is
+   scan-and-abort, not scan-and-scrub, and the actual risk for LOCAL-only
+   projections is low (the same secret already sits in `~/.claude/projects`
+   before this project ever touches it). Genuinely "defensible either way,"
+   as the ticket already said, so it stays undecided rather than picked
+   without a real reason to prefer one side.
+
+Picked ticket 28.11 instead: sub-agent transcripts get archived but never
+rendered, so reading one meant reading raw JSONL by hand. Scoped by reading
+`archive.write_subagent`'s own docstring (which literally said "sub-agents
+are archived, not rendered... a flag for it recorded as future work") and
+`write_session_folder`'s streamed-rendering machinery, then built the
+smallest version that delivers the real value: a new `[render]
+subagent_projections` config key (default OFF), and `write_subagent`
+optionally rendering the same four files a session gets via
+`store.write_if_changed` - no new manifest, no new incremental-skip system,
+reusing `GENERATED_NAMES` (R9) and the "render the payload that survived"
+lesson ticket 29 already paid for once.
+
+7 new oracle tests, confirmed red against a `git stash` of just the
+production diff before being confirmed green. Full suite 1607 passed (was
+1604), ruff and pyright strict clean. Verified against real data: a real,
+limited `ccw sweep --limit 200` into a scratch archive (never the real one)
+rendered an actual sub-agent transcript correctly and a second sweep proved
+idempotence; scratch directory deleted afterward. Default stays OFF, so
+nothing changes for any existing install unless an operator opts in - not
+pushed or reinstalled as of this handoff, pending the operator's review.
+Full account: `harness/tickets/28-backlog.md`'s 28.11 DONE block.
+
 ### Forty-fourth handoff, 2026-09-09 (ticket 42 #6: the hook-dispatch-gap detector)
 
 Picked up from the OPENING-PROMPT.md priority queue after the operator chose

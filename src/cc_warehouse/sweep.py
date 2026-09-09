@@ -216,7 +216,7 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
     Returns None when this is not a sub-agent, so the caller falls through to
     the ordinary path.
     """
-    from cc_warehouse import archive
+    from cc_warehouse import archive, build
 
     try:
         data = path.read_bytes()
@@ -257,6 +257,9 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
             config.archive_timezone,
             meta=meta,
             companions=capture.forked_skill_companions(path),
+            render_options=(
+                build.render_options(config) if config.render_subagent_projections else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")

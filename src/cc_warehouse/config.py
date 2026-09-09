@@ -11,7 +11,8 @@ missing from this list entirely until 2026-09-08, ticket 38);
 [notify] voice_url voice_id open_folder desktop_alerts;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
-attachments_compact commands_compact extras_compact tool_output_compact, and the
+attachments_compact commands_compact extras_compact tool_output_compact,
+subagent_projections (ticket 28.11, 2026-09-09), and the
 chrome keys html_width html_font html_turns details html_dates, the
 truncation cap tool_output_max_chars, and thinking_withheld (ticket 20, 2026-08-02);
 [share] redact_patterns; [relocate] roots; [import] inbox;
@@ -227,6 +228,18 @@ class Config:
     render_commands_compact: bool = False
     render_extras_compact: bool = False
     render_tool_output_compact: bool = False
+    # Ticket 28.11: whether an archived sub-agent ALSO gets its own transcript.md/
+    # transcript.compact.md/conversation.html/conversation.compact.html, the same
+    # four files a session gets, written beside its own agent-<id>.jsonl. A
+    # DIFFERENT QUESTION from `render_subagents` above, which governs an inline
+    # summary INSIDE the PARENT session's own markdown -- this is about the
+    # sub-agent's own transcript being independently readable at all. DEFAULTS
+    # OFF: `archive.write_subagent`'s long-standing behaviour ("sub-agents are
+    # archived, not rendered") is the default the principal set, and this key
+    # only extends it for whoever opts in, matching v1.1's own "empty config
+    # renders byte-identical output" rule for anything that adds output nobody
+    # asked for.
+    render_subagent_projections: bool = False
     # HTML chrome initial states (block 2). Variant-agnostic by contract, so
     # there is deliberately no `_full` or `_compact` sibling for any of them.
     render_html_width: str = "large"
@@ -609,6 +622,12 @@ def load_config(
         render_tool_output_compact=_flag_bool(
             flag_map, "tool_output_compact", _bool(render.get("tool_output_compact"), False)
         ),
+        # Ticket 28.11. Plain config, no `_flag_bool`/CLI flag: unlike the
+        # per-VARIANT matrix keys above (a `ccw build`/`ccw render` invocation
+        # concern), this decides what `write_subagent` writes into the ARCHIVE
+        # at capture/sweep time, the same layer `archive_subagents` and
+        # `archive_tool_results` already govern.
+        render_subagent_projections=_bool(render.get("subagent_projections"), False),
         render_html_width=_chrome(render, flag_map, "html_width", problems),
         render_html_font=_chrome(render, flag_map, "html_font", problems),
         render_html_turns=_chrome(render, flag_map, "html_turns", problems),

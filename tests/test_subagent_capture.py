@@ -43,7 +43,13 @@ PARENT = "d3111111-2222-3333-4444-555555555551"
 CWD = "/home/alice/projects/widget"
 
 
-def configure(env: dict[str, str], archive_root: Path, *, subagents: bool | None = None) -> None:
+def configure(
+    env: dict[str, str],
+    archive_root: Path,
+    *,
+    subagents: bool | None = None,
+    render_projections: bool | None = None,
+) -> None:
     cfg = Path(env["HOME"]) / ".config" / "cc-warehouse"
     cfg.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -53,6 +59,9 @@ def configure(env: dict[str, str], archive_root: Path, *, subagents: bool | None
     ]
     if subagents is not None:
         lines.append(f"archive_subagents = {'true' if subagents else 'false'}")
+    if render_projections is not None:
+        lines.append("[render]")
+        lines.append(f"subagent_projections = {'true' if render_projections else 'false'}")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
 
@@ -115,6 +124,65 @@ def test_the_subagent_gets_no_markdown_or_html(
     assert run_ccw(["sweep"], ccw_env).code == 0
     sub = next(target.rglob(f"{AGENT}.jsonl")).parent
     assert {p.name for p in sub.iterdir()} == {f"{AGENT}.jsonl", "meta.json"}
+
+
+def test_opting_in_renders_the_subagent_too(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """Ticket 28.11: the same four files a session gets, opt-in."""
+    target = tmp_path / "archive"
+    configure(ccw_env, target, render_projections=True)
+    plant(ccw_env)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    sub = next(target.rglob(f"{AGENT}.jsonl")).parent
+    names = {p.name for p in sub.iterdir()}
+    assert names == {
+        f"{AGENT}.jsonl",
+        "meta.json",
+        "transcript.md",
+        "transcript.compact.md",
+        "conversation.html",
+        "conversation.compact.html",
+    }, names
+    assert "REUSE-focused reviewer" in (sub / "transcript.md").read_text(encoding="utf-8")
+    assert "REUSE-focused reviewer" in (sub / "conversation.html").read_text(encoding="utf-8")
+
+
+def test_sweeping_twice_with_projections_on_is_idempotent(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    target = tmp_path / "archive"
+    configure(ccw_env, target, render_projections=True)
+    plant(ccw_env)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    sub = next(target.rglob(f"{AGENT}.jsonl")).parent
+    first = (sub / "transcript.md").read_bytes()
+
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    assert (sub / "transcript.md").read_bytes() == first
+
+
+def test_the_hook_renders_the_subagent_when_opted_in(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The capture path, not just the sweep: the detached companions child
+    (ticket 37 Part B) is what actually calls `write_subagent` here."""
+    target = tmp_path / "archive"
+    configure(ccw_env, target, render_projections=True)
+    plant(ccw_env)
+    transcript = (
+        Path(ccw_env["HOME"]) / ".claude" / "projects"
+        / "-home-alice-projects-widget" / f"{PARENT}.jsonl"
+    )
+    assert (
+        run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, cwd=CWD, session_id=PARENT)).code
+        == 0
+    )
+    settle_companions(ccw_env)
+
+    sub = next(target.rglob(f"{AGENT}.jsonl")).parent
+    assert (sub / "transcript.md").is_file()
+    assert (sub / "conversation.html").is_file()
 
 
 def test_the_opt_out_restores_the_old_behaviour(

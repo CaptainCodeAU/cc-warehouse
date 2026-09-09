@@ -195,9 +195,17 @@ filter, zero console errors - and against a headless Node probe (9 tests) for th
 pure-data half. Full account: `harness/HANDOFFS.md`'s twentieth handoff, and
 `tools/ccstats/README.md`'s "The 3D companion page" section.
 
+**28.11 (markdown/HTML for sub-agents) is DONE 2026-09-09**: new opt-in
+`[render] subagent_projections` config key (default OFF, zero effect on any
+existing install), oracle-tested (7 new tests, full suite 1607 passed),
+verified against a real scratch-archive sweep. Coded and committed locally,
+NOT yet pushed or reinstalled - pending review. See
+`harness/tickets/28-backlog.md`'s 28.11 DONE block.
+
 **Standing backlog candidates, none picked yet** (ticket 28's other open items):
-secret redaction on personal projections (28.2), test gaps (28.10), markdown/HTML for
-sub-agents (28.11), re-homing an orphaned sub-agent when its parent arrives (28.12),
+secret redaction on personal projections (28.2, scoped 2026-09-09 and found to be
+a genuine "defensible either way" - see the forty-fifth handoff), test gaps (28.10),
+re-homing an orphaned sub-agent when its parent arrives (28.12),
 `prefers-color-scheme` for shared pages (28.14), and `ccw share --open` as a possible
 fast follow-up to `ccw render --open` (28.1, already done). Full entries:
 `harness/tickets/28-backlog.md`.

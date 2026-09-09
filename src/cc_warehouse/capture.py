@@ -423,12 +423,13 @@ def _archive_subagents_of(
     directory = sidecars.locate(transcript_path, session_uuid)
     if directory is None:
         return
-    from cc_warehouse import archive
+    from cc_warehouse import archive, build
 
     subagents = directory / archive.SUBAGENTS_DIR
     if not subagents.is_dir():
         return
     label = _label_of(conn, project_id)
+    render_opts = build.render_options(config) if config.render_subagent_projections else None
     # RECURSIVE since ticket 38. Claude Code also writes Workflow-tool sub-agents
     # at `subagents/workflows/wf_<id>/agent-*.jsonl` - 432 files, 33 MB, 211
     # distinct transcripts - and a non-recursive glob reached none of them. The
@@ -447,6 +448,7 @@ def _archive_subagents_of(
                 config.archive_timezone,
                 meta=meta_path.read_bytes() if meta_path.is_file() else None,
                 companions=forked_skill_companions(child),
+                render_options=render_opts,
             )
         except Exception:  # noqa: BLE001, PERF203 - one bad sub-agent never costs the capture
             continue
