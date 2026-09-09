@@ -477,6 +477,15 @@ here into their own ticket when they are taken up.
   collision; ENOSPC mid-write; cross-tree reconciliation as a TEST rather than
   a hand-check; rename-then-rebuild for `project.json`.
 
+  **2026-09-09 cross-reference:** the "cross-tree reconciliation" gap named
+  here is the same shape of mechanism ticket 42's proposal #5 would build
+  (`harness/tickets/42-capture-logging-and-alerting-gaps.md`) - cross-checking
+  `capture.jsonl`'s error records against whether the source file or an
+  archive folder now exists, surfaced by the 2026-09-09 capture-alert
+  incident (ticket 41 Finding 5, a real case of exactly this gap costing 3
+  sessions). Design it once, covering both this item's test-gap framing and
+  42's alerting need, rather than building two separate reconciliation passes.
+
 - **28.11  Markdown and HTML for sub-agents.** Purely additive now that each
   sub-agent has its own folder: a config key, a flag, and the files appear
   beside the JSONL.

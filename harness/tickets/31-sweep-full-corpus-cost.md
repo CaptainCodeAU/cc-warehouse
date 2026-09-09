@@ -353,6 +353,34 @@ widening `_desync` into a public API it does not otherwise need -, `uv run
 ruff check` clean). `tests/golden/matrix-anchor` untouched (re-run directly,
 61 passed) - `ccw doctor` output is not part of the projected matrix.
 
+## 2026-09-09 cross-reference (do not re-investigate the mechanism from scratch)
+
+A `ccw-logging-audit` agent, dispatched during ticket 41/42's 2026-09-09
+incident investigation, found something this ticket's own 31.4 closing note
+did not know at the time: **`catalog.record_event` is never called with
+`action="error"` anywhere in this codebase.** 31.4's decision to leave the
+retry loop unshipped rested on two signals - "0 `capture_event` rows with
+`action='error'` in the live catalog" and "the live `add_session`/
+`record_event` wrap has not fired." The first of those two can NEVER be
+anything other than zero, by construction - it was never real evidence the
+lock-contention exception "has not recurred," only evidence that nothing
+writes that kind of row at all. The second signal (the `capture.jsonl`-based
+wrap 31.4 itself added) is real and unaffected by this. Net effect: the
+"hasn't recurred" verdict was resting on one real signal and one that could
+never have said otherwise either way - not disproven, just weaker evidence
+than it read as.
+
+Ticket 42's proposal #4 (`harness/tickets/42-capture-logging-and-alerting-gaps.md`)
+would fix this specific gap. **Do that before next revisiting whether to ship
+31.4's retry loop** - the decision deserves a real signal, not a
+by-construction zero. This ticket's own fault-tree research (ticket 41's
+addendum) also flagged the same catalog-contention mechanism (5s
+`busy_timeout` x 3 retries) as one candidate explanation for that incident's
+separate hook-dispatch gap - a different symptom, but the same underlying
+open question this ticket already posed and never confirmed. Don't
+investigate the mechanism twice; whichever session revisits this should read
+both this ticket's 31.4 and ticket 41's addendum first.
+
 ## Things already checked and ruled out (do not re-investigate)
 
 - Duplicate hook registration (old `claude-transcript-exporter` plugin cache

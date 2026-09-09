@@ -5,6 +5,46 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
+**PRIORITY ORDER, set 2026-09-09, supersedes "nothing is queued" below until
+someone changes it.** Everything found during the 2026-09-09 capture-alert
+incident (tickets 41/42) now sits at the top of the queue, ahead of the
+standing backlog, in this order - two of these items were found to overlap
+with existing open tickets, so those are merged in rather than duplicated:
+
+1. **Ticket 42 #1** - wire a real desktop/voice notification into
+   `ccw-freshness-check.py`'s WARN/ALERT tiers (today they only print to
+   stdout, which is why this whole incident needed a peer session to notice
+   and relay it by hand). Cheap, standalone, ~10 lines.
+2. **Ticket 42 #4** - fix or relabel `ccw status`'s "Recent errors" section.
+   **Do this before revisiting ticket 31.4's stalled decision** (see
+   ticket 31's own file, "2026-09-09 cross-reference" note): one of the two
+   signals ticket 31.4 was watching for its lock-contention retry-loop
+   decision can never fire, by construction, so that decision has been
+   resting partly on a broken instrument, not a real "hasn't recurred."
+3. **Revisit ticket 31.4's retry-loop decision** once #2 lands and has run
+   for a while - the monitoring signal will finally be real.
+4. **Ticket 42 #5** - build the capture.jsonl-vs-archive reconciliation
+   check (the single highest-value fix for real, permanent data loss - see
+   ticket 41 Finding 5). **This also closes ticket 28.10's long-standing
+   "cross-tree reconciliation as a test, not a hand-check" gap** (see
+   ticket 28's own file, "2026-09-09 cross-reference" note) - design it once
+   for both, don't build it twice.
+5. **Rest of ticket 42's ranked list** (#2, #3, #6, #7, plus the two
+   unranked design-tradeoff items) - see
+   `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
+6. **Ticket 41 Finding 1** - stop a live SessionStart hook from silently
+   running this repo's dev checkout instead of the installed `ccw` (small,
+   standalone, can be done any time in this sequence).
+7. **The standing backlog below, unchanged** - ticket 28's remaining items,
+   version cuts, ticket 19 leftovers, etc.
+
+Full incident account and every finding's evidence:
+`harness/tickets/41-capture-alert-incident-2026-09-09.md` +
+`harness/tickets/41-addendum-rca-evidence-2026-09-09.md`. Full fix list:
+`harness/tickets/42-capture-logging-and-alerting-gaps.md`.
+
+---
+
 **TICKET 39 IS SHIPPED, LIVE, AND CLOSED, 2026-09-08.** All of 39a-39g landed,
 including the operator-gated reinstall and back-fill. `ccw` on this machine is the
 frozen `0.1.4` (confirmed both by `ccw doctor`'s `install` line and PEP 610's
@@ -22,10 +62,9 @@ release step: gates + publish both green
 the published wheel/sdist sha256 hashes match a local `uv build` exactly -
 verified from the outside, not just a green CI run.
 
-**Nothing is queued as the next task right now** - ticket 39 closes this track.
-Read the ticket file's full history for context if picking up new work here;
-otherwise check `CLAUDE.md`'s `## OPEN / next` for the standing backlog (ticket 28,
-version cuts not yet started, etc).
+**CORRECTED 2026-09-09: no longer nothing queued** - see the priority order at
+the very top of this file. Ticket 39 itself closed that track; what follows is
+kept for its historical detail on how 39 was built, not as the active pointer.
 
 For historical detail on how 39 was built, 39f added the config switch
 `archive_history_prompts` (one early-return added to `sweep._process_history`'s and
@@ -97,6 +136,31 @@ fast follow-up to `ccw render --open` (28.1, already done). Full entries:
 `harness/tickets/28-backlog.md`.
 
 **Also still open, not scheduled:**
+- **Ticket 41 (new, 2026-09-09): capture-alert incident + root-cause pass, NOT
+  started.** A 56-uncaptured alert traced to a mostly-pre-existing backlog (not ~50
+  sessions failing at once), root-caused to Claude Code never invoking the SessionEnd
+  hook for 12 of 14 sessions that ended that day (outside this repo's own code/logs).
+  Confirmed real gaps worth fixing: a live SessionStart hook can silently run this
+  repo's dev checkout instead of the installed `ccw`; `ccw sweep` has no durable log
+  record on a successful run; and a source-file-vanishes-before-capture blind spot
+  that no `ccw doctor` check can ever detect. **CRITICAL, still genuinely open: 3
+  specific sessions (5604f5fd/bf09caea/313b7e02) have NO trace anywhere on this
+  machine - not source, not archive - and whether they held real content is
+  unresolved.** Full raw evidence, plus external research on Claude Code's own documented
+  hook-reliability limitations, in the companion addendum file. See
+  `harness/tickets/41-capture-alert-incident-2026-09-09.md` and
+  `harness/tickets/41-addendum-rca-evidence-2026-09-09.md`.
+- **Ticket 42 (new, 2026-09-09): 7 ranked, scoped fixes for the logging/
+  alerting gaps ticket 41 found, NOT started.** Two new structural findings
+  beyond 41: `ccw-hook.log`'s "ok" status is unreliable for ANY graceful
+  failure (not just the 3 sessions in 41), and `ccw status`'s "Recent
+  errors" can never show anything (the code path that would log an error
+  row is never called). Core gap: the ALERT tier that fired during the
+  incident never actually notifies (voice/desktop) - it only prints to
+  stdout, pull-based not push-based, which is why a peer session had to
+  relay it manually. Cheapest, highest-value fix (#1, ~10 lines) is wiring
+  real notification into that tier. See
+  `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
 - **Ticket 31's lock-contention mechanism is still UNPROVEN.** Debug logging shipped;
   the retry loop was deliberately not written until the real exception is observed. Do
   not design a fix for an unconfirmed cause. See `harness/tickets/31-sweep-full-corpus-cost.md`.
