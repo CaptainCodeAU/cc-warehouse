@@ -39,9 +39,20 @@ which is the commit that added the check; and a live `env -u VIRTUAL_ENV ...
 session - there was nothing left to do. Corrected the stale paragraph in both
 `OPENING-PROMPT.md` and `harness/tickets/42-capture-logging-and-alerting-gaps.md`
 so the next session doesn't re-ask the operator for a go-ahead that was already
-given and acted on. Nothing else touched this session. Still genuinely open from
-ticket 42: the unranked "register capture logic in `settings.json` directly" item,
-not started.
+given and acted on. Pushed the doc fix (`c26be5a`) with the operator's go-ahead.
+
+Then scoped ticket 42's last open item - "register capture logic in `settings.json`
+directly" as a hedge against Claude Code's open plugin-loading bug (#16288). Presented
+the operator three real options rather than picking one: (A) build a real second hook
+registration (safe to double-fire, since capture is content-addressed, but creates a
+second config to keep in sync with the plugin's forever - the exact "which one is
+actually live" confusion class this repo's own CLAUDE.md hard rule exists to prevent),
+(B) rely on the backstop that already exists (daily `ccw sweep` + #6's now-live doctor
+check, both already built, catch a miss on the next run rather than instantly), or (C)
+drop the idea. **Operator picked (B).** No code written. Recorded the decision and its
+reasoning in `contract/DESIGN.md` section 15 ("2026-09-10, ticket 42's last unranked
+item") and closed the ticket file. **Ticket 42 is now fully closed - every item done or
+explicitly declined.**
 
 ### Forty-fifth handoff, 2026-09-09 (ticket 28.11: markdown and HTML for sub-agents; and two calls made without asking)
 

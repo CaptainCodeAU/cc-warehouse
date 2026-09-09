@@ -91,9 +91,12 @@ with existing open tickets, so those are merged in rather than duplicated:
    doctor` found a genuine 4-session gap on this machine, non-blocking as
    designed), and the frozen `ccw` install now matches the repo byte-for-byte
    (installed `doctor.py` postdates commit `788cac9`; a live `ccw doctor` run
-   shows the new `dispatch` line). **Still NOT started: the remaining
-   unranked item** (registering capture logic in `settings.json` directly) -
-   see
+   shows the new `dispatch` line). **The last remaining item (registering
+   capture logic in `settings.json` directly) is now CLOSED, 2026-09-10,
+   decided against** - operator chose to rely on the existing `ccw sweep` +
+   #6 backstop instead of a second, separately-maintained hook registration.
+   No code written; reasoning in `contract/DESIGN.md` section 15. **TICKET 42
+   IS NOW FULLY CLOSED.** See
    `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
 6. **Ticket 41 Finding 1 - DONE and LIVE (2026-09-09).** Picked up out of
    order after a live SessionStart timeout led straight to it (4th same-day

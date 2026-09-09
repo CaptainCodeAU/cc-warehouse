@@ -2152,6 +2152,37 @@ confirms the anomaly is still correctly recorded in `sidecars.json` - only
 the OS-level side effect is suppressed. Full suite 1597 passed (up from
 1593), ruff and pyright strict clean.
 
+### 2026-09-10, ticket 42's last unranked item: declined, not built
+
+The remaining unranked item in ticket 42 was "register capture logic in
+`settings.json` directly, alongside the plugin's `hooks.json`" - a proposed
+hedge against Claude Code's still-open plugin-loading bug (#16288: plugin
+hooks load fire-and-forget async at startup, and dispatch for non-startup
+events doesn't wait for that load to finish, so a plugin-registered hook can
+silently never fire). The ticket text itself never proposed a concrete
+change, only flagged the trade-off against this repo's existing hard rule
+that `cc-capture@cc-warehouse` is THE one live capture plugin, verified via
+`enabledPlugins` (CLAUDE.md).
+
+Presented to the operator as three options: (A) add a real second hook
+registration in `settings.json` - safe to double-fire since capture is
+content-addressed and idempotent, but creates two hook configs that must be
+kept in sync forever, which is exactly the "which plugin is actually live"
+confusion class CLAUDE.md's hard rule already exists to prevent; (B) rely on
+the backstop that already exists - the daily `ccw sweep` plus ticket 42 #6's
+`ccw doctor` dispatch-gap check, both already live, which catch a missed
+hook on the next scheduled run rather than instantly; (C) drop the idea
+outright.
+
+**Operator chose (B).** No code was written. The item is closed as
+considered-and-declined rather than left open indefinitely: the existing
+sweep + doctor #6 combination is judged sufficient, and a second hook
+registration was judged to trade an instant-detection gain for a permanent
+two-configs-drift risk that was not worth it. If a future session finds the
+sweep/doctor backstop is not catching a real miss in practice, re-open
+option A with that evidence in hand rather than building it speculatively
+now.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
