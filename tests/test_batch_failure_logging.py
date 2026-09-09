@@ -83,7 +83,12 @@ def test_ccw_build_failure_is_logged_durably(
     records = _log_records(ccw_env)
     errors = [r for r in records if r.get("status") == "error"]
     assert errors, f"build failure left no durable trace: {records}"
-    assert "simulated build mirror failure" in str(errors[-1].get("message", ""))
+    # NOT errors[-1]: ticket 42 #2 added a per-RUN summary record (status="error"
+    # too) written AFTER this per-item one, so this checks the per-item failure
+    # exists anywhere among the error records rather than assuming it is last.
+    assert any("simulated build mirror failure" in str(r.get("message", "")) for r in errors), (
+        errors
+    )
 
 
 def test_sweep_triggered_build_failure_is_logged_durably(
@@ -107,7 +112,11 @@ def test_sweep_triggered_build_failure_is_logged_durably(
     records = _log_records(ccw_env)
     errors = [r for r in records if r.get("status") == "error"]
     assert errors, f"sweep-triggered build failure left no durable trace: {records}"
-    assert "simulated sweep-triggered build failure" in str(errors[-1].get("message", ""))
+    # NOT errors[-1]: ticket 42 #2 added a per-RUN summary record (status="error"
+    # too) written AFTER this per-item one -- see test_run_summary_logging.py.
+    assert any(
+        "simulated sweep-triggered build failure" in str(r.get("message", "")) for r in errors
+    ), errors
 
 
 def _break_render(folder: Path) -> None:

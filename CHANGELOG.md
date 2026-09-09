@@ -20,7 +20,34 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ---
 
-## Releases
+## Unreleased
+
+Logging-only fixes, deliberately shipped WITHOUT a version bump (2026-09-09, ticket
+42 items #2/#3/#7). `render.py`'s `renderer_version` is `__version__`, so bumping the
+package version would re-render all 29,700+ archive folders for a change set with no
+rendering effect; the frozen install is reinstalled in place at 0.1.4 instead, proven
+live by exercising the new records rather than by a version string.
+
+- **Ticket 42 #3**: a sweep item's GRACEFUL capture error (an unreadable transcript,
+  a stuck lock -- `capture_transcript` returns this rather than raising, R5/R10) now
+  reaches `capture.jsonl`. Before this, the identical failure via the live hook was
+  logged and the sweep path was not, so a sweep-discovered loss could never become a
+  `reconcile.find_unrecoverable` candidate.
+- **Ticket 42 #2**: `ccw sweep` and `ccw build` each write one durable run-summary
+  record per invocation, success or failure, regardless of `--quiet` -- mirroring
+  `_log_repair_outcome`'s own contract. Before this, a fully-successful scheduled run
+  left no trace anywhere. **`ccw archive` deliberately does NOT get one**: found while
+  building this that a warehouse-log write would break its "the source warehouse
+  stays untouched" contract, pinned by an existing oracle test in
+  `test_archive_cli.py`.
+- **Ticket 42 #7**: `ccw hook` now prints its real outcome to stdout before returning
+  (always 0, SPEC 2.6/F7 unchanged), and `ccw-hook.py`'s wrapper reads it instead of
+  deciding ok-vs-error purely on the exit code. Measured 2026-09-09:
+  `~/.claude/logs/ccw-hook.log` had never once written `error` for `ccw-hook` in
+  1,238 real rows, because a graceful `error` result still exits 0. The wrapper logs
+  this as a new status, `capture-error`, kept out of its own voice gate -- `ccw hook`
+  already speaks a graceful failure itself. Deploy-order safe in either direction (an
+  old `ccw` against the new wrapper, or a new `ccw` against the old wrapper).
 
 ### 0.1.4 - 2026-09-08
 

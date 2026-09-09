@@ -2036,6 +2036,73 @@ desktop+voice alert for the batch, and a second run stayed silent. Full
 account: `harness/tickets/42-*.md`, `harness/HANDOFFS.md`'s forty-first
 handoff.
 
+### 2026-09-09, ticket 42 #2/#3/#7: the logs stop lying, and `ccw archive` deliberately does not get a run summary
+
+Three of ticket 42's ranked items closed in one session, one theme: the
+durable logs did not report what actually happened. Confirmed on real
+machine data before building: `~/.claude/logs/ccw-hook.log` held 1,238 rows
+for `ccw-hook` and never once wrote `error`, because the wrapper decided
+ok-vs-error purely on `ccw hook`'s exit code, and `capture_transcript`'s own
+GRACEFUL `error` result (R5/R10) deliberately never sets that to non-zero.
+
+**#3**: `sweep._log_item_failure` widened to take a `detail: str` instead of
+an `Exception`, so `sweep._capture_item` can log the SAME writer for both a
+raised exception and a graceful `CaptureResult(action="error")` return -
+before this, only the raised-exception shape reached `capture.jsonl`, so the
+identical failure via the live hook was recoverable and the sweep path's own
+was not, and `reconcile.find_unrecoverable` (ticket 42 #5, shipped the same
+day this gap was found) could never see it.
+
+**#2**: a new `cli._log_run_summary` helper, one durable record per `ccw
+sweep`/`ccw build` INVOCATION (not just per failed item), written REGARDLESS
+of `--quiet`, mirroring `_log_repair_outcome`'s own contract exactly.
+`reconcile._EXCLUDED_PREFIXES` gained `"sweep: "`/`"build: "` so a run summary
+(names no session) is never misread as a lost session.
+
+**Ruling, found by execution rather than planned: `ccw archive` does NOT get
+a run summary, unlike sweep/build.** The first attempt wired one in and broke
+a real, load-bearing contract pinned by an existing oracle test in
+`test_archive_cli.py`: `ccw archive --to DIR` builds the tree BESIDE the
+warehouse it reads, touching nothing under `config.root`, which is the whole
+safety argument for running it against a live warehouse. A `capture.jsonl`
+write IS a warehouse write. Ticket 41 Finding 2's actual incident was about
+`ccw sweep`; extending "the same treatment" to archive "for consistency" (the
+ticket's own phrasing) would trade a tested invariant for a log line the
+verb's own scheduled job already gets from stdout (`ccw-archive.log`,
+`docs/operations.md`). Reverted the archive call sites; kept a scope note in
+`cli.py` and a positive oracle test
+(`test_archive_writes_no_capture_jsonl_record_of_any_kind`) proving the
+warehouse's log is untouched by a real archive run.
+
+**#7**: `cli._run_hook` prints one outcome line to stdout before returning
+(always 0, SPEC 2.6/F7 unchanged) - `"ok: captured"` / `"error: <detail>"` /
+`"skipped_unchanged"` / `"skipped_disabled"` / `"duplicate-invocation"`, the
+exact string `_report_capture` already computed internally, just never
+surfaced. `plugins/cc-capture/hooks/ccw-hook.py`'s wrapper reads the child's
+last stdout line: one starting with `"error"` logs as a NEW status,
+`"capture-error"`, never plain `"error"` - `ccw hook` already speaks a
+graceful failure itself (`notify.SPEAKING_STATUSES` includes `"error"`, and
+the wrapper hands the child `CCW_VOICE_URL`), so the wrapper's own voice gate
+(`if status in ("ok", "started", "capture-error"): return`) stays out of it
+rather than doubling the alert. **Operator ruling recorded**: no second voice
+alert for this case, confirmed via AskUserQuestion before building. Deploy-
+order safety is structural, not incidental: an OLD `ccw` against the NEW
+wrapper prints nothing (unchanged behaviour, logs `ok`); a NEW `ccw` against
+the OLD wrapper still logs `ok`, with the truth folded into `detail` instead
+of lost - pinned by
+`tests/test_cc_capture_hook_started.py::test_old_ccw_with_no_outcome_line_still_logs_ok`.
+
+**Deliberately NOT built this session (see the priority queue for why)**:
+ticket 42 #6 (the hook-dispatch-gap detector) and the two unranked
+design-tradeoff items - one of which, "move the hook's synchronous
+sidecar/external copying off the SessionEnd budget," was ALREADY CLOSED by
+ticket 37 Part B earlier the same day (`cd84020`), making the ticket file's
+own text there stale; corrected in the same pass as this entry.
+
+Full suite 1593 passed, ruff and pyright strict clean, project-wide, verified
+twice after the archive-logging revert. Full account:
+`harness/tickets/42-*.md`, `harness/HANDOFFS.md`'s next handoff.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

@@ -21,6 +21,87 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-second handoff, 2026-09-09 (ticket 42 #2/#3/#7: the logs stop lying, ccw archive stays out of scope)
+
+Picked up `OPENING-PROMPT.md`'s priority-order item 5 (ticket 42's remaining
+ranked list) right after the forty-first handoff closed item 4. Confirmed
+priority-order item 3 (ticket 31.4's retry loop) is still genuinely blocked
+before starting: all 784 lines of the real `capture.jsonl` hold zero
+lock-contention or stage-error records, so the exception 31.4 needs has not
+happened yet.
+
+Two Explore agents mapped the logging/doctor/hook code in parallel before any
+design decision; direct reads of the real machine's logs followed
+(`~/.claude/logs/ccw-hook.log`: 1,238 rows, `ccw-hook` source is 70 `started`
++ 61 `ok` + ZERO `error`, confirming Finding A on real data rather than
+argument alone). Presented a scoped decision brief and got two operator
+rulings via AskUserQuestion before writing any code: build #2+#3+#7 together
+(not #6, not archive-consistency-for-its-own-sake), and the hook wrapper logs
+truthfully without adding a second spoken alert (`ccw hook` already speaks a
+graceful failure itself). A third question (skip the version bump, since
+`renderer_version` is `__version__` and a bump would re-render 29,700+
+folders for zero rendering change) was also confirmed before building.
+
+**#3** (`sweep.py`): `_log_item_failure` widened from an `Exception` param to
+a `detail: str`, so `_capture_item` calls the same writer on
+`capture_transcript`'s graceful `error` result, not just a raised exception.
+**#2** (`cli.py`): new `_log_run_summary` helper, wired into `_run_sweep` and
+`_run_build` (including their lock-refusal paths) exactly as scoped. **#7**
+(`cli.py` + `ccw-hook.py`): `_run_hook` prints its real outcome to stdout
+before returning 0; the wrapper reads it and logs a new `capture-error`
+status kept out of its own voice gate.
+
+**One real design conflict found by execution, not anticipated in the plan**:
+wiring #2 into `ccw archive` too (the ticket's own "for consistency" line)
+broke a real, load-bearing contract on the first attempt -
+`test_archive_cli.py::test_archive_leaves_the_source_warehouse_byte_identical`
+- because `ccw archive --to DIR` is deliberately BUILD-BESIDE, and a
+`capture.jsonl` write is a warehouse write. Reverted the archive call sites
+rather than patch the test, left a scope note in `cli.py`, and added a
+positive oracle test proving a real archive run leaves the warehouse's log
+untouched. This is recorded as a decision, not a shortfall: ticket 41 Finding
+2's actual incident was about `ccw sweep`, and archive's own scheduled job
+already gets a durable record from its stdout redirect.
+
+Also found and fixed two existing tests that assumed a build failure's error
+record would be the LAST error record in `capture.jsonl`
+(`test_batch_failure_logging.py`) - true before #2, false after, since a
+failed run now also writes a per-run summary (also `status="error"`) after
+the per-item one. Widened both assertions to search rather than assume
+order, rather than reordering the writes to preserve a test's incidental
+assumption.
+
+New test files: `tests/test_sweep_graceful_error_logging.py`,
+`tests/test_run_summary_logging.py`, `tests/test_hook_prints_outcome.py`;
+four new tests added to `tests/test_cc_capture_hook_started.py`; one existing
+test widened in `tests/test_reconcile.py`. Full suite 1593 passed, ruff and
+pyright strict clean, project-wide - verified twice, once right after the
+archive revert and once after fixing two pyright strict findings (a
+`reportPrivateUsage` on `sweep._log_item_failure` used from a test, silenced
+the same way `test_companions_detach.py`/`test_doctor.py` already do; a
+`lambda` monkeypatch pyright's strict mode could not fully type, replaced
+with a named function matching this file's own existing style).
+
+Corrected a stale note in the ticket file while here: its "also worth
+weighing" section still said the hook's synchronous companion-copying was an
+open design tradeoff, but ticket 37 Part B (`cd84020`) had already closed it
+earlier the same day, wider than that bullet's own two named functions.
+
+**NOT done, and named rather than silently dropped**: ticket 42 #6 (the
+hook-dispatch-gap detector) and the remaining unranked item (registering
+capture logic in `settings.json` directly, as a redundancy hedge). Neither
+was in the approved scope for this session.
+
+**Deploy pending the operator's go-ahead, not yet run**: the frozen tool
+reinstall (`uv_tool_reinstall_current_project --no-extras`), and - for #7
+specifically - the plugin marketplace update + `cc-capture@cc-warehouse`
+update, each its own separate ask per this repo's own deploy-order-safety
+design (the two changes are independently deployable, in either order, by
+construction and by test). Local commit only; not pushed.
+
+Full account: `contract/DESIGN.md` section 15's "2026-09-09, ticket 42
+#2/#3/#7" entry; `harness/tickets/42-*.md`'s items #2/#3/#7 DONE blocks.
+
 ### Forty-first handoff, 2026-09-09 (ticket 42 #5: reconciliation check, real number is 21 not 3)
 
 Picked up priority-order item 4 from `OPENING-PROMPT.md` right after item 2 (the

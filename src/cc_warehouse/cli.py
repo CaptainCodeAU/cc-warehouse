@@ -554,8 +554,9 @@ def _report_capture(
     result: capture.CaptureResult,
     transcript_path: Path,
     session_uuid: str | None = None,
-) -> None:
-    """Emit notifications for a completed capture per its action (DESIGN sections 4, 12).
+) -> str:
+    """Emit notifications for a completed capture per its action (DESIGN sections 4, 12),
+    and return a one-line, stable outcome string (ticket 42 #7).
 
     A duplicate SessionEnd invocation is silent (no sink fires). A fresh `stored` capture
     spawns the render child and the companions child (ticket 37 Part B) and reports ok;
@@ -571,9 +572,17 @@ def _report_capture(
     `session_uuid` (ticket 42 #5) is the payload's own `session_id`, passed through only
     for the `error` case: a `stored`/`skipped_unchanged` result already has a real catalog
     identity in `short`, so only a capture that never reached the catalog needs this to be
-    reconcilable later against the source tree, the archive, and the catalog."""
+    reconcilable later against the source tree, the archive, and the catalog.
+
+    The returned string is what `_run_hook` prints to stdout so `ccw-hook.py`'s wrapper can
+    log the REAL outcome instead of treating exit 0 as proof of success (ticket 42 #7,
+    Finding A: measured 2026-09-09, `ccw-hook.log` had never once written `error` in 1,238
+    rows across its whole history, because the wrapper decides ok-vs-error purely on
+    `ccw hook`'s exit code, and this codepath's own `error` result deliberately never sets
+    that to non-zero -- R5/R10, a batch/hook caller must be told, never crashed). This was
+    always computable from `result.action`; it was just never surfaced."""
     if result.action == "duplicate-invocation":
-        return
+        return "duplicate-invocation"
     short = result.short or None
     if result.action == "error":
         notify.report(
@@ -582,7 +591,7 @@ def _report_capture(
                 "error", short, None, result.detail, result.elapsed_ms, session_uuid
             ),
         )
-        return
+        return f"error: {result.detail}"
     if result.action == "skipped_unchanged":
         notify.report(
             config,
@@ -592,7 +601,7 @@ def _report_capture(
         )
         if config.open_folder:
             notify.open_folder(config, _reveal_target(config, short))
-        return
+        return "skipped_unchanged"
     # stored: a successful new capture. Both children are spawned INDEPENDENTLY of any
     # sink (a log or webhook failure must never suppress rendering or archiving
     # companions); every spawn and notify.report are best-effort and neither can fail
@@ -603,6 +612,7 @@ def _report_capture(
         config,
         notify.NotifyEvent("ok", short, result.detail or None, "captured", result.elapsed_ms),
     )
+    return "ok: captured"
 
 
 def _run_hook() -> int:
@@ -610,7 +620,15 @@ def _run_hook() -> int:
 
     A kill switch (CCW_SKIP_HOOK) no-ops. An invalid payload, a missing transcript, or any
     unexpected failure becomes an error notification and a clean exit with nothing stored
-    and no traceback on stderr (SPEC section 2.6)."""
+    and no traceback on stderr (SPEC section 2.6).
+
+    Ticket 42 #7: prints ONE outcome line to stdout before returning, always 0 -- SPEC
+    2.6/F7 is unchanged, this never becomes the exit code. `ccw-hook.py`'s wrapper decided
+    ok-vs-error purely on the exit code, so a graceful `error` result (an unreadable
+    transcript, a stuck lock -- R5/R10's whole point is that these must NOT raise) has
+    always logged as `ok` in `ccw-hook.log`. Measured 2026-09-09: 1,238 real rows, zero
+    ever said `error`. Nothing in `contract/SPEC.md` locks this verb's stdout as empty;
+    the wrapper already discards stdout on the ok path today, so this is additive."""
     config: Config | None = None
     # Ticket 42 #5: hoisted above the try so the except block below can still name the
     # session when the failure happens after the payload was read but before capture
@@ -619,6 +637,7 @@ def _run_hook() -> int:
     # with no session identity at all.
     session_id: str | None = None
     transcript_path: Path | None = None
+    outcome = "ok: captured"
     try:
         config = load_config()
         if config.skip_hook:
@@ -630,19 +649,21 @@ def _run_hook() -> int:
                 config,
                 notify.NotifyEvent("skipped_disabled", None, None, "CCW_SKIP_HOOK=1", None),
             )
-            return 0
-        payload = _read_payload()
-        transcript_path = Path(str(payload["transcript_path"]))
-        session_id = _str_field(payload, "session_id")
-        result = capture.capture_transcript(
-            config,
-            transcript_path,
-            session_id=session_id,
-            cwd=_str_field(payload, "cwd"),
-            defer_companions=True,
-        )
-        _report_capture(config, result, transcript_path, session_id)
+            outcome = "skipped_disabled"
+        else:
+            payload = _read_payload()
+            transcript_path = Path(str(payload["transcript_path"]))
+            session_id = _str_field(payload, "session_id")
+            result = capture.capture_transcript(
+                config,
+                transcript_path,
+                session_id=session_id,
+                cwd=_str_field(payload, "cwd"),
+                defer_companions=True,
+            )
+            outcome = _report_capture(config, result, transcript_path, session_id)
     except Exception as exc:  # never-raise into the harness (SPEC 2.6 / F7)
+        outcome = f"error: {exc!r}"
         if config is not None:
             try:
                 notify.report(
@@ -651,6 +672,7 @@ def _run_hook() -> int:
                 )
             except Exception:
                 pass
+    print(outcome)
     return 0
 
 
@@ -757,6 +779,9 @@ def _run_sweep(args: Sequence[str]) -> int:
         return 1 if failures else 0
     report = sweep.sweep(config, source, keep, limit=limit)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
+        # Ticket 42 #2: a refusal that leaves no trace is exactly what ticket 41 had to
+        # reconstruct by hand -- log it before returning, same as a real run below.
+        _log_run_summary(config, "sweep", "error", "refused: lock held by a live holder")
         print("sweep refused: lock held by a live holder", file=sys.stderr)
         return 2
     failures = report.failures
@@ -790,15 +815,18 @@ def _run_sweep(args: Sequence[str]) -> int:
             print(f"sweep: projection failed: {outcome.item}: {outcome.detail}", file=sys.stderr)
             _log_build_failure(config, outcome, "sweep-triggered build")
         failures = failures + build_failures
+    sidecar_note = f", {archived_sidecars} with sidecars" if archived_sidecars else ""
+    summary = (
+        f"{len(report.outcomes)} items, {stored} stored{sidecar_note}, {len(failures)} failed"
+    )
+    # Ticket 42 #2: written REGARDLESS of --quiet, matching _log_repair_outcome's own
+    # contract -- --quiet drops the stdout line below only, never the durable record.
+    _log_run_summary(config, "sweep", "error" if failures else "ok", summary)
     if not quiet:
         # --quiet drops STDOUT only. Failures are already on stderr above, and the
         # exit code is untouched, so a scheduled sweep stays silent when it works
         # and still speaks when it does not (ticket 23, 24.5).
-        sidecar_note = f", {archived_sidecars} with sidecars" if archived_sidecars else ""
-        print(
-            f"sweep: {len(report.outcomes)} items, {stored} stored{sidecar_note},"
-            f" {len(failures)} failed"
-        )
+        print(f"sweep: {summary}")
     return 1 if failures else 0
 
 
@@ -942,6 +970,51 @@ def _log_repair_outcome(config: Config, status: str, session: str | None, messag
         return
 
 
+def _log_run_summary(
+    config: Config, verb: str, status: str, message: str, elapsed_ms: int | None = None
+) -> None:
+    """One durable capture.jsonl record per `ccw sweep`/`ccw build` INVOCATION
+    (ticket 42 #2), not just per failed item. NOT called from `ccw archive` --
+    see `_run_archive`'s own scope note: a warehouse-log write would break its
+    "the source warehouse stays untouched" contract, load-bearing and pinned by
+    an existing oracle test in `test_archive_cli.py`.
+
+    Before this, a run that captured or rendered anything with zero failures left no
+    durable trace at all -- `ccw sweep`'s own launchd stdout redirect is empty by
+    design under `--quiet`, and `launchctl print` gives only a lifetime run count with
+    no per-run detail. Ticket 41's own incident had to reconstruct "did sweep run
+    today" from indirect signals (an uncaptured count dropping, folder mtimes,
+    `ccw repair`'s unrelated log) for exactly this reason.
+
+    Same six-field schema and best-effort contract as `_log_build_failure` /
+    `_log_repair_outcome` / `_log_companions` just above: new context folds into
+    `message` (`f"{verb}: {message}"`), never a new JSON key. Written REGARDLESS of
+    `--quiet` (mirrors `_log_repair_outcome`'s own contract): quiet only drops the
+    human-readable stdout summary, never the durable record.
+
+    `status` is `ok` or `error`, so a failed run lands in `ccw status`'s "Recent
+    errors" the same way any other error record does (status.py's `_recent_errors`
+    filters on exactly this field). `reconcile._EXCLUDED_PREFIXES` carries this verb's
+    own `f"{verb}: "` prefix, since a run summary names no session and must never be
+    misread as one lost session (it is checked against the per-item failure prefixes
+    `sweep item `/`build failed: `, which this deliberately does not share, so there is
+    no collision either way)."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": status,
+                "session": None,
+                "project": None,
+                "message": f"{verb}: {message}",
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+    except Exception:
+        return
+
+
 def _log_companions(
     config: Config, status: str, short: str | None, message: str, elapsed_ms: int | None
 ) -> None:
@@ -1063,6 +1136,8 @@ def _run_build(args: Sequence[str]) -> int:
     config = _load(rest)
     report = build.build(config, rebuild=rebuild, include_hidden=include_hidden)
     if any(outcome.action == build.BUILD_LOCK_HELD for outcome in report.outcomes):
+        # Ticket 42 #2: see the matching comment in _run_sweep.
+        _log_run_summary(config, "build", "error", "refused: lock held by a live holder")
         print("build refused: lock held by a live holder", file=sys.stderr)
         return 2
     built = sum(1 for outcome in report.outcomes if outcome.action == "built")
@@ -1074,10 +1149,12 @@ def _run_build(args: Sequence[str]) -> int:
     # "unchanged" is its own segment, never folded into "built" (R10/F6):
     # an all-skipped run must not read as "0 built" with no explanation,
     # mirroring archive.MigrationReport.summary()'s "N unchanged" line.
-    print(
-        f"build: {len(report.outcomes)} sessions, {built} built, "
+    summary = (
+        f"{len(report.outcomes)} sessions, {built} built, "
         f"{unchanged} unchanged, {len(failures)} failed"
     )
+    _log_run_summary(config, "build", "error" if failures else "ok", summary)
+    print(f"build: {summary}")
     return 1 if failures else 0
 
 
@@ -1927,7 +2004,19 @@ def _run_archive(args: Sequence[str]) -> int:
         print(f"archive: FAILED {hash_[:16]}: {why}", file=sys.stderr)
     for hash_ in report.skipped_not_a_session:
         print(f"archive: not a session (no sessionId) {hash_[:16]}", file=sys.stderr)
-    print(f"{report.summary()}, {projects} project.json written")
+    # TICKET 42 #2 SCOPE NOTE, found while building this: `ccw archive` deliberately
+    # does NOT get a durable capture.jsonl run summary, unlike sweep/build above.
+    # `test_archive_leaves_the_source_warehouse_byte_identical` pins a real, load-
+    # bearing contract -- this verb builds the archive tree BESIDE the warehouse it
+    # reads, touching NOTHING under config.root, which is the whole safety argument
+    # for running it against a live warehouse. A capture.jsonl write is a warehouse
+    # write. Ticket 41 Finding 2's actual incident was about `ccw sweep`; extending
+    # "the same treatment" to archive "for consistency" would trade a real, tested
+    # invariant for a log line this verb's own scheduled job (`ccw-archive.log`,
+    # docs/operations.md) already gets from stdout. Not done; flagged rather than
+    # silently dropped.
+    summary = f"{report.summary()}, {projects} project.json written"
+    print(summary)
     return 1 if report.failed else 0
 
 

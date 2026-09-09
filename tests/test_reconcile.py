@@ -170,10 +170,13 @@ def test_excluded_prefixes_are_never_treated_as_a_session_loss(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
     """`repair: `, `companions: `, `post-archive-write failure at `, `could not
-    read sidecar `, and `refused sidecar ` all describe an ALREADY-archived
-    session or a sidecar file, never the session's own loss -- real shapes this
-    codebase's own writers produce (cli._log_repair_outcome,
-    cli._log_companions, capture._log_stage_failure, capture.log_sidecar_trouble)."""
+    read sidecar `, `refused sidecar `, and (ticket 42 #2) `sweep: `/`build: `
+    all describe an ALREADY-archived session, a sidecar file, or a per-RUN
+    summary naming no session at all -- never the session's own loss. Real
+    shapes this codebase's own writers produce (cli._log_repair_outcome,
+    cli._log_companions, capture._log_stage_failure, capture.log_sidecar_trouble,
+    cli._log_run_summary). `ccw archive` has no such summary at all -- see
+    cli._run_archive's own scope note."""
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     prefixes = (
@@ -182,6 +185,8 @@ def test_excluded_prefixes_are_never_treated_as_a_session_loss(
         "post-archive-write failure at ",
         "could not read sidecar ",
         "refused sidecar ",
+        "sweep: ",
+        "build: ",
     )
     old_at = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     for i, prefix in enumerate(prefixes):

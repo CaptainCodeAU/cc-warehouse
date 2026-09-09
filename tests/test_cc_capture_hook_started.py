@@ -105,3 +105,99 @@ def test_a_started_with_no_end_is_what_a_killed_hook_leaves(
     assert len(lines) == 1
     assert lines[0]["status"] == "started"
     assert lines[0]["session"] == "s-killed"
+
+
+# ---------------------------------------------------------------------------
+# Ticket 42 #7: the wrapper reads `ccw hook`'s own outcome line instead of
+# treating exit 0 as proof of success.
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_ccw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout_line: str) -> None:
+    fake = tmp_path / "ccw"
+    fake.write_text(f"#!/bin/sh\necho '{stdout_line}'\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("CCW_BIN", str(fake))
+
+
+def test_a_graceful_capture_error_is_logged_as_capture_error_not_ok(
+    hook: tuple[ModuleType, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE GAP THIS CLOSES (Finding A, measured 2026-09-09): a `ccw hook` that
+    exits 0 but printed a graceful `error` result used to log `ok` here, every
+    time -- 1,238 real rows, zero ever said `error`. `ccw hook` now prints its
+    real outcome; this wrapper must read it rather than trust the exit code
+    alone."""
+    module, log = hook
+    _write_fake_ccw(tmp_path, monkeypatch, "error: unreadable transcript /x/abc.jsonl: boom")
+
+    assert _run(module, monkeypatch, PAYLOAD) == 0
+    lines = _lines(log)
+    assert [line["status"] for line in lines] == ["started", "capture-error"]
+    assert "unreadable transcript" in str(lines[-1]["detail"])
+
+
+def test_a_graceful_capture_error_does_not_speak_a_second_time(
+    hook: tuple[ModuleType, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ccw hook` already spoke this failure itself (notify.SPEAKING_STATUSES
+    includes "error", and this wrapper hands it CCW_VOICE_URL/CCW_VOICE_ID) --
+    the wrapper must not also POST to the voice URL, or the operator hears the
+    same failure twice."""
+    module, _ = hook
+    _write_fake_ccw(tmp_path, monkeypatch, "error: unreadable transcript /x/abc.jsonl: boom")
+    calls: list[str] = []
+
+    def fake_urlopen(*args: object, **kwargs: object) -> UrlopenStub:
+        calls.append("voice")
+        return UrlopenStub()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    _run(module, monkeypatch, PAYLOAD)
+    assert calls == []
+
+
+def test_a_non_zero_exit_still_speaks(
+    hook: tuple[ModuleType, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure `ccw hook` could NOT report itself (a non-zero exit) is a
+    genuinely different case from a graceful `error` result, and must still
+    reach the voice URL -- this wrapper's own voice gate must not have been
+    widened by mistake."""
+    module, _ = hook
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "boom"
+
+    def fake_run(*args: object, **kwargs: object) -> Result:
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    calls: list[str] = []
+
+    def fake_urlopen(*args: object, **kwargs: object) -> UrlopenStub:
+        calls.append("voice")
+        return UrlopenStub()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    _run(module, monkeypatch, PAYLOAD)
+    assert calls == ["voice"]
+
+
+def test_old_ccw_with_no_outcome_line_still_logs_ok(
+    hook: tuple[ModuleType, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deploy-order safety: an OLD `ccw hook` that prints nothing on success
+    (pre-ticket-42-#7) must still log `ok`, so the tool reinstall and the
+    plugin update can land in either order."""
+    module, log = hook
+    fake = tmp_path / "ccw"
+    fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("CCW_BIN", str(fake))
+
+    assert _run(module, monkeypatch, PAYLOAD) == 0
+    lines = _lines(log)
+    assert [line["status"] for line in lines] == ["started", "ok"]

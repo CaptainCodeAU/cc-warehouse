@@ -37,6 +37,27 @@ SO TWO RULES, both load-bearing:
   2. A failure must be LOUD. The hook still exits 0, because blocking session
      end is worse than a missed capture (SPEC 2.6, never-raise), but every
      failure is reported through channels the operator already watches.
+
+TICKET 42 #7 (2026-09-09). `ccw hook` now prints one outcome line to stdout before
+it exits (always 0, unchanged). Before this, this wrapper decided ok-vs-error
+PURELY on the child's exit code, and `ccw hook`'s own graceful `error` result (an
+unreadable transcript, a stuck lock -- deliberately never raised, cc-warehouse's
+R5/R10) still exits 0. Measured live 2026-09-09: `~/.claude/logs/ccw-hook.log` had
+never once written "error" for `ccw-hook` in 1,238 rows across its whole history.
+`main()` below now reads that line: one beginning with "error" becomes a NEW
+status, `capture-error` (never `"error"` itself -- see the note there for why),
+everything else still logs `ok`. `ccw hook` already speaks a graceful failure
+itself (`notify.SPEAKING_STATUSES` includes "error", and this wrapper hands it
+`CCW_VOICE_URL`/`CCW_VOICE_ID` below) -- so this file's own voice gate stays
+reserved for failures `ccw` could not report itself, never doubling up on one it
+already did.
+
+DEPLOY-ORDER SAFETY, load-bearing: the tool reinstall and the plugin update are
+two independent deploys, in either order. An OLD `ccw` against this NEW wrapper
+prints nothing on success, so `result.stdout` is empty and the wrapper logs `ok`
+exactly as before. A NEW `ccw` against the OLD wrapper still logs `ok`, with the
+new line folded into `detail` -- the old wrapper doesn't know to look for it, but
+the truth is at least visible in the record rather than lost.
 """
 
 # WHY THIS IMPORT IS THE FIRST LINE OF CODE IN THE FILE. These hooks do not
@@ -113,7 +134,11 @@ def report(status: str, detail: str) -> None:
             handle.write(json.dumps(record) + "\n")
     except OSError:
         pass
-    if status in ("ok", "started"):
+    # "capture-error" (ticket 42 #7): a GRACEFUL `ccw hook` failure, already spoken by
+    # `ccw hook` itself via notify.report (notify.SPEAKING_STATUSES includes "error",
+    # and this wrapper hands the child CCW_VOICE_URL/CCW_VOICE_ID below) -- staying out
+    # of this gate means the operator hears it once, not twice.
+    if status in ("ok", "started", "capture-error"):
         return
     try:
         payload = json.dumps(
@@ -229,7 +254,16 @@ def main() -> int:
         )
         return 0
 
-    report("ok", (result.stdout or "").strip().splitlines()[-1] if result.stdout else "")
+    # Ticket 42 #7: `ccw hook` now prints one outcome line before exiting 0 on every
+    # path, including its own GRACEFUL error result (an unreadable transcript, a stuck
+    # lock -- deliberately never raised, R5/R10). An OLD `ccw` prints nothing here, so
+    # `last_line` is "" and this still logs "ok" exactly as before deploy-order safety,
+    # see the module docstring).
+    last_line = (result.stdout or "").strip().splitlines()[-1] if result.stdout else ""
+    if last_line.startswith("error"):
+        report("capture-error", last_line)
+        return 0
+    report("ok", last_line)
     return 0
 
 

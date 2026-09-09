@@ -61,9 +61,25 @@ with existing open tickets, so those are merged in rather than duplicated:
    announced 15 newly-confirmed unrecoverable sessions, wrote the dedup
    ledger, fired one real desktop+voice alert; a second run correctly
    stayed silent. Full account: `harness/HANDOFFS.md`'s forty-first handoff.
-5. **Rest of ticket 42's ranked list** (#2, #3, #6, #7, plus the two
-   unranked design-tradeoff items) - see
-   `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
+5. **Ticket 42 #2/#3/#7 - DONE 2026-09-09, committed locally, NOT YET
+   pushed/reinstalled/plugin-updated (operator go-ahead pending).** #3: a
+   sweep item's graceful capture error (unreadable transcript, stuck lock)
+   now reaches `capture.jsonl`, same as the hook path already did. #2:
+   `ccw sweep`/`ccw build` write one durable run-summary record per
+   invocation regardless of `--quiet`. **`ccw archive` deliberately does
+   NOT get one** - found by execution that a warehouse-log write there
+   breaks a real, load-bearing "the source warehouse stays untouched"
+   contract, pinned by an existing oracle test; reverted rather than kept.
+   #7: `ccw hook` now prints its real outcome before returning 0 (still
+   always 0, SPEC 2.6/F7 unchanged), so `ccw-hook.py`'s wrapper stops
+   logging graceful failures as `ok` - measured live first: 1,238 real rows,
+   zero ever said `error`. No second voice alert added (operator-confirmed):
+   `ccw hook` already speaks a graceful failure itself. Full suite 1593
+   passed, ruff/pyright strict clean. Full account: `harness/HANDOFFS.md`'s
+   forty-second handoff, `harness/tickets/42-*.md`'s #2/#3/#7 DONE blocks.
+   **Still NOT started: #6** (the hook-dispatch-gap detector) **and the
+   remaining unranked item** (registering capture logic in `settings.json`
+   directly) - see `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
 6. **Ticket 41 Finding 1 - DONE and LIVE (2026-09-09).** Picked up out of
    order after a live SessionStart timeout led straight to it (4th same-day
    recurrence). Both `find_ccw()` copies now skip a `.venv` PATH hit and

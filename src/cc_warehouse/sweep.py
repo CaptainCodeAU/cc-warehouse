@@ -378,11 +378,20 @@ def _archived_session_folders(archive_root: Path) -> dict[str, Path]:
     return out
 
 
-def _log_item_failure(config: Config, path: Path, exc: Exception) -> None:
+def _log_item_failure(config: Config, path: Path, detail: str) -> None:
     """Best-effort diagnostic line for a sweep item that failed capture, reviewable
     later next to the hook path's own stage-failure lines (notify.append_log,
     DESIGN R2's sanctioned exception; the SAME log, `logs/capture.jsonl`, not a new
     write path -- see capture.py's `_log_stage_failure`, the twin this mirrors).
+
+    `detail` covers both of `_capture_item`'s two failure shapes: a raised exception's
+    `f"{type}: {msg}"`, or (ticket 42 #3) `capture_transcript`'s own GRACEFUL `error`
+    result's `.detail` -- an unreadable transcript, a stuck lock. Before ticket 42 #3
+    only the raised-exception shape reached this log at all: the identical failure via
+    the live hook was already logged (`cli._report_capture`'s error branch), so a
+    sweep-discovered loss and a hook-discovered loss disagreed about whether
+    `capture.jsonl` (and therefore `reconcile.find_unrecoverable`, which reads exactly
+    this log) could ever see it.
 
     Ticket 42 #5: `path.stem` is the transcript's own filename-derived identity, a real
     session UUID for `<uuid>.jsonl` and unusable for anything else (e.g. an
@@ -397,7 +406,7 @@ def _log_item_failure(config: Config, path: Path, exc: Exception) -> None:
             "status": "error",
             "session": None,
             "project": None,
-            "message": f"sweep item {path.name} failed: {type(exc).__name__}: {exc}",
+            "message": f"sweep item {path.name} failed: {detail}",
             "elapsed_ms": None,
         }
         if session_uuid is not None:
@@ -418,12 +427,21 @@ def _capture_item(config: Config, path: Path) -> ItemOutcome:
     failure used to abort the ENTIRE sweep batch mid-run, silently, with every
     session still queued simply never attempted. Wrapping it here, matching
     `_archive_subagent`'s own error handling a few lines above, closes that: name
-    the item, log it for later review, and let the batch continue (R5/R10/F6)."""
+    the item, log it for later review, and let the batch continue (R5/R10/F6).
+
+    Ticket 42 #3: the GRACEFUL `error` return (never raised, see
+    `capture_transcript`'s own docstring) used to reach only stderr via the caller's
+    `ItemOutcome`, invisible to `capture.jsonl` and therefore to
+    `reconcile.find_unrecoverable`. Logged here too, same writer as the raised-exception
+    case just above."""
     try:
         result = capture.capture_transcript(config, path, session_id=None, cwd=None)
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
-        _log_item_failure(config, path, exc)
-        return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
+        detail = f"{type(exc).__name__}: {exc}"
+        _log_item_failure(config, path, detail)
+        return ItemOutcome(path.name, "error", detail)
+    if result.action == "error":
+        _log_item_failure(config, path, result.detail)
     return ItemOutcome(path.name, result.action, result.detail)
 
 
