@@ -22,6 +22,7 @@ from conftest import (
     basic_session,
     hook_payload,
     run_ccw,
+    settle_render,
     subagent_session,
     tree_snapshot,
     warehouse_root,
@@ -327,11 +328,19 @@ def test_a_sweep_that_only_archived_sidecars_still_rebuilds_the_manifest(
 ) -> None:
     """`cli.py` only ran `build.build` `if stored:`, and a back-fill stores 0. The
     manifest would then never list the file that was just copied, which is the
-    only thing that makes its later deletion detectable."""
+    only thing that makes its later deletion detectable.
+
+    Waits for the hook's own detached render child (ticket 37 Part B added a
+    SECOND detached child per hook fire, `ccw companions`, which raised the
+    odds of hitting this pre-existing race enough to surface it in CI): that
+    child writes its OWN manifest.json, built before `plant_tool_result` below
+    ever ran, so without the wait it can land AFTER the sweep's own build and
+    silently revert this test's very assertion."""
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     transcript = plant_session(ccw_env)
     run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, session_id=PARENT))
+    settle_render(warehouse_root(ccw_env), expected=1)
     plant_tool_result(ccw_env)
     sweep(ccw_env)
     manifest = json.loads((session_folder(archive_root) / "manifest.json").read_text("utf-8"))

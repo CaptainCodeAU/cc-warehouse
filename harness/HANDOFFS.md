@@ -21,6 +21,90 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-ninth handoff, 2026-09-09 (ticket 37 Part B: the detached companions child, shipped and verified)
+
+Picked up the priority-order item 1 that the thirty-eighth handoff's session left
+scoped-but-not-built: detach the hook's synchronous sidecar/external-file
+copying into its own child, matching the render child's shape. Measured first,
+which changed the scope twice before any code was written. Measured cost per
+companion type on the real machine: sub-agents are 14-18 MB / 30-90 files on a
+big session, ~90% of the hook's total elapsed time; the slowest real `stored`
+capture in two days (4,331 ms) was nowhere near the 40s/45s timeout budgets,
+independently confirming a hook lost mid-run is being killed by a signal, not a
+timeout. On that evidence, and with the operator's confirmation, ALL FOUR
+companion calls detach, not only the two the prior session's ruling named -
+detaching just sidecars/external would have moved ~10% of the exposure and left
+the ticket effectively open.
+
+Shipped: `capture.py`'s four companion functions widened to take `session_uuid:
+str | None` (not a full `ParsedSession`) and lifted into one public
+`archive_companions()`; `capture_transcript(defer_companions=False)` (default
+unchanged behaviour for sweep/import/migrate); `cli.py`'s new hidden verb `ccw
+companions --session s:<key> --transcript PATH`, `_spawn_companions` (same
+`start_new_session=True`, all-DEVNULL Popen shape SPEC locks), `_run_companions`,
+`_log_companions` (writes `companions-started`/`companions-done`/`error` into
+the EXISTING `logs/capture.jsonl`, six-field schema unchanged, every message
+prefixed `"companions: "` so a later reader can tell this child's lines apart
+from unrelated `error` records sharing the same `session` value); `doctor.py`'s
+new non-blocking `companions` check (`_companions_stalled`, modelled on
+`_history_staleness`, pairs started/done within a 7-day window with a 300s
+grace period) - proved non-blocking with a real `grep -E '^\s*FAIL'`
+subprocess, not just an assertion on the Python object.
+
+**A live, distinct incident found and fixed on the way, unplanned:**
+`store.get()`'s bare `read_bytes()` failure formats fine via `str()` but its
+`repr()` - what `notify.report`'s error path actually uses - drops the
+filename entirely (`FileNotFoundError(2, 'No such file or directory')`, no
+path, no hash). Confirmed this was live on the operator's machine: `ccw
+doctor` was FAILing on exactly one folder (`9bde8f85`, go_research) with this
+shape, the SECOND occurrence of a bug the prior ticket-37 session had already
+seen once (`abaece35`) and flagged as "worth its own ticket line if it
+recurs." It had recurred. `store.get()` now raises an OSError (same concrete
+subclass via the original's own errno, so the one existing `except OSError`
+caller elsewhere is unaffected) whose message names the hash and the vault
+root.
+
+**Reproduced that second bug's real mechanism end to end, in a scratch
+archive_root, and found the ORIGINAL PLAN'S OWN GUESS WAS WRONG.** The plan
+assumed a `build._heads` ranking bug (ticket 29's shape). Reproducing it
+(a monkeypatched `catalog.add_session` failing right after a real archive
+write) showed instead: the archive write succeeds and is durable, but that
+SAME capture's own catalog-row insert then fails (ticket 31.4's own
+already-documented sqlite-contention shape) - so the archive holds bytes at a
+hash no catalog row names, and `ccw repair` can never fix this by
+construction (it only ever re-renders from an existing row). Per the plan's
+own instruction ("if the reproduction shows a different cause, write up what
+it actually is rather than shipping the guessed fix"), no repair-logic change
+was forced through; the already-working recovery is the next `ccw sweep`
+picking the source transcript back up once it stabilizes.
+
+**A second, genuinely new race, found by running the suite repeatedly rather
+than trusting one green run**: adding a SECOND detached child per hook fire
+raised the odds of hitting a PRE-EXISTING (not new) race in
+`test_sidecar_sweep.py`'s manifest-rebuild test - proven with a `git stash`
+comparison (8/8 clean on the base commit, 1/5 failing with the change
+applied, 12/12 clean once the test got the `settle_render` wait it always
+needed). One line fixed the test; nothing in the render or companions child
+changed.
+
+Test work: one general-purpose sub-agent, dispatched in parallel with this
+session's own work, fixed the pre-existing `test_external_capture.py`/
+`test_sidecar_capture.py`/`test_subagent_capture.py`/`test_sidecar_boundaries.py`
+hook-then-assert races by adding a new `settle_companions` wait to
+`tests/conftest.py` (the companions-child twin of the existing `settle_render`).
+New oracle file `tests/test_companions_detach.py` (9 tests). Verified, not
+assumed: `uv run pytest tests/ -q` run three times in a row, 1542 passed, zero
+failures, zero flakes each time; full-repo `ruff check .` and `pyright` both
+clean.
+
+**Not done this session, needs the operator's go-ahead at the moment of
+running**: `uv_tool_reinstall_current_project`, the `/plugin` update, and the
+real-session acceptance checks. **Left open for the operator**: whether `ccw
+repair` should read `capture.jsonl`'s own error line to enrich its "still
+broken" report for the second bug above (small, safe, deliberately not
+freelanced). Full account: `harness/tickets/37-*.md`'s "Part B DONE,
+2026-09-09" section; `contract/DESIGN.md` section 15's matching dated entry.
+
 ### Thirty-eighth handoff, 2026-09-09 (ticket 41 Finding 1 shipped and verified live)
 
 Picked up out of the stated queue order (item #6, moved ahead of #2/#4) after the

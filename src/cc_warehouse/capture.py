@@ -210,6 +210,7 @@ def _capture_locked(
     now: datetime,
     now_iso: str,
     start: float,
+    defer_companions: bool,
 ) -> CaptureResult:
     existing = _existing_short(conn, digest)
     if existing is not None:
@@ -232,23 +233,8 @@ def _capture_locked(
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
     _archive_source(config, conn, project_id, data)
-    _archive_subagents_of(config, conn, project_id, transcript_path, parsed)
-    # Ticket 38. Both are wrapped in the never-fatal posture `_archive_project_file`
-    # already uses (DESIGN 12): the session is stored by this point, and neither a
-    # copier nor a signal may turn that into a reported failure.
-    refused: tuple[str, ...] = ()
-    try:
-        refused = _archive_sidecars_of(config, conn, project_id, transcript_path, parsed)
-    except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
-        refused = ()
-    try:
-        _archive_external_of(config, conn, project_id, transcript_path, parsed)
-    except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
-        pass
-    try:
-        _note_unknown_siblings(config, conn, project_id, transcript_path, parsed, refused)
-    except Exception:  # noqa: BLE001 - a signal must never be what fails a capture
-        pass
+    if not defer_companions:
+        archive_companions(config, conn, project_id, transcript_path, parsed.session_uuid)
     meta = catalog.SessionMeta(
         sha256=digest,
         source_kind=_SOURCE_KIND,
@@ -362,19 +348,67 @@ def _label_of(conn: sqlite3.Connection, project_id: int) -> str:
     return str(row[0]) if row else "_unlabeled"
 
 
+def archive_companions(
+    config: Config,
+    conn: sqlite3.Connection,
+    project_id: int,
+    transcript_path: Path,
+    session_uuid: str | None,
+) -> None:
+    """Bring everything beside this transcript into the archive: sub-agents, the
+    other sidecar dirs, the externally-keyed stores, and the unknown-sibling
+    notice (ticket 37 Part B).
+
+    THE FOUR CALLS THIS REPLACES were inline in `_capture_locked`, run
+    synchronously on the hook's SessionEnd budget. Measured 2026-09-09: a big
+    session's sub-agents alone are 14-18 MB across 30-90 files, ~90% of the
+    hook's total elapsed time, and the slowest real capture in two days
+    (4,331 ms) was still nowhere near the 40s/45s timeout budgets - so a hook
+    lost mid-run is being killed by an exit-driven signal, not a timeout, and
+    shortening this window is what lowers the odds of getting caught in it.
+
+    Public and taking `session_uuid` directly (not a full `parser.ParsedSession`)
+    for the same reason `log_sidecar_trouble` was widened in ticket 39e: the
+    hook's fresh-capture path already has one parsed, but a caller that only
+    knows a catalog `short` (the detached companions child, `cli._run_companions`)
+    would otherwise have to re-read and re-parse a multi-megabyte transcript just
+    to supply a 36-character string.
+
+    Every step here is wrapped never-fatal (DESIGN 12): whichever caller invokes
+    this, the session is already stored, and no copier or signal may turn that
+    into a reported failure.
+    """
+    _archive_subagents_of(config, conn, project_id, transcript_path, session_uuid)
+    refused: tuple[str, ...] = ()
+    try:
+        refused = _archive_sidecars_of(config, conn, project_id, transcript_path, session_uuid)
+    except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
+        refused = ()
+    try:
+        _archive_external_of(config, conn, project_id, transcript_path, session_uuid)
+    except Exception:  # noqa: BLE001 - see DESIGN 12; the session is already stored
+        pass
+    try:
+        _note_unknown_siblings(config, conn, project_id, transcript_path, session_uuid, refused)
+    except Exception:  # noqa: BLE001 - a signal must never be what fails a capture
+        pass
+
+
 def _archive_subagents_of(
     config: Config,
     conn: sqlite3.Connection,
     project_id: int,
     transcript_path: Path,
-    parsed: parser.ParsedSession,
+    session_uuid: str | None,
 ) -> None:
     """Bring this session's sub-agent transcripts with it (ticket 21d).
 
     Claude Code writes them to `<session-uuid>/subagents/agent-*.jsonl` beside
     the transcript. A session captured without them leaves work behind in
-    `~/.claude`, and `~/.claude` is being cleared - so "the sweep will get it
-    later" is not a plan, it is a hope.
+    `~/.claude` with nothing indexing it, so "the sweep will get it later" used
+    to be a hope rather than a plan (CLAUDE.md's never-delete rule now means
+    `~/.claude` itself is not at risk, but this project's own catalog and
+    render still are, until something captures the session).
 
     Ordering is free here, unlike in the sweep: the parent's own folder was
     written moments ago by _archive_source, so every sub-agent nests rather than
@@ -386,7 +420,7 @@ def _archive_subagents_of(
     """
     if config.archive_root is None or not config.archive_subagents:
         return
-    directory = sidecars.locate(transcript_path, parsed.session_uuid)
+    directory = sidecars.locate(transcript_path, session_uuid)
     if directory is None:
         return
     from cc_warehouse import archive
@@ -442,7 +476,7 @@ def _archive_sidecars_of(
     conn: sqlite3.Connection,
     project_id: int,
     transcript_path: Path,
-    parsed: parser.ParsedSession,
+    session_uuid: str | None,
 ) -> tuple[str, ...]:
     """Bring this session's OTHER sidecar folders with it: `tool-results/` and
     `workflows/` (ticket 38). Returns the relative paths that were refused.
@@ -463,14 +497,14 @@ def _archive_sidecars_of(
     """
     if config.archive_root is None or not config.archive_tool_results:
         return ()
-    directory = sidecars.locate(transcript_path, parsed.session_uuid)
+    directory = sidecars.locate(transcript_path, session_uuid)
     if directory is None:
         return ()
     from cc_warehouse import archive
 
     label = _label_of(conn, project_id)
     parent = archive.session_folder(
-        config.archive_root, label, parsed.session_uuid, config.archive_timezone
+        config.archive_root, label, session_uuid, config.archive_timezone
     )
     if parent is None:
         return ()
@@ -482,9 +516,9 @@ def _archive_sidecars_of(
         copied = archive.copy_companion_dir(parent, name, source)
         refused.extend(f"{name}/{item}" for item in copied.refused)
         for item in copied.refused:
-            log_sidecar_trouble(config, parsed.session_uuid, "refused", name, item)
+            log_sidecar_trouble(config, session_uuid, "refused", name, item)
         for item in copied.errors:
-            log_sidecar_trouble(config, parsed.session_uuid, "error", name, item)
+            log_sidecar_trouble(config, session_uuid, "error", name, item)
     return tuple(refused)
 
 
@@ -493,7 +527,7 @@ def _archive_external_of(
     conn: sqlite3.Connection,
     project_id: int,
     transcript_path: Path,
-    parsed: parser.ParsedSession,
+    session_uuid: str | None,
 ) -> None:
     """Bring the stores keyed by SESSION ID with the session (ticket 39, 39b).
 
@@ -516,26 +550,22 @@ def _archive_external_of(
     from cc_warehouse import archive
 
     home = external.home_for_transcript(transcript_path)
-    snapshots = external.file_history_dir(home, parsed.session_uuid)
-    todos = external.todo_files(home, parsed.session_uuid)
+    snapshots = external.file_history_dir(home, session_uuid)
+    todos = external.todo_files(home, session_uuid)
     if snapshots is None and not todos:
         return
     label = _label_of(conn, project_id)
     folder = archive.session_folder(
-        config.archive_root, label, parsed.session_uuid, config.archive_timezone
+        config.archive_root, label, session_uuid, config.archive_timezone
     )
     if folder is None:
         return
     if snapshots is not None:
         copied = archive.copy_companion_dir(folder, external.FILE_HISTORY_DIR, snapshots)
         for item in copied.refused:
-            log_sidecar_trouble(
-                config, parsed.session_uuid, "refused", external.FILE_HISTORY_DIR, item
-            )
+            log_sidecar_trouble(config, session_uuid, "refused", external.FILE_HISTORY_DIR, item)
         for item in copied.errors:
-            log_sidecar_trouble(
-                config, parsed.session_uuid, "error", external.FILE_HISTORY_DIR, item
-            )
+            log_sidecar_trouble(config, session_uuid, "error", external.FILE_HISTORY_DIR, item)
     for path in todos:
         try:
             archive.write_companion_file(
@@ -543,7 +573,7 @@ def _archive_external_of(
             )
         except OSError as exc:  # noqa: PERF203 - R10: name it and carry on
             log_sidecar_trouble(
-                config, parsed.session_uuid, "error", external.TODOS_DIR, f"{path.name}: {exc}"
+                config, session_uuid, "error", external.TODOS_DIR, f"{path.name}: {exc}"
             )
 
 
@@ -588,7 +618,7 @@ def _note_unknown_siblings(
     conn: sqlite3.Connection,
     project_id: int,
     transcript_path: Path,
-    parsed: parser.ParsedSession,
+    session_uuid: str | None,
     refused: Sequence[str],
 ) -> None:
     """Record anything beside this transcript that nothing copied, and say so once.
@@ -609,14 +639,14 @@ def _note_unknown_siblings(
 
     label = _label_of(conn, project_id)
     parent = archive.session_folder(
-        config.archive_root, label, parsed.session_uuid, config.archive_timezone
+        config.archive_root, label, session_uuid, config.archive_timezone
     )
     if parent is None:
         return
-    scan = sidecars.scan(transcript_path, parsed.session_uuid)
+    scan = sidecars.scan(transcript_path, session_uuid)
     if not archive.write_sidecar_notice(parent, scan, refused):
         return
-    announce_sidecar_anomaly(config, parsed.session_uuid, transcript_path.name, scan, refused)
+    announce_sidecar_anomaly(config, session_uuid, transcript_path.name, scan, refused)
 
 
 def announce_sidecar_anomaly(
@@ -692,7 +722,12 @@ def announce_sidecar_anomaly(
 
 
 def capture_transcript(
-    config: Config, transcript_path: Path, *, session_id: str | None, cwd: str | None
+    config: Config,
+    transcript_path: Path,
+    *,
+    session_id: str | None,
+    cwd: str | None,
+    defer_companions: bool = False,
 ) -> CaptureResult:
     """Hash-first, identity-idempotent capture of one transcript into the store + catalog.
 
@@ -702,7 +737,14 @@ def capture_transcript(
     transcript takes the conservative branch and returns an `error` result rather than
     raising, so a batch caller (sweep/migrate) can report the item and continue (R5/R10);
     the source transcript is never written (F9). Any deeper failure propagates to the
-    caller's never-raise boundary with the lock released and the connection closed."""
+    caller's never-raise boundary with the lock released and the connection closed.
+
+    `defer_companions` (ticket 37 Part B) skips `archive_companions` on a fresh capture,
+    leaving it to the caller. Default false keeps `ccw sweep`/`ccw import`/`ccw migrate`
+    byte-for-byte unchanged: they are not on a timing budget, and detaching one child per
+    item is explicitly the wrong shape at sweep scale (contract/DESIGN.md section 15,
+    ticket 31's own cost argument). Only `ccw hook` passes true, then spawns the detached
+    companions child itself once this call returns (cli._report_capture)."""
     start = time.monotonic()
     now = datetime.now(UTC)
     now_iso = now.isoformat()
@@ -731,6 +773,7 @@ def capture_transcript(
                 now,
                 now_iso,
                 start,
+                defer_companions,
             )
         finally:
             conn.close()

@@ -135,6 +135,37 @@ def test_has_and_get_roundtrip(tmp_path: Path) -> None:
         store.get(tmp_path, "0" * 64)
 
 
+def test_a_missing_object_names_the_hash_in_both_str_and_repr(tmp_path: Path) -> None:
+    """Ticket 37 Part B, slice 4a. The bare `Path.read_bytes()` failure's
+    `repr()` drops the filename entirely (confirmed: `FileNotFoundError(2, 'No
+    such file or directory')`), and the one caller that surfaces a vault-read
+    failure to an operator (`notify.report`'s error path) formats with
+    `repr()`, not `str()`. This traced to a real live incident where a
+    `keep_objects=false` install with no `objects/` at all crashed a render
+    with that bare, contextless message. The fix must survive EITHER
+    formatting, and must still be an OSError so `archive.py`'s existing
+    `except OSError` fallback catches it exactly as before."""
+    digest = "0" * 64
+    with pytest.raises(OSError) as excinfo:
+        store.get(tmp_path, digest)
+    exc = excinfo.value
+    assert isinstance(exc, FileNotFoundError), "errno must still resolve to the same subclass"
+    for rendered in (str(exc), repr(exc)):
+        assert digest[:12] in rendered, rendered
+        assert str(tmp_path) in rendered, rendered
+
+
+def test_a_missing_objects_directory_says_so(tmp_path: Path) -> None:
+    """A `keep_objects=false` install has no `objects/` at all (ticket 27.3) -
+    the exact live shape that crashed with no context on 2026-09-09. The
+    message must say the directory itself is gone, not merely "not found",
+    since an operator reading this needs to know whether to look for a single
+    missing file or a retired vault."""
+    with pytest.raises(OSError) as excinfo:
+        store.get(tmp_path, "1" * 64)
+    assert "missing" in str(excinfo.value)
+
+
 def test_verify_walk_all_ok(tmp_path: Path) -> None:
     store.put(tmp_path, SAME_SIZE_A)
     store.put(tmp_path, SAME_SIZE_B)

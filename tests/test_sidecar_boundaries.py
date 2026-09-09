@@ -22,7 +22,14 @@ import json
 from pathlib import Path
 from typing import cast
 
-from conftest import basic_session, hook_payload, run_ccw, warehouse_root, write_transcript
+from conftest import (
+    basic_session,
+    hook_payload,
+    run_ccw,
+    settle_companions,
+    warehouse_root,
+    write_transcript,
+)
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -49,13 +56,22 @@ def configure(
 
 
 def plant_and_capture(env: dict[str, str], archive_root: Path) -> Path:
-    """One session with one tool result holding an obvious secret."""
+    """One session with one tool result holding an obvious secret.
+
+    Ticket 37 Part B moved the tool-results copy into a detached companions
+    child, so `ccw hook` returns before `tool-results/STDOUT_NAME` exists under
+    the archive folder. Every test in this file reads that copied file (or
+    checks a verb's behaviour against it), so this helper waits for the child
+    to finish before handing the folder back - otherwise callers race a process
+    that has not started yet, matching the same race `settle_companions` closes
+    in the sidecar/external/subagent capture suites."""
     transcript = write_transcript(env, basic_session(session_id=UUID_A), session_id=UUID_A)
     where = Path(env["HOME"]) / ".claude" / "projects" / ENCODED / UUID_A / "tool-results"
     where.mkdir(parents=True, exist_ok=True)
     (where / STDOUT_NAME).write_bytes(SECRET)
     result = run_ccw(["hook"], env, stdin=hook_payload(transcript, session_id=UUID_A))
     assert result.code == 0, result.err
+    settle_companions(env)
     folders = sorted(archive_root.glob(f"*/*_{UUID_A}"))
     assert len(folders) == 1, folders
     return folders[0]

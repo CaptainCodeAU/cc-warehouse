@@ -22,6 +22,7 @@ from conftest import (
     basic_session,
     hook_payload,
     run_ccw,
+    settle_companions,
     subagent_meta,
     subagent_session,
     warehouse_root,
@@ -116,6 +117,7 @@ def test_the_hook_brings_tool_results_into_the_session_folder(
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     landed = session_folder(archive_root) / "tool-results" / STDOUT_NAME
     assert landed.read_bytes() == STDOUT_BYTES
 
@@ -126,6 +128,7 @@ def test_the_hook_keeps_the_nesting_inside_tool_results(
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     assert (session_folder(archive_root) / "tool-results" / "pdf-4f1e" / "page-01.jpg").is_file()
 
 
@@ -136,6 +139,7 @@ def test_the_hook_brings_workflows_too(ccw_env: dict[str, str], tmp_path: Path) 
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     assert (session_folder(archive_root) / "workflows" / "wf_abc.json").is_file()
 
 
@@ -164,6 +168,7 @@ def test_the_switch_off_stops_the_hook_copying(ccw_env: dict[str, str], tmp_path
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root, tool_results=False)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     assert not (session_folder(archive_root) / "tool-results").exists()
 
 
@@ -183,6 +188,7 @@ def test_a_second_hook_fire_of_the_same_session_writes_no_sidecar_again(
     configure(ccw_env, archive_root)
     transcript = plant(ccw_env)
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     landed = session_folder(archive_root) / "tool-results" / STDOUT_NAME
     before = landed.stat().st_mtime_ns
     fire_hook(ccw_env, transcript)
@@ -211,6 +217,7 @@ def test_the_hook_reaches_a_workflow_tool_subagent(
         subagent_session(agent_id=WF_AGENT, parent_uuid=PARENT)
     )
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     landed = sorted(session_folder(archive_root).glob(f"subagents/*_{WF_AGENT}/{WF_AGENT}.jsonl"))
     assert len(landed) == 1, landed
 
@@ -229,6 +236,7 @@ def test_a_forked_skill_companion_travels_with_its_subagent(
     (subs / f"agent-{AGENT}.meta.json").write_bytes(subagent_meta())
     (subs / f"agent-{AGENT}.forked-skill.json").write_bytes(b'{"skill":"tdd"}\n')
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     landed = sorted(
         session_folder(archive_root).glob(f"subagents/*_{AGENT}/agent-{AGENT}.forked-skill.json")
     )
@@ -248,6 +256,7 @@ def test_a_sidecar_dir_is_found_even_when_the_file_stem_is_not_the_bare_uuid(
     odd.write_bytes(basic_session(session_id=PARENT))
     (projects / f"{PARENT}.jsonl").unlink()
     fire_hook(ccw_env, odd)
+    settle_companions(ccw_env)
     assert (session_folder(archive_root) / "tool-results" / STDOUT_NAME).is_file()
 
 
@@ -264,6 +273,7 @@ def test_an_unknown_sibling_is_named_in_the_session_folders_notice(
     transcript = plant(ccw_env)
     (sidecar_root(ccw_env) / "zzz-probe").mkdir()
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     notice = json.loads(
         (session_folder(archive_root) / "sidecars.json").read_text(encoding="utf-8")
     )
@@ -283,6 +293,7 @@ def test_an_unknown_sibling_writes_exactly_one_log_line(
     (sidecar_root(ccw_env) / "zzz-probe").mkdir()
     fire_hook(ccw_env, transcript)
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     assert len(log_lines(ccw_env, "unarchived-sibling")) == 1
 
 
@@ -294,6 +305,7 @@ def test_the_log_line_names_the_sibling_and_carries_the_six_standard_keys(
     transcript = plant(ccw_env)
     (sidecar_root(ccw_env) / "zzz-probe").mkdir()
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     record = log_lines(ccw_env, "unarchived-sibling")[0]
     assert set(record) == {"at", "status", "session", "project", "message", "elapsed_ms"}
     assert "zzz-probe" in str(record["message"])
@@ -307,6 +319,7 @@ def test_ds_store_beside_a_transcript_raises_no_notice(
     transcript = plant(ccw_env)
     (sidecar_root(ccw_env) / ".DS_Store").write_bytes(b"\x00")
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     assert not (session_folder(archive_root) / "sidecars.json").exists()
 
 
@@ -314,6 +327,7 @@ def test_a_clean_session_gets_no_notice(ccw_env: dict[str, str], tmp_path: Path)
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     assert not (session_folder(archive_root) / "sidecars.json").exists()
 
 
@@ -355,6 +369,7 @@ def test_one_unreadable_file_does_not_stop_the_others_being_copied(
         fire_hook(ccw_env, transcript)
     finally:
         blocked.chmod(0o600)
+    settle_companions(ccw_env)
     assert (session_folder(archive_root) / "tool-results" / "pdf-4f1e" / "page-01.jpg").is_file()
 
 
@@ -373,9 +388,11 @@ def test_a_refused_sidecar_is_recorded_rather_than_swallowed(
     configure(ccw_env, archive_root)
     transcript = plant(ccw_env)
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     (sidecar_root(ccw_env) / "tool-results" / STDOUT_NAME).write_bytes(b"different bytes here")
     grow(transcript)
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env, expected=2)
     notice = json.loads(
         (session_folder(archive_root) / "sidecars.json").read_text(encoding="utf-8")
     )
@@ -392,9 +409,11 @@ def test_a_refused_sidecar_is_named_in_the_audit_log_too(
     configure(ccw_env, archive_root)
     transcript = plant(ccw_env)
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     (sidecar_root(ccw_env) / "tool-results" / STDOUT_NAME).write_bytes(b"different bytes here")
     grow(transcript)
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env, expected=2)
     records = log_lines(ccw_env, "refused")
     assert len(records) == 1, records
     assert STDOUT_NAME in str(records[0]["message"])

@@ -22,6 +22,7 @@ from conftest import (
     basic_session,
     hook_payload,
     run_ccw,
+    settle_companions,
     tree_snapshot,
     warehouse_root,
     write_transcript,
@@ -92,6 +93,7 @@ def test_the_hook_brings_the_sessions_file_history(
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     assert (folder_of(archive_root) / "file-history" / SNAP).read_bytes() == SNAP_BYTES
 
 
@@ -99,6 +101,7 @@ def test_the_hook_brings_the_sessions_todos(ccw_env: dict[str, str], tmp_path: P
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     landed = folder_of(archive_root) / "todos" / f"{UUID_A}-agent-{UUID_A}.json"
     assert landed.read_bytes() == b'[{"content":"do the thing"}]'
 
@@ -114,6 +117,7 @@ def test_only_this_sessions_snapshots_are_taken(ccw_env: dict[str, str], tmp_pat
     other.mkdir(parents=True)
     (other / "deadbeef@v1").write_bytes(b"someone else's file\n")
     fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
     names = sorted(p.name for p in (folder_of(archive_root) / "file-history").iterdir())
     assert names == [SNAP, "23527e7c@v2"]
 
@@ -134,6 +138,7 @@ def test_the_switch_off_stops_the_gather(ccw_env: dict[str, str], tmp_path: Path
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root, file_history=False)
     fire_hook(ccw_env, plant(ccw_env))
+    settle_companions(ccw_env)
     assert not (folder_of(archive_root) / "file-history").exists()
 
 

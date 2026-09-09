@@ -644,6 +644,48 @@ def settle_render(root: Path, expected: int, timeout: float = 30.0) -> None:
     )
 
 
+def settle_companions(env: Mapping[str, str], expected: int = 1, timeout: float = 30.0) -> None:
+    """Wait until `expected` capture hooks' DETACHED COMPANIONS CHILDREN have finished.
+
+    Ticket 37 Part B moved companion-copying (sub-agents, tool-results/workflows
+    sidecars, file-history/todos, the unknown-sibling notice) out of the hook and
+    into a detached child, the same shape `settle_render` above already waits
+    for. `ccw hook` returns before that child has written anything, so a test
+    that fires the hook and immediately reads archived companion content is
+    racing a process that has not started yet.
+
+    No quiet period is needed here, unlike `settle_render`: each companions
+    child writes exactly one `companions-done` line to `logs/capture.jsonl`
+    when it finishes (`cli._log_companions`), and that line is a genuine
+    terminal signal rather than a filesystem snapshot that can catch a child
+    mid-write. `expected` is a floor on how many hook fires should have spawned
+    a fresh companions child - a fire on unchanged transcript bytes is skipped
+    before it ever reaches `archive_companions`, so it spawns none and does not
+    count.
+    """
+    log = warehouse_root(env) / "logs" / "capture.jsonl"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if log.is_file():
+            done = 0
+            for line in log.read_text(encoding="utf-8").splitlines():
+                try:
+                    record = cast(object, json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    typed = cast(dict[str, object], record)
+                    if typed.get("status") == "companions-done":
+                        done += 1
+            if done >= expected:
+                return
+        time.sleep(0.05)
+    raise AssertionError(
+        f"companions children did not settle within {timeout}s under {log}"
+        f" (wanted at least {expected} 'companions-done' line(s))"
+    )
+
+
 def tree_snapshot(root: Path) -> dict[str, bytes]:
     """Every file under root with its exact bytes; directory set included as keys."""
     snap: dict[str, bytes] = {}

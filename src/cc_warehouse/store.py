@@ -169,7 +169,35 @@ def has(root: Path, sha256: str, ext: str = ".jsonl") -> bool:
 
 
 def get(root: Path, sha256: str, ext: str = ".jsonl") -> bytes:
-    return object_path(root, sha256, ext).read_bytes()
+    """This object's bytes from the vault, addressed by its own hash.
+
+    Raises a message NAMING THE HASH AND THE VAULT ROOT on any OSError (ticket
+    37 Part B, slice 4a), not the bare `read_bytes()` failure. Still an OSError
+    (constructed from the original's own errno, so Python still resolves it to
+    the same concrete subclass -- e.g. FileNotFoundError) so the one caller
+    that already catches OSError here (archive.py's `ccw archive` fallback)
+    is unaffected.
+
+    THE DEFECT THIS FIXES, traced 2026-09-09 to a real live incident (ticket
+    37): the bare form's `repr()` drops the filename entirely
+    (`FileNotFoundError(2, 'No such file or directory')`, confirmed by
+    inspection -- only `str()` keeps it), and the one caller that surfaces
+    this to an operator (`notify.report`'s error path, `cli.py`) formats with
+    `repr()`. A `keep_objects=false` install with no `objects/` directory at
+    all crashed a render with that bare, contextless message -- "something
+    failed" with no way to tell what. A message built into the exception's own
+    args survives either formatting.
+    """
+    path = object_path(root, sha256, ext)
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        detail = exc.strerror or str(exc)
+        message = (
+            f"no bytes for {sha256[:12]}{ext} in the vault at {root}"
+            f" (objects/ {'missing' if not (root / 'objects').is_dir() else 'present'}: {detail})"
+        )
+        raise OSError(exc.errno, message) from exc
 
 
 def verify_walk(root: Path) -> Iterator[VerifyResult]:

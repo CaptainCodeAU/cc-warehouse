@@ -28,6 +28,7 @@ from conftest import (
     basic_session,
     hook_payload,
     run_ccw,
+    settle_companions,
     subagent_meta,
     subagent_session,
     warehouse_root,
@@ -242,6 +243,7 @@ def test_the_hook_captures_a_subagent_too(
         run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, cwd=CWD, session_id=PARENT)).code
         == 0
     )
+    settle_companions(ccw_env)
     assert list(target.rglob(f"{AGENT}.jsonl")), "the hook left the sub-agent behind"
 
 

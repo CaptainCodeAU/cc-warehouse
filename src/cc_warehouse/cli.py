@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -462,6 +463,43 @@ def _spawn_render(short: str) -> None:
         return
 
 
+def _spawn_companions(short: str, transcript_path: Path) -> None:
+    """Spawn the detached companions child (ticket 37 Part B): same shape as
+    `_spawn_render` just above - start_new_session, all stdio to DEVNULL,
+    `ccw companions --session s:<key> --transcript <path>`.
+
+    A KEY, NOT A PAYLOAD, same reasoning as the render child's `s:<short>`:
+    `notify._spawn_notify_helper`'s `--record <json>` idiom passes the whole
+    record on argv and would hit ARG_MAX for a work list this size. The child
+    re-opens the catalog and re-derives everything else (label, session_uuid,
+    project_id) from `short` alone - the one thing it CANNOT re-derive is
+    which transcript to read sidecars beside (`sidecars.locate` anchors on
+    `transcript_path.parent`, and the catalog stores no path), so that is the
+    one extra argument this child needs that the render child does not.
+
+    Best-effort, exactly like `_spawn_render`: an OS spawn failure must never
+    turn a stored capture into a reported error (DESIGN section 12)."""
+    try:
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "cc_warehouse",
+                "companions",
+                "--session",
+                f"s:{short}",
+                "--transcript",
+                str(transcript_path),
+            ],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return
+
+
 def _reveal_target(config: Config, short: str | None) -> str:
     """The folder the open-folder opt-in should show for this capture.
 
@@ -509,14 +547,21 @@ def _reveal_target(config: Config, short: str | None) -> str:
     return str(config.root / "projections")
 
 
-def _report_capture(config: Config, result: capture.CaptureResult) -> None:
+def _report_capture(
+    config: Config, result: capture.CaptureResult, transcript_path: Path
+) -> None:
     """Emit notifications for a completed capture per its action (DESIGN sections 4, 12).
 
     A duplicate SessionEnd invocation is silent (no sink fires). A fresh `stored` capture
-    spawns the render child and reports ok; the network POSTs leave via the detached
-    notify-only helper (notify.report), never inline on the hook. An unchanged re-fire
-    reports skipped_unchanged (silent by default) and honors the open-folder opt-in. An
-    error reports error. Every sink is best-effort and cannot fail capture."""
+    spawns the render child and the companions child (ticket 37 Part B) and reports ok;
+    the network POSTs leave via the detached notify-only helper (notify.report), never
+    inline on the hook. An unchanged re-fire reports skipped_unchanged (silent by default)
+    and honors the open-folder opt-in. An error reports error. Every sink is best-effort
+    and cannot fail capture.
+
+    `transcript_path` is the source path the companions child needs to locate sidecars
+    beside (see `_spawn_companions`'s docstring); the sole caller is `_run_hook`, the only
+    place `capture.capture_transcript` is called with `defer_companions=True`."""
     if result.action == "duplicate-invocation":
         return
     short = result.short or None
@@ -536,10 +581,12 @@ def _report_capture(config: Config, result: capture.CaptureResult) -> None:
         if config.open_folder:
             notify.open_folder(config, _reveal_target(config, short))
         return
-    # stored: a successful new capture. The render child is spawned INDEPENDENTLY of any
-    # sink (a log or webhook failure must never suppress rendering); both the spawn and
-    # notify.report are best-effort and neither can fail the capture (DESIGN section 12).
+    # stored: a successful new capture. Both children are spawned INDEPENDENTLY of any
+    # sink (a log or webhook failure must never suppress rendering or archiving
+    # companions); every spawn and notify.report are best-effort and neither can fail
+    # the capture (DESIGN section 12).
     _spawn_render(result.short)
+    _spawn_companions(result.short, transcript_path)
     notify.report(
         config,
         notify.NotifyEvent("ok", short, result.detail or None, "captured", result.elapsed_ms),
@@ -566,13 +613,15 @@ def _run_hook() -> int:
             )
             return 0
         payload = _read_payload()
+        transcript_path = Path(str(payload["transcript_path"]))
         result = capture.capture_transcript(
             config,
-            Path(str(payload["transcript_path"])),
+            transcript_path,
             session_id=_str_field(payload, "session_id"),
             cwd=_str_field(payload, "cwd"),
+            defer_companions=True,
         )
-        _report_capture(config, result)
+        _report_capture(config, result, transcript_path)
     except Exception as exc:  # never-raise into the harness (SPEC 2.6 / F7)
         if config is not None:
             try:
@@ -868,6 +917,99 @@ def _log_repair_outcome(config: Config, status: str, session: str | None, messag
         )
     except Exception:
         return
+
+
+def _log_companions(
+    config: Config, status: str, short: str | None, message: str, elapsed_ms: int | None
+) -> None:
+    """One durable capture.jsonl record for the companions child (ticket 37 Part B).
+
+    Same six-field schema and best-effort contract as `_log_build_failure` /
+    `_log_repair_outcome` just above (cli.py's own stated invariant: new context
+    folds into `message`, never a new JSON key, so nothing that reads
+    capture.jsonl today needs to change). `status` carries `companions-started`
+    / `companions-done` / `error`; `doctor._companions_stalled` pairs started
+    against done by `short` to spot a child that died mid-run, the same
+    started/ok pairing ticket 37 Part B row 1 already shipped for
+    `ccw-hook.log`.
+
+    The `companions: ` PREFIX ON EVERY MESSAGE, added here rather than at each
+    call site (matching `_log_repair_outcome`'s own `f"repair: {message}"`
+    shape), is what lets `doctor._companions_stalled` tell a companions-child
+    error apart from an unrelated `error` line sharing the same `status` value
+    - an `error` record from `_log_stage_failure` or `_log_build_failure` never
+    carries this prefix, so a coincidental `session` match between them can
+    never be misread as this child having reported in."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": status,
+                "session": short,
+                "project": None,
+                "message": f"companions: {message}",
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+    except Exception:
+        return
+
+
+def _run_companions(args: Sequence[str]) -> int:
+    """`ccw companions --session s:<key> --transcript PATH`: the detached
+    companions child (ticket 37 Part B), spawned by `_spawn_companions` only
+    from the `stored` branch of `_report_capture` - so a missing catalog row
+    here means something else deleted it in the meantime, not a normal race.
+
+    Re-derives `project_id` and `session_uuid` from the catalog by `short`
+    rather than taking them on argv, and calls `capture.archive_companions` -
+    the SAME function the hook calls inline when `defer_companions` is false,
+    so the detached and inline paths can never drift into two different
+    copiers.
+
+    Logs a `companions-started` / `companions-done` pair (see `_log_companions`)
+    into the same `logs/capture.jsonl` the hook already writes; O_APPEND makes
+    concurrent appends from the hook and this child safe by construction.
+
+    Never raises into anything (it is detached, no stdio, nobody waits on it
+    or reads its exit code); mirrors `_run_notify`'s posture rather than the
+    render child's (which IS observed, via its own error-notify path)."""
+    rest = args[1:]
+    session_arg = _flag_value(rest, "session")
+    transcript_arg = _flag_value(rest, "transcript")
+    if session_arg is None or transcript_arg is None:
+        return 0
+    short = session_arg[2:] if session_arg.startswith("s:") else session_arg
+    transcript_path = Path(transcript_arg)
+    try:
+        config = load_config()
+    except Exception:
+        return 0
+    start = time.monotonic()
+    try:
+        conn = catalog.open_catalog(config.root)
+        try:
+            row = cast(
+                "tuple[object, ...] | None",
+                conn.execute(
+                    "SELECT project_id, session_uuid FROM session WHERE short = ?", (short,)
+                ).fetchone(),
+            )
+            if row is None:
+                _log_companions(config, "error", short, "no catalog row for this short", None)
+                return 1
+            project_id, session_uuid = cast("tuple[int, str | None]", row)
+            _log_companions(config, "companions-started", short, "started", None)
+            capture.archive_companions(config, conn, project_id, transcript_path, session_uuid)
+        finally:
+            conn.close()
+    except Exception as exc:
+        _log_companions(config, "error", short, f"failed: {exc!r}", None)
+        return 1
+    elapsed = max(0, int((time.monotonic() - start) * 1000))
+    _log_companions(config, "companions-done", short, "archived", elapsed)
+    return 0
 
 
 def _run_build(args: Sequence[str]) -> int:
@@ -2286,6 +2428,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_hook()
     if verb == "notify":
         return _run_notify(args)
+    if verb == "companions":
+        return _run_companions(args)
     if verb == "sweep":
         return _run_sweep(args)
     if verb == "build":

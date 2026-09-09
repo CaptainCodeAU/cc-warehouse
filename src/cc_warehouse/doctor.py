@@ -76,6 +76,22 @@ _WRAPPER_READ_LIMIT = 64 * 1024
 # everything").
 _DESYNC_SAMPLE = 25
 
+# Ticket 37 Part B: how far back to look in logs/capture.jsonl for a
+# companions-started/companions-done pairing. Matches the "bounded window"
+# posture ticket 42's own proposal #5 uses for the planned capture.jsonl
+# reconciliation check (7-14 days). The narrow end, deliberately: this check
+# exists to catch a CURRENTLY stuck child, not to audit history.
+_COMPANIONS_WINDOW = timedelta(days=7)
+
+# How long a started-but-not-yet-done companions child gets before it counts
+# as stalled rather than merely still running. Generous margin over the
+# largest real elapsed time measured for the SYNCHRONOUS version of this same
+# work (4,331 ms, measured 2026-09-09) plus the detached child's own
+# config-load and catalog-open overhead -- the same "still running vs
+# actually stuck" distinction _PENDING_GRACE_SECONDS makes for the render
+# child, just a wider margin because this child also copies more bytes.
+_COMPANIONS_GRACE_SECONDS = 300
+
 
 @dataclass(frozen=True)
 class Check:
@@ -432,6 +448,94 @@ def _history_staleness(config: Config, home: Path) -> tuple[bool, str]:
     return False, f"live history.jsonl not yet snapshotted (would land at {target.name})"
 
 
+def _companions_stalled(config: Config) -> tuple[bool, str]:
+    """Whether the detached companions child (ticket 37 Part B) is keeping up.
+
+    Reads logs/capture.jsonl rather than a catalog row: like `_history_staleness`
+    just above, this is a MACHINE-LEVEL log, not a session, so nothing in the
+    catalog can answer for it. Pairs each session's `companions-started` line
+    against a `companions-done` (or a companions-originated `error`) line by
+    its `session` field (the short hash, within `_COMPANIONS_WINDOW`) -- a
+    start with no matching finish, older than `_COMPANIONS_GRACE_SECONDS`, is a
+    child that died mid-run: the same started/ok pairing ticket 37 Part B row 1
+    already proved out for `ccw-hook.log`, read here for a second log with the
+    same shape.
+
+    THE `companions: ` MESSAGE PREFIX IS WHAT MAKES THE `error` MATCH SAFE.
+    `capture.jsonl` carries `error` records from several unrelated sources
+    (`_log_stage_failure`, `_log_build_failure`, ...), and some of those also
+    key `session` on a short hash that could coincidentally match a companions
+    child's. Without the prefix, one of those could be misread as this child
+    having reported in when it never ran at all. `cli._log_companions` adds the
+    prefix at the one place every companions-child log line is written, so this
+    reader never has to guess.
+
+    NEVER BLOCKING (see `sidecars`/`history`/`prompts` in `diagnose`, ticket 38
+    ruling (e), for the same posture): a stalled companions pass is worth
+    knowing about and is not a broken capture -- the archive JSONL and catalog
+    row are already durable by the time this child would even be spawned, and
+    the daily sweep re-does the same work as a net. Every cannot-answer
+    state (no log yet, no archive configured) reads as `ok=True` with an
+    explanatory detail, never as an alarm.
+    """
+    if config.archive_root is None:
+        return True, "no archive configured"
+    path = config.root / "logs" / "capture.jsonl"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return True, "no capture.jsonl on this machine yet"
+    now = datetime.now(UTC)
+    cutoff = now - _COMPANIONS_WINDOW
+    started: dict[str, datetime] = {}
+    finished: set[str] = set()
+    done_count = 0
+    for line in text.splitlines():
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        status = record.get("status")
+        session = record.get("session")
+        at = record.get("at")
+        if not isinstance(session, str) or not isinstance(at, str):
+            continue
+        try:
+            moment = datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        if moment < cutoff:
+            continue
+        if status == "companions-started":
+            started[session] = moment
+        elif status == "companions-done":
+            finished.add(session)
+            done_count += 1
+        elif status == "error" and str(record.get("message", "")).startswith("companions: "):
+            finished.add(session)
+    stalled = sorted(
+        (
+            (session, moment)
+            for session, moment in started.items()
+            if session not in finished
+            and (now - moment).total_seconds() >= _COMPANIONS_GRACE_SECONDS
+        ),
+        key=lambda pair: pair[1],
+    )
+    if stalled:
+        session, moment = stalled[0]
+        return (
+            False,
+            f"{len(stalled)} companions pass(es) stalled, e.g. {session} started"
+            f" {moment.isoformat()}",
+        )
+    if done_count == 0 and not started:
+        return True, "no companions activity recorded in the last 7 days"
+    return True, f"{done_count} companions pass(es) completed in the last 7 days"
+
+
 def _batch_render_in_progress(root: Path) -> bool:
     """True while `ccw sweep` or `ccw build` is actively running against this
     warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
@@ -673,6 +777,13 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             blocking=False,
         )
     )
+
+    # Ticket 37 Part B. Same never-blocking posture as `sidecars`/`history`/
+    # `prompts` above: a stalled detached companions child is worth knowing
+    # about and is not itself a broken capture (the session's archive JSONL
+    # and catalog row are already safe by the time this child would run).
+    companions_ok, companions_detail = _companions_stalled(config)
+    checks.append(Check("companions", companions_ok, companions_detail, blocking=False))
 
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)

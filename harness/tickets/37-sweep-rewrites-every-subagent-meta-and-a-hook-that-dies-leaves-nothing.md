@@ -389,3 +389,117 @@ like, and whether it reuses `notify.alert` or needs its own path given this
 file's "must not import `cc_warehouse`" constraint) is real design work on
 its own and was deliberately left for a dedicated session rather than rushed
 in under this one's original scope.
+
+## Part B DONE, 2026-09-09 (same-day follow-on session): the detached companions child
+
+Scoped and built the diff the previous section deliberately left open. **Widened
+the scope of what detaches, past the operator's original ruling, on measured
+evidence rather than guessing**: `_archive_subagents_of` alone is 14-18 MB /
+30-90 files on a big session, ~90% of the hook's total elapsed time (the
+sidecar/external work the ruling named is the other ~10%), and the slowest
+real `stored` capture in the two days measured (4,331 ms) was nowhere near the
+40s/45s timeout budgets - independent confirmation that a hook lost mid-run is
+being killed by a signal, not a timeout, so shortening the window is what
+actually lowers the odds of getting caught in it. Detaching only sidecars/
+external would have moved ~10% of the exposure and left this ticket
+effectively open; the operator confirmed detaching all four calls before this
+was built.
+
+**What shipped:**
+- `capture.py`: the four companion functions widened to take `session_uuid:
+  str | None` instead of a full `parser.ParsedSession` (same reason
+  `log_sidecar_trouble` was widened in 39e - a caller that only knows a
+  catalog `short` should not have to re-parse a multi-megabyte transcript for
+  a 36-character string), lifted into one new public `archive_companions()`.
+  `capture_transcript()` gained `defer_companions: bool = False`; default
+  false keeps `ccw sweep`/`ccw import`/`ccw migrate` byte-for-byte unchanged
+  (not on a timing budget, and one detached child per sweep item is the wrong
+  shape at scale, per DESIGN 15's own ticket-31 cost argument).
+- `cli.py`: new hidden verb `ccw companions --session s:<key> --transcript
+  PATH` (the `notify`/`render` precedent for a machine-invoked verb absent
+  from `_VERB_OPTIONS`), `_spawn_companions` (same `start_new_session=True`,
+  all-DEVNULL Popen shape SPEC 2.5/5 locks, spawned beside `_spawn_render`),
+  `_run_companions` (re-derives `project_id`/`session_uuid` from the catalog
+  by `short`, calls the SAME `archive_companions` the inline path calls so
+  the two can never drift), `_log_companions` (writes `companions-started`/
+  `companions-done`/`error` into the EXISTING `logs/capture.jsonl`, six-field
+  schema unchanged, every message prefixed `"companions: "` so a later reader
+  can tell this child's `error` lines apart from unrelated ones sharing the
+  same `session` value). `_run_hook` now passes `defer_companions=True`.
+- `doctor.py`: `_companions_stalled` (modelled on `_history_staleness`, not on
+  a `status.py` gap/line pair - a machine-level log is that function's shape).
+  Pairs `companions-started` against `companions-done`/a `companions: `-
+  prefixed `error` by `session`, within a 7-day window, `_COMPANIONS_GRACE_
+  SECONDS = 300` before a started-with-no-finish counts as stalled rather
+  than merely running. Registered NON-BLOCKING (ticket 38 ruling (e) posture)
+  after `prompts` in `diagnose`; `report_text`/the exit-code rule are
+  untouched, so `ccw-watch`'s `grep -E '^\s*FAIL'` and `ccw-freshness-
+  check.py`'s exit-code read are both unaffected by construction (proved by a
+  real `grep` subprocess, not just an assertion on the Python object).
+- `store.py`: `get()` now raises an `OSError` (constructed from the original's
+  own `errno`, so `isinstance` and the concrete subclass are unchanged) whose
+  message names the hash and the vault root. Fixes a REAL, separate incident
+  this same session found live on the operator's machine (see "A second,
+  distinct bug" below): the bare form's `repr()` drops the filename entirely
+  (confirmed by inspection: `FileNotFoundError(2, 'No such file or
+  directory')`), and `notify.report`'s error path formats with `repr()`, so a
+  `keep_objects=false` install with no `objects/` crashed with a message
+  carrying no path and no hash at all.
+- New `tests/test_companions_detach.py` (9 oracle tests: the defer flag,
+  `archive_companions` producing the same tree as the inline path, the verb's
+  catalog lookup and logging, and every state of the new doctor check) plus
+  two new `test_store.py` tests for the `get()` message. `tests/conftest.py`
+  gained `settle_companions` (the companions-child twin of the existing
+  `settle_render`), and the pre-existing hook-fire-then-assert-on-companion-
+  content tests across `test_external_capture.py`, `test_sidecar_capture.py`,
+  `test_subagent_capture.py`, `test_sidecar_boundaries.py` were updated to
+  wait on it - those tests were racing a background process that did not
+  exist before this ticket.
+
+**A genuinely new race this ticket's own change caused, found and fixed, not
+just inherited**: adding a SECOND detached child per hook fire (companions,
+alongside the pre-existing render child) measurably raised the odds of a
+PRE-EXISTING, previously-rare race in `test_sidecar_sweep.py`'s
+`test_a_sweep_that_only_archived_sidecars_still_rebuilds_the_manifest` - the
+hook's own render child (built before this ticket, unrelated to it) can write
+a STALE `manifest.json` (built before a later-arriving sidecar file existed)
+AFTER a subsequent sweep's build already wrote the correct one, if the render
+child is still in flight. Proven, not assumed: 8/8 clean runs on the
+pre-change commit (`git stash`), 1/5 failing with the change applied, 12/12
+clean again once the test was given a `settle_render` wait it always should
+have had. Fixed with a one-line wait in the test, not a change to the render
+child or the new companions child - the mechanism was already there; this
+ticket only made it more visible.
+
+**A second, distinct bug found and root-caused, but NOT force-fixed**: this
+ticket's own plan guessed slice 4b's fix was "`build._heads` renders from a
+stale head instead of the one matching the bytes on disk" (a ticket-29-shaped
+ranking bug). **Reproduced end to end in a scratch archive_root and the guess
+was wrong.** The real mechanism: a capture's archive write (`_archive_source`,
+durable, always first by design) succeeds, and then its OWN catalog-row
+insert (`catalog.add_session`) fails - the exact, already-documented ticket
+31.4 sqlite-contention shape, reproduced here with a monkeypatched
+`add_session` raising after a real archive write - so the archive folder ends
+up holding bytes at a hash NO catalog row for that `session_uuid` names.
+`ccw repair` can never fix this by construction: it only ever re-renders from
+a catalog row, and there is no row matching what the archive actually holds,
+so it fails with `render failed: exit 1` and empty stderr - exactly the shape
+this ticket's own 2026-09-09 addendum first saw on `abaece35`. The machine's
+own PROVEN recovery is `ccw sweep` re-capturing the still-present source
+transcript once it stabilizes (recorded lower on this page: "all 3 sessions
+recovered... via ccw sweep"), not a change to repair's rendering logic. Slice
+4a (the `store.get` message fix above) already turns this incident's
+operator-facing symptom from a contextless crash into a message naming the
+hash and the vault root; no further code was shipped for this half of 4b,
+per this ticket's own instruction to write up a wrong guess rather than force
+it through. Left as an open question for the operator: whether `_run_repair`
+should also read `capture.jsonl`'s own error line to enrich its "still
+broken" report (small, safe, deferred rather than freelanced), or whether
+this is adequately covered by the next day's scheduled sweep.
+
+**Real-data acceptance, run 3x for confidence**: `uv run pytest tests/ -q` -
+1542 passed, zero failures, three consecutive clean runs (no flakes). Full-repo
+`ruff check .` and `pyright` both clean. **Not yet done, needs the operator's
+go-ahead at the moment of running**: `uv_tool_reinstall_current_project`, the
+`/plugin` update, and the real-session acceptance checks this ticket's own
+Verification section calls for - none of that was run this session.

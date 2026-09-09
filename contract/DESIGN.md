@@ -1949,6 +1949,45 @@ a session whose original scope was the freshness check's alerting, not this
 mechanism's actual fix. Full incident evidence and the operator's own words:
 `harness/tickets/37-*.md`'s 2026-09-09 dated section.
 
+### 2026-09-09, ticket 37 Part B, same day: the deferred diff scoped and built
+
+Two decisions taken measuring rather than guessing, both diverging from the
+first pass at scoping this above.
+
+**All four companion calls detach, not only the two the original ruling
+named.** Measured before writing any code: sub-agents alone are 14-18 MB /
+~90% of hook elapsed time on a big session, and the slowest real capture in
+two days (4,331 ms) never came close to either timeout budget - independent
+proof the hook is being killed by a signal, not a timeout, so shortening the
+window (not merely trimming ~10% of it) is what actually moves the odds.
+Confirmed with the operator before building past the original ruling.
+
+**The stale-manifest render failure (this file's own 2026-09-09 addendum,
+`abaece35`) is NOT a `build._heads` ranking bug.** The plan guessed it was;
+reproducing it end to end (a scratch archive_root, a monkeypatched
+`catalog.add_session` failing right after a real `_archive_source` write)
+showed the real mechanism instead: the archive write succeeds and durable,
+but that SAME capture's own catalog-row insert then fails (ticket 31.4's
+already-documented sqlite-contention shape), leaving archive bytes at a hash
+no catalog row names. `ccw repair` cannot fix this by construction - it only
+ever re-renders from a catalog row, and none matches. Per this file's own
+stated posture on a wrong guess, no fix was forced through for the render
+path; `store.get`'s message (below) already turns the operator-facing symptom
+from a contextless crash into one naming the hash and vault root, and the
+already-working recovery is the next `ccw sweep` re-capturing the source once
+it stabilizes.
+
+`store.get()` also gained a clear message on any read failure (still an
+`OSError`, same concrete subclass, so the one existing `except OSError`
+caller in `archive.py` is unaffected): the bare form's `repr()` - what
+`notify.report`'s error path actually formats with - drops the filename
+entirely, confirmed live on the operator's `keep_objects=false` machine.
+
+Full account, including the acceptance numbers and the one open question left
+for the operator (whether `ccw repair` should also read `capture.jsonl`'s own
+error line to enrich its report): `harness/tickets/37-*.md`'s "Part B DONE,
+2026-09-09" section.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

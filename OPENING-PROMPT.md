@@ -25,8 +25,19 @@ with existing open tickets, so those are merged in rather than duplicated:
    underlying mechanism is NOT fixed. **Operator ruling recorded**: detach
    the hook's synchronous sidecar/external copying off the SessionEnd
    budget, report failures via a log file a daily job reads (matching the
-   `sidecars`/`history`/`prompts` pattern already in this repo). Scoping the
-   actual diff is NOT done - pick this up next.
+   `sidecars`/`history`/`prompts` pattern already in this repo).
+   **SCOPED AND BUILT, same day, 2026-09-09.** All four companion calls
+   detach (measured evidence widened this past the ruling's original two -
+   sub-agents alone are ~90% of the exposure), new `ccw companions` verb +
+   `logs/capture.jsonl` logging + non-blocking `doctor` `companions` check.
+   Also fixed a live, distinct `store.get()` incident found on the way, and
+   root-caused (but deliberately did not force-fix) a second one whose real
+   mechanism turned out NOT to match this file's original guess. Full suite
+   green x3 (1542 passed), ruff/pyright clean. **NOT YET DONE: the frozen
+   reinstall, `/plugin` update, and real-session acceptance** - needs the
+   operator's go-ahead at the moment of running. Full account:
+   `harness/HANDOFFS.md`'s thirty-ninth handoff, `harness/tickets/37-*.md`'s
+   "Part B DONE, 2026-09-09" section.
 2. **Ticket 42 #4** - fix or relabel `ccw status`'s "Recent errors" section.
    **Do this before revisiting ticket 31.4's stalled decision** (see
    ticket 31's own file, "2026-09-09 cross-reference" note): one of the two
