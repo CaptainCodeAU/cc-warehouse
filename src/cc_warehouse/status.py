@@ -66,6 +66,34 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 _JSONL_SUFFIX = ".jsonl"
 
 
+def archived_session_uuids(archive_root: Path | None) -> set[str]:
+    """Every archived session's uuid, by folder-name walk alone (ticket 42 #5).
+
+    A FILTER, never an identity by itself (F4): a name match only means "a folder with
+    this uuid tail exists", not that its payload is intact or belongs to this session --
+    callers that need to KNOW, not just filter, still open the folder (or query the
+    catalog) themselves. Deliberately NOT shared with `uncaptured_gap`'s own walk just
+    below, which needs sub-agent ids from the SAME pass and would otherwise cost that
+    hot path a second full archive walk to get this set alone; the two are near-twins by
+    necessity (Claude Code's own `<stamp>_<uuid>` naming, not a choice either owns), the
+    same shape doctor.py already accepts for lock-name literals it cannot import either.
+    Reads directory entries only; nothing is created, including the archive root itself.
+    """
+    archived: set[str] = set()
+    if archive_root is None or not archive_root.is_dir():
+        return archived
+    for label_dir in archive_root.iterdir():
+        if not label_dir.is_dir() or label_dir.name in build.RESERVED_LABELS:
+            continue
+        for session_dir in label_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            _stamp, _sep, tail = session_dir.name.partition("_")
+            if _UUID_RE.match(tail):
+                archived.add(tail)
+    return archived
+
+
 @dataclass(frozen=True)
 class UncapturedGap:
     """How far the archive is behind the source tree, and by what instrument.

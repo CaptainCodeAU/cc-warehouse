@@ -45,6 +45,13 @@ class NotifyEvent:
     project_label: str | None
     message: str
     elapsed_ms: int | None
+    # Ticket 42 #5: the full Claude Code session UUID, when the caller has one.
+    # `session_short` above holds four different shapes across this codebase's
+    # writers (an 8-char short, a 12-char short, a full sha256 digest, or None),
+    # so it cannot be used as a session identity for cross-tree reconciliation.
+    # This is additive and optional (every capture.jsonl reader uses `.get()`,
+    # DESIGN 15's "additive optional keys" ruling) -- omitted, it is None.
+    session_uuid: str | None = None
 
 
 def append_log(config: Config, record: Mapping[str, object]) -> None:
@@ -145,6 +152,8 @@ def report(config: Config, event: NotifyEvent) -> None:
         "message": event.message,
         "elapsed_ms": event.elapsed_ms,
     }
+    if event.session_uuid is not None:
+        record["session_uuid"] = event.session_uuid
     append_log(config, record)
     _spawn_notify_helper(config, record)
 

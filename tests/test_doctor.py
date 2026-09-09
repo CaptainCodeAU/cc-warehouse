@@ -864,3 +864,111 @@ def test_a_stale_history_snapshot_never_flips_doctors_exit_code(
     assert history_check.ok is False
     assert history_check.blocking is False
     assert report.ok, "a stale history snapshot alone must not fail doctor"
+
+
+# ---------------------------------------------------------------------------
+# Ticket 42 #5: the reconcile check reads only the cheap dedup ledger
+# ---------------------------------------------------------------------------
+
+
+def _append_capture_log(env: dict[str, str], **fields: object) -> None:
+    record: dict[str, object] = {
+        "at": "2026-01-01T00:00:00+00:00",
+        "status": "error",
+        "session": None,
+        "project": None,
+        "message": "(no detail)",
+        "elapsed_ms": None,
+    }
+    record.update(fields)
+    log_dir = warehouse_root(env) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "capture.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def test_reconcile_line_reads_zero_before_repair_has_ever_run(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """A raw `error` record on its own is NOT a KNOWN loss -- only `ccw repair`
+    confirming it (the expensive cross-check) and writing the dedup record makes
+    it one. Before that, the line reads 0, meaning "not yet checked", the same
+    "never fired" vs "fired, but not recently" distinction `_last_capture` draws."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    _append_capture_log(
+        ccw_env, session_uuid=UUID_A, message=f"unreadable transcript /x/{UUID_A}.jsonl: boom"
+    )
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "reconcile")
+    assert "0 session" in check.detail, check.detail
+
+
+def test_reconcile_line_reports_a_known_loss(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    _append_capture_log(
+        ccw_env,
+        status="unrecoverable",
+        session_uuid=UUID_A,
+        message="confirmed unrecoverable",
+        at="2026-05-01T00:00:00+00:00",
+    )
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "reconcile")
+    assert "1 session" in check.detail, check.detail
+    assert "2026-05-01" in check.detail, check.detail
+
+
+def test_reconcile_line_never_blocks_doctors_exit_code(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """NEVER BLOCKING (same posture as sidecars/history/prompts/companions): a
+    known permanent loss already happened and this line cannot undo it, so it
+    must not fail an otherwise-healthy `ccw doctor`."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    _append_capture_log(
+        ccw_env, status="unrecoverable", session_uuid=UUID_B, message="confirmed unrecoverable"
+    )
+
+    result = run_ccw(["doctor"], ccw_env)
+
+    assert result.code == 0, f"a known-unrecoverable session alone failed doctor: {result.out}"
+
+
+def test_reconcile_line_never_walks_the_archive(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE COST GUARANTEE: `ccw doctor` runs on every SessionStart
+    (ccw-freshness-check.py), and ticket 41 Finding 1 already caused a real
+    SessionStart timeout once, from an unrelated bug. Proven by making the
+    expensive cross-check explode if `diagnose` ever reaches for it -- the
+    reconcile line must read ONLY the dedup ledger. In-process (not `run_ccw`,
+    a subprocess the monkeypatch below cannot reach)."""
+    from cc_warehouse import reconcile
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    _append_capture_log(
+        ccw_env, session_uuid=UUID_A, message=f"unreadable transcript /x/{UUID_A}.jsonl: boom"
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> tuple[object, ...]:
+        raise AssertionError("doctor's reconcile check ran the expensive cross-check")
+
+    monkeypatch.setattr(reconcile, "find_unrecoverable", _boom)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+
+    assert next(c for c in report.checks if c.name == "reconcile").detail

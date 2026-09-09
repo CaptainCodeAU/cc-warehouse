@@ -9,6 +9,7 @@ racing the hook harmless. Item failures are reported and the batch continues pas
 """
 
 import os
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -22,6 +23,12 @@ from cc_warehouse.reports import BatchReport, ItemOutcome
 
 # DESIGN sections 4/13: one lock per sweep, O_EXCL, stale after a recorded PID dies.
 _SWEEP_LOCK = "sweep"
+
+# Duplicated from status._UUID_RE rather than imported: status.py already imports this
+# module (F8/R9's usual "one implementation" would create a cycle the other way), and
+# the shared truth is Claude Code's own transcript-naming convention, not a choice either
+# module owns. Same pattern doctor.py uses for the lock names it cannot import either.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 # A live lock holder is reported as a named item so the CLI end report and exit code
 # name the refusal (R10); the item is the lock's path token.
@@ -375,19 +382,27 @@ def _log_item_failure(config: Config, path: Path, exc: Exception) -> None:
     """Best-effort diagnostic line for a sweep item that failed capture, reviewable
     later next to the hook path's own stage-failure lines (notify.append_log,
     DESIGN R2's sanctioned exception; the SAME log, `logs/capture.jsonl`, not a new
-    write path -- see capture.py's `_log_stage_failure`, the twin this mirrors)."""
+    write path -- see capture.py's `_log_stage_failure`, the twin this mirrors).
+
+    Ticket 42 #5: `path.stem` is the transcript's own filename-derived identity, a real
+    session UUID for `<uuid>.jsonl` and unusable for anything else (e.g. an
+    `<uuid>.orphaned-<n>-<hash>.jsonl` rename, or a sub-agent's `agent-<id>.jsonl`) -- a
+    filter on WHERE to look, never an identity by itself (F4), so it is recorded as a
+    structured field only when it actually parses as a UUID, never guessed at."""
+    stem = path.stem
+    session_uuid = stem if _UUID_RE.fullmatch(stem) else None
     try:
-        notify.append_log(
-            config,
-            {
-                "at": datetime.now(UTC).isoformat(),
-                "status": "error",
-                "session": None,
-                "project": None,
-                "message": f"sweep item {path.name} failed: {type(exc).__name__}: {exc}",
-                "elapsed_ms": None,
-            },
-        )
+        record: dict[str, object] = {
+            "at": datetime.now(UTC).isoformat(),
+            "status": "error",
+            "session": None,
+            "project": None,
+            "message": f"sweep item {path.name} failed: {type(exc).__name__}: {exc}",
+            "elapsed_ms": None,
+        }
+        if session_uuid is not None:
+            record["session_uuid"] = session_uuid
+        notify.append_log(config, record)
     except Exception:
         return
 

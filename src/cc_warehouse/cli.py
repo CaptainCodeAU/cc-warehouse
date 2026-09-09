@@ -30,6 +30,7 @@ from cc_warehouse import (
     import_tree,
     migrate,
     notify,
+    reconcile,
     registry,
     reindex,
     relocate,
@@ -65,6 +66,7 @@ _VERBS: tuple[tuple[str, str], ...] = (
     ("status", "recent captures, counts, store size, last errors"),
     ("doctor", "is capture working, and if not since when"),
     ("repair", "re-render recent archive folders doctor's desync check flags"),
+    ("reconcile", "list sessions on record as permanently unrecoverable"),
     ("verify", "re-hash objects and cross-check the catalog"),
     ("archive", "build (or --verify) the archive-first tree at --to DIR"),
     ("reindex", "rebuild catalog.sqlite from the archive tree alone"),
@@ -548,7 +550,10 @@ def _reveal_target(config: Config, short: str | None) -> str:
 
 
 def _report_capture(
-    config: Config, result: capture.CaptureResult, transcript_path: Path
+    config: Config,
+    result: capture.CaptureResult,
+    transcript_path: Path,
+    session_uuid: str | None = None,
 ) -> None:
     """Emit notifications for a completed capture per its action (DESIGN sections 4, 12).
 
@@ -561,14 +566,21 @@ def _report_capture(
 
     `transcript_path` is the source path the companions child needs to locate sidecars
     beside (see `_spawn_companions`'s docstring); the sole caller is `_run_hook`, the only
-    place `capture.capture_transcript` is called with `defer_companions=True`."""
+    place `capture.capture_transcript` is called with `defer_companions=True`.
+
+    `session_uuid` (ticket 42 #5) is the payload's own `session_id`, passed through only
+    for the `error` case: a `stored`/`skipped_unchanged` result already has a real catalog
+    identity in `short`, so only a capture that never reached the catalog needs this to be
+    reconcilable later against the source tree, the archive, and the catalog."""
     if result.action == "duplicate-invocation":
         return
     short = result.short or None
     if result.action == "error":
         notify.report(
             config,
-            notify.NotifyEvent("error", short, None, result.detail, result.elapsed_ms),
+            notify.NotifyEvent(
+                "error", short, None, result.detail, result.elapsed_ms, session_uuid
+            ),
         )
         return
     if result.action == "skipped_unchanged":
@@ -600,6 +612,13 @@ def _run_hook() -> int:
     unexpected failure becomes an error notification and a clean exit with nothing stored
     and no traceback on stderr (SPEC section 2.6)."""
     config: Config | None = None
+    # Ticket 42 #5: hoisted above the try so the except block below can still name the
+    # session when the failure happens after the payload was read but before capture
+    # returns -- previously only the risky block's own locals had it, so the top-level
+    # except (the one boundary that catches literally anything) always logged `error`
+    # with no session identity at all.
+    session_id: str | None = None
+    transcript_path: Path | None = None
     try:
         config = load_config()
         if config.skip_hook:
@@ -614,18 +633,22 @@ def _run_hook() -> int:
             return 0
         payload = _read_payload()
         transcript_path = Path(str(payload["transcript_path"]))
+        session_id = _str_field(payload, "session_id")
         result = capture.capture_transcript(
             config,
             transcript_path,
-            session_id=_str_field(payload, "session_id"),
+            session_id=session_id,
             cwd=_str_field(payload, "cwd"),
             defer_companions=True,
         )
-        _report_capture(config, result, transcript_path)
+        _report_capture(config, result, transcript_path, session_id)
     except Exception as exc:  # never-raise into the harness (SPEC 2.6 / F7)
         if config is not None:
             try:
-                notify.report(config, notify.NotifyEvent("error", None, None, repr(exc), None))
+                notify.report(
+                    config,
+                    notify.NotifyEvent("error", None, None, repr(exc), None, session_id),
+                )
             except Exception:
                 pass
     return 0
@@ -1671,6 +1694,69 @@ def _run_verify() -> int:
     return 1 if findings else 0
 
 
+def _run_reconcile() -> int:
+    """`ccw reconcile`: list sessions on record as permanently unrecoverable (ticket
+    42 #5) -- a logged capture error whose session is missing from the source tree,
+    the archive, AND the catalog, all three.
+
+    Read-only: the cross-check itself never writes; only `ccw repair`'s daily run
+    turns a finding into a dedup record and an alert. Prints the FULL history (no
+    window), unlike repair's alert -- an operator investigating a notification wants
+    to see everything on record, not just what is recent enough to have re-alerted."""
+    config = load_config()
+    findings = reconcile.find_unrecoverable(config)
+    if not findings:
+        print("reconcile: 0 session(s) on record as unrecoverable")
+        return 0
+    print(f"reconcile: {len(findings)} session(s) on record as unrecoverable")
+    for finding in findings:
+        print(f"  {finding.at}  {finding.session_uuid}  {finding.message}")
+    return 1
+
+
+def _announce_unrecoverable(config: Config, findings: Sequence[reconcile.Finding]) -> None:
+    """New (not already-dedup'd) unrecoverable findings: one durable record per
+    session, plus ONE combined desktop+voice alert for the whole batch.
+
+    ONE ALERT, NEVER ONE PER CASE: measured live, a first run finds 14 in the
+    default window -- 14 desktop banners would be exactly the ticket 24.7 trap (a
+    banner nobody reads). THE DEDUP IS THE LOG COMPARE, not a timer
+    (capture._note_unknown_siblings states the same principle for its own anomaly):
+    a session already announced stays silent on every later run until it ages out
+    of the window, and a genuinely NEW error for the same session re-fires --
+    correct, because that is a new failure. Every sink is best-effort (DESIGN 12)."""
+    if not findings:
+        return
+    now_iso = datetime.now(UTC).isoformat()
+    for finding in findings:
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": now_iso,
+                    "status": "unrecoverable",
+                    "session": None,
+                    "project": None,
+                    "message": f"confirmed unrecoverable: {finding.message}",
+                    "elapsed_ms": None,
+                    "session_uuid": finding.session_uuid,
+                },
+            )
+        except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+            continue
+    oldest = min(findings, key=lambda f: f.at)
+    plural = "s are" if len(findings) != 1 else " is"
+    sentence = (
+        f"cc-warehouse: {len(findings)} session{plural} permanently unrecoverable."
+        f" Their transcripts vanished before capture. Oldest is {oldest.at[:10]}."
+    )
+    try:
+        notify.alert(config, "cc-warehouse", sentence)
+        notify.speak(config, sentence)
+    except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+        return
+
+
 def _run_repair(rest: Sequence[str]) -> int:
     """`ccw repair`: re-render any of the same recent archive folders `ccw doctor`'s
     desync check flags (ticket 32 -- a real 2026-08-23 incident: the hook's detached
@@ -1692,13 +1778,30 @@ def _run_repair(rest: Sequence[str]) -> int:
     `--quiet` matches `sweep`'s own contract exactly (cli.py `_run_sweep`): drops the
     STDOUT summary only, so a scheduled run's log stays empty when nothing was wrong
     and non-empty exactly when it wasn't -- failures still go to stderr and the exit
-    code is unaffected."""
+    code is unaffected.
+
+    Ticket 42 #5: ALSO runs the reconciliation cross-check and announces any NEWLY
+    confirmed unrecoverable session, deliberately BEFORE the desync early-return just
+    below -- a healthy machine with nothing to re-render is the NORMAL daily case, and
+    a check placed after that return would never run on exactly the machines where it
+    matters. This does not change repair's own return contract: the exit code still
+    reflects desync-repair success/failure only; the reconciliation alert is a
+    separate, always-best-effort signal (desktop + voice), not a repair failure."""
     quiet = "--quiet" in rest
     config = _load(rest)
+    reconcile_since = datetime.now(UTC) - reconcile.DEFAULT_WINDOW
+    reconcile_findings = reconcile.find_unrecoverable(config, since=reconcile_since)
+    reconcile_known = reconcile.known_unrecoverable_uuids(config)
+    reconcile_new = [f for f in reconcile_findings if f.session_uuid not in reconcile_known]
+    _announce_unrecoverable(config, reconcile_new)
     folders, broken = doctor.desync_detail(config)
     if not broken:
         if not quiet:
             print(f"repair: 0 problems in the {len(folders)} most recently captured folder(s)")
+            if reconcile_new:
+                print(
+                    f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)"
+                )
         return 0
     conn = catalog.open_catalog(config.root)
     try:
@@ -1739,6 +1842,8 @@ def _run_repair(rest: Sequence[str]) -> int:
     finally:
         conn.close()
     if not quiet:
+        if reconcile_new:
+            print(f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)")
         total_problems = sum(len(p) for _, p in broken)
         print(
             f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
@@ -2283,6 +2388,10 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
         (("--quiet", "no stdout on success; failures and the exit code are unaffected"),),
         False,
     ),
+    "reconcile": (
+        (("(no options)", "list sessions on record as permanently unrecoverable"),),
+        False,
+    ),
     "verify": ((("(no options)", "re-hash objects and cross-check the catalog"),), False),
     "archive": (
         (
@@ -2448,6 +2557,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_doctor()
     if verb == "repair":
         return _run_repair(args[1:])
+    if verb == "reconcile":
+        return _run_reconcile()
     if verb == "verify":
         return _run_verify()
     if verb == "archive":

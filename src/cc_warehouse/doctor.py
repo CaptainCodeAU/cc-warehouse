@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import archive, parser, status, store, sweep
+from cc_warehouse import archive, parser, reconcile, status, store, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
@@ -784,6 +784,23 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     # and catalog row are already safe by the time this child would run).
     companions_ok, companions_detail = _companions_stalled(config)
     checks.append(Check("companions", companions_ok, companions_detail, blocking=False))
+
+    # Ticket 42 #5. Same never-blocking posture as sidecars/history/prompts/companions
+    # above: a permanently-lost session is worth knowing about, and this LINE is not
+    # itself a broken capture (the loss already happened; nothing here can undo it).
+    # Deliberately the CHEAP reader (reconcile.known_unrecoverable_count), never the
+    # source/archive/catalog cross-check -- see that function's own docstring for why
+    # this hot SessionStart path must not risk a repeat of ticket 41 Finding 1's timeout.
+    reconcile_count, reconcile_latest = reconcile.known_unrecoverable_count(config)
+    reconcile_detail = (
+        "0 session(s) on record as unrecoverable"
+        if reconcile_count == 0
+        else (
+            f"{reconcile_count} session(s) on record as unrecoverable,"
+            f" most recent {reconcile_latest}"
+        )
+    )
+    checks.append(Check("reconcile", True, reconcile_detail, blocking=False))
 
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)
