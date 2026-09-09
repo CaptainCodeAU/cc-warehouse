@@ -146,7 +146,13 @@ def find_ccw() -> str | None:
     if override and Path(override).is_file():
         return override
     found = shutil.which("ccw")
-    if found:
+    # A `.venv` hit is this repo's own editable dev checkout, live-editable by
+    # construction (see this repo's CLAUDE.md frozen-install rule) - never
+    # what a hook should run. Confirmed live 2026-09-09 (ticket 41 Finding 1):
+    # this repo's `.envrc` puts `.venv/bin` ahead of `~/.local/bin` on PATH for
+    # any shell whose cwd is under the repo, so `shutil.which` picked the dev
+    # copy instead of the frozen install and both hooks got slower/flakier.
+    if found and "/.venv/" not in found:
         return found
     shim = Path.home() / ".local" / "bin" / "ccw"
     return str(shim) if shim.is_file() else None

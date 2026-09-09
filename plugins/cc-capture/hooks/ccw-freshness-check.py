@@ -256,7 +256,10 @@ def find_ccw() -> str | None:
     if override and Path(override).is_file():
         return override
     found = shutil.which("ccw")
-    if found:
+    # See ccw-hook.py's own find_ccw() for the incident (ticket 41 Finding 1,
+    # confirmed live 2026-09-09) - a `.venv` hit is this repo's own editable
+    # dev checkout and must fall through to the frozen shim instead.
+    if found and "/.venv/" not in found:
         return found
     shim = Path.home() / ".local" / "bin" / "ccw"
     return str(shim) if shim.is_file() else None
