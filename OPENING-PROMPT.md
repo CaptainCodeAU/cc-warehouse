@@ -219,19 +219,25 @@ fast follow-up to `ccw render --open` (28.1, already done). Full entries:
 `harness/tickets/28-backlog.md`.
 
 **Also still open, not scheduled:**
-- **Ticket 41 (new, 2026-09-09): capture-alert incident + root-cause pass, NOT
-  started.** A 56-uncaptured alert traced to a mostly-pre-existing backlog (not ~50
-  sessions failing at once), root-caused to Claude Code never invoking the SessionEnd
-  hook for 12 of 14 sessions that ended that day (outside this repo's own code/logs).
-  Confirmed real gaps worth fixing: a live SessionStart hook can silently run this
-  repo's dev checkout instead of the installed `ccw`; `ccw sweep` has no durable log
-  record on a successful run; and a source-file-vanishes-before-capture blind spot
-  that no `ccw doctor` check can ever detect. **CRITICAL, still genuinely open: 3
-  specific sessions (5604f5fd/bf09caea/313b7e02) have NO trace anywhere on this
-  machine - not source, not archive - and whether they held real content is
-  unresolved.** Full raw evidence, plus external research on Claude Code's own documented
-  hook-reliability limitations, in the companion addendum file. See
-  `harness/tickets/41-capture-alert-incident-2026-09-09.md` and
+- **Ticket 41 (2026-09-09): capture-alert incident + root-cause pass. Findings 1-6
+  are DONE (this line said "NOT started" for a while after that stopped being true -
+  corrected 2026-09-10).** A 56-uncaptured alert traced to a mostly-pre-existing backlog
+  (not ~50 sessions failing at once), root-caused to Claude Code never invoking the
+  SessionEnd hook for 12 of 14 sessions that ended that day (outside this repo's own
+  code/logs). Confirmed real gaps worth fixing: a live SessionStart hook can silently
+  run this repo's dev checkout instead of the installed `ccw` (fixed, see Finding 1
+  above); `ccw sweep` has no durable log record on a successful run; and a
+  source-file-vanishes-before-capture blind spot that no `ccw doctor` check can ever
+  detect. **CRITICAL, still genuinely open: 3 specific sessions
+  (5604f5fd/bf09caea/313b7e02) have NO trace anywhere on this machine - not source,
+  not archive - and whether they held real content is unresolved. Narrowed further
+  2026-09-10: also 0 hits in file-history, todos, and every history.jsonl copy
+  including a whole-file backup taken 40-60 min after they happened (each checked
+  against a working control, so the zeros are real) - consistent with near-empty
+  sessions, but still not proof nothing was typed. Still needs the operator's own
+  memory of that window to actually close.** Full raw evidence, plus external research
+  on Claude Code's own documented hook-reliability limitations, in the companion
+  addendum file. See `harness/tickets/41-capture-alert-incident-2026-09-09.md` and
   `harness/tickets/41-addendum-rca-evidence-2026-09-09.md`.
 - **Ticket 42 (new, 2026-09-09): 7 ranked, scoped fixes for the logging/
   alerting gaps ticket 41 found, NOT started.** Two new structural findings

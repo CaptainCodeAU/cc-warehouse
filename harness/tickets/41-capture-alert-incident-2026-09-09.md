@@ -220,6 +220,38 @@ content - needs the operator's own memory of that time window (01:56-02:18Z
 or access to Claude Code's own session records, neither of which this
 investigation could reach.
 
+**2026-09-10 follow-up: part (b) narrowed further by direct evidence, still
+not fully closed.** Checked three more session-keyed stores, each with a
+known-good control session confirmed present first so a zero means
+"absent," not "search broken": `~/.claude/file-history/` (no dir for any of
+the 3), `~/.claude/todos/` (no file for any of the 3), and
+`~/.claude/history.jsonl` (0 rows for any of the 3; control session had 13).
+Went further than the live file: this repo already keeps whole-file
+`history.jsonl` snapshots from ticket 39c
+(`~/cc-warehouse-archive/_not-sessions/history-jsonl-snapshots/`). The
+earliest one taken AFTER all 3 sessions started
+(`b1e70cf96c04.jsonl`, stamped 9 Sep 12:56 local, 40-60 min after the 3
+sessions' 11:56am/12:15pm/12:17pm start times) also has 0 rows for all 3,
+while the same control session appears in 3 of the 5 snapshots. `tmutil
+listlocalsnapshots /` returned no local Time Machine snapshots to check
+independently.
+Also noted: `bf09caea` and `313b7e02` are the SAME project
+(`fifty-shades-of-dotfiles`) with `started` timestamps 2 minutes apart
+(02:15:39 and 02:17:39 UTC), and neither project shows any other session in
+the surrounding 15 minutes - i.e. not part of a busier run of normal
+sessions that day, but two back-to-back near-instant session-ends in the
+same project.
+**Combined read (still inference, not proof):** every independent store
+that would show real work - file edits, a todo list, a submitted prompt -
+is empty for all 3 sessions, including a whole-file snapshot taken not long
+after they ended. This is consistent with the existing working hypothesis
+(near-instant, effectively-empty sessions) and does not turn up any new
+evidence of real lost content. It does NOT prove nothing was typed - a
+prompt submission that itself failed before reaching `history.jsonl` would
+look identical in every store checked here. **The operator's own memory of
+that window is still the only thing that can close this for good**, and
+still hasn't been asked/answered as of this note.
+
 ## Finding 6 (formerly Finding 3, renumbered, LOW): ALERT wording doesn't distinguish "queued" from "actually broken"
 
 Already a documented, known weakness (`docs/operations.md`, ticket 34's own

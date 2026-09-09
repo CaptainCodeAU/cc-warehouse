@@ -21,6 +21,32 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-seventh handoff, 2026-09-10 (ticket 41 Finding 5: narrowed the 3 untraceable sessions further, still not closed)
+
+The operator asked to chase ticket 41 Finding 5's still-open CRITICAL item: whether the
+3 sessions with no trace anywhere (`5604f5fd`, `bf09caea`, `313b7e02`) ever held real
+content. Checked three more session-keyed stores beyond what the original investigation
+covered - `~/.claude/file-history/`, `~/.claude/todos/`, and `~/.claude/history.jsonl` -
+each with a known-good control session checked first so a zero would mean "absent," not
+"the search is broken." All three came back empty for all three sessions. Went one step
+further: this repo already keeps whole-file `history.jsonl` snapshots (ticket 39c), so
+checked the earliest one taken AFTER all three sessions ended (40-60 minutes later) -
+still empty. `tmutil listlocalsnapshots /` found no local Time Machine backup to check
+as a last resort. Also noticed two of the three sessions were the same project, `started`
+timestamps 2 minutes apart, with no other session in that project nearby - a
+back-to-back near-instant pattern, not part of a normal busy run.
+
+None of this proves nothing was typed - a prompt that failed before it reached
+`history.jsonl` would look identical - but every store that would show real work is
+empty, which fits the existing "near-empty session" hypothesis better than "real work
+lost." Wrote the evidence into
+`harness/tickets/41-capture-alert-incident-2026-09-09.md` (Finding 5) and corrected
+`OPENING-PROMPT.md`'s ticket 41 bullet, which had said "NOT started" for a while after
+findings 1-6 and their fixes had already landed. **This is still not closed**: the one
+thing that can actually close it is the operator's own memory of that time window
+(2026-09-09, roughly 11:56am-12:18pm local, in `Network-Plan` and
+`fifty-shades-of-dotfiles`) - asked directly, not yet answered as of this handoff.
+
 ### Forty-sixth handoff, 2026-09-10 (correcting stale status: ticket 42 #6 was already reinstalled and live)
 
 The operator asked to reinstall `ccw` so ticket 42 #6 (the hook-dispatch-gap detector)
