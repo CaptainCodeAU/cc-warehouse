@@ -52,11 +52,20 @@ capture, and `ccw repair`'s attempted fix crashed on a `store.get` fallback to a
 `objects/` vault this machine no longer has (`keep_objects=false` since ticket 27.3),
 raising a bare `FileNotFoundError` that `notify.report`'s `repr(exc)` swallows without
 the path. Full evidence, including the still-unresolved 40s-inner-vs-45s-outer timeout
-arithmetic, appended to `harness/tickets/37-*.md`'s dated 2026-09-09 section. Not fixed
-this session - the candidate fix (detach the hook's synchronous sidecar/external
-copying, ticket 42's unranked design item) needs an operator ruling first. `ccw
-repair`'s daily 12:45 run remains the only thing closing this gap in the meantime,
-which means a session captured after 12:45 stays unrendered for roughly 24 hours.
+arithmetic, appended to `harness/tickets/37-*.md`'s dated 2026-09-09 section.
+
+**Same day, follow-up: the alert deployment was verified live end to end** (git push
+was NOT yet done when the fix landed - traced why `/plugin` reported "already latest"
+by matching the reported hash to the pre-fix commit, pushed `a781555`, then re-verified
+the full chain: marketplace checkout commit -> new plugin cache folder ->
+`_desktop_alert` actually present in the loaded file). **The operator then approved
+`ccw sweep` to recover the 3 stuck sessions** (`31 stored, 0 failed`) - all three
+confirmed rendered on disk, `ccw doctor` back to `ok desync` / exit 0. **Operator also
+ruled on ticket 37 Part B's root-cause fix**: detach the hook's synchronous copying,
+report failures via a log file a daily job reads (the same shape this repo already
+uses for `sidecars`/`history`/`prompts`). Recorded in the ticket; the actual diff is
+NOT scoped or built - genuine design work left for a dedicated session rather than
+rushed under this one's original scope.
 
 ### Thirty-sixth handoff, 2026-09-08 (ticket 39: shipped and live - the reinstall and back-fill)
 

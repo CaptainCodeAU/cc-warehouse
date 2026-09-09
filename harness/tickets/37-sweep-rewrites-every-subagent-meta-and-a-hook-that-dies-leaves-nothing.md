@@ -1,6 +1,6 @@
 # Ticket 37: the sweep rewrites every sub-agent `meta.json` daily, and a hook killed mid-run leaves no trace
 
-Opened 2026-09-06. **Part A DONE and Part B row 1 DONE the same day** (see the bottom of this file). Part B rows 2, 3 and 5 and the pre-filter follow-up are OPEN. **2026-09-09: Part B's underlying mechanism confirmed CHRONIC and size-correlated, still unfixed - see that dated section near the bottom.** Two findings from one session's timeline
+Opened 2026-09-06. **Part A DONE and Part B row 1 DONE the same day** (see the bottom of this file). Part B rows 2, 3 and 5 and the pre-filter follow-up are OPEN. **2026-09-09: Part B's underlying mechanism confirmed CHRONIC and size-correlated; the day's 3 stuck sessions were recovered via `ccw sweep`, but the mechanism itself is still unfixed - operator ruled on the fix's shape (detach + log-file reporting), not yet built - see that dated section near the bottom.** Two findings from one session's timeline
 (chorustic session `78bb0bd1-06cf-44b6-b5ec-6e7a01b0df92`), traced because
 the operator asked why the rendered files landed nine minutes after the
 JSONL and why the `subagents/` folders carried a date between the two.
@@ -362,3 +362,30 @@ on `_tier()` rather than the raw streak so a single ordinary blip does not
 start popping up notifications - see that file's own change for detail. That
 alert will now surface this exact chronic condition instead of only ever
 printing to a SessionStart a human might not read.
+
+**All 3 sessions recovered the same day, by the operator's explicit go-ahead
+to run `ccw sweep` early rather than wait for the 12:30 scheduled job.**
+`sweep: 28059 items, 31 stored, 12 with sidecars, 0 failed`. Verified two
+ways: `ccw doctor` went from `FAIL desync` (11 problems, 3 folders, exit 1)
+to `ok desync` (0 problems, exit 0), and all three archive folders were
+checked directly on disk - `transcript.md`, both HTML variants, and
+`manifest.json` now present in each, including the third (`abaece35-...`),
+whose stale-catalog-row shape `ccw repair` could not fix on its own but a
+fresh sweep re-captured cleanly since the source session had since ended and
+stabilized. This confirms the sweep-as-safety-net property Part B's own
+"Not proposed" section already argues for; it does not confirm anything about
+whether the underlying hook-death mechanism itself is fixed.
+
+**Operator ruling on the candidate fix, 2026-09-09: detach the hook's
+synchronous sidecar/external-file copying, and report a failure in that
+detached work via a log file a daily job reads** - the same shape this repo
+already uses for `sidecars`/`history`/`prompts` (a non-blocking `ccw doctor`
+line reading a durable log, per ticket 38 ruling (e)), rather than trying to
+report synchronously from work that is deliberately no longer on the
+SessionEnd critical path. **Not built this session** - scoping the actual
+diff (where the detached child writes its log, which existing daily job
+reads it or whether it needs a new one, what the new `ccw doctor` line looks
+like, and whether it reuses `notify.alert` or needs its own path given this
+file's "must not import `cc_warehouse`" constraint) is real design work on
+its own and was deliberately left for a dedicated session rather than rushed
+in under this one's original scope.
