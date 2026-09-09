@@ -73,13 +73,22 @@ invisible to `capture.jsonl`-based tooling entirely (including proposal #5
 below), even though the identical error via the live hook IS logged there -
 an inconsistency between the two capture paths for the same failure.
 
-**4. MEDIUM value / LOW effort - fix or retire `ccw status`'s "Recent
-errors" section** (Finding B above). Either wire error results into
+**4. DONE 2026-09-09.** MEDIUM value / LOW effort - fix or retire `ccw status`'s "Recent
+errors" section (Finding B above). Either wire error results into
 `catalog.record_event` (needs minor restructuring in
 `capture.py::capture_transcript`/`_capture_locked`, since the
 unreadable-transcript and lock-unavailable paths currently return before a
 catalog connection even opens), or relabel/remove the section so it stops
 implying a capability that doesn't exist.
+**Shipped as a third option, found while scoping**: point `status._recent_errors`
+at `logs/capture.jsonl` instead, which every real error source already writes to
+(`notify.append_log`'s shared six-field schema) - reusing the same JSON-lines
+parsing `doctor._companions_stalled` already does. Confirmed by re-reading
+DESIGN section 7's own `ccw status` contract that this was the ORIGINAL spec
+("reads catalog + log"); the catalog-only implementation was the drift. 6 new
+oracle tests in `tests/test_status_verify.py`; full suite 1547 passed, ruff and
+pyright strict clean. Not yet committed. Full account: `harness/HANDOFFS.md`'s
+fortieth handoff.
 
 **5. HIGH value / MEDIUM-HIGH effort - build the Finding-5 reconciliation
 check.** The single highest-value fix relative to the incident's worst

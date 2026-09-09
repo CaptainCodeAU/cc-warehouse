@@ -6,6 +6,7 @@ R6; FINDINGS F5.
 """
 
 import hashlib
+import json
 
 from cc_warehouse import catalog
 from conftest import (
@@ -112,3 +113,100 @@ def test_verify_never_modifies_the_store(ccw_env: dict[str, str]) -> None:
     before = tree_snapshot(objects)
     run_cli(["verify"])
     assert tree_snapshot(objects) == before
+
+
+def _append_log_record(env: dict[str, str], **fields: object) -> None:
+    """Write one capture.jsonl line directly, the same six-field shape every
+    real writer (notify.append_log and its callers) produces."""
+    record: dict[str, object] = {
+        "at": "2026-01-01T00:00:00+00:00",
+        "status": "error",
+        "session": None,
+        "project": None,
+        "message": "(no detail)",
+        "elapsed_ms": None,
+    }
+    record.update(fields)
+    log_dir = warehouse_root(env) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "capture.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def test_status_recent_errors_says_none_with_no_log(ccw_env: dict[str, str]) -> None:
+    """Ticket 42 #4: with no capture.jsonl at all, status reports no errors
+    rather than crashing (R5 -- a missing log is not a capture failure)."""
+    capture_one(ccw_env)
+    result = run_cli(["status"])
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    idx = lines.index("Recent errors:")
+    assert lines[idx + 1] == "  (none)"
+
+
+def test_status_shows_a_real_error_from_the_log(ccw_env: dict[str, str]) -> None:
+    """Ticket 42 Finding B: `catalog.record_event` is never called with
+    action="error" anywhere, so a real capture error (unreadable transcript,
+    lock unavailable, ...) only ever reaches logs/capture.jsonl. status must
+    read it from there, not from the permanently-empty catalog table."""
+    capture_one(ccw_env)
+    _append_log_record(
+        ccw_env, at="2026-01-01T00:00:00+00:00", message="unreadable transcript /x: boom"
+    )
+    result = run_cli(["status"])
+    assert result.code == 0, result.err
+    assert "unreadable transcript /x: boom" in result.out
+
+
+def test_status_recent_errors_excludes_non_error_records(
+    ccw_env: dict[str, str],
+) -> None:
+    """capture.jsonl also carries "ok" and "skipped_unchanged" records
+    (every capture, not just failures); only status="error" belongs under
+    Recent errors."""
+    capture_one(ccw_env)
+    _append_log_record(ccw_env, status="ok", message="stored fine")
+    result = run_cli(["status"])
+    assert result.code == 0, result.err
+    assert "stored fine" not in result.out
+    lines = result.out.splitlines()
+    idx = lines.index("Recent errors:")
+    assert lines[idx + 1] == "  (none)"
+
+
+def test_status_recent_errors_are_newest_first_and_bounded(
+    ccw_env: dict[str, str],
+) -> None:
+    """Matches the old catalog query's contract: newest first, capped at
+    _ERROR_LIMIT (5) even when the log holds more."""
+    capture_one(ccw_env)
+    for n in range(7):
+        _append_log_record(
+            ccw_env,
+            at=f"2026-01-01T00:00:0{n}+00:00",
+            message=f"error number {n}",
+        )
+    result = run_cli(["status"])
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    idx = lines.index("Recent errors:")
+    error_lines = lines[idx + 1 : idx + 6]
+    assert len(error_lines) == 5
+    assert "error number 6" in error_lines[0], "newest is not first"
+    assert "error number 2" in error_lines[4], "did not cap at 5"
+    assert not any("error number 0" in ln or "error number 1" in ln for ln in error_lines)
+
+
+def test_status_ignores_a_malformed_log_line(ccw_env: dict[str, str]) -> None:
+    """A corrupted or partial capture.jsonl line (e.g. an interrupted append)
+    must not crash status; it is skipped, and real errors around it still
+    show (R5)."""
+    capture_one(ccw_env)
+    log_dir = warehouse_root(ccw_env) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "capture.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("{not valid json\n")
+    _append_log_record(ccw_env, message="a real error survives the bad line")
+    result = run_cli(["status"])
+    assert result.code == 0, result.err
+    assert "a real error survives the bad line" in result.out

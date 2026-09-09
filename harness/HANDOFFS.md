@@ -21,6 +21,34 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fortieth handoff, 2026-09-09 (ticket 42 #4: fixed `ccw status`'s "Recent errors")
+
+Picked up priority-order item 2 from `OPENING-PROMPT.md`. Ticket 42 Finding B: the
+"Recent errors" section reads the catalog's `capture_event` table for `action =
+'error'` rows, but `catalog.record_event` is never called with `action="error"`
+anywhere in the codebase (verified independently: capture.py:225, capture.py:264,
+sweep.py:162, none of the three call sites pass it) - the section was permanently
+empty by construction. The ticket offered two fixes (wire errors into the catalog,
+or relabel/remove the section); presented both plus a third option found while
+reading the code - point the section at `logs/capture.jsonl` instead, which every
+real error source (unreadable transcript, lock unavailable, post-archive-write
+stage failures, build/repair failures) already writes to via `notify.append_log`'s
+shared six-field schema. The operator picked the third option. It also turned out
+to be what DESIGN section 7's own `ccw status` contract already specified ("reads
+catalog + log"): the catalog-only implementation was itself the drift from spec.
+
+Shipped: `status._recent_errors` reads `logs/capture.jsonl`, reusing the same
+JSON-lines parsing pattern `doctor._companions_stalled` already uses for a
+different check (missing file or malformed line reads as no errors, never a
+crash, matching R5). `status_text` no longer queries `capture_event` for errors;
+its docstring and the module docstring are corrected to say catalog session
+table + log, not catalog-only. 6 new oracle tests in `tests/test_status_verify.py`
+cover: a real error surfaces, `(none)` with no log, non-error records excluded,
+newest-first ordering, capped at `_ERROR_LIMIT` (5), and a malformed line does
+not crash the read. Full suite: 1547 passed (6 of them the new ones above), ruff
+and pyright strict both clean, project-wide. Not yet committed or pushed - left
+for the operator's go-ahead. `OPENING-PROMPT.md`'s priority list item 2 marked DONE.
+
 ### Thirty-ninth handoff, 2026-09-09 (ticket 37 Part B: the detached companions child, shipped and verified)
 
 Picked up the priority-order item 1 that the thirty-eighth handoff's session left

@@ -1,7 +1,8 @@
 """ccw status and ccw verify surfaces (slice 9).
 
-status reads the catalog only (the session table for listings/counts/size, the
-capture_event table for recent errors); it opens no stored payload under objects/
+status reads the catalog (the session table for listings/counts/size) plus
+logs/capture.jsonl (for recent errors, per DESIGN section 7's "catalog + log"
+contract, ticket 42 #4); it opens no stored payload under objects/
 (FINDINGS F5, rule R6), holds no write handle, and removes nothing (R2/R4 fences).
 verify wraps the slice-1 store.verify_walk and cross-checks the catalog against the
 objects in both directions; it re-implements no hashing (R9/F8) and mutates nothing in
@@ -306,13 +307,53 @@ def paste_line(gap: PasteGap) -> str:
     )
 
 
+def _recent_errors(config: Config, limit: int) -> list[tuple[str, str | None, str]]:
+    """Last `limit` error records from logs/capture.jsonl, newest first.
+
+    DESIGN section 7's `ccw status` contract reads "catalog + log": every capture.jsonl
+    writer shares one six-field schema (`notify.append_log`), and an error record always
+    carries `status: "error"` there, whichever of the several call sites wrote it
+    (unreadable transcript, lock unavailable, a post-archive-write stage failure, a
+    build/repair failure, ...). `catalog.record_event` is never called with
+    action="error" anywhere in this codebase (ticket 42 Finding B), so a query against
+    the catalog's `capture_event` table read permanently empty regardless of what was
+    actually failing; this reads the log file capture.jsonl writers already use, the same
+    JSON-lines parsing `doctor._companions_stalled` already does for a different check. A
+    missing file or an unparsable line is not an error condition for `status` (R5): it
+    reads as no errors, never a crash."""
+    try:
+        text = (config.root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows: list[tuple[str, str | None, str]] = []
+    for line in text.splitlines():
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if record.get("status") != "error":
+            continue
+        at = record.get("at")
+        session = record.get("session")
+        message = record.get("message")
+        rows.append(
+            (
+                at if isinstance(at, str) else "(unknown time)",
+                session if isinstance(session, str) else None,
+                message if isinstance(message, str) else "(no detail)",
+            )
+        )
+    return rows[-limit:][::-1]
+
+
 def status_text(config: Config) -> str:
     """Human summary: recent captures, session count, stored size, recent errors.
 
-    Every figure comes from the catalog: the session count and the SUM of size_bytes from
-    the session table, the last errors from the capture_event table. No object under
-    objects/ is opened and the verify walk is not run (R6/F5). No file mtime reaches the
-    output (R12): captured_at is the catalog's own capture time, not a filesystem stamp."""
+    The session count and the SUM of size_bytes come from the catalog's session table.
+    The recent errors come from logs/capture.jsonl (`_recent_errors`), per DESIGN section
+    7's "catalog + log" contract. No object under objects/ is opened and the verify walk
+    is not run (R6/F5). No file mtime reaches the output (R12): captured_at is the
+    catalog's own capture time, not a filesystem stamp."""
     conn = catalog.open_catalog(config.root)
     try:
         session_total = cast(
@@ -322,16 +363,9 @@ def status_text(config: Config) -> str:
             tuple[int],
             conn.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM session").fetchone(),
         )[0]
-        error_rows = cast(
-            list[tuple[str | None, str | None, str | None]],
-            conn.execute(
-                "SELECT at, session_hash, detail FROM capture_event"
-                " WHERE action = 'error' ORDER BY id DESC LIMIT ?",
-                (_ERROR_LIMIT,),
-            ).fetchall(),
-        )
     finally:
         conn.close()
+    error_rows = _recent_errors(config, _ERROR_LIMIT)
     recent = recent_sessions(config, limit=_RECENT_LIMIT)
     lines = [f"cc-warehouse: {session_total} session(s), {stored_bytes} byte(s) stored"]
     # DESIGN 7, status row amended 2026-08-03: the catalog cannot see a session
@@ -359,11 +393,9 @@ def status_text(config: Config) -> str:
         lines.append("  (none)")
     lines.append("Recent errors:")
     if error_rows:
-        for at, session_hash, detail in error_rows:
-            when = at or "(unknown time)"
-            which = (session_hash or "")[:12] or "(no session)"
-            what = detail or "(no detail)"
-            lines.append(f"  {when}  {which}  {what}")
+        for at, session, message in error_rows:
+            which = (session or "")[:12] or "(no session)"
+            lines.append(f"  {at}  {which}  {message}")
     else:
         lines.append("  (none)")
     return "\n".join(lines)

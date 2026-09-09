@@ -40,14 +40,16 @@ with existing open tickets, so those are merged in rather than duplicated:
    "capture is working", `ccw archive --verify` reports 0 problems across
    29705 folders. Full account: `harness/HANDOFFS.md`'s thirty-ninth handoff,
    `harness/tickets/37-*.md`'s "Part B DONE, 2026-09-09" section.
-2. **Ticket 42 #4** - fix or relabel `ccw status`'s "Recent errors" section.
-   **Do this before revisiting ticket 31.4's stalled decision** (see
-   ticket 31's own file, "2026-09-09 cross-reference" note): one of the two
-   signals ticket 31.4 was watching for its lock-contention retry-loop
-   decision can never fire, by construction, so that decision has been
-   resting partly on a broken instrument, not a real "hasn't recurred."
-3. **Revisit ticket 31.4's retry-loop decision** once #2 lands and has run
-   for a while - the monitoring signal will finally be real.
+2. **Ticket 42 #4 - DONE 2026-09-09, NOT YET COMMITTED.** `ccw status`'s
+   "Recent errors" now reads `logs/capture.jsonl` (operator-picked option,
+   found while scoping - not one of the ticket's original two). Full
+   account: `harness/HANDOFFS.md`'s fortieth handoff. Still needs: the
+   operator's go-ahead to commit (and separately, to push).
+3. **Revisit ticket 31.4's retry-loop decision** now that #2 has landed - the
+   monitoring signal is finally real. Not yet done; give it some time to run
+   first (see ticket 31's own file, "2026-09-09 cross-reference" note: one
+   of the two signals it was watching for could never fire, by construction,
+   until #2's fix).
 4. **Ticket 42 #5** - build the capture.jsonl-vs-archive reconciliation
    check (the single highest-value fix for real, permanent data loss - see
    ticket 41 Finding 5). **This also closes ticket 28.10's long-standing
