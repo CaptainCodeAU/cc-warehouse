@@ -1912,6 +1912,43 @@ are real, non-nothing visibility in the meantime; a future ticket that wants
 full parity with sidecars' persistent treatment would need to merge the passes
 first.
 
+### 2026-09-09, ticket 37 Part B: detach the hook's slow copying, report failures via a log a daily job reads
+
+**The shape of the eventual fix was ruled on before the diff itself was scoped.**
+Found the same day: `ccw-hook.py`'s SessionEnd process sometimes never reaches its
+own `ok`/`error` line at all - `started` with nothing after it, no catalog row,
+just the raw archive folder - and it correlates with payload size (the day's two
+largest sessions were the two that failed, every smaller one was fine). The
+mechanism candidate (from ticket 42's own unranked design list) is moving the
+hook's synchronous sidecar/external-file copying (`capture.py:440-547`) off the
+SessionEnd timing budget entirely, at the cost of losing that piece's ability to
+report a failure back synchronously the way the rest of the hook does.
+
+**Ruling: report failures from the detached work via a durable log a daily job
+reads, not synchronously.** This is a straight reuse of a shape this project
+already has three working instances of - `sidecars`/`history`/`prompts`, each a
+non-blocking `ccw doctor` line reading a durable record rather than trying to
+surface trouble the instant it happens (ticket 38 ruling (e)'s reasoning applies
+unchanged: a detached child cannot report synchronously by construction, so the
+question was never "sync vs async," it was "which of the patterns we already
+have does this reuse"). Rejected implicitly: inventing a fourth, different
+reporting shape for this one case, which would be a new thing to maintain for no
+gain over the three that already exist and are already tested.
+
+**Not built this session, and that gap is deliberate, not an oversight.**
+Scoping the actual diff needs real decisions this ruling does not answer on its
+own: where the detached child's log lives, which existing daily job (`ccw
+repair`, most likely, since it already runs right after sweep) reads it versus
+whether it needs its own, what the new `ccw doctor` line's wording and blocking-
+ness should be (non-blocking, per every sibling case, but that still needs
+saying explicitly), and how `ccw-freshness-check.py`'s own "must not import
+`cc_warehouse`" constraint interacts with whatever `notify`-adjacent primitive
+gets reused. That is a real design pass, not a mechanical follow-through of this
+ruling, and was left for a dedicated session on purpose rather than rushed under
+a session whose original scope was the freshness check's alerting, not this
+mechanism's actual fix. Full incident evidence and the operator's own words:
+`harness/tickets/37-*.md`'s 2026-09-09 dated section.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

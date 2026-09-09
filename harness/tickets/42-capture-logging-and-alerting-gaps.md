@@ -1,6 +1,10 @@
 # Ticket 42: close the logging and alerting gaps found in the 2026-09-09 capture incident
 
-Opened 2026-09-09. NOT started - proposals only, no code changed. Follow-up
+Opened 2026-09-09. **Item #1 DONE and LIVE the same day** (real desktop/voice
+notification wired into `ccw-freshness-check.py`'s WARN/ALERT tiers, pushed
+`a781555`, verified live end to end - see `harness/HANDOFFS.md`'s
+thirty-seventh entry for the full account). Items #2-#7 and the two unranked
+design-tradeoff items are still NOT started. Follow-up
 to ticket 41 (`harness/tickets/41-capture-alert-incident-2026-09-09.md` and
 its addendum), which found the incident's actual backlog was harmless but
 surfaced structural gaps in how this project logs and alerts on capture
@@ -47,8 +51,8 @@ mechanism is pull-based, wearing the shape of a push-based alert.
 
 ## Ranked proposals
 
-**1. HIGH value / LOW effort - wire real notification into the WARN/ALERT
-tiers.** Scope: `plugins/cc-capture/hooks/ccw-freshness-check.py::main()`,
+**1. DONE 2026-09-09.** HIGH value / LOW effort - wire real notification into the WARN/ALERT
+tiers. Scope: `plugins/cc-capture/hooks/ccw-freshness-check.py::main()`,
 the `report("warn"/"alert", message)` calls. This file deliberately doesn't
 import `cc_warehouse`, so it needs its own ~10-line copy of the `osascript`
 Popen technique `notify.alert` already uses elsewhere. Closes the single
