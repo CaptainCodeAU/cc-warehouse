@@ -6,10 +6,14 @@ notification wired into `ccw-freshness-check.py`'s WARN/ALERT tiers, pushed
 thirty-seventh entry for the full account). **Items #2, #3, #4, #5, #6 and #7
 are DONE (2026-09-09); one of the two unranked design-tradeoff items closed
 the same day via ticket 37 Part B. Still NOT started: the remaining unranked
-item (registering capture logic in `settings.json` directly). #6 is coded,
-tested and verified against real data but NOT yet reinstalled into the frozen
-`ccw` - needs the operator's go-ahead first, per this repo's own standing
-practice for anything that changes the live capture path.**
+item (registering capture logic in `settings.json` directly). **#6 IS NOW
+REINSTALLED AND LIVE, confirmed 2026-09-10**: the frozen install's
+`doctor.py` is byte-identical to the repo copy, its file timestamp postdates
+the `788cac9` commit, and a live `ccw doctor` run already prints the new
+`dispatch` line. This paragraph previously said #6 was still awaiting the
+operator's go-ahead to reinstall; that was stale by the time it was read -
+someone had already run the reinstall the same evening, and this file just
+hadn't been updated to say so.**
 Follow-up
 to ticket 41 (`harness/tickets/41-capture-alert-incident-2026-09-09.md` and
 its addendum), which found the incident's actual backlog was harmless but

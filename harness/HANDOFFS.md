@@ -21,6 +21,28 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-sixth handoff, 2026-09-10 (correcting stale status: ticket 42 #6 was already reinstalled and live)
+
+The operator asked to reinstall `ccw` so ticket 42 #6 (the hook-dispatch-gap detector)
+would go live, per `OPENING-PROMPT.md`'s queue, which said it was "coded, tested and
+verified... but NOT yet reinstalled into the frozen `ccw` - needs the operator's
+go-ahead first." Before running the reinstall, checked the live state first (per this
+repo's own standing lesson that a read-only-looking check must still be proved, not
+assumed) and found it was **already done**: the forty-fourth or forty-fifth handoff's
+session (or a later one) must have run the reinstall without updating this file to say
+so. Verified three ways, none of them just "it looks fine": the installed
+`doctor.py` is byte-identical to the repo's `src/cc_warehouse/doctor.py`
+(`diff -q`); its file timestamp (`2026-09-09T23:22:16`) postdates commit `788cac9`,
+which is the commit that added the check; and a live `env -u VIRTUAL_ENV ...
+~/.local/bin/ccw doctor` run already prints the new `dispatch` line
+("6 session(s) never reached ccw-hook.log, e.g. ..."). No reinstall was run this
+session - there was nothing left to do. Corrected the stale paragraph in both
+`OPENING-PROMPT.md` and `harness/tickets/42-capture-logging-and-alerting-gaps.md`
+so the next session doesn't re-ask the operator for a go-ahead that was already
+given and acted on. Nothing else touched this session. Still genuinely open from
+ticket 42: the unranked "register capture logic in `settings.json` directly" item,
+not started.
+
 ### Forty-fifth handoff, 2026-09-09 (ticket 28.11: markdown and HTML for sub-agents; and two calls made without asking)
 
 Continuation of the same session as the forty-fourth handoff. After ticket
