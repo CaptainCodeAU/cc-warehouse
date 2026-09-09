@@ -1988,6 +1988,54 @@ for the operator (whether `ccw repair` should also read `capture.jsonl`'s own
 error line to enrich its report): `harness/tickets/37-*.md`'s "Part B DONE,
 2026-09-09" section.
 
+### 2026-09-09, ticket 42 #4: `ccw status`'s "Recent errors" repointed at the log, not the catalog
+
+`catalog.record_event` is never called with `action="error"` anywhere in this
+codebase (verified independently: `capture.py:225`, `capture.py:264`,
+`sweep.py:162`, none of the three call sites pass it), so `status.status_text`'s
+"Recent errors" query against `capture_event WHERE action = 'error'` was
+permanently empty regardless of what was actually failing. The ticket offered
+two fixes (wire errors into the catalog, or relabel/remove the section);
+`status._recent_errors` now reads `logs/capture.jsonl` instead, a third option
+found while scoping. Every real error source already writes there via
+`notify.append_log`'s shared six-field schema, and the JSON-lines parsing
+pattern is the same one `doctor._companions_stalled` already uses for a
+different check. It also turned out to match section 7's own `ccw status`
+contract ("reads catalog + log"), which this session was quoting from this very
+file when it noticed the shipped code had drifted from it. Full account:
+`harness/tickets/42-*.md`, `harness/HANDOFFS.md`'s fortieth handoff.
+
+### 2026-09-09, ticket 42 #5: the reconciliation check, and why `ccw doctor`'s line reads a ledger instead of re-deriving the answer
+
+Built the Finding-5 reconciliation check (`src/cc_warehouse/reconcile.py`):
+`find_unrecoverable` cross-checks a capture error's session against the source
+tree, the archive, and the catalog, all three, before calling it permanently
+lost. Measured before building: the real figure was 21 unrecoverable sessions,
+not the 3 ticket 41 named. A dedicated Plan agent (model tier `opus`, per this
+session's own model-rung reminder) scoped the design; its plan had `ccw
+doctor`'s new line run the SAME expensive cross-check as `ccw repair`, just
+unbounded instead of windowed. This session judged that unsafe on its own
+evidence and diverged from the agent's plan on this one point: `ccw doctor`
+runs on every SessionStart via `ccw-freshness-check.py`, and ticket 41 Finding 1
+already caused a real SessionStart timeout once, from an unrelated bug -
+handing doctor's hot path a second way to reproduce that symptom was not worth
+the doctor line's cost savings.
+
+**Ruling: doctor's line reads only `known_unrecoverable_count`, a cheap parse
+of the dedup ledger `ccw repair` already writes back into `capture.jsonl` -
+zero directory walks. The expensive cross-check (`find_unrecoverable`) is
+reserved for `ccw repair` (daily, off the interactive path) and the new
+explicit, read-only `ccw reconcile` verb.** Proven, not just asserted: a test
+monkeypatches `find_unrecoverable` to raise and confirms `doctor.diagnose`
+never reaches for it.
+
+Verified live, with the operator's go-ahead: `ccw repair` announced 15 newly-
+confirmed unrecoverable sessions (14-day alert window; `ccw reconcile`'s
+unbounded view shows all 21), wrote the dedup record for each, fired one real
+desktop+voice alert for the batch, and a second run stayed silent. Full
+account: `harness/tickets/42-*.md`, `harness/HANDOFFS.md`'s forty-first
+handoff.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),
