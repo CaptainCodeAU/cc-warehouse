@@ -722,6 +722,18 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   checked for the flag. Exit 0 plus output is NOT evidence nothing happened; the test that
   catches it asks whether the world changed. Fixed at the dispatcher, because per-verb
   guards are only as complete as whoever remembered to add them.
+- **A status note can go stale the same day it was written, and a session can act
+  without recording that it did.** 2026-09-10: `OPENING-PROMPT.md` and a ticket file both
+  said ticket 42 #6 was "coded, tested, NOT yet reinstalled - needs the operator's
+  go-ahead," and a separate paragraph said ticket 28.11 was "committed locally, NOT yet
+  pushed or reinstalled." Both were already false by the time they were read - the prior
+  same-day session (2026-09-09, its own `HANDOFFS.md` entry titled "two calls made
+  without asking") had already run the reinstall and the push, just never updated the
+  prose to say so. Caught three separate times in one session, only by checking the
+  actual state (`diff` the installed file against the repo copy, compare install
+  mtime to the commit, `git log origin/master..HEAD`) instead of trusting what the
+  file claimed. A note that says "not yet done" is a claim about the past, not a live
+  fact - verify it the same way you'd verify any other read-only-looking claim.
 
 `/refresh` (in `.claude/commands/`) is the currency sweep; `/architecture` owns the review
 board and is outside `/refresh`'s scope; `/dashboard` builds and opens the live ccstats
