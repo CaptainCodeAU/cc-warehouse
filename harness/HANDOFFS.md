@@ -92,12 +92,22 @@ hook-dispatch-gap detector) and the remaining unranked item (registering
 capture logic in `settings.json` directly, as a redundancy hedge). Neither
 was in the approved scope for this session.
 
-**Deploy pending the operator's go-ahead, not yet run**: the frozen tool
-reinstall (`uv_tool_reinstall_current_project --no-extras`), and - for #7
-specifically - the plugin marketplace update + `cc-capture@cc-warehouse`
-update, each its own separate ask per this repo's own deploy-order-safety
-design (the two changes are independently deployable, in either order, by
-construction and by test). Local commit only; not pushed.
+**DEPLOYED AND VERIFIED LIVE, same day, operator go-ahead given for both
+gates at once.** `uv_tool_reinstall_current_project --no-extras` (run via
+`zsh -ic`, since the Bash tool's own shell snapshot was missing a helper
+function the real interactive shell has), confirmed frozen via `ccw doctor`
+run from outside the repo. Pushed (`81d75cf`), `claude plugin marketplace
+update cc-warehouse` then `claude plugin update cc-capture@cc-warehouse`
+(digest `5078316cc35b` -> `81d75cf8a55b`, matching the pushed commit).
+Verified against real data, not just exit codes: a real `ccw sweep` wrote
+`"sweep: 28128 items, 15 stored, 12 with sidecars, 0 failed"` to
+`capture.jsonl`; `ccw archive --to ~/cc-warehouse-archive --verify` reported
+0 problems across 29721 folders and left the warehouse's own log line count
+unchanged (792 before and after, proving the archive-logging revert holds on
+the real machine too); a direct `ccw hook` probe against a missing
+transcript printed `"error: unreadable transcript ..."` and still exited 0;
+grepped the actual plugin cache digest folder AND the installed package for
+the new `capture-error` code, found in both.
 
 Full account: `contract/DESIGN.md` section 15's "2026-09-09, ticket 42
 #2/#3/#7" entry; `harness/tickets/42-*.md`'s items #2/#3/#7 DONE blocks.

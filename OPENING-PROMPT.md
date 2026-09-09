@@ -61,8 +61,16 @@ with existing open tickets, so those are merged in rather than duplicated:
    announced 15 newly-confirmed unrecoverable sessions, wrote the dedup
    ledger, fired one real desktop+voice alert; a second run correctly
    stayed silent. Full account: `harness/HANDOFFS.md`'s forty-first handoff.
-5. **Ticket 42 #2/#3/#7 - DONE 2026-09-09, committed locally, NOT YET
-   pushed/reinstalled/plugin-updated (operator go-ahead pending).** #3: a
+5. **Ticket 42 #2/#3/#7 - DONE AND LIVE 2026-09-09, committed `81d75cf`,
+   pushed, frozen `ccw` reinstalled, plugin updated and verified (operator
+   go-ahead given).** Verified live: a real `ccw sweep` wrote a
+   `"sweep: 28128 items, 15 stored, 12 with sidecars, 0 failed"` record to
+   `capture.jsonl`; `ccw archive --to ~/cc-warehouse-archive --verify`
+   reported 0 problems across 29721 folders AND left the warehouse's own log
+   untouched (792 lines before and after); a direct `ccw hook` probe against
+   a missing transcript printed `"error: unreadable transcript ..."` and
+   still exited 0; the plugin cache digest `81d75cf8a55b` and the installed
+   package both grep-confirmed to hold the new `capture-error` code. #3: a
    sweep item's graceful capture error (unreadable transcript, stuck lock)
    now reaches `capture.jsonl`, same as the hook path already did. #2:
    `ccw sweep`/`ccw build` write one durable run-summary record per
