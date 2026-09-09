@@ -97,13 +97,23 @@ assumed: `uv run pytest tests/ -q` run three times in a row, 1542 passed, zero
 failures, zero flakes each time; full-repo `ruff check .` and `pyright` both
 clean.
 
-**Not done this session, needs the operator's go-ahead at the moment of
-running**: `uv_tool_reinstall_current_project`, the `/plugin` update, and the
-real-session acceptance checks. **Left open for the operator**: whether `ccw
+**Deployed and verified live, same session, operator go-ahead given.**
+Committed (`cd84020`), pushed, frozen `ccw` reinstalled, plugin updated and
+digest-verified against the checkout. A real peer session ending naturally
+went through the new path unprompted and logged the correct
+`companions-started`/`companions-done` pair 46ms apart; a manually-fired
+uncaptured transcript did the same in 2ms. Caught one archive folder live,
+mid-flight, from the exact ticket-37 mechanism this fix closes (started
+moments before the fix landed, never finished) - `ccw repair` correctly could
+not fix it and said why; a full `ccw sweep` (0 failed) closed it and the
+already-known `9bde8f85` stale-manifest incident together. Final state: `ccw
+doctor` reports "capture is working" and `ccw archive --verify` reports
+29705 folders, 0 problems. **Left open for the operator**: whether `ccw
 repair` should read `capture.jsonl`'s own error line to enrich its "still
-broken" report for the second bug above (small, safe, deliberately not
-freelanced). Full account: `harness/tickets/37-*.md`'s "Part B DONE,
-2026-09-09" section; `contract/DESIGN.md` section 15's matching dated entry.
+broken" report for the stale-manifest bug (small, safe, deliberately not
+freelanced - the operator chose to leave it as documented for now). Full
+account: `harness/tickets/37-*.md`'s "Part B DONE, 2026-09-09" section;
+`contract/DESIGN.md` section 15's matching dated entry.
 
 ### Thirty-eighth handoff, 2026-09-09 (ticket 41 Finding 1 shipped and verified live)
 

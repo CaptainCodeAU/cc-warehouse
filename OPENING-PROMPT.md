@@ -33,11 +33,13 @@ with existing open tickets, so those are merged in rather than duplicated:
    Also fixed a live, distinct `store.get()` incident found on the way, and
    root-caused (but deliberately did not force-fix) a second one whose real
    mechanism turned out NOT to match this file's original guess. Full suite
-   green x3 (1542 passed), ruff/pyright clean. **NOT YET DONE: the frozen
-   reinstall, `/plugin` update, and real-session acceptance** - needs the
-   operator's go-ahead at the moment of running. Full account:
-   `harness/HANDOFFS.md`'s thirty-ninth handoff, `harness/tickets/37-*.md`'s
-   "Part B DONE, 2026-09-09" section.
+   green x3 (1542 passed), ruff/pyright clean. **DEPLOYED AND VERIFIED LIVE,
+   same day, operator go-ahead given**: pushed, frozen `ccw` reinstalled,
+   plugin updated and digest-verified, a real session's own natural
+   SessionEnd hook exercised the new path correctly, `ccw doctor` reports
+   "capture is working", `ccw archive --verify` reports 0 problems across
+   29705 folders. Full account: `harness/HANDOFFS.md`'s thirty-ninth handoff,
+   `harness/tickets/37-*.md`'s "Part B DONE, 2026-09-09" section.
 2. **Ticket 42 #4** - fix or relabel `ccw status`'s "Recent errors" section.
    **Do this before revisiting ticket 31.4's stalled decision** (see
    ticket 31's own file, "2026-09-09 cross-reference" note): one of the two

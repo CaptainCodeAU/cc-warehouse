@@ -499,7 +499,41 @@ this is adequately covered by the next day's scheduled sweep.
 
 **Real-data acceptance, run 3x for confidence**: `uv run pytest tests/ -q` -
 1542 passed, zero failures, three consecutive clean runs (no flakes). Full-repo
-`ruff check .` and `pyright` both clean. **Not yet done, needs the operator's
-go-ahead at the moment of running**: `uv_tool_reinstall_current_project`, the
-`/plugin` update, and the real-session acceptance checks this ticket's own
-Verification section calls for - none of that was run this session.
+`ruff check .` and `pyright` both clean.
+
+**DEPLOYED AND VERIFIED LIVE, same session, operator go-ahead given.** Committed
+(`cd84020`), pushed to `origin/master`, `uv_tool_reinstall_current_project
+--no-extras` run and confirmed frozen from OUTSIDE the repo. `claude plugin
+update cc-capture@cc-warehouse` ran clean (`131545e7b0f5` -> `cd8402066390`);
+verified by the digest script, not by the reported sha alone - the cache's
+hooks/ directory bytes match the checkout's exactly (`a247412be9a3ef62` both
+places). No restart was needed for the companions detach itself: the hook
+WRAPPER scripts are unchanged by this ticket, only the underlying `ccw`
+binary's dispatch, and a `uv tool` reinstall takes effect immediately for
+every new invocation.
+
+Fired a real SessionEnd hook payload for a genuinely uncaptured transcript
+through the live installed binary by hand, AND a real peer session ended
+naturally minutes later and went through the same path unprompted - both
+show the exact intended shape in `logs/capture.jsonl`: `ok captured` in
+single-digit-to-low-hundred milliseconds, immediately followed by its own
+`companions-started` / `companions-done` pair 2-46ms apart. `ccw doctor`'s
+new `companions` line correctly read `2 companions pass(es) completed in the
+last 7 days` off exactly those two.
+
+**Also caught, live, in the act**: one archive folder (`34054751-...`) whose
+hook had started at `08:16:35`, moments before this fix went live, and never
+reached a matching `ok`/`error` line or a catalog row at all - a real,
+naturally-occurring instance of this ticket's ORIGINAL problem, from the last
+seconds before the fix that solves it existed. `ccw repair` correctly could
+not fix it (no catalog row exists for it, by design repair only re-renders
+from one that does) and named the reason honestly rather than crashing. A
+full `ccw sweep` (28,099 items, 17 stored, 11 with sidecars, 0 failed,
+6m40s) picked the source transcript back up and closed it, together with the
+OTHER live incident this session had already found and root-caused
+(`9bde8f85`, the stale-manifest bug) - confirming, on real data, that "the
+next sweep recovers it" is not a hopeful claim but the machine's actual,
+proven behaviour. Final state: `ccw doctor` reports **"capture is working"**
+(0 desync problems, 0 uncaptured sessions, history caught up) and `ccw
+archive --to ~/cc-warehouse-archive --verify` reports **29705 folders
+checked, 0 problems**.
