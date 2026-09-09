@@ -128,11 +128,13 @@ the exact 3 (5604f5fd/bf09caea/313b7e02) ticket 41 already flagged as an
 unresolved critical unknown. 22 new oracle tests; full suite 1574 passed,
 ruff and pyright strict clean, project-wide. Committed `2d58f73`, reinstalled
 live, `ccw reconcile` run for real and found the same 21 by UUID. **`ccw
-repair`'s live run (which would write the dedup ledger for real and fire a
-real desktop+voice alert) was deliberately NOT triggered manually this
-session** - left for the operator's word, or for the existing 12:45 daily
-job to pick up naturally. Full account: `harness/HANDOFFS.md`'s forty-first
-handoff.
+repair`'s live run WAS then triggered, with the operator's explicit go-ahead**:
+announced 15 newly-confirmed unrecoverable sessions (the 14-day alert window;
+6 of the 21 fall outside it), wrote the dedup record for each, fired one
+real desktop+voice alert. `ccw doctor`'s new `reconcile` line confirmed it
+afterward ("15 session(s) on record as unrecoverable"), and a second `ccw
+repair` run correctly stayed silent (dedup verified live, not just in tests).
+Full account: `harness/HANDOFFS.md`'s forty-first handoff.
 
 **6. MEDIUM value / MEDIUM effort - build a hook-dispatch-gap detector**
 (ticket 41 Finding 4's mechanism, made concrete). Sketch: parse

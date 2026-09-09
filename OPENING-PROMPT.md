@@ -56,11 +56,11 @@ with existing open tickets, so those are merged in rather than duplicated:
    an unresolved critical unknown, now independently confirmed. New
    `src/cc_warehouse/reconcile.py`, a new read-only `ccw reconcile` verb,
    `ccw repair` now announces+dedups new losses (desktop+voice). **This also
-   closes ticket 28.10's "cross-tree reconciliation as a test" gap.** Full
-   account: `harness/HANDOFFS.md`'s forty-first handoff. **`ccw repair`'s
-   live run (real dedup write + real desktop/voice alert) was deliberately
-   NOT triggered manually - still needs the operator's word, or the existing
-   12:45 daily job picks it up on its own.**
+   closes ticket 28.10's "cross-tree reconciliation as a test" gap.**
+   **`ccw repair` was then triggered live with the operator's go-ahead**:
+   announced 15 newly-confirmed unrecoverable sessions, wrote the dedup
+   ledger, fired one real desktop+voice alert; a second run correctly
+   stayed silent. Full account: `harness/HANDOFFS.md`'s forty-first handoff.
 5. **Rest of ticket 42's ranked list** (#2, #3, #6, #7, plus the two
    unranked design-tradeoff items) - see
    `harness/tickets/42-capture-logging-and-alerting-gaps.md`.

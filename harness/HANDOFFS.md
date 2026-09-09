@@ -64,10 +64,14 @@ the frozen `ccw` and ran the real, read-only `ccw reconcile` against the actual
 warehouse: it found the same 21 sessions, by UUID, including the exact 3
 (5604f5fd/bf09caea/313b7e02) ticket 41 had already flagged as an unresolved
 critical unknown - independent confirmation of that finding. Committed `2d58f73`,
-not pushed. **`ccw repair`'s live run was deliberately NOT triggered manually**:
-it writes a real dedup record and fires a real desktop+voice alert, and the
-operator had not yet said whether to trigger it now or let the existing 12:45
-daily job pick it up on its own schedule.
+not pushed. **`ccw repair`'s live run was then triggered with the operator's
+explicit go-ahead**: announced 15 newly-confirmed unrecoverable sessions (14-day
+alert window; 6 of the 21 fall outside it and only show in `ccw reconcile`'s
+unbounded view), wrote one dedup record per session, fired one real desktop +
+voice alert for the whole batch. `ccw doctor`'s new `reconcile` line read back
+"15 session(s) on record as unrecoverable" afterward, and a second `ccw repair`
+run correctly printed nothing new - the dedup path is proven live, not just in
+the test suite.
 
 ### Fortieth handoff, 2026-09-09 (ticket 42 #4: fixed `ccw status`'s "Recent errors")
 
