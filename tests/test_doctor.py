@@ -26,6 +26,7 @@ plus output is not evidence that nothing happened (2026-08-01).
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -972,3 +973,172 @@ def test_reconcile_line_never_walks_the_archive(
     report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
 
     assert next(c for c in report.checks if c.name == "reconcile").detail
+
+
+# ---------------------------------------------------------------------------
+# Ticket 42 #6: the dispatch check -- "did Claude Code even try to tell us"
+# ---------------------------------------------------------------------------
+
+
+def session_at(session_id: str, moment: datetime) -> bytes:
+    """A session whose own payload timestamp sits at a caller-chosen real
+    moment, needed to exercise `_DISPATCH_GRACE_SECONDS`/`_DISPATCH_WINDOW`
+    against actual wall-clock time (same reasoning as `fresh_session` above,
+    generalised to an arbitrary offset rather than only "now")."""
+    stamp = moment.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return jsonl(
+        entry("user", "hello", stamp, session_id=session_id),
+        entry("assistant", "hi", stamp, session_id=session_id),
+    )
+
+
+def append_hook_log(
+    env: dict[str, str], session_id: str, *, status: str = "started", moment: datetime | None = None
+) -> None:
+    """A `ccw-hook.log` line in `ccw-hook.py`'s own `report()` shape."""
+    record = {
+        "ts": (moment or datetime.now(UTC)).isoformat(timespec="seconds"),
+        "source": "ccw-hook",
+        "python": "3.12.0 /usr/bin/python3",
+        "session": session_id,
+        "status": status,
+        "detail": "",
+    }
+    log_dir = Path(env["HOME"]) / ".claude" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "ccw-hook.log").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def test_a_session_with_a_started_line_is_not_a_dispatch_gap(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The hook plainly ran; a slow sweep behind it is `_overdue`'s question,
+    not this one's."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    old_enough = datetime.now(UTC) - timedelta(hours=1)
+    write_transcript(ccw_env, session_at(UUID_A, old_enough), session_id=UUID_A)
+    append_hook_log(ccw_env, UUID_A, moment=old_enough)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "dispatch")
+    assert check.ok is True, check.detail
+
+
+def test_a_stale_session_with_no_started_line_is_a_dispatch_gap(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The exact ticket 41 Finding 4 mechanism: a session that ended a while
+    ago and has zero entries anywhere in `ccw-hook.log` -- unlike an entirely
+    MISSING log (a different, "cannot answer yet" case below), the log here
+    exists and has entries, just none for this session's own uuid."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    old_enough = datetime.now(UTC) - timedelta(hours=1)
+    write_transcript(ccw_env, session_at(UUID_A, old_enough), session_id=UUID_A)
+    append_hook_log(ccw_env, UUID_B, moment=old_enough)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "dispatch")
+    assert check.ok is False
+    assert UUID_A in check.detail, check.detail
+
+
+def test_a_freshly_ended_session_is_not_flagged_yet(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Inside `_DISPATCH_GRACE_SECONDS`: the session may simply not have
+    reached the hook yet. Flagging it here would just be a faster-firing
+    version of the exact false-alarm class `_overdue` already avoids."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, fresh_session(UUID_A), session_id=UUID_A)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "dispatch")
+    assert check.ok is True, check.detail
+
+
+def test_an_archived_session_is_never_flagged_even_with_no_started_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`ccw sweep` does not depend on the hook ever having fired (ticket 41):
+    a session captured that way, with nothing to show in `ccw-hook.log`, is
+    working as designed, not a gap."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    old_enough = datetime.now(UTC) - timedelta(hours=1)
+    write_transcript(ccw_env, session_at(UUID_A, old_enough), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "dispatch")
+    assert check.ok is True, check.detail
+
+
+def test_a_gap_older_than_the_window_is_not_re_alarmed_forever(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Bounded recency, same posture as `_COMPANIONS_WINDOW`: a long-past gap
+    is `ccw reconcile`'s permanent record to keep, not this SessionStart-cheap
+    line's to re-surface on every run."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)  # 2020, no hook line
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "dispatch")
+    assert check.ok is True, check.detail
+
+
+def test_no_ccw_hook_log_on_this_machine_is_not_an_alarm(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    report = doctor.diagnose(config, home=Path(ccw_env["HOME"]))
+    check = next(c for c in report.checks if c.name == "dispatch")
+    assert check.ok is True
+    assert "no ccw-hook.log" in check.detail
+
+
+def test_dispatch_check_never_blocks_doctors_exit_code(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """NEVER BLOCKING (same posture as sidecars/history/prompts/companions/
+    reconcile): root cause lives outside this repo (ticket 41's addendum), and
+    sweep does not depend on the hook ever having fired, so a dispatch gap
+    alone must not fail an otherwise-healthy `ccw doctor`."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)
+    write_transcript(ccw_env, fresh_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    old_enough = datetime.now(UTC) - timedelta(hours=1)
+    write_transcript(ccw_env, session_at(UUID_B, old_enough), session_id=UUID_B)
+    append_hook_log(ccw_env, "some-unrelated-uuid", moment=old_enough)
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    dispatch_check = next(
+        c for c in doctor.diagnose(config, home=Path(ccw_env["HOME"])).checks
+        if c.name == "dispatch"
+    )
+    assert dispatch_check.ok is False, "test setup did not actually produce a dispatch gap"
+
+    result = run_ccw(["doctor"], ccw_env)
+
+    assert result.code == 0, f"a dispatch gap alone failed doctor: {result.out}"
+    assert "dispatch" in result.out, result.out

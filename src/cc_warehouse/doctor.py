@@ -92,6 +92,21 @@ _COMPANIONS_WINDOW = timedelta(days=7)
 # child, just a wider margin because this child also copies more bytes.
 _COMPANIONS_GRACE_SECONDS = 300
 
+# Ticket 42 #6: how long a session's last activity may sit with no
+# `ccw-hook.log` "started" line before that absence counts as a genuine
+# dispatch gap rather than "the session only just ended". Short on purpose --
+# this asks "did Claude Code even try to invoke our hook", a much faster
+# question than _overdue's "is it captured", which gives sweep/render a full
+# 24h before flagging anything.
+_DISPATCH_GRACE_SECONDS = 15 * 60
+
+# How far back a session's last activity may reach before an absent dispatch
+# stops being surfaced here at all. Same bounded-recency posture as
+# `_COMPANIONS_WINDOW`: this line exists to catch a CURRENTLY recurring gap
+# (ticket 41 Finding 4), not to audit history -- `ccw reconcile` is the
+# permanent record for an old, already-known loss.
+_DISPATCH_WINDOW = timedelta(days=7)
+
 
 @dataclass(frozen=True)
 class Check:
@@ -536,6 +551,92 @@ def _companions_stalled(config: Config) -> tuple[bool, str]:
     return True, f"{done_count} companions pass(es) completed in the last 7 days"
 
 
+def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, str]:
+    """Sessions Claude Code's own SessionEnd event never told our hook about at
+    all (ticket 41 Finding 4 / ticket 42 #6).
+
+    A DIFFERENT QUESTION FROM `_overdue`, just above. `_overdue` asks "is this
+    session captured yet" and gives sweep/render a generous 24h before
+    flagging anything -- it cannot tell "still queued" from "the hook never
+    fired" and does not try to. This asks the narrower, faster question: did
+    `ccw-hook.py` ever even see this session? Its own `report()` writes a
+    `started` line BEFORE anything that can die, so a session with no
+    `started` line anywhere in the log means Claude Code never invoked the
+    hook for it at all -- not that our hook crashed partway through (that
+    failure mode already reaches `capture.jsonl` and `ccw status`, tickets
+    42 #3/#4, and is not this check's job to repeat).
+
+    ROOT CAUSE IS OUTSIDE THIS REPO (ticket 41's addendum traces it to Claude
+    Code's own hook dispatch), so this is VISIBILITY ONLY, same never-blocking
+    posture as sidecars/history/prompts/companions/reconcile above (see
+    `diagnose`). Ticket 41 also confirmed nothing is actually AT RISK from this
+    mechanism alone -- `ccw sweep`'s daily scan does not depend on the hook
+    ever having fired, so every session behind a dispatch gap still gets
+    captured. The value here is a SessionStart-speed signal that the gap is
+    happening again, instead of a peer session noticing days into an incident.
+
+    BOUNDED TWICE. Only sessions NOT YET ARCHIVED pay for a payload read at all
+    (an archived session's hook, having plainly worked or been overtaken by
+    sweep, is not in question). And only ones whose last activity falls inside
+    `_DISPATCH_WINDOW` are counted -- a much older, already-known gap is `ccw
+    reconcile`'s job to remember, not this SessionStart-cheap line's.
+    """
+    log_path = home / ".claude" / "logs" / "ccw-hook.log"
+    try:
+        text = log_path.read_text(encoding="utf-8")
+    except OSError:
+        return True, "no ccw-hook.log on this machine yet"
+
+    now = datetime.now(UTC)
+    cutoff = now - _DISPATCH_WINDOW
+    started: set[str] = set()
+    for line in text.splitlines():
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if record.get("status") != "started":
+            continue
+        session = record.get("session")
+        ts = record.get("ts")
+        if not isinstance(session, str) or not isinstance(ts, str):
+            continue
+        moment = _moment(ts)
+        if moment is not None and moment < cutoff:
+            continue
+        started.add(session)
+
+    archived: set[str] = set()
+    if config.archive_root is not None and config.archive_root.is_dir():
+        for label_dir in config.archive_root.iterdir():
+            if label_dir.is_dir():
+                for session_dir in label_dir.iterdir():
+                    if session_dir.is_dir():
+                        archived.add(session_dir.name.partition("_")[2])
+
+    sessions, _subagents = sweep.source_transcripts(walk_root)
+    grace_cutoff = now - timedelta(seconds=_DISPATCH_GRACE_SECONDS)
+    gaps: list[tuple[str, datetime]] = []
+    for path in sessions:
+        uuid = path.name.removesuffix(".jsonl")
+        if uuid in archived or uuid in started:
+            continue
+        moment = _moment(_last_activity(path))
+        if moment is None or moment >= grace_cutoff or moment < cutoff:
+            continue
+        gaps.append((uuid, moment))
+
+    if not gaps:
+        return True, "0 session(s) missing a hook dispatch"
+    gaps.sort(key=lambda pair: pair[1])
+    uuid, moment = gaps[0]
+    return (
+        False,
+        f"{len(gaps)} session(s) never reached ccw-hook.log, e.g. {uuid}"
+        f" last active {moment.isoformat()}",
+    )
+
+
 def _batch_render_in_progress(root: Path) -> bool:
     """True while `ccw sweep` or `ccw build` is actively running against this
     warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
@@ -726,6 +827,14 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             else f"{count} session(s) OVERDUE, oldest last active {oldest}",
         )
     )
+
+    # Ticket 42 #6. Same never-blocking posture as sidecars/history/prompts/
+    # companions/reconcile below: whether Claude Code even DISPATCHED to our
+    # hook is a different, faster question than `overdue` just above (ticket
+    # 41 Finding 4), worth knowing at SessionStart speed, and not itself a
+    # broken capture -- sweep does not depend on the hook ever having fired.
+    dispatch_ok, dispatch_detail = _dispatch_gap(config, walk_root, where)
+    checks.append(Check("dispatch", dispatch_ok, dispatch_detail, blocking=False))
 
     checked, problems, pending, first_problem = _desync(config)
     pending_suffix = f", {pending} pending render(s)" if pending else ""

@@ -3,10 +3,13 @@
 Opened 2026-09-09. **Item #1 DONE and LIVE the same day** (real desktop/voice
 notification wired into `ccw-freshness-check.py`'s WARN/ALERT tiers, pushed
 `a781555`, verified live end to end - see `harness/HANDOFFS.md`'s
-thirty-seventh entry for the full account). **Items #2, #3, #4, #5 and #7 are
-DONE (2026-09-09); one of the two unranked design-tradeoff items closed the
-same day via ticket 37 Part B. Still NOT started: #6, and the remaining
-unranked item (registering capture logic in `settings.json` directly).**
+thirty-seventh entry for the full account). **Items #2, #3, #4, #5, #6 and #7
+are DONE (2026-09-09); one of the two unranked design-tradeoff items closed
+the same day via ticket 37 Part B. Still NOT started: the remaining unranked
+item (registering capture logic in `settings.json` directly). #6 is coded,
+tested and verified against real data but NOT yet reinstalled into the frozen
+`ccw` - needs the operator's go-ahead first, per this repo's own standing
+practice for anything that changes the live capture path.**
 Follow-up
 to ticket 41 (`harness/tickets/41-capture-alert-incident-2026-09-09.md` and
 its addendum), which found the incident's actual backlog was harmless but
@@ -161,7 +164,7 @@ afterward ("15 session(s) on record as unrecoverable"), and a second `ccw
 repair` run correctly stayed silent (dedup verified live, not just in tests).
 Full account: `harness/HANDOFFS.md`'s forty-first handoff.
 
-**6. MEDIUM value / MEDIUM effort - build a hook-dispatch-gap detector**
+**6. DONE 2026-09-09.** MEDIUM value / MEDIUM effort - build a hook-dispatch-gap detector
 (ticket 41 Finding 4's mechanism, made concrete). Sketch: parse
 `ccw-hook.log` for session UUIDs with at least one `"started"` entry
 (bounded window, same posture as `_DESYNC_SAMPLE`); walk
@@ -177,6 +180,26 @@ sweep already nets the DATA for this specific mechanism (ticket 41 confirms
 nothing was lost from it alone), so this is about faster observability, not
 recovering something currently at risk - though a second bug landing
 unnoticed on top of a dispatch gap is exactly how incidents compound.
+**Shipped as scoped**: new `doctor._dispatch_gap(config, walk_root, home)`, a new
+non-blocking `dispatch` line in `diagnose()` (placed right after `overdue`, same
+"in the order an operator would ask them" ordering the module's own docstring
+names). Reads `ccw-hook.log`'s own `started` lines (full session-id field, not
+the short hash `capture.jsonl` uses) within `_DISPATCH_WINDOW` (7 days, same
+bounded-recency posture as `_COMPANIONS_WINDOW`); walks only UNARCHIVED source
+transcripts via `sweep.source_transcripts`, flagging one whose last activity
+(R12, payload-derived) is older than `_DISPATCH_GRACE_SECONDS` (15 min) but still
+inside the window, and absent from the started-set. Three "cannot answer"
+states all read `ok=True` with an explanatory detail, same posture as
+`sidecars`/`history`/`prompts`/`companions`/`reconcile`: no `ccw-hook.log` yet,
+an archived session (sweep worked without the hook, which is fine), and a gap
+older than the window (`ccw reconcile` is the permanent record for that, not
+this line). 7 new oracle tests in `tests/test_doctor.py`; full suite 1604
+passed (was 1593), ruff and pyright strict clean project-wide. **Verified
+against real data, read-only, no reinstall needed** (doctor checks are dev-checkout
+code, `uv run ccw doctor` on this machine): found a genuine, real dispatch gap
+- 4 sessions on this machine with zero `ccw-hook.log` entries, doctor's overall
+exit code stayed 0 as designed. Not yet deployed to the frozen install; that
+needs the operator's go-ahead per this repo's own standing practice.
 
 **7. DONE 2026-09-09.** LOW value / LOW effort, hygiene - stop `ccw-hook.log` lying about
 success (Finding A above). Have `_run_hook` print its actual outcome to

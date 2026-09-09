@@ -21,6 +21,60 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-fourth handoff, 2026-09-09 (ticket 42 #6: the hook-dispatch-gap detector)
+
+Picked up from the OPENING-PROMPT.md priority queue after the operator chose
+it over the other two remaining options (settings.json capture registration,
+chasing ticket 41's 3 unresolved lost sessions). The one item left in ticket
+42's ranked list: build a `ccw doctor` check that answers "did Claude Code
+even try to invoke our hook," distinct from every other check in the module,
+which all ask "is it captured yet."
+
+Shipped exactly to the ticket's own sketch: new `doctor._dispatch_gap(config,
+walk_root, home)`, wired into `diagnose()` as a new non-blocking `dispatch`
+line placed right after `overdue`. Reads `ccw-hook.log`'s `started` lines
+(keyed on the full `session_id`, not the short hash `capture.jsonl` uses) into
+a set, bounded to `_DISPATCH_WINDOW` (7 days, matching `_COMPANIONS_WINDOW`'s
+posture); walks only unarchived source transcripts via
+`sweep.source_transcripts`; flags any whose last activity (R12) is older than
+`_DISPATCH_GRACE_SECONDS` (15 minutes) but still inside the window, and absent
+from the started-set. Three "cannot answer" states read `ok=True` with an
+explanatory detail rather than an alarm, matching `sidecars`/`history`/
+`prompts`/`companions`/`reconcile`'s existing posture: no `ccw-hook.log` file
+yet, a session that IS archived (sweep worked without the hook ever firing,
+which is fine, not a gap), and a gap older than the window (`ccw reconcile`
+already keeps the permanent record for that).
+
+Deliberately did NOT touch `_overdue`'s own separate, longer-standing
+archived-id-collection code, even though it duplicates a small amount of
+logic with the new check's own archived-set read: refactoring a shared helper
+would have meant re-verifying an existing, well-tested function's behaviour
+for no functional gain, against a task that did not ask for it.
+
+Oracle-tests-first, per this repo's own house rule: wrote 7 new tests in
+`tests/test_doctor.py` against the not-yet-existing check, confirmed all 7
+failed for the expected reason (`StopIteration` on a "dispatch" check that
+didn't exist), then implemented, then confirmed all 7 passed. Two of the
+tests needed a second pass after their first run exposed real test-design
+gaps, not implementation bugs: one asserted a dispatch gap using a
+completely-missing `ccw-hook.log` file, which the check correctly reads as
+"cannot answer yet" rather than "gap" (fixed by giving the log an unrelated
+entry so it exists but doesn't mention the session under test - the real
+shape of ticket 41's actual incident); the other needed the same "isolate an
+otherwise-healthy warehouse first" pattern the existing `history` non-blocking
+test already uses, so only the check under test could move `report.ok`.
+
+Full suite 1604 passed (was 1593), ruff and pyright strict clean
+project-wide. Verified against real data, read-only, no reinstall needed
+(doctor runs as ordinary dev-checkout code): `uv run ccw doctor` on this
+machine found a genuine dispatch gap - 4 real sessions with zero
+`ccw-hook.log` entries - and doctor's overall exit code stayed 0, confirming
+the non-blocking posture holds outside the test suite too, not just inside
+it. **Not yet deployed to the frozen `ccw` install** - that step needs the
+operator's explicit go-ahead first, matching every other live-path change in
+this ticket's own history. Full account:
+`harness/tickets/42-capture-logging-and-alerting-gaps.md`'s #6 DONE block.
+
 ### Forty-third handoff, 2026-09-09 (real desktop notifications leaking from the test suite)
 
 Triggered by the operator: two REAL macOS notifications appeared naming

@@ -85,9 +85,14 @@ with existing open tickets, so those are merged in rather than duplicated:
    `ccw hook` already speaks a graceful failure itself. Full suite 1593
    passed, ruff/pyright strict clean. Full account: `harness/HANDOFFS.md`'s
    forty-second handoff, `harness/tickets/42-*.md`'s #2/#3/#7 DONE blocks.
-   **Still NOT started: #6** (the hook-dispatch-gap detector) **and the
-   remaining unranked item** (registering capture logic in `settings.json`
-   directly) - see `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
+   **#6 (the hook-dispatch-gap detector) is DONE 2026-09-09**: coded, oracle-
+   tested (7 new tests, full suite 1604 passed), ruff/pyright clean, and
+   verified against real data (`uv run ccw doctor` found a genuine 4-session
+   gap on this machine, non-blocking as designed). NOT yet reinstalled into
+   the frozen `ccw` - needs the operator's go-ahead first. **Still NOT
+   started: the remaining unranked item** (registering capture logic in
+   `settings.json` directly) - see
+   `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
 6. **Ticket 41 Finding 1 - DONE and LIVE (2026-09-09).** Picked up out of
    order after a live SessionStart timeout led straight to it (4th same-day
    recurrence). Both `find_ccw()` copies now skip a `.venv` PATH hit and
