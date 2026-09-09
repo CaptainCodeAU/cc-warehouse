@@ -393,18 +393,21 @@ def _drive_main(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     doctor: BaseException | subprocess.CompletedProcess[str],
-) -> tuple[list[dict[str, Any]], list[list[str]], dict[str, float]]:
+) -> tuple[list[dict[str, Any]], list[list[str]], dict[str, float], list[list[str]]]:
     """Run main() with every outside edge faked. `doctor` is either an
     exception to raise for the `ccw doctor` call, or a CompletedProcess to
-    return. Yields (things spoken aloud, argv of every subprocess call,
-    timeout budget per call)."""
+    return. Yields (things spoken aloud, argv of every subprocess.run call,
+    timeout budget per call, argv of every subprocess.Popen call - the
+    desktop-notification channel, ticket 42 item #1)."""
     spoken: list[dict[str, Any]] = []
     calls: list[list[str]] = []
     budgets: dict[str, float] = {}
+    popened: list[list[str]] = []
 
     monkeypatch.setattr(freshness, "LOG", tmp_path / "ccw-hook.log")
     monkeypatch.setattr(freshness, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(freshness, "find_ccw", lambda: "/fake/bin/ccw")
+    monkeypatch.setattr(freshness.sys, "platform", "darwin")
 
     def fake_run(
         argv: list[str], **kwargs: Any
@@ -427,22 +430,38 @@ def _drive_main(
         spoken.append(json.loads(body.decode("utf-8")))
         return UrlopenStub()
 
+    def fake_popen(argv: list[str], **_kwargs: Any) -> object:
+        popened.append(argv)
+        return object()
+
     monkeypatch.setattr(freshness.subprocess, "run", fake_run)
+    monkeypatch.setattr(freshness.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(freshness.urllib.request, "urlopen", fake_urlopen)
 
     assert freshness.main() == 0
-    return spoken, calls, budgets
+    return spoken, calls, budgets, popened
 
 
 def test_a_single_timeout_says_nothing_out_loud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The reported symptom: one slow moment produced a spoken raw Python
-    traceback. report() speaks only on status "error", so the fix is that a
-    timeout no longer takes that path."""
+    traceback. report() speaks only on status "alert"/"error" (ticket 42 item
+    #1), so the fix is that a timeout no longer takes that path."""
     freshness = _freshness()
-    spoken, _, _ = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
+    spoken, _, _, _ = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
     assert spoken == []
+
+
+def test_a_single_timeout_raises_no_desktop_notification_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first-ever unreachable doctor is streak 1, below _WARN_AT - it must
+    stay as quiet on the new desktop channel as it already is on voice, or a
+    perfectly ordinary slow moment starts popping up notifications."""
+    freshness = _freshness()
+    _, _, _, popened = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
+    assert not any(argv[0] == "osascript" for argv in popened)
 
 
 def test_a_timeout_increments_the_streak(
@@ -463,7 +482,7 @@ def test_a_timeout_still_checks_the_scheduled_jobs(
     entirely. The archive-job incident that check exists to catch would have
     gone unnoticed again, for as long as doctor stayed slow."""
     freshness = _freshness()
-    _, calls, _ = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
+    _, calls, _, _ = _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
     assert any(argv[0] == "launchctl" for argv in calls)
 
 
@@ -476,9 +495,10 @@ def test_a_healthy_doctor_still_clears_the_streak(
     healthy = subprocess.CompletedProcess(
         ["/fake/bin/ccw", "doctor"], 0, "Uncaptured: 36 session(s)\n", ""
     )
-    spoken, _, _ = _drive_main(freshness, tmp_path, monkeypatch, healthy)
+    spoken, _, _, popened = _drive_main(freshness, tmp_path, monkeypatch, healthy)
     assert freshness.read_streak(tmp_path / "state.json") == 0
     assert spoken == []
+    assert not any(argv[0] == "osascript" for argv in popened)
 
 
 def test_the_doctor_budget_fits_a_cold_walk(
@@ -492,9 +512,126 @@ def test_the_doctor_budget_fits_a_cold_walk(
     healthy = subprocess.CompletedProcess(
         ["/fake/bin/ccw", "doctor"], 0, "Uncaptured: 36 session(s)\n", ""
     )
-    _, _, budgets = _drive_main(freshness, tmp_path, monkeypatch, healthy)
+    _, _, budgets, _ = _drive_main(freshness, tmp_path, monkeypatch, healthy)
     assert budgets["doctor"] >= 45
     assert budgets["launchctl"] == freshness._JOB_TIMEOUT
+
+
+# ---------------------------------------------------------------------------
+# Ticket 42 item #1: WARN raises a desktop notification, ALERT also speaks.
+#
+# Before this, `report()` only ever fired the voice POST on status "error",
+# and nothing at all raised a desktop notification, so a WARN/ALERT tier
+# only ever reached a human as SessionStart stdout - pull-based, not
+# push-based, which is exactly why the 2026-09-09 incident needed a peer
+# session to relay it by hand instead of an alert reaching the operator on
+# its own. None of the branch these tests cover (main()'s escalating
+# `report("warn"/"alert", message)` calls) had ANY test before this ticket.
+# ---------------------------------------------------------------------------
+
+
+def _failing_doctor(uncaptured: int = 42) -> subprocess.CompletedProcess[str]:
+    """A `ccw doctor` that answered but reported unhealthy - the FAIL branch,
+    distinct from `_timed_out()`'s could-not-be-asked branch."""
+    return subprocess.CompletedProcess(
+        ["/fake/bin/ccw", "doctor"], 1, f"Uncaptured: {uncaptured} session(s)\n", ""
+    )
+
+
+def test_a_warn_tier_streak_raises_a_desktop_notification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Streak 1 -> 2 crosses into WARNING (_WARN_AT). Desktop fires from
+    WARN onward; voice waits for ALERT (see the module's
+    _DESKTOP_STATUSES/_SPEAKING_STATUSES) so an ordinary run of multi-session
+    work, where two session-starts can be minutes apart, is not talked over."""
+    freshness = _freshness()
+    freshness.write_streak(tmp_path / "state.json", 1)
+    spoken, _, _, popened = _drive_main(
+        freshness, tmp_path, monkeypatch, _failing_doctor()
+    )
+    assert freshness.read_streak(tmp_path / "state.json") == 2
+    osa = [argv for argv in popened if argv[0] == "osascript"]
+    assert len(osa) == 1
+    assert spoken == []
+
+
+def test_an_alert_tier_streak_raises_both_desktop_and_voice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Streak 4 -> 5 crosses into ALERT (_ALERT_AT) - the scale ticket 24's
+    own incident reached before anyone noticed. This is the tier the whole
+    ticket exists to make loud."""
+    freshness = _freshness()
+    freshness.write_streak(tmp_path / "state.json", 4)
+    spoken, _, _, popened = _drive_main(
+        freshness, tmp_path, monkeypatch, _failing_doctor()
+    )
+    assert freshness.read_streak(tmp_path / "state.json") == 5
+    osa = [argv for argv in popened if argv[0] == "osascript"]
+    assert len(osa) == 1
+    assert len(spoken) == 1
+
+
+def test_the_notification_body_matches_the_printed_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """All three channels - log, stdout, desktop - must say the same thing;
+    a notification with different wording than the printed line would be a
+    second place for the message to drift from the log."""
+    freshness = _freshness()
+    freshness.write_streak(tmp_path / "state.json", 1)
+    _, _, _, popened = _drive_main(freshness, tmp_path, monkeypatch, _failing_doctor())
+    printed = capsys.readouterr().out.strip()
+    osa = next(argv for argv in popened if argv[0] == "osascript")
+    script = osa[-1]
+    assert printed and printed in script
+
+
+def test_desktop_alert_escapes_quotes_so_the_applescript_stays_one_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ported by hand from notify.py's alert(): AppleScript is assembled as
+    source text, so an unescaped double quote in the message would end the
+    string early and change what runs."""
+    freshness = _freshness()
+    seen: list[list[str]] = []
+
+    def fake_popen(argv: list[str], **_kwargs: Any) -> object:
+        seen.append(argv)
+        return object()
+
+    monkeypatch.setattr(freshness.sys, "platform", "darwin")
+    monkeypatch.setattr(freshness.subprocess, "Popen", fake_popen)
+    freshness._desktop_alert("cc-warehouse", 'capture check failed ("desync")')
+    script = seen[0][-1]
+    assert '\\"desync\\"' in script
+
+
+def test_desktop_alert_is_a_no_op_off_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    freshness = _freshness()
+    seen: list[list[str]] = []
+
+    def fake_popen(argv: list[str], **_kwargs: Any) -> object:
+        seen.append(argv)
+        return object()
+
+    monkeypatch.setattr(freshness.sys, "platform", "linux")
+    monkeypatch.setattr(freshness.subprocess, "Popen", fake_popen)
+    freshness._desktop_alert("cc-warehouse", "anything")
+    assert seen == []
+
+
+def test_desktop_alert_swallows_a_failure_to_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A notification sink must never be able to fail a SessionStart hook."""
+    freshness = _freshness()
+
+    def boom(*_args: Any, **_kwargs: Any) -> object:
+        raise OSError("no such binary")
+
+    monkeypatch.setattr(freshness.sys, "platform", "darwin")
+    monkeypatch.setattr(freshness.subprocess, "Popen", boom)
+    freshness._desktop_alert("cc-warehouse", "anything")
 
 
 # ---------------------------------------------------------------------------

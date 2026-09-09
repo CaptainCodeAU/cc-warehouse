@@ -10,6 +10,15 @@ it lives in the same place Claude Code already surfaces a SessionStart hook's
 stdout, it gets LOUDER the longer it stays broken instead of showing a flat
 banner, and it goes quiet again the moment it is actually fixed.
 
+PUSH, NOT JUST PULL (ticket 42 item #1, 2026-09-09). The WARN/ALERT tiers used
+to ONLY print to that stdout, which only reaches a human if a new session
+happens to start and someone reads the scrollback - exactly what happened in
+the 2026-09-09 incident this line commemorates, where a peer session's own
+SessionStart hook had to relay the alert by hand. `report()` now also raises a
+real desktop notification from WARN onward and speaks aloud from ALERT onward
+(see the _DESKTOP_STATUSES/_SPEAKING_STATUSES comment beside it) - the print
+stays too, so a session-start that IS read still shows the same line.
+
 WHAT DRIVES THE ALARM, AND WHAT DOES NOT (found by running the first draft
 against real data). `ccw doctor` prints an "Uncaptured: N session(s)" figure
 that sits at a few hundred on a perfectly healthy install - old sessions that
@@ -136,9 +145,66 @@ _WATCHED_JOBS = (
 # "LastExitStatus" = N; that an earlier draft of this file wrongly assumed.
 _LAST_EXIT = re.compile(r"last exit code = (-?\d+)")
 
+# Ticket 42 item #1: which statuses raise WHICH channel. Before this, only
+# "error" spoke at all and nothing ever raised a desktop notification, so the
+# WARN/ALERT tiers below -- the actual escalation mechanism ticket 24.7 was
+# built for -- only ever reached a human as SessionStart stdout: pull-based,
+# not push-based, which is why the 2026-09-09 incident needed a peer session
+# to notice and relay it by hand. Desktop fires from WARN onward (streak 2+,
+# _tier() 1); voice waits for ALERT (streak 5+, _tier() 2, the scale ticket
+# 24's own incident reached) so an ordinary run of multi-session work --
+# where two session starts can be minutes apart -- does not get talked over
+# by every WARN. Deliberately excluded: the unlabelled tier-0 first miss
+# (streak 1) is logged as its own "info" status in main() rather than
+# collapsed into "warn" -- raising a desktop toast on the very first failed
+# check, every time, would be the same "chronic figure trains you to ignore
+# banners" trap ticket 24.7 exists to avoid, just moved one tier earlier.
+# "error" (ccw not installed, a broken scheduled job) keeps speaking
+# immediately, same as before this ticket -- there is no chronic, expected
+# case for it the way the doctor-streak has one, so waiting for a streak
+# would just delay a real one-shot problem.
+_DESKTOP_STATUSES = frozenset({"warn", "alert", "error"})
+_SPEAKING_STATUSES = frozenset({"alert", "error"})
+
+
+def _desktop_alert(title: str, body: str) -> None:
+    """Raise ONE desktop notification, best-effort. Ported by hand from
+    src/cc_warehouse/notify.py's alert() (this file must not import
+    cc_warehouse -- see the module docstring), same shape and same reason:
+    fire-and-forget so a slow or missing `osascript` can never delay session
+    start, and no new timeout is added to the budget this file already
+    spends on `ccw doctor` and `launchctl` (see
+    test_the_freshness_hook_budgets_fit_inside_its_own_outer_kill).
+
+    macOS ONLY, and a no-op everywhere else rather than a guess -- this
+    machine is a Mac, but this script also runs on whatever Linux box
+    inherits the plugin (see the module's PORTABILITY note). Double quotes
+    and backslashes in either string are escaped before being spliced into
+    the AppleScript source, so a message containing a quote cannot end the
+    string early and change what runs (same bug class notify.py's own
+    docstring calls out)."""
+    if sys.platform != "darwin":
+        return
+    safe_body = body.replace("\\", "\\\\").replace('"', '\\"')
+    safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'display notification "{safe_body}" with title "{safe_title}"'
+    try:
+        subprocess.Popen(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:  # noqa: BLE001 - a notification must never raise here
+        pass
+
 
 def report(status: str, detail: str) -> None:
-    """Same idiom as ccw-hook.py's report(): log durably, speak only on trouble."""
+    """Same idiom as ccw-hook.py's report(): log durably, then escalate by
+    tier -- desktop from WARN, voice from ALERT (ticket 42 item #1; see the
+    _DESKTOP_STATUSES/_SPEAKING_STATUSES comment above for why the two
+    channels split there and not together)."""
     record = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": "ccw-freshness-check",
@@ -163,7 +229,9 @@ def report(status: str, detail: str) -> None:
             handle.write(json.dumps(record) + "\n")
     except OSError:
         pass
-    if status not in ("error",):
+    if status in _DESKTOP_STATUSES:
+        _desktop_alert("cc-warehouse", detail)
+    if status not in _SPEAKING_STATUSES:
         return
     try:
         payload = json.dumps(
@@ -425,12 +493,16 @@ def main() -> int:
     # A doctor that could not be ASKED and a doctor that answered FAIL are
     # different facts, but they share one property: neither is evidence that
     # capture is healthy. So both fall through to the same streak below.
-    # They used to not: the except branch spoke immediately (report("error")
-    # is the only status report() says out loud) and then `return 0`-ed,
-    # which never touched the streak counter AND skipped broken_jobs()
-    # entirely. One slow moment therefore shouted a raw Python traceback,
-    # while a permanently unreachable doctor could never escalate past that
-    # same flat line. Fixed 2026-09-07 after both halves fired for real.
+    # They used to not: the except branch spoke immediately (before ticket 42
+    # item #1, "error" was the only status report() ever said out loud) and
+    # then `return 0`-ed, which never touched the streak counter AND skipped
+    # broken_jobs() entirely. One slow moment therefore shouted a raw Python
+    # traceback, while a permanently unreachable doctor could never escalate
+    # past that same flat line. Fixed 2026-09-07 after both halves fired for
+    # real. "unreachable" itself still stays off _DESKTOP_STATUSES/
+    # _SPEAKING_STATUSES on purpose: it means the check got no answer, not
+    # that capture failed (see freshness_message's own docstring), so it logs
+    # durably and lets the streak below carry the actual escalation.
     result: subprocess.CompletedProcess[str] | None = None
     unreachable: str | None = None
     try:
@@ -465,7 +537,19 @@ def main() -> int:
         message = freshness_message(streak, uncaptured, unreachable)
         if message is not None:
             message += growth_context(rate)
-            report("warn" if streak < _ALERT_AT else "alert", message)
+            # Ticket 42 item #1: the report STATUS must track _tier(), not just
+            # "below/at _ALERT_AT" - streak 1 is tier 0, the unlabelled first
+            # miss, and must stay as quiet on the new desktop channel as it
+            # already was on voice. Collapsing tier 0 into "warn" here (the
+            # pre-ticket-42 shape) would have raised a desktop notification on
+            # the very first failed check, every time - the same "chronic
+            # figure trains you to ignore banners" trap ticket 24.7 exists to
+            # avoid, just moved a tier earlier. "info" is a new log status,
+            # deliberately outside _DESKTOP_STATUSES/_SPEAKING_STATUSES; no
+            # test or external consumer keys on the old "warn"-at-tier-0 value
+            # (checked: ccw-watch and this plugin's docs key on `ccw doctor`'s
+            # own exit code, never on this file's log status strings).
+            report(("info", "warn", "alert")[_tier(streak)], message)
             print(message)
 
     write_backlog_snapshot(STATE_PATH, uncaptured, now.isoformat())

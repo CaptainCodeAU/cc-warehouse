@@ -1,6 +1,6 @@
 # Ticket 37: the sweep rewrites every sub-agent `meta.json` daily, and a hook killed mid-run leaves no trace
 
-Opened 2026-09-06. **Part A DONE and Part B row 1 DONE the same day** (see the bottom of this file). Part B rows 2, 3 and 5 and the pre-filter follow-up are OPEN. Two findings from one session's timeline
+Opened 2026-09-06. **Part A DONE and Part B row 1 DONE the same day** (see the bottom of this file). Part B rows 2, 3 and 5 and the pre-filter follow-up are OPEN. **2026-09-09: Part B's underlying mechanism confirmed CHRONIC and size-correlated, still unfixed - see that dated section near the bottom.** Two findings from one session's timeline
 (chorustic session `78bb0bd1-06cf-44b6-b5ec-6e7a01b0df92`), traced because
 the operator asked why the rendered files landed nine minutes after the
 JSONL and why the `subagents/` folders carried a date between the two.
@@ -268,3 +268,97 @@ contain `_started`.
 4. Part B row 5, a `source: sweep` line per sweep-stored session.
 5. A shared `SubagentResult.action` enum so `capture._archive_subagents_of`
    (which currently discards the result) and the sweep share one vocabulary.
+
+## 2026-09-09: Part B's mechanism is chronic, and it tracks payload size
+
+Found while working ticket 42 item #1 (real notification on the freshness
+check). `ccw doctor` reported `capture is NOT working` (`FAIL desync`, 11
+problems in 3 folders). All three problem folders are sessions whose
+`~/.claude/logs/ccw-hook.log` entry that day shows a `started` line with NO
+matching `ok` or `error` - the Part B row 1 line doing exactly the job it was
+built for: this took one `tail`, not the seven tool calls the original
+2026-09-06 incident needed.
+
+**What's new since the original instance (which was one session, cause
+undetermined):**
+
+- **It is chronic, not a one-off.** The daily `ccw repair` job
+  (`com.captaincodeau.ccw-repair`, 12:45 local) wrote 23 `repair: fixed`
+  lines into `capture.jsonl` at 02:45 UTC the same day, for 23 different
+  sessions from the day before. Repair has been silently absorbing this
+  every day; nobody had looked at whether it should have to.
+- **It tracks payload size.** The two folders with NO catalog row at all
+  (`85da9fee-24bb-4285-a6d6-9f88df63a3eb`, `c8f9cc69-fe9d-45d1-9a63-6285c638a7ea`)
+  were the two LARGEST sessions of the day: 3.06 MB / 25 sub-agent dirs and
+  3.35 MB / 21 sub-agent dirs. Every smaller session captured that day
+  rendered fine (checked all 25 most recently captured folders via
+  `doctor.desync_detail`). Their raw `.jsonl` and `subagents/` are safely on
+  disk - only the derived transcript.md/HTML/manifest never got written, and
+  no catalog row exists for either session at all (confirmed by querying
+  `catalog.sqlite`'s `session` table directly by `session_uuid`: zero rows).
+  This is exactly the Part A/Part B row 3 shape this ticket already names -
+  the hook died after writing the archive but before the catalog insert -
+  just not previously known to correlate with size.
+- **A THIRD, distinct failure showed up in the same batch, worth recording
+  separately**: session `abaece35-4037-4f28-8286-bbd612ff38f9` DOES have a
+  catalog row, but `ccw doctor` flagged `JSONL does not match manifest
+  source_hash`, and `ccw repair` could not fix it (`render failed: exit 1`,
+  no stderr). Traced (read-only, one scoped `ccw render --session
+  s:5f98fd710bd5`, nothing else touched): the catalog's row was snapshotted
+  at `2026-09-09T02:31:07Z` against hash `5f98fd710bd5...`, but the archive
+  mirror's `.jsonl` kept growing after that (the session was still active)
+  to a different hash, `5482b4c6...`. `archive.read_payload` correctly
+  refuses to serve a mismatched file and falls through to `store.get`, which
+  unconditionally does `object_path(...).read_bytes()` - but this machine
+  runs `keep_objects=false` (ticket 27.3), so `objects/` does not exist, and
+  the fallback raises a bare `FileNotFoundError` with no `.filename` context
+  (swallowed via `repr(exc)` in `notify.report`, which drops the path
+  entirely - `str(exc)` would have kept it). This is a DIFFERENT bug from
+  Part B's hook-death shape: no hook died here, a session was captured
+  mid-growth and never re-captured once it stabilized, and the render-time
+  fallback to a vault that no longer exists on `keep_objects=false`
+  installs produces an unhelpful crash instead of a clear "no bytes
+  anywhere for this hash" message. Worth its own ticket line if it recurs;
+  not fixed here.
+
+**The unresolved timing question from Part B's own "why the hook died is not
+recoverable" section, re-measured and STILL unresolved:** the outer
+SessionEnd kill is 45s (`hooks.json`) and `ccw-hook.py`'s own inner
+`subprocess.run(..., timeout=40)` is 40s. The inner budget is BELOW the outer
+kill, so a `TimeoutExpired` should fire first and get logged via the existing
+`except (OSError, subprocess.SubprocessError)` branch (`ccw-hook.py:213-215`).
+It did not, for either of the two catalog-less sessions. So either Claude
+Code kills the SessionEnd hook's process tree before its declared 45s
+elapses, or an exit-driven signal (window close, `kill`) takes the whole tree
+down regardless of either budget - the same two candidates Part B's original
+"why the hook died" section already named, still unprovable from what exists,
+now with two more data points that both point the same way (both failures
+were large payloads, which is the kind of session most likely to still be
+running long enough into shutdown to get caught either way).
+
+**Confirmed, not just suspected:** `cli._run_hook` (`cli.py:549-582`) always
+returns 0 on every path, including an in-process exception - so
+`ccw-hook.py`'s `result.returncode != 0` branch (`ccw-hook.py:217`) can never
+fire in practice. Every real capture failure that does not crash the wrapper
+itself lands on `report("ok", ...)`. This is ticket 42 Finding A, and it is
+exactly why `ccw-hook.log` showed nothing for these three sessions instead of
+a wrong-but-visible "ok": the wrapper's subprocess call itself never
+returned, so it never reached line 217 OR line 226.
+
+**The candidate fix, from ticket 42's unranked design-tradeoff list, not
+scoped here and needs an operator ruling first:** move the hook's synchronous
+sidecar/external-file copying (`capture.py:440-547`,
+`_archive_sidecars_of`/`_archive_external_of`) off the SessionEnd timing
+budget entirely - detach it (`nohup ... & disown; exit 0`-shaped), at the
+cost of losing that piece's ability to report a failure back synchronously
+(which ticket 42 proposal #5's `capture.jsonl` reconciliation check would
+need to cover instead). Until that lands, `ccw repair`'s daily 12:45 run is
+the only thing closing this gap, which means a session captured after 12:45
+stays unrendered for roughly 24 hours - a mitigation, not a fix.
+
+Ticket 42 item #1 (real desktop/voice notification on the freshness check)
+shipped the same session this was found, deliberately gating the new alert
+on `_tier()` rather than the raw streak so a single ordinary blip does not
+start popping up notifications - see that file's own change for detail. That
+alert will now surface this exact chronic condition instead of only ever
+printing to a SessionStart a human might not read.

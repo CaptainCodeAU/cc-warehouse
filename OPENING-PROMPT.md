@@ -11,10 +11,19 @@ incident (tickets 41/42) now sits at the top of the queue, ahead of the
 standing backlog, in this order - two of these items were found to overlap
 with existing open tickets, so those are merged in rather than duplicated:
 
-1. **Ticket 42 #1** - wire a real desktop/voice notification into
-   `ccw-freshness-check.py`'s WARN/ALERT tiers (today they only print to
-   stdout, which is why this whole incident needed a peer session to notice
-   and relay it by hand). Cheap, standalone, ~10 lines.
+1. **Ticket 42 #1 - DONE, same day (2026-09-09).** Real desktop/voice
+   notification now wired into `ccw-freshness-check.py`'s WARN/ALERT tiers
+   (desktop from streak 2, voice from streak 5+); the tier-0 first miss stays
+   quiet on purpose. **NOT LIVE YET** - the plugin cache still holds the old
+   script; run `/plugin` and update `cc-capture@cc-warehouse` to pick it up
+   (verify with `grep _desktop_alert` against the newest
+   `~/.claude/plugins/cache/cc-warehouse/cc-capture/*/hooks/ccw-freshness-check.py`).
+   **While confirming this, found ticket 37 Part B's mechanism happening
+   chronically right now** (2 sessions today with a `started` hook line and
+   no `ok`/`error`, no catalog row, both the day's two largest payloads) -
+   full evidence appended to `harness/tickets/37-*.md`'s dated 2026-09-09
+   section. Not fixed; needs an operator ruling on detaching the hook's
+   synchronous copying (ticket 42's unranked design item).
 2. **Ticket 42 #4** - fix or relabel `ccw status`'s "Recent errors" section.
    **Do this before revisiting ticket 31.4's stalled decision** (see
    ticket 31's own file, "2026-09-09 cross-reference" note): one of the two

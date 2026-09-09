@@ -21,6 +21,43 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Thirty-seventh handoff, 2026-09-09 (ticket 42 #1 shipped; ticket 37 Part B found chronic)
+
+Ticket 42 item #1 (real desktop/voice notification on `ccw-freshness-check.py`'s
+WARN/ALERT tiers, top of `OPENING-PROMPT.md`'s priority order) is DONE:
+`_desktop_alert` (ported by hand from `notify.py`'s `alert()`, since this file must
+never import `cc_warehouse`) fires from the WARN tier (streak 2+) onward, voice from
+ALERT (streak 5+) onward, fire-and-forget via `subprocess.Popen` so no new timeout was
+added to the budget `test_the_freshness_hook_budgets_fit_inside_its_own_outer_kill`
+already pins. The unlabelled tier-0 first miss (streak 1) got its own new log status,
+`"info"`, deliberately kept off both notification channels - collapsing it into "warn"
+(the pre-fix shape) would have raised a desktop toast on the very first failed check,
+every time, the exact chronic-banner trap ticket 24.7 exists to avoid. 8 new oracle
+tests in `tests/test_cc_capture_freshness.py`, all previously-uncovered branches (the
+escalating half of `main()` had zero test coverage before this). Negative control run
+by hand: reverting the notification call sent 3 of the new tests red, confirmed, then
+restored. Full suite 1525 passed, ruff and pyright both clean. **NOT LIVE**: the plugin
+cache (`~/.claude/plugins/cache/cc-warehouse/cc-capture/68d5fa775651/...`) still holds
+the pre-fix script; needs an operator-run `/plugin` update.
+
+While verifying the fix (`ccw doctor` before touching anything), found capture
+genuinely broken: `FAIL desync`, 3 sessions that day with a `started` hook-log line and
+no matching `ok`/`error`. This is ticket 37 Part B's exact mechanism (opened
+2026-09-06, previously one instance, cause undetermined), now shown to be CHRONIC (the
+daily `ccw repair` job silently fixed 23 of these the day before) and correlated with
+payload size (the two fully-broken sessions were the day's two largest, 3+ MB / 20+
+sub-agent dirs each; every smaller session that day rendered fine). A third session in
+the same batch had a different, newly-found failure: a stale catalog row from mid-growth
+capture, and `ccw repair`'s attempted fix crashed on a `store.get` fallback to a
+`objects/` vault this machine no longer has (`keep_objects=false` since ticket 27.3),
+raising a bare `FileNotFoundError` that `notify.report`'s `repr(exc)` swallows without
+the path. Full evidence, including the still-unresolved 40s-inner-vs-45s-outer timeout
+arithmetic, appended to `harness/tickets/37-*.md`'s dated 2026-09-09 section. Not fixed
+this session - the candidate fix (detach the hook's synchronous sidecar/external
+copying, ticket 42's unranked design item) needs an operator ruling first. `ccw
+repair`'s daily 12:45 run remains the only thing closing this gap in the meantime,
+which means a session captured after 12:45 stays unrendered for roughly 24 hours.
+
 ### Thirty-sixth handoff, 2026-09-08 (ticket 39: shipped and live - the reinstall and back-fill)
 
 Continuation of the same day's session that built 39b-39g. With the operator's explicit
