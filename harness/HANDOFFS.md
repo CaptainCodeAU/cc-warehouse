@@ -21,6 +21,54 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-first handoff, 2026-09-09 (ticket 42 #5: reconciliation check, real number is 21 not 3)
+
+Picked up priority-order item 4 from `OPENING-PROMPT.md` right after item 2 (the
+fortieth handoff) landed. Dispatched the design/scoping to a Plan agent on the
+`opus` model tier per the session's model-rung reminder (MAX-class judgment work,
+this session itself was running one rung down); the agent measured the real
+`capture.jsonl` first rather than trusting the ticket's own text, and found the
+true figure was **21 permanently unrecoverable sessions, not the 3 ticket 41
+named**, running at roughly 1-2 a week since 2026-08-08. Presented the agent's
+options (A narrow / B recommended / C broad / D backfill add-on) to the operator;
+picked B+D.
+
+Built `src/cc_warehouse/reconcile.py`: `find_unrecoverable` is the expensive
+source-tree + archive + catalog cross-check (all three must miss, the
+conservative direction); `known_unrecoverable_count`/`known_unrecoverable_uuids`
+are a cheap read of the dedup ledger `ccw repair` writes back into
+capture.jsonl. **Deliberately split from the agent's plan on one point**: the
+agent's design had `ccw doctor`'s line do the same cross-check as `ccw repair`,
+just over the whole log instead of a window; this session judged that unsafe on
+its own (not something the agent's report weighed) - `ccw doctor` runs on every
+SessionStart via `ccw-freshness-check.py`, and ticket 41 Finding 1 already caused
+a real SessionStart timeout once from an unrelated bug, so doctor's line reads
+ONLY the already-cheap dedup ledger and never walks the archive itself. Proven
+with a test that monkeypatches the expensive cross-check to explode and confirms
+doctor never reaches for it.
+
+Also added: the `session_uuid` structured field (threaded through the 3 call
+sites that can supply one - `cli._report_capture`/`_run_hook`'s error path,
+`sweep._log_item_failure` - with the prose-regex fallback kept permanently for
+every record written before this field existed); a new read-only `ccw reconcile`
+verb (prints the full unbounded history); `ccw repair` now runs reconciliation
+BEFORE its desync early-return (the trap: that return fires on the normal
+healthy-machine day, exactly when this needs to run) and announces new losses
+once per run via desktop + voice, deduped by writing its own record back into
+the same log (no new state file, matching the pattern `capture._note_unknown_
+siblings` already uses for a different anomaly).
+
+22 new oracle tests (`tests/test_reconcile.py`, `tests/test_doctor.py`). Full
+suite 1574 passed, ruff and pyright strict both clean, project-wide. Reinstalled
+the frozen `ccw` and ran the real, read-only `ccw reconcile` against the actual
+warehouse: it found the same 21 sessions, by UUID, including the exact 3
+(5604f5fd/bf09caea/313b7e02) ticket 41 had already flagged as an unresolved
+critical unknown - independent confirmation of that finding. Committed `2d58f73`,
+not pushed. **`ccw repair`'s live run was deliberately NOT triggered manually**:
+it writes a real dedup record and fires a real desktop+voice alert, and the
+operator had not yet said whether to trigger it now or let the existing 12:45
+daily job pick it up on its own schedule.
+
 ### Fortieth handoff, 2026-09-09 (ticket 42 #4: fixed `ccw status`'s "Recent errors")
 
 Picked up priority-order item 2 from `OPENING-PROMPT.md`. Ticket 42 Finding B: the

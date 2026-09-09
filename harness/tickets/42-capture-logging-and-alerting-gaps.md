@@ -87,11 +87,12 @@ parsing `doctor._companions_stalled` already does. Confirmed by re-reading
 DESIGN section 7's own `ccw status` contract that this was the ORIGINAL spec
 ("reads catalog + log"); the catalog-only implementation was the drift. 6 new
 oracle tests in `tests/test_status_verify.py`; full suite 1547 passed, ruff and
-pyright strict clean. Not yet committed. Full account: `harness/HANDOFFS.md`'s
-fortieth handoff.
+pyright strict clean. Committed `acf5975`, reinstalled live and verified against
+the real warehouse the same day. Full account: `harness/HANDOFFS.md`'s fortieth
+handoff.
 
-**5. HIGH value / MEDIUM-HIGH effort - build the Finding-5 reconciliation
-check.** The single highest-value fix relative to the incident's worst
+**5. DONE 2026-09-09 (scope B+D).** HIGH value / MEDIUM-HIGH effort - build the Finding-5
+reconciliation check. The single highest-value fix relative to the incident's worst
 possible outcome (permanent, silent data loss) and the most novel piece of
 logic proposed here - nothing today cross-checks `capture.jsonl`'s error
 records against whether the affected session ever actually got archived.
@@ -108,6 +109,30 @@ field - worth making that a first-class field on error-shaped
 (new Check) or a new small `reconcile.py`. Natural cadence: daily, via the
 existing `ccw repair` job (12:45 local, right after sweep has had its shot
 at reclaiming the source file for that day).
+**Shipped as scope "B+D"** (both offered, operator picked both): new
+`src/cc_warehouse/reconcile.py` (`find_unrecoverable`, the expensive
+source+archive+catalog cross-check; `known_unrecoverable_count`/
+`_uuids`, the cheap dedup-ledger read `ccw doctor`'s new non-blocking
+`reconcile` line uses so the SessionStart hot path never risks ticket 41
+Finding 1's timeout again); the `session_uuid` structured field added at the
+3 call sites that can supply a real identity (`cli._report_capture`/
+`_run_hook`, `sweep._log_item_failure`), prose-regex fallback kept
+permanently for older records; a new read-only `ccw reconcile` verb (option
+D: prints the full unbounded history, not just the 14-day alert window);
+`ccw repair` now runs reconciliation BEFORE its desync early-return (so it
+still runs on the normal healthy-machine day) and announces new losses once
+per run (desktop + voice), deduped via its own record written back into
+capture.jsonl. **Measured live before building, and confirmed again after**:
+the real figure is 21 permanently unrecoverable sessions, not 3 - including
+the exact 3 (5604f5fd/bf09caea/313b7e02) ticket 41 already flagged as an
+unresolved critical unknown. 22 new oracle tests; full suite 1574 passed,
+ruff and pyright strict clean, project-wide. Committed `2d58f73`, reinstalled
+live, `ccw reconcile` run for real and found the same 21 by UUID. **`ccw
+repair`'s live run (which would write the dedup ledger for real and fire a
+real desktop+voice alert) was deliberately NOT triggered manually this
+session** - left for the operator's word, or for the existing 12:45 daily
+job to pick up naturally. Full account: `harness/HANDOFFS.md`'s forty-first
+handoff.
 
 **6. MEDIUM value / MEDIUM effort - build a hook-dispatch-gap detector**
 (ticket 41 Finding 4's mechanism, made concrete). Sketch: parse

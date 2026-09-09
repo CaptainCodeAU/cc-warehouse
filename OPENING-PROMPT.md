@@ -40,22 +40,27 @@ with existing open tickets, so those are merged in rather than duplicated:
    "capture is working", `ccw archive --verify` reports 0 problems across
    29705 folders. Full account: `harness/HANDOFFS.md`'s thirty-ninth handoff,
    `harness/tickets/37-*.md`'s "Part B DONE, 2026-09-09" section.
-2. **Ticket 42 #4 - DONE 2026-09-09, NOT YET COMMITTED.** `ccw status`'s
-   "Recent errors" now reads `logs/capture.jsonl` (operator-picked option,
-   found while scoping - not one of the ticket's original two). Full
-   account: `harness/HANDOFFS.md`'s fortieth handoff. Still needs: the
-   operator's go-ahead to commit (and separately, to push).
+2. **Ticket 42 #4 - DONE 2026-09-09, committed `acf5975`, reinstalled live.**
+   `ccw status`'s "Recent errors" now reads `logs/capture.jsonl` (operator-
+   picked option, found while scoping - not one of the ticket's original
+   two). Full account: `harness/HANDOFFS.md`'s fortieth handoff. Not pushed.
 3. **Revisit ticket 31.4's retry-loop decision** now that #2 has landed - the
    monitoring signal is finally real. Not yet done; give it some time to run
    first (see ticket 31's own file, "2026-09-09 cross-reference" note: one
    of the two signals it was watching for could never fire, by construction,
    until #2's fix).
-4. **Ticket 42 #5** - build the capture.jsonl-vs-archive reconciliation
-   check (the single highest-value fix for real, permanent data loss - see
-   ticket 41 Finding 5). **This also closes ticket 28.10's long-standing
-   "cross-tree reconciliation as a test, not a hand-check" gap** (see
-   ticket 28's own file, "2026-09-09 cross-reference" note) - design it once
-   for both, don't build it twice.
+4. **Ticket 42 #5 - DONE 2026-09-09 (scope B+D), committed `2d58f73`,
+   reinstalled live, verified against real data.** The real figure was 21
+   permanently unrecoverable sessions, not the 3 ticket 41 named - including
+   the exact 3 (5604f5fd/bf09caea/313b7e02) ticket 41 had already flagged as
+   an unresolved critical unknown, now independently confirmed. New
+   `src/cc_warehouse/reconcile.py`, a new read-only `ccw reconcile` verb,
+   `ccw repair` now announces+dedups new losses (desktop+voice). **This also
+   closes ticket 28.10's "cross-tree reconciliation as a test" gap.** Full
+   account: `harness/HANDOFFS.md`'s forty-first handoff. **`ccw repair`'s
+   live run (real dedup write + real desktop/voice alert) was deliberately
+   NOT triggered manually - still needs the operator's word, or the existing
+   12:45 daily job picks it up on its own.**
 5. **Rest of ticket 42's ranked list** (#2, #3, #6, #7, plus the two
    unranked design-tradeoff items) - see
    `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
