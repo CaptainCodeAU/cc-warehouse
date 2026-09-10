@@ -104,6 +104,19 @@ here into their own ticket when they are taken up.
   `CC-SESSIONS-ARCHIVE`. Revisit once the migration's new location is stable, and
   census it then rather than trusting today's figures.
 
+- **28.24  One archived folder still shows an unarchived-sibling flag, unrelated
+  to ticket 38's `custom-title.json` fix (found 2026-09-10, not investigated).**
+  After the custom-title.json fix and a real sweep, `ccw doctor`'s `sidecars`
+  line dropped from 3 flagged folders to 1: `CaptainCodeAU-cleaner_temp/
+  20260907-235950+1000_b2532281-2057-40c0-85a0-13414d6d082e:
+  tool-results/b3ace6uqd.txt`. Odd on its face - names INSIDE `tool-results/`
+  are deliberately not judged (`sidecars.py`'s own docstring), so this may be a
+  `write_if_absent` refusal (a same-named file with different content, R5)
+  surfacing through the same doctor line rather than a genuine unknown-name
+  anomaly. Not chased further; the operator's actual ask that day was the
+  custom-title.json fix specifically, and this is a single folder, not a
+  pattern.
+
 ## Recorded, low value, not planned
 
 - **28.4  `--repo` override.** `parser.detect_github_repo` auto-detects and has
