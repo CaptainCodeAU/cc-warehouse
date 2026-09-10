@@ -17,13 +17,14 @@ silent write side effect.
 """
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from cc_warehouse import archive, doctor
 from cc_warehouse.config import Config
-from conftest import basic_session, entry, jsonl, run_ccw, warehouse_root, write_transcript
+from conftest import basic_session, entry, jsonl, run_ccw, run_cli, warehouse_root, write_transcript
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -85,6 +86,66 @@ def test_repair_fixes_a_session_missing_all_generated_files(
     for name in archive.GENERATED_NAMES:
         assert (folder / name).exists(), f"{name} was not restored by repair"
     assert run_ccw(["doctor"], ccw_env).code == 0, "doctor still unhappy after repair"
+
+
+def test_repair_never_opens_finder_even_when_open_folder_is_configured_on(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ccw repair` runs unattended, on a daily schedule -- nobody is at the
+    machine to want (or dismiss) a folder popping open in Finder. `open_folder`
+    is a single config switch shared with the live hook's own detached render
+    child, which DOES want the reveal (a human just ended a real session by
+    hand). Found 2026-09-10 by reading the code: repair's render subprocess
+    inherited the ambient environment unmodified, so a machine with
+    `open_folder = true` (set for the live hook's own benefit) would ALSO pop a
+    folder open every time an unattended repair run fixed something. Never yet
+    observed live on the reporting machine only because doctor's desync check
+    had not yet found anything for repair to fix there.
+
+    The real subprocess boundary matters here (same reasoning `run_ccw`'s own
+    docstring gives), so this spies on `subprocess.run` rather than mocking
+    `notify.open_folder`: the render child is a SEPARATE process that reloads
+    its own config from scratch, so an in-process patch of `notify` cannot
+    reach it, and this repo's own `ccw_env` fixture leaves `CCW_OPEN_FOLDER`
+    unset by default specifically because only tests that opt in should risk a
+    real popup - a lesson already paid for once, in this same fixture's
+    `CCW_DESKTOP_ALERTS=0` default."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    cfg_path = Path(ccw_env["HOME"]) / ".config" / "cc-warehouse" / "config.toml"
+    cfg_path.write_text(
+        cfg_path.read_text(encoding="utf-8") + "\n[notify]\nopen_folder = true\n",
+        encoding="utf-8",
+    )
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+
+    real_run = subprocess.run
+    captured_envs: list[dict[str, str] | None] = []
+
+    def spy_run(
+        argv: list[str],
+        *,
+        capture_output: bool = False,
+        text: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured_envs.append(env)
+        return real_run(argv, capture_output=capture_output, text=text, env=env)
+
+    monkeypatch.setattr(subprocess, "run", spy_run)
+    result = run_cli(["repair"])
+    assert result.code == 0, f"repair did not report success: {result.err!r}"
+    for name in archive.GENERATED_NAMES:
+        assert (folder / name).exists(), f"{name} was not restored by repair"
+
+    assert captured_envs, "repair never spawned its render child"
+    for env in captured_envs:
+        assert env is not None and env.get("CCW_OPEN_FOLDER") != "1", (
+            "repair's render child can still open Finder on an unattended run"
+        )
 
 
 def test_repair_is_a_quiet_no_op_when_nothing_is_broken(

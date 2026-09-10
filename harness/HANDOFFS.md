@@ -21,6 +21,27 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-ninth handoff, 2026-09-10 (ccw repair could pop a Finder window open on an unattended scheduled run)
+
+The operator asked directly: does anything scheduled ever launch Finder, when that should
+only happen for a human ending a real session in real time? Checked against the actual
+code rather than assuming. `open_folder` (`[notify] open_folder = true` in this machine's
+config.toml) is one shared switch. Two places read it: the live hook's own detached render
+child (`cli._spawn_render`, correct - a human just ended a real session) and `ccw repair`'s
+render subprocess (`cli._run_repair`, wrong - a daily 12:45 scheduled job with nobody at
+the machine). `ccw sweep` and `ccw archive` were checked too and confirmed clean: neither
+shells out to `ccw render --session` at all, so neither can reach this switch.
+
+The bug had never fired live on this machine (`ccw doctor`'s desync check has stayed green,
+so repair has never yet had anything to fix), but it is not hypothetical: writing a real
+oracle test for it (`tests/test_repair.py::test_repair_never_opens_finder_even_when_open_
+folder_is_configured_on`) genuinely popped a real Finder window on this machine the first
+time it ran, before the fix, because nothing stopped the real render subprocess from
+running for real. Fixed by forcing `CCW_OPEN_FOLDER=0` into that child's environment
+explicitly in `_run_repair`, regardless of what config.toml says - repair keeps its own
+rule instead of inheriting the hook's. Full suite 1626 passed (was 1625), ruff and pyright
+strict both clean, all independently re-run.
+
 ### Forty-eighth handoff, 2026-09-10 (custom-title.json: new Claude Code sidecar was firing false alarms and going unbacked-up)
 
 Two real desktop notifications from this machine's own `cc-warehouse` alerts prompted this:

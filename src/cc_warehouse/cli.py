@@ -10,6 +10,7 @@ owns the one write primitive (R2/R4 fences).
 
 import functools
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1852,6 +1853,14 @@ def _run_repair(rest: Sequence[str]) -> int:
     action, not a hook, so waiting on it is fine. Never touches a folder outside
     doctor's own bounded recent sample (R9: one instrument, shared).
 
+    `CCW_OPEN_FOLDER` is forced off in that child's environment regardless of what
+    config.toml says (found 2026-09-10 by reading the code, not yet observed live).
+    `open_folder` is one config switch shared with the hook's own detached render
+    child, which DOES want the reveal -- a human just ended a real session by hand.
+    This job runs unattended, on a schedule; without the override it would inherit
+    that same switch and pop a Finder window open every time it fixed something,
+    with nobody there to want or dismiss it.
+
     `--quiet` matches `sweep`'s own contract exactly (cli.py `_run_sweep`): drops the
     STDOUT summary only, so a scheduled run's log stays empty when nothing was wrong
     and non-empty exactly when it wasn't -- failures still go to stderr and the exit
@@ -1897,10 +1906,15 @@ def _run_repair(rest: Sequence[str]) -> int:
                 _log_repair_outcome(config, "error", None, message)
                 continue
             short = cast(str, row[0])
+            # See the docstring above: this is an unattended, scheduled render, never
+            # a human ending a real session, so the open-folder reveal is forced off
+            # for this child regardless of what config.toml says.
+            render_env = {**os.environ, "CCW_OPEN_FOLDER": "0"}
             render = subprocess.run(
                 [sys.executable, "-m", "cc_warehouse", "render", "--session", f"s:{short}"],
                 capture_output=True,
                 text=True,
+                env=render_env,
             )
             if render.returncode != 0:
                 detail = render.stderr.strip() or f"exit {render.returncode}"
