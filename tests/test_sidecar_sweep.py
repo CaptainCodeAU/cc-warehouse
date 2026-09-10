@@ -117,6 +117,25 @@ def test_a_sweep_backfills_sidecars_for_a_session_it_already_archived(
     )
 
 
+def test_a_sweep_backfills_a_custom_title_for_a_session_it_already_archived(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The single-file case: a rename can happen any time after capture, with
+    the transcript's own hash unchanged, so pass three has to pick it up here
+    too, not just for the two companion directories above."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    transcript = plant_session(ccw_env)
+    run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, session_id=PARENT))
+    title_dir = projects(ccw_env) / PARENT
+    title_dir.mkdir(parents=True, exist_ok=True)
+    (title_dir / "custom-title.json").write_bytes(b'{"customTitle":"np1"}\n')
+    sweep(ccw_env)
+    assert (session_folder(archive_root) / "custom-title.json").read_bytes() == (
+        b'{"customTitle":"np1"}\n'
+    )
+
+
 def test_the_backfilled_session_is_reported_skipped_unchanged_not_stored(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:

@@ -41,11 +41,15 @@ def transcript(tmp_path: Path, *, name: str | None = None) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_the_three_copied_sidecar_names_are_the_ones_measured_in_the_source_tree() -> None:
+def test_the_known_sidecar_names_are_the_ones_measured_plus_custom_title() -> None:
     """A census of all 1,196 real `<uuid>/` dirs on 2026-09-06 found exactly four
-    child names: these three plus `.DS_Store`. The list is the product decision,
-    so it is asserted rather than left implicit."""
-    assert sidecars.SESSION_SIDECARS == frozenset({"subagents", "tool-results", "workflows"})
+    child names: three of these plus `.DS_Store`. `custom-title.json` is a
+    fourth name, confirmed real 2026-09-10 when it fired the level-A anomaly
+    alert this module exists to raise. The list is the product decision, so it
+    is asserted rather than left implicit."""
+    assert sidecars.SESSION_SIDECARS == frozenset(
+        {"subagents", "tool-results", "workflows", "custom-title.json"}
+    )
 
 
 def test_ds_store_is_ignored_rather_than_treated_as_an_unknown_sibling() -> None:
@@ -111,6 +115,15 @@ def test_a_known_child_is_reported_as_known(tmp_path: Path) -> None:
     path = transcript(tmp_path)
     (project_dir(tmp_path) / UUID / "tool-results").mkdir(parents=True)
     assert sidecars.scan(path, UUID).known == ("tool-results",)
+
+
+def test_a_custom_title_file_is_reported_as_known(tmp_path: Path) -> None:
+    """A single FILE, not a directory, unlike the other three known names."""
+    path = transcript(tmp_path)
+    sidecar_dir = project_dir(tmp_path) / UUID
+    sidecar_dir.mkdir(parents=True)
+    (sidecar_dir / "custom-title.json").write_bytes(b'{"customTitle":"np1"}\n')
+    assert sidecars.scan(path, UUID).known == ("custom-title.json",)
 
 
 def test_an_unknown_child_is_reported_as_unknown(tmp_path: Path) -> None:

@@ -521,6 +521,12 @@ def _archive_sidecars_of(
             log_sidecar_trouble(config, session_uuid, "refused", name, item)
         for item in copied.errors:
             log_sidecar_trouble(config, session_uuid, "error", name, item)
+    title_file = directory / archive.CUSTOM_TITLE_FILE
+    if title_file.is_file():
+        try:
+            archive.write_custom_title(parent, title_file.read_bytes())
+        except OSError as exc:
+            log_sidecar_trouble(config, session_uuid, "error", archive.CUSTOM_TITLE_FILE, str(exc))
     return tuple(refused)
 
 

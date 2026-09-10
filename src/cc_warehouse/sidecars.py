@@ -52,10 +52,20 @@ from pathlib import Path
 SUBAGENTS_DIR = "subagents"
 TOOL_RESULTS_DIR = "tool-results"
 WORKFLOWS_DIR = "workflows"
+# Claude Code started writing this beside a transcript's `<uuid>/` dir at some
+# point after the 2026-09-06 measurement below - a single flat FILE holding a
+# renamed session's title (`{"customTitle": "..."}`), not a directory. Found
+# 2026-09-10 when it fired the level-A anomaly alert this module exists to
+# raise. It gets the SUBAGENTS_DIR treatment (its own dedicated copier,
+# `archive.write_custom_title`), never `copy_companion_dir`, because that
+# copier mirrors a directory tree and this is one small file.
+CUSTOM_TITLE_FILE = "custom-title.json"
 
-# The three names that get copied. Measured 2026-09-06 over all 1,196 real
-# `<uuid>/` dirs: these plus `.DS_Store` are the only children that exist.
-SESSION_SIDECARS = frozenset({SUBAGENTS_DIR, TOOL_RESULTS_DIR, WORKFLOWS_DIR})
+# Measured 2026-09-06 over all 1,196 real `<uuid>/` dirs: these three plus
+# `.DS_Store` were the only children that existed THEN. `CUSTOM_TITLE_FILE`
+# is a fourth, confirmed real on 2026-09-10 - the measurement above is
+# historical, not a claim that nothing has been added since.
+SESSION_SIDECARS = frozenset({SUBAGENTS_DIR, TOOL_RESULTS_DIR, WORKFLOWS_DIR, CUSTOM_TITLE_FILE})
 
 # Skipped at EVERY depth, by the scan and by the copier alike. Finder writes one
 # of these into any folder a human browses, and the archive already holds 125 of

@@ -143,6 +143,19 @@ def test_the_hook_brings_workflows_too(ccw_env: dict[str, str], tmp_path: Path) 
     assert (session_folder(archive_root) / "workflows" / "wf_abc.json").is_file()
 
 
+def test_the_hook_brings_the_custom_title_too(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """Found 2026-09-10: a single flat FILE, not a directory, so it needs its own
+    assertion separate from the tool-results/workflows coverage above."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    transcript = plant(ccw_env)
+    (sidecar_root(ccw_env) / "custom-title.json").write_bytes(b'{"customTitle":"np1"}\n')
+    fire_hook(ccw_env, transcript)
+    settle_companions(ccw_env)
+    landed = session_folder(archive_root) / "custom-title.json"
+    assert landed.read_bytes() == b'{"customTitle":"np1"}\n'
+
+
 def test_the_source_tree_is_not_modified_by_the_copy(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:

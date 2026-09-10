@@ -195,6 +195,7 @@ ORPHAN_LABEL = "_orphaned-subagents"
 SUBAGENTS_DIR = sidecars.SUBAGENTS_DIR
 TOOL_RESULTS_DIR = sidecars.TOOL_RESULTS_DIR
 WORKFLOWS_DIR = sidecars.WORKFLOWS_DIR
+CUSTOM_TITLE_FILE = sidecars.CUSTOM_TITLE_FILE
 _META = "meta.json"
 
 # The per-session anomaly record (ticket 38), and it is a NOTICE FILE rather
@@ -264,6 +265,7 @@ COPIERS = {
     SUBAGENTS_DIR: "write_subagent",
     TOOL_RESULTS_DIR: "copy_companion_dir",
     WORKFLOWS_DIR: "copy_companion_dir",
+    CUSTOM_TITLE_FILE: "write_custom_title",
 }
 
 # Where a payload that is NOT a session lives (ticket 25.6). Reserved in
@@ -1012,6 +1014,37 @@ def write_prompts(session_dir: Path, data: bytes) -> bool:
     return store.write_if_changed(session_dir / PROMPTS_FILE, data)
 
 
+def write_custom_title(session_dir: Path, data: bytes) -> bool:
+    """Write this session's `custom-title.json` into its archive folder.
+
+    `store.write_if_changed`, same reasoning as `write_prompts`: a rename is a
+    legitimate later update to a FIXED-name file, not a second source to refuse
+    under R5 - the archive should hold the session's LATEST title, not its
+    first. A MIRROR under the same flat name, at the session folder's own top
+    level, the same layout `manifest.json`/`sidecars.json`/`prompts.jsonl`
+    already use - it is one small file per session, never a subfolder.
+    """
+    return store.write_if_changed(session_dir / CUSTOM_TITLE_FILE, data)
+
+
+def custom_title_record(session_dir: Path) -> dict[str, object]:
+    """This session's `custom-title.json` as the manifest records it.
+
+    Same shape as `prompts_record`: `present: False` when this session was
+    never renamed, so a reader can tell "no title" from "this manifest
+    predates the feature" the way every other DESIGN 6 key already does.
+    """
+    path = session_dir / CUSTOM_TITLE_FILE
+    if not path.is_file():
+        return {"present": False}
+    payload = path.read_bytes()
+    return {
+        "present": True,
+        "sha256": store.sha256_hex(payload),
+        "bytes": len(payload),
+    }
+
+
 def prompts_record(session_dir: Path) -> dict[str, object]:
     """This session's `prompts.jsonl` as the manifest records it.
 
@@ -1137,6 +1170,11 @@ def folder_is_current(
     # as the companion loop just above - without this a later deletion of the
     # file would be undetectable too, since nothing else compares it.
     if manifest.get("prompts") != prompts_record(directory):
+        return False
+    # A `custom-title.json` written after this folder's last render must force
+    # a rebuild too, same reasoning as prompts: without this a later rename (or
+    # a later deletion of the copied file) would be undetectable.
+    if manifest.get("custom_title") != custom_title_record(directory):
         return False
     return manifest.get("subagents") == subagent_records(directory)
 
@@ -1278,6 +1316,7 @@ def write_session_folder(
             payload = _with_subagents(payload, subagent_records(directory))
             payload = _with_companions(payload, directory)
             payload = _with_prompts(payload, directory)
+            payload = _with_custom_title(payload, directory)
             if refused_smaller:
                 payload = _with_refusal(
                     payload, jsonl.stat().st_size, len(data),
@@ -1313,6 +1352,18 @@ def _with_prompts(manifest_bytes: bytes, directory: Path) -> bytes:
     """
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
     manifest["prompts"] = prompts_record(directory)
+    return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+
+def _with_custom_title(manifest_bytes: bytes, directory: Path) -> bytes:
+    """Record this session's `custom-title.json` in its manifest.
+
+    Same shape as `_with_prompts`, computed from the ARCHIVE FOLDER rather than
+    the source tree for the same reason: a re-render long after the copier ran
+    can see no source directory at all, only what already sits in the folder.
+    """
+    manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
+    manifest["custom_title"] = custom_title_record(directory)
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
@@ -1703,6 +1754,7 @@ def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
         problems.extend(_subagent_problems(directory, manifest_path))
         problems.extend(_companion_problems(directory, manifest_path))
         problems.extend(_prompts_problems(directory, manifest_path))
+        problems.extend(_custom_title_problems(directory, manifest_path))
     problems.extend(_name_problems(directory, meta, timezone))
     return problems
 
@@ -1801,6 +1853,32 @@ def _prompts_problems(directory: Path, manifest_path: Path) -> list[FolderProble
         return [FolderProblem(directory, "prompts.jsonl does not match its hash")]
     if not recorded.get("present") and live.get("present"):
         return [FolderProblem(directory, "prompts.jsonl exists but the manifest says none")]
+    return []
+
+
+def _custom_title_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+    """`custom-title.json` must still match what the manifest recorded.
+
+    Same "NO PROBLEM STRING MAY START WITH `missing `" constraint
+    `_prompts_problems` states, for the same reason (`doctor._desync`'s
+    pending-render carve-out). A manifest with no `custom_title` key at all
+    yields NOTHING - it predates this feature.
+    """
+    try:
+        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+    recorded = manifest.get("custom_title")
+    if not isinstance(recorded, dict):
+        return []
+    recorded = cast(dict[str, object], recorded)
+    live = custom_title_record(directory)
+    if recorded.get("present") and not live.get("present"):
+        return [FolderProblem(directory, "custom-title.json is missing")]
+    if recorded.get("present") and recorded.get("sha256") != live.get("sha256"):
+        return [FolderProblem(directory, "custom-title.json does not match its hash")]
+    if not recorded.get("present") and live.get("present"):
+        return [FolderProblem(directory, "custom-title.json exists but the manifest says none")]
     return []
 
 

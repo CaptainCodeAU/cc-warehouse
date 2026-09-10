@@ -21,6 +21,39 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Forty-eighth handoff, 2026-09-10 (custom-title.json: new Claude Code sidecar was firing false alarms and going unbacked-up)
+
+Two real desktop notifications from this machine's own `cc-warehouse` alerts prompted this:
+an "unarchived sibling(s) beside dc7a3c48: custom-title.json" alert (the ticket 38
+mechanism doing its job - a genuinely new sibling name), and a "1 session is permanently
+unrecoverable" alert that turned out to be a false alarm from a `"session_uuid":
+"probe-only"` synthetic test record left in the live `~/cc-warehouse-data/logs/capture.jsonl`
+from testing ticket 42's alerting two nights earlier. The 2 fake lines were removed from
+that log (backed up first) and confirmed gone.
+
+`custom-title.json` (`{"customTitle": "..."}`, holding a session's renamed title) is real:
+Claude Code started writing it beside a transcript's `<uuid>/` dir at some point after the
+2026-09-06 sidecar census, confirmed on two separate real sessions on this machine. Unlike
+`tool-results/`/`workflows/`, it is a single FILE, not a directory, so it got the
+SUBAGENTS_DIR treatment instead of `copy_companion_dir`: added to `sidecars.SESSION_SIDECARS`,
+its own `archive.write_custom_title`/`custom_title_record`/`_with_custom_title`/
+`_custom_title_problems` (mirroring `write_prompts`'s shape exactly, including
+`store.write_if_changed` rather than `write_if_absent` - a session's title can legitimately
+change on a later rename, so refuse-on-conflict would have frozen the archive at the first
+title forever), wired into `folder_is_current`, `verify_folder`, and both `capture.py`'s hook
+path and `sweep.py`'s sweep/stranded-dir/dry-run paths. 24 new tests in `tests/test_custom_title.py`
+plus additions to the three existing sidecar test files. Verified two ways beyond the oracle
+suite: the REAL session that fired the original alert (`dc7a3c48-ecb2-4547-89e2-c3a312d3d2da`)
+now scans as fully known with no anomaly, and a synthetic genuinely-unknown sidecar file was
+confirmed to still trip the detector - the fix closes the real gap without blinding it.
+Full suite 1625 passed (was 1607), ruff and pyright strict both clean, all independently
+re-run rather than taken on the implementing agent's word.
+
+No `pyproject.toml` version bump: `folder_is_current`'s own existing None-vs-`{"present":
+False}` mismatch already forces exactly one rebuild per folder to backfill the new
+`custom_title` manifest key, the same mechanism ticket 38's `COMPANION_MANIFEST_KEYS` loop
+already relies on - a renderer_version bump was not needed for this to self-heal.
+
 ### Forty-seventh handoff, 2026-09-10 (ticket 41 Finding 5: narrowed the 3 untraceable sessions further, still not closed)
 
 The operator asked to chase ticket 41 Finding 5's still-open CRITICAL item: whether the
