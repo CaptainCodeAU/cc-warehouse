@@ -21,6 +21,50 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fiftieth handoff, 2026-09-13 (a SessionEnd hook that died before it could log, and an alarm we nearly built twice)
+
+Started as "why is session 5c652174 not in the archive". It was never lost: the
+daily sweep took it at 12:30 and it is at
+`fonzarelli-.claude/20260912-190922+1000_5c652174-...`. The real defect was that the
+failure left NO trace anywhere, so nobody could say what happened.
+
+Worked jointly with a second live session running from `~/.claude`, which ran three
+controlled `lifeos`-launched sessions and a `claude --debug` exit. Between us we
+ruled out, each by measurement: launcher, cwd being the config dir, resume, plugin
+registration, python resolution, plugin-file churn, transcript size and duration.
+What survived: SessionEnd DID fire (a sibling hook logged the same event 181 ms
+after exit), all seven hooks dispatch in PARALLEL inside ~700 ms, and only ours left
+nothing. Mechanism: `started` sits behind a blocking `sys.stdin.read()` with no
+ceiling. Shipped `report("dispatched", "")` ahead of that read. Full reasoning in
+`contract/DESIGN.md` section 15 and `harness/tickets/43-hook-dies-before-it-can-log.md`.
+
+THREE PROCESS LESSONS, which are the reusable part:
+
+1. **We nearly shipped a duplicate.** Both sessions argued hard about the sequencing
+   of a `started`-without-`ok` alarm. Reading the code before writing any showed
+   `doctor._dispatch_gap` already asks that question and `ccw repair` already logs
+   the other shape. Neither of us widened the narrow check into "is this topic
+   already covered" until the code forced it.
+
+2. **`/plugin update` reporting "already at the latest version" was TRUE and
+   USELESS.** The marketplace clone tracks the GitHub remote and the plugin version
+   string IS the commit hash, so an unpushed local commit is invisible to it. The
+   first update was a no-op. Push, then update, then verify the cached file by hand.
+
+3. **"Live" means new sessions only.** A session resolves its plugin path at START.
+   Measured in the real log in the 90 seconds after install: three genuine session
+   ends, two still on the old hook, one on the new. Corroborated by the other
+   session's own `PATH` carrying the pre-update cache dir.
+
+Verified by running the registered file end to end with a fake session id and a
+deliberately broken `CCW_BIN`: `dispatched` (session None), then `started`, then
+`error`. Positive case and negative control both shown; those three lines are in the
+real `ccw-hook.log` under an obviously fake id and were left as the evidence.
+
+Still open, deliberately not bundled: reading stdin with a timeout instead of
+blocking to EOF. That is prevention rather than detection and touches a path that
+must never drop a payload, so it needs its own ruling.
+
 ### Forty-ninth handoff, 2026-09-10 (ccw repair could pop a Finder window open on an unattended scheduled run)
 
 The operator asked directly: does anything scheduled ever launch Finder, when that should

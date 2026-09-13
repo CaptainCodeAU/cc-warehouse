@@ -2191,3 +2191,43 @@ migrate + retire, relocate, share static site, status/verify, config. v1.1: FTS5
 v1.2: `ccw mcp` (search, get-session, list-projects, stats). Later per BRAINSTORM.
 v1.1 opens with the flag-group slices 14-17 (section 15 entry, 2026-08-01) before
 FTS5/search/import.
+
+**2026-09-13, ticket 43: the SessionEnd wrapper logs BEFORE it reads stdin, and a
+missing log line no longer means what the code claimed it meant.** `ccw-hook.py`
+wrote its first line (`started`, ticket 37 part B) only after `sys.stdin.read()`.
+That read blocks until Claude Code closes the pipe and has no ceiling, while spawn
+plus the whole module-scope import set is 30 ms and bounded (measured; a second
+session measured 40 ms with a method that also wraps shell and spawn, and the
+disagreement is recorded unresolved in the ticket). So the read was the only
+unbounded step ahead of the first write, and a hook killed inside it left nothing
+anywhere.
+
+Live case: session 5c652174 (2026-09-12) has ZERO lines in `ccw-hook.log`, while a
+sibling SessionEnd hook recorded the same event 181 ms after exit and a
+`claude --debug` trace shows all seven SessionEnd hooks dispatching in PARALLEL
+inside ~700 ms. Six accounted for, ours silent.
+
+THE DECISION: `report("dispatched", "")` runs first in `main()`. It carries no
+session id by construction, because the id is on stdin and reading it would put the
+line back behind the wait it exists to survive. Pair it with the SessionEnd event by
+proximity, not by id.
+
+TWO THINGS DECLINED, both on measurement rather than taste. Deferring the heavy
+imports into their functions saves ~15 ms of an already-bounded window and was
+dropped. A shell wrapper in `hooks.json` logging before python exists would close
+the last ~10-20 ms too, and was dropped as a new moving part for a bounded
+remainder; revisit only if a recurrence still lands in the dark.
+
+NO NEW ALARM WAS ADDED, and that is the part worth remembering. The proposal was to
+alarm on a `started` with no `ok`. Reading the code first showed
+`doctor._dispatch_gap` already asks the 5c652174 question and `ccw repair` already
+logs the other shape to `capture.jsonl`. Two sessions had argued the sequencing of a
+check that already existed. The narrow question "does anything consume this signal"
+was never widened to "is this topic already covered", which is the failure this
+project's own standing lesson names.
+
+CORRECTED IN PASSING: `_dispatch_gap`'s docstring asserted a missing `started` line
+"means Claude Code never invoked the hook for it at all". It could not have known
+that, for exactly the reason above. It now says the hook never reached its first log
+write, and that the two cases stay indistinguishable until enough log history
+carries a `dispatched` line.
