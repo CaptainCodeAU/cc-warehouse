@@ -561,10 +561,17 @@ def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, st
     fired" and does not try to. This asks the narrower, faster question: did
     `ccw-hook.py` ever even see this session? Its own `report()` writes a
     `started` line BEFORE anything that can die, so a session with no
-    `started` line anywhere in the log means Claude Code never invoked the
-    hook for it at all -- not that our hook crashed partway through (that
-    failure mode already reaches `capture.jsonl` and `ccw status`, tickets
-    42 #3/#4, and is not this check's job to repeat).
+    `started` line anywhere in the log means the hook never got as far as its
+    first log write -- not that it crashed partway through (that failure mode
+    already reaches `capture.jsonl` and `ccw status`, tickets 42 #3/#4, and is
+    not this check's job to repeat).
+
+    THAT USED TO SAY "Claude Code never invoked the hook for it at all", which
+    OVERCLAIMED: `started` is written after `sys.stdin.read()`, so a hook that
+    WAS dispatched and then killed while waiting on that read produced exactly
+    the same silence. Ticket 43 added a `dispatched` line ahead of the read to
+    tell the two apart. Until enough log history carries it, an entry here
+    still cannot say which of the two happened.
 
     ROOT CAUSE IS OUTSIDE THIS REPO (ticket 41's addendum traces it to Claude
     Code's own hook dispatch), so this is VISIBILITY ONLY, same never-blocking

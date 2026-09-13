@@ -55,9 +55,9 @@ def test_started_is_written_first_and_every_line_carries_the_session(
     module, log = hook
     assert _run(module, monkeypatch, PAYLOAD) == 0
     lines = _lines(log)
-    assert [line["status"] for line in lines] == ["started", "ok"]
-    assert [line["session"] for line in lines] == ["abc-123", "abc-123"]
-    assert lines[0]["detail"] == "/x/abc-123.jsonl"
+    assert [line["status"] for line in lines] == ["dispatched", "started", "ok"]
+    assert [line["session"] for line in lines] == [None, "abc-123", "abc-123"]
+    assert lines[1]["detail"] == "/x/abc-123.jsonl"
     assert {line["source"] for line in lines} == {"ccw-hook"}
 
 
@@ -68,7 +68,7 @@ def test_started_survives_a_payload_that_is_not_json(
     of those things and must not be the reason there is no line."""
     module, log = hook
     _run(module, monkeypatch, "not json at all")
-    started = _lines(log)[0]
+    started = _lines(log)[1]  # [0] is ticket 43's `dispatched`
     assert started["status"] == "started"
     assert started["session"] is None
 
@@ -102,9 +102,8 @@ def test_a_started_with_no_end_is_what_a_killed_hook_leaves(
     with pytest.raises(SystemExit):
         _run(module, monkeypatch, json.dumps({"session_id": "s-killed"}))
     lines = _lines(log)
-    assert len(lines) == 1
-    assert lines[0]["status"] == "started"
-    assert lines[0]["session"] == "s-killed"
+    assert [line["status"] for line in lines] == ["dispatched", "started"]
+    assert lines[1]["session"] == "s-killed"
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +132,7 @@ def test_a_graceful_capture_error_is_logged_as_capture_error_not_ok(
 
     assert _run(module, monkeypatch, PAYLOAD) == 0
     lines = _lines(log)
-    assert [line["status"] for line in lines] == ["started", "capture-error"]
+    assert [line["status"] for line in lines] == ["dispatched", "started", "capture-error"]
     assert "unreadable transcript" in str(lines[-1]["detail"])
 
 
@@ -200,4 +199,67 @@ def test_old_ccw_with_no_outcome_line_still_logs_ok(
 
     assert _run(module, monkeypatch, PAYLOAD) == 0
     lines = _lines(log)
-    assert [line["status"] for line in lines] == ["started", "ok"]
+    assert [line["status"] for line in lines] == ["dispatched", "started", "ok"]
+
+
+# --- ticket 43: the window BEFORE `started` --------------------------------
+#
+# `started` is written after `sys.stdin.read()`, which blocks until Claude Code
+# closes the pipe and has no ceiling. Measured 2026-09-13: spawn plus the whole
+# module-scope import set is 30 ms and bounded; the read is not. A hook killed
+# while waiting on that read leaves NOTHING, so no instrument can tell "Claude
+# Code never dispatched us" from "it dispatched us and killed us mid-startup".
+# Live case: session 5c652174 on 2026-09-12, zero lines in the log while
+# SessionCleanup.hook.ts recorded the same SessionEnd 181 ms after exit.
+#
+# `dispatched` closes that. It carries no session id BY CONSTRUCTION: the id is
+# on stdin, and reading stdin to get it would put the line back behind the very
+# wait it exists to survive.
+
+
+def test_dispatched_is_written_before_stdin_is_read(
+    hook: tuple[ModuleType, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point: the line lands even if the read never returns."""
+    module, log = hook
+
+    class NeverCloses(io.StringIO):
+        def read(self, size: int | None = -1) -> str:
+            raise KeyboardInterrupt  # stands in for the kill
+
+    monkeypatch.setattr("sys.stdin", NeverCloses())
+    with pytest.raises(KeyboardInterrupt):
+        module.main()
+
+    lines = _lines(log)
+    assert [line["status"] for line in lines] == ["dispatched"]
+    assert lines[0]["session"] is None
+
+
+def test_dispatched_precedes_started_and_ok_on_the_normal_path(
+    hook: tuple[ModuleType, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module, log = hook
+    assert _run(module, monkeypatch, PAYLOAD) == 0
+    assert [line["status"] for line in _lines(log)] == ["dispatched", "started", "ok"]
+
+
+def test_dispatched_never_speaks(
+    hook: tuple[ModuleType, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`report()` speaks any status outside its quiet set. A line written on
+    EVERY session end must never reach the voice server."""
+    module, _log = hook
+    calls: list[object] = []
+
+    def spy(request: object, timeout: float = 0) -> UrlopenStub:
+        calls.append(request)
+        return UrlopenStub()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", spy)
+    module.report("dispatched", "")
+    assert calls == []
+    # Control: a status OUTSIDE the quiet set still speaks, so a passing
+    # assertion above is the gate working, not the spy being unreachable.
+    module.report("error", "boom")
+    assert len(calls) == 1

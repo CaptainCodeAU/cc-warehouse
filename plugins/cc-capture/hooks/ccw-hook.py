@@ -138,7 +138,7 @@ def report(status: str, detail: str) -> None:
     # `ccw hook` itself via notify.report (notify.SPEAKING_STATUSES includes "error",
     # and this wrapper hands the child CCW_VOICE_URL/CCW_VOICE_ID below) -- staying out
     # of this gate means the operator hears it once, not twice.
-    if status in ("ok", "started", "capture-error"):
+    if status in ("ok", "started", "dispatched", "capture-error"):
         return
     try:
         payload = json.dumps(
@@ -210,6 +210,28 @@ def _started(payload: str) -> None:
 
 
 def main() -> int:
+    # BEFORE THE READ, DELIBERATELY (ticket 43). `sys.stdin.read()` below blocks
+    # until Claude Code closes the pipe and has NO ceiling, while spawn plus every
+    # module-scope import above is 30 ms and bounded (measured 2026-09-13, three
+    # runs, python 3.14.7). So the read is the only unbounded step before this
+    # file's first log line, and a hook killed inside it used to leave nothing at
+    # all -- indistinguishable from never having been dispatched.
+    #
+    # Live case: session 5c652174 on 2026-09-12 has ZERO lines in this log, while
+    # `SessionCleanup.hook.ts` recorded the same SessionEnd 181 ms after exit and
+    # a `claude --debug` trace shows all seven SessionEnd hooks dispatching in
+    # parallel inside ~700 ms. Six are accounted for; ours left no trace, and no
+    # instrument could say which side of the read it died on.
+    #
+    # NO SESSION ID, BY CONSTRUCTION: the id arrives on stdin, and reading stdin
+    # to fill it in would put this line back behind the very wait it exists to
+    # survive. Pair it with the SessionEnd event by proximity, not by id. Two
+    # readers were checked before adding a new status value: `doctor._dispatch_gap`
+    # filters on `status == "started"` exactly, and `ccw-freshness-check.py` only
+    # appends to this file. The residual blind window is bare interpreter startup,
+    # ~10 ms and bounded; closing that too needs a shell wrapper in hooks.json and
+    # was judged not worth a new moving part until evidence says otherwise.
+    report("dispatched", "")
     payload = sys.stdin.read()
     _started(payload)
     executable = find_ccw()
