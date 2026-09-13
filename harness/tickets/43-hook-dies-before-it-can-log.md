@@ -181,3 +181,30 @@ docstring change additionally needs the frozen reinstall
 Postscript: `5c652174` reached the archive at
 `fonzarelli-.claude/20260912-190922+1000_5c652174-...` when the 12:30 sweep ran
 on 2026-09-13. The net held, as designed.
+
+## Rollout addendum, 2026-09-13: "live" means NEW sessions only
+
+A session resolves its plugin path at START, so a session already open when the
+update lands keeps running the OLD cache dir until it is closed. Measured in the
+real `ccw-hook.log` in the first 90 seconds after install, three genuine session
+ends:
+
+    03:06:33  started 30f48a8c -> ok                       2 lines, OLD hook
+    03:07:26  dispatched -> started c68469f6 -> ok         3 lines, NEW hook
+    03:07:44  started 12ffa665 -> ok                       2 lines, OLD hook
+
+Two of three still uninstrumented. Corroborated from the other session's own
+`PATH`, which carries `.../cc-capture/7ab4793b3a97/bin`, the pre-update version,
+because that session started before the push. Old sessions drain naturally as
+they are closed; nothing to do, but "live" is not "live everywhere" on the day of
+an update, and a silent hook death in an already-open session is still possible
+until the last one closes.
+
+## Correction to the residual figure
+
+The ~10 ms of bare interpreter startup quoted above is THIS session's
+measurement. The other session measured 20-21 ms warm over three runs, same
+method gap as the earlier import disagreement (that timing wraps shell plus
+spawn). So the residual blind window may be double what is written above. Both
+figures are bounded and small, neither changes the decision to skip the shell
+wrapper, and 10 ms should not harden into a fact without this caveat.
