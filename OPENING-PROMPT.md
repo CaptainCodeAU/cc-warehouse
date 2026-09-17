@@ -115,6 +115,25 @@ Full incident account and every finding's evidence:
 `harness/tickets/41-addendum-rca-evidence-2026-09-09.md`. Full fix list:
 `harness/tickets/42-capture-logging-and-alerting-gaps.md`.
 
+**TICKET 43 (2026-09-13): DONE in the repo, LIVE for new sessions, one small thing
+still owed.** A SessionEnd hook could die leaving NO trace at all, because its first
+log write sat behind an unbounded, blocking `sys.stdin.read()`. Fixed by writing a
+`dispatched` line ahead of that read (`05fab80`). Pushed, `/plugin` updated, and
+re-verified 2026-09-17: a session's own SessionStart line reports plugin
+`1feb10cf094c`, and that cached hook file holds the new code. No session was lost;
+the daily sweep caught the one that triggered it. **The `started`-without-`ok` alarm
+the plan called for was deliberately NOT built** - reading the code first showed
+`doctor._dispatch_gap` already asks that exact question, so a duplicate check was
+avoided. **The frozen reinstall is DONE, 2026-09-17, with the operator's go-ahead.** Verified
+three ways: all 33 installed `cc_warehouse/*.py` files are byte-identical to the repo,
+PEP 610 reads `"dir_info":{}` (frozen), and `ccw doctor` run from outside the repo
+reports `frozen` plus "capture is working". The command had to be run through
+`zsh -ic`, because Claude Code's own shell drops every single-underscore function and
+the reinstall helper is one; see `harness/GOTCHAS.md`. Also note the rollout addendum: "live" means NEW
+sessions only, since a session resolves its plugin path at start. Full account:
+`harness/tickets/43-hook-dies-before-it-can-log.md` and `harness/HANDOFFS.md`'s
+fiftieth handoff.
+
 ---
 
 **TICKET 39 IS SHIPPED, LIVE, AND CLOSED, 2026-09-08.** All of 39a-39g landed,
@@ -214,9 +233,10 @@ is byte-identical to the repo's copy. See `harness/tickets/28-backlog.md`'s
 secret redaction on personal projections (28.2, scoped 2026-09-09 and found to be
 a genuine "defensible either way" - see the forty-fifth handoff), test gaps (28.10),
 re-homing an orphaned sub-agent when its parent arrives (28.12),
-`prefers-color-scheme` for shared pages (28.14), and `ccw share --open` as a possible
-fast follow-up to `ccw render --open` (28.1, already done). Full entries:
-`harness/tickets/28-backlog.md`.
+`prefers-color-scheme` for shared pages (28.14), `ccw share --open` as a possible
+fast follow-up to `ccw render --open` (28.1, already done), and 28.24 (one archived
+folder still shows an unarchived-sibling flag, found 2026-09-10, not investigated).
+Full entries: `harness/tickets/28-backlog.md`.
 
 **Also still open, not scheduled:**
 - **Ticket 41 (2026-09-09): capture-alert incident + root-cause pass. Findings 1-6

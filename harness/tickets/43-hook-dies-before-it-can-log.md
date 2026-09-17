@@ -1,6 +1,11 @@
 # Ticket 43: a SessionEnd hook that dies before it can log
 
-Status: OPEN, scoped, not started. Opened 2026-09-13.
+Status: repo half DONE and PUSHED 2026-09-13; the plugin half is LIVE for new
+sessions (`/plugin` updated, cache `1feb10cf094c` verified to hold the new code,
+re-checked 2026-09-17). Still owed: the frozen `ccw` reinstall, which as of
+2026-09-17 affects a `doctor.py` docstring only. Opened 2026-09-13.
+This line read "OPEN, scoped, not started" until 2026-09-17, which was already
+false when the DONE block below it was written the same day.
 
 ## The incident
 

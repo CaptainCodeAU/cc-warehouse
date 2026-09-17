@@ -24,6 +24,30 @@ facts" while actually holding five - fixed here.)
   project's own R2 write convention:
   `tmp.write_bytes(backup.read_bytes()); os.replace(tmp, target)`, then compare
   sha256 to prove the restore actually landed.
+- **Claude Code's shell has NO single-underscore functions, so any shell helper
+  named `_foo` is missing and its public caller dies with `command not found`
+  (found 2026-09-17).** Claude Code snapshots the shell at startup and filters
+  out the whole single-leading-underscore namespace, because that is where zsh
+  keeps its ~1,500 completion functions. Measured, with a control: a real
+  interactive zsh has 1,563 functions matching `^_[^_]`, a Claude Code shell has
+  0, while double-underscore names survive (16 of 18). This bit
+  `uv_tool_reinstall_current_project`, which calls `_uv_tool_parse_flags`; the
+  symptom is `command not found: _uv_tool_parse_flags` and it looks like a broken
+  dotfiles install, which it is not. Workaround, and it is the one that finished
+  this repo's own frozen reinstall:
+  `zsh -ic 'cd <repo> && source .venv/bin/activate && uv_tool_reinstall_current_project --no-extras'`
+  Check a suspect helper with
+  `zsh -ic 'typeset -f _the_helper'` versus `typeset -f _the_helper` in the
+  Claude shell; if the first finds it and the second does not, this is the cause.
+- **`grep` in a Claude Code shell is NOT `/usr/bin/grep`, and it silently skips
+  ignored files (found 2026-09-17).** It is a shell function that execs Claude
+  Code's own bundled ugrep with `--ignore-files`, which honours `.gitignore`. A
+  search under a gitignored path returns NOTHING and exits cleanly, so it reads
+  as a genuine absence. Three searches under `$HOME/.claude/shell-snapshots/`
+  returned a false empty this way, including the control, which is the only
+  reason it was caught. When the target might be ignored, or when a zero is
+  about to become a conclusion, call `/usr/bin/grep` explicitly. Confirm the
+  wrapper with `type grep`.
 - **The SSH key drops out of the agent** (ticket 28.15, seen more than once).
   `ssh-add -l` reports "no identities" and `git push` fails on access rights.
   Any commits made while this is happening land LOCAL AND UNPUSHED - the operator
