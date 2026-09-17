@@ -187,6 +187,40 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
 
 #panels{transition:opacity .16s ease}
 #panels.refreshing{opacity:.4}
+
+/* ------------------------------------------------------ mobile (<= 700px)
+   Operator ruling 2026-09-16: the phone view is a FIXED, read-only cut of
+   this dashboard, not a filterable one. Every filter control is HIDDEN
+   rather than disabled, because the page's DEFAULT state already IS the
+   wanted state - DEFAULT_FROM (2026-06-08), DEFAULT_TO (the latest embedded
+   day), defaultExcludedNames() (the saved exclude list) and DEFAULT_KINDS
+   ({mine}). With no control on screen nothing can move them, so this needs
+   no JS lock and desktop behaviour is untouched.
+   Hiding .filterbar also removes this page's ONLY source of horizontal
+   overflow. Measured 2026-09-16 in real Chrome at 390px: the four elements
+   whose right edge passed the viewport were all inside #kind-group, pushing
+   the document to 584px wide on a 390px screen. setNavTop() re-measures on
+   resize and reads 0 for a display:none filterbar, so the panel nav
+   correctly sticks at top:0 here instead of under a bar that is not there.
+   The nine dropped panels are the operator's own explicit list. They are
+   hidden with CSS rather than skipped at render time so that rotating to
+   landscape (or opening the same file on a laptop) restores them with no
+   redraw and no resize handler. Their nav chips go with them, keyed on the
+   same "p-<id>" anchor renderAll() builds, so a hidden panel can never
+   leave a chip that scrolls to nothing. */
+.sub-narrow{display:none}
+@media (max-width:700px){
+  .filterbar{display:none}
+  #p-concurrency,#p-projects,#p-repos,#p-proj-month,#p-tools,
+  #p-skills,#p-worktrees,#p-top-sessions,#p-longest-sessions{display:none}
+  nav a[href="#p-concurrency"],nav a[href="#p-projects"],
+  nav a[href="#p-repos"],nav a[href="#p-proj-month"],
+  nav a[href="#p-tools"],nav a[href="#p-skills"],
+  nav a[href="#p-worktrees"],nav a[href="#p-top-sessions"],
+  nav a[href="#p-longest-sessions"]{display:none}
+  .sub-wide{display:none}
+  .sub-narrow{display:inline}
+}
 </style>
 </head>
 <body>
@@ -194,8 +228,8 @@ nav a:hover,nav a:focus-visible{color:var(--signal);border-color:var(--signal)}
 <header class="mast">
   <p class="kicker" id="mast-kicker">Claude Code usage &middot; live, filterable</p>
   <h1>.cc-warehouse<br><em>/ stats</em></h1>
-  <p class="sub" id="mast-sub">Pick a date range and the projects to skip, up top. Every
-  panel below redraws from that one choice. Hours are <b>engaged_hours</b> throughout &mdash;
+  <p class="sub" id="mast-sub"><span class="sub-wide">Pick a date range and the projects to skip, up top. Every
+  panel below redraws from that one choice.</span><span class="sub-narrow" id="mast-sub-narrow"></span> Hours are <b>engaged_hours</b> throughout &mdash;
   the only column here that means work done, not idle time.</p>
 </header>
 </div>
@@ -1369,6 +1403,21 @@ document.getElementById("proj-saved").addEventListener("click", () => { state.ex
 
 document.getElementById("mast-kicker").textContent =
   `${DATA.timezone} · ${fmtInt(DATA.S.length)} session/agent/automated-call rows embedded · ${DATA.min_date} to ${DATA.max_date}`;
+
+/* The wide masthead line tells the reader to "pick a date range and the
+   projects to skip, up top". Under 700px that bar is display:none, so the
+   sentence would be pointing at controls that are not on the page. The
+   narrow variant states the fixed view instead, and reads the REAL numbers
+   out of `state` rather than restating the constants, so it cannot drift
+   from what the panels below were actually filtered by. Written on every
+   load regardless of width: the CSS decides which of the two spans shows,
+   so a rotation needs no JS. */
+const mastSubNarrow = document.getElementById("mast-sub-narrow");
+if (mastSubNarrow) {
+  mastSubNarrow.textContent =
+    `A fixed view for small screens: your own sessions, ${state.from} to ${state.to}, `
+    + `with your saved project list applied. Open it on a wider screen to change any of that.`;
+}
 
 /* The sticky panel-nav bar sits directly under the sticky filterbar, so it
    must stick exactly `filterbar`'s own rendered height down from the
