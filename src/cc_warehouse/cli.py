@@ -466,10 +466,13 @@ def _spawn_render(short: str) -> None:
         return
 
 
-def _spawn_companions(short: str, transcript_path: Path) -> None:
+def _spawn_companions(short: str, transcript_path: Path) -> bool:
     """Spawn the detached companions child (ticket 37 Part B): same shape as
     `_spawn_render` just above - start_new_session, all stdio to DEVNULL,
-    `ccw companions --session s:<key> --transcript <path>`.
+    `ccw companions --session s:<key> --transcript <path>`. Returns whether the
+    child was started, because with an archive configured that child owns
+    spawning the render (`_report_capture`), so a failed spawn means the caller
+    must spawn the render itself.
 
     A KEY, NOT A PAYLOAD, same reasoning as the render child's `s:<short>`:
     `notify._spawn_notify_helper`'s `--record <json>` idiom passes the whole
@@ -500,7 +503,8 @@ def _spawn_companions(short: str, transcript_path: Path) -> None:
             stderr=subprocess.DEVNULL,
         )
     except Exception:
-        return
+        return False
+    return True
 
 
 def _reveal_target(config: Config, short: str | None) -> str:
@@ -560,7 +564,8 @@ def _report_capture(
     and return a one-line, stable outcome string (ticket 42 #7).
 
     A duplicate SessionEnd invocation is silent (no sink fires). A fresh `stored` capture
-    spawns the render child and the companions child (ticket 37 Part B) and reports ok;
+    spawns the companions child (ticket 37 Part B), which spawns the render child once
+    its copying is over (see the comment at the spawn below), and reports ok;
     the network POSTs leave via the detached notify-only helper (notify.report), never
     inline on the hook. An unchanged re-fire reports skipped_unchanged (silent by default)
     and honors the open-folder opt-in. An error reports error. Every sink is best-effort
@@ -607,8 +612,21 @@ def _report_capture(
     # sink (a log or webhook failure must never suppress rendering or archiving
     # companions); every spawn and notify.report are best-effort and neither can fail
     # the capture (DESIGN section 12).
-    _spawn_render(result.short)
-    _spawn_companions(result.short, transcript_path)
+    #
+    # COPY, THEN RENDER (principal ruling 2026-09-29, W-20260929-A59). The render
+    # child's manifest lists the session folder's companion dirs as they stand when
+    # it runs, so starting it beside the companions child let it record a
+    # half-copied dir: live on 2026-09-28 a manifest named the copier's own
+    # `.<name>.<random>.tmp` file and `ccw doctor` FAILed. With an archive, the
+    # companions child spawns the render when its copying is over
+    # (`_run_companions`), and the hook spawns it only when that child could not
+    # be started. With no archive there is no folder to wait for, so the render
+    # starts at once as before. Pinned by tests/test_render_after_companions.py.
+    if config.archive_root is None:
+        _spawn_render(result.short)
+        _spawn_companions(result.short, transcript_path)
+    elif not _spawn_companions(result.short, transcript_path):
+        _spawn_render(result.short)
     notify.report(
         config,
         notify.NotifyEvent("ok", short, result.detail or None, "captured", result.elapsed_ms),
@@ -1084,18 +1102,39 @@ def _run_companions(args: Sequence[str]) -> int:
 
     Never raises into anything (it is detached, no stdio, nobody waits on it
     or reads its exit code); mirrors `_run_notify`'s posture rather than the
-    render child's (which IS observed, via its own error-notify path)."""
+    render child's (which IS observed, via its own error-notify path).
+
+    THEN IT SPAWNS THE RENDER CHILD, on every way out once it knows the
+    session: done, failed, no catalog row, unloadable config (principal ruling
+    2026-09-29, "copy, then render"; see `_report_capture`). A render that never
+    happens is worse than a render that lists too little (F7), so the only way
+    out that skips it is a config that loaded and names no archive, where the
+    hook already spawned the render itself. The render child stays a separate
+    detached process so its own error-notify path is unchanged. A child killed
+    outright (SIGKILL, no `finally` runs) leaves the session to the next
+    `ccw repair` or `ccw build`, and `ccw doctor` reports it meanwhile.
+    Pinned by tests/test_render_after_companions.py."""
     rest = args[1:]
     session_arg = _flag_value(rest, "session")
     transcript_arg = _flag_value(rest, "transcript")
-    if session_arg is None or transcript_arg is None:
+    if session_arg is None:
         return 0
     short = session_arg[2:] if session_arg.startswith("s:") else session_arg
-    transcript_path = Path(transcript_arg)
+    config: Config | None = None
     try:
         config = load_config()
+        if transcript_arg is None:
+            return 0
+        return _companions_pass(config, short, Path(transcript_arg))
     except Exception:
         return 0
+    finally:
+        if config is None or config.archive_root is not None:
+            _spawn_render(short)
+
+
+def _companions_pass(config: Config, short: str, transcript_path: Path) -> int:
+    """The body of `_run_companions`: look the session up, copy, log the pair."""
     start = time.monotonic()
     try:
         conn = catalog.open_catalog(config.root)
