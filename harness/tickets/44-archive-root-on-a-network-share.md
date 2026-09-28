@@ -349,3 +349,52 @@ check. That arm assumes tests do not run as root.
   (the live config has `keep_objects = false`) and doctor goes FAIL. Phase 4's
   `ccw archive --to ~/cc-warehouse-archive --init` must run immediately after
   phase 3, before the next session ends.
+
+## Phases 3 to 6 DONE 2026-09-28/29 (conductor, with the operator's word at each gate)
+
+**3 Reinstall.** Marked the local tree first from the repo venv (`ccw archive --to
+~/cc-warehouse-archive --init`, marker zone Australia/Melbourne), verified the OLD
+frozen `ccw doctor` still read "capture is working" with the marker present (a
+top-level file is skipped by every old walker), THEN `uv_tool_reinstall_current_project
+--no-extras`. Doctor from outside the repo: `frozen`, `archive root marker present`,
+installed `doctor.py` carries `_catalog_index`. Version stays 0.1.4 (operator: no
+re-render for a change with no rendering effect). Tag `ticket-44-code` pushed.
+
+**4 Copy.** One early `ccw sweep` first (11 min, 38 stored, 0 failed; it also wrote the
+first `logs/coverage.json`). Local sha256 manifest: 227,812 files, 18,079,324,078 bytes
+(1 min). Copy: `COPYFILE_DISABLE=1 tar --no-xattrs --exclude .DS_Store` streamed over
+SSH to the Proxmox host and unpacked straight into the share's dataset with
+`--no-same-owner`, then `chown -R` to the share user's shifted uid on the host. 27
+minutes for 18 GB (macOS bsdtar emits AppleDouble `._*` files for xattrs unless
+`COPYFILE_DISABLE=1` is set; found on the tiny pipe test, not on the real run).
+ZFS lz4 stores it as 9.2 GB. Script: session scratchpad `phase4-copy.sh`.
+
+**5 Verify.** Host-side sha256 of every file compared to the local manifest: 227,812 =
+227,812, 0 only-local, 0 only-remote, 0 hash differences, control path present on
+both sides (17 s). Then `ccw archive --to /Volumes/mac/cc-warehouse-archive --verify`
+through the share: **31,157 folders checked, 0 problems, 3 h 10 min** (about 0.37 s
+per folder over SMB; the pre-run estimate of 30 to 40 min was wrong by 5x, recorded
+in the DESIGN entry). Progress instrument: `verify-progress.sh` (lsof on the process,
+position in the sorted label list weighted by folder count).
+
+**6 Switch.** `archive_root` in `~/.config/cc-warehouse/config.toml` (dated `.bak`
+beside it, the old value in a comment: pointing it back is the undo), the `--to`
+argument in `com.captaincodeau.ccw-archive.plist` (dated `.bak`; note `plutil -replace
+ProgramArguments.3` INSERTED rather than replaced on this macOS and left the old path as
+a fifth argument, caught by reading the plist back and fixed with `-remove`), and the
+two hand tools now read `archive_root` from ccw's config. First doctor against the
+share: **FAIL desync, "no session JSONL in the folder"** for a session that ended during
+the copy and existed only in the local tree: exactly 44b's honesty control firing as
+designed. Catch-up was NOT a sweep (the pre-filter skips a cataloged hash, so a sweep
+never re-reads a session whose folder is missing; the sandbox arm in the additive audit
+proved the same): a delta script copied every local file newer than the manifest that
+the share lacked (8 files, one session folder plus a project.json) and REPORTED, without
+touching, six files whose sizes differed: one session re-captured at 21:49 with a longer
+JSONL. Its share copy was proven a byte PREFIX of the local one and then replaced by
+the local six files (the product's own replace-if-larger rule, applied by hand).
+Doctor: `0 problems in the 25 most recently captured folder(s)`, `capture is working`.
+A catch-up `ccw sweep` against the share was started detached at 00:22 to measure the
+real daily cost; result appended below when it lands.
+
+**Phase 7 stands as written:** `~/cc-warehouse-archive` stays on disk, frozen at its
+2026-09-28 21:49 state, until the operator removes it himself.
