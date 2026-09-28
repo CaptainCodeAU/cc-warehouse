@@ -82,6 +82,37 @@ def test_defer_companions_true_leaves_the_subagent_uncopied(tmp_path: Path) -> N
     )
 
 
+def test_a_deferred_capture_still_writes_the_custom_title_before_it_returns(
+    tmp_path: Path,
+) -> None:
+    """THE RACE THIS PINS (live 2026-09-29): the hook spawns the render child and
+    the companions child together. The render child wrote the manifest at
+    03:14:25; the companions child copied `custom-title.json` in at 03:14:38;
+    nothing re-rendered, so `ccw doctor` FAILed "custom-title.json exists but
+    the manifest says none" until the next scheduled build, hours later. The
+    title is one small file the manifest records, so it lands synchronously,
+    before either child exists, and the render child's manifest includes it."""
+    from cc_warehouse import archive
+
+    transcript = _plant_source(tmp_path / "source")
+    title = b'{"customTitle":"np1"}\n'
+    (transcript.parent / PARENT / archive.CUSTOM_TITLE_FILE).write_bytes(title)
+    mark_archive(tmp_path / "archive", ZONE)
+    config = Config(root=tmp_path / "wh", archive_root=tmp_path / "archive", archive_timezone=ZONE)
+    result = capture.capture_transcript(
+        config, transcript, session_id=None, cwd="/home/alice/x", defer_companions=True
+    )
+    assert result.action == "stored"
+    assert config.archive_root is not None
+    landed = [p for p in config.archive_root.rglob(archive.CUSTOM_TITLE_FILE) if p.is_file()]
+    assert len(landed) == 1, f"the title waited for the companions child: {landed}"
+    assert landed[0].read_bytes() == title
+    assert landed[0].parent == next(config.archive_root.rglob(f"{PARENT}.jsonl")).parent
+    assert not any("subagents" in f for f in _archive_files(config.archive_root)), (
+        "only the title moves forward; the other companions stay deferred"
+    )
+
+
 def test_defer_companions_false_is_the_default_and_archives_inline(tmp_path: Path) -> None:
     """Today's behaviour, byte for byte: omitting the flag must still write the
     sub-agent synchronously, exactly as it did before this ticket."""

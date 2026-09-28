@@ -256,6 +256,7 @@ def _capture_locked(
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
     _archive_source(config, conn, project_id, data)
+    _archive_custom_title_of(config, conn, project_id, transcript_path, parsed.session_uuid)
     if not defer_companions:
         archive_companions(config, conn, project_id, transcript_path, parsed.session_uuid)
     meta = catalog.SessionMeta(
@@ -571,13 +572,51 @@ def _archive_sidecars_of(
             log_sidecar_trouble(config, session_uuid, "refused", name, item)
         for item in copied.errors:
             log_sidecar_trouble(config, session_uuid, "error", name, item)
-    title_file = directory / archive.CUSTOM_TITLE_FILE
-    if title_file.is_file():
-        try:
-            archive.write_custom_title(parent, title_file.read_bytes())
-        except OSError as exc:
-            log_sidecar_trouble(config, session_uuid, "error", archive.CUSTOM_TITLE_FILE, str(exc))
     return tuple(refused)
+
+
+def _archive_custom_title_of(
+    config: Config,
+    conn: sqlite3.Connection,
+    project_id: int,
+    transcript_path: Path,
+    session_uuid: str | None,
+) -> None:
+    """Copy `custom-title.json` into the session folder SYNCHRONOUSLY, before the
+    hook spawns the render child (2026-09-29).
+
+    It used to travel with the other sidecars in the detached companions child,
+    which runs alongside the render child. Live: the render child wrote the
+    manifest at 03:14:25, the title arrived at 03:14:38, nothing re-rendered,
+    and `ccw doctor` FAILed "custom-title.json exists but the manifest says
+    none" until the next scheduled build. It is one small file the manifest
+    records, so it cannot wait; the directories the manifest does not check on
+    arrival stay deferred.
+
+    Same gate and same never-fatal posture as `_archive_sidecars_of`, and an
+    unproven root writes nothing (ticket 44a), same as `archive_companions`.
+    """
+    if config.archive_root is None or not config.archive_tool_results:
+        return
+    from cc_warehouse import archive
+
+    try:
+        if archive.root_problem(config.archive_root, config.archive_timezone) is not None:
+            return
+        directory = sidecars.locate(transcript_path, session_uuid)
+        if directory is None:
+            return
+        title_file = directory / archive.CUSTOM_TITLE_FILE
+        if not title_file.is_file():
+            return
+        parent = archive.session_folder(
+            config.archive_root, _label_of(conn, project_id), session_uuid, config.archive_timezone
+        )
+        if parent is None:
+            return
+        archive.write_custom_title(parent, title_file.read_bytes())
+    except Exception as exc:  # noqa: BLE001 - see DESIGN 12; the session is already stored
+        log_sidecar_trouble(config, session_uuid, "error", archive.CUSTOM_TITLE_FILE, str(exc))
 
 
 def _archive_external_of(

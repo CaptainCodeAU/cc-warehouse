@@ -34,6 +34,16 @@ mismatch with no lock held, still FAILs. Accepted cost: a file altered by
 something else during a batch reads as pending until the lock is released. No
 rendered byte changes.
 
+**A renamed session no longer fails `ccw doctor` until the next build
+(2026-09-29).** The hook spawns the render child and the companions child
+together, and `custom-title.json` travelled with the companions child. Live: the
+manifest was written at 03:14:25, the title arrived at 03:14:38, nothing
+re-rendered, and doctor FAILed "custom-title.json exists but the manifest says
+none" for hours. Possible since the title file was first archived (2026-09-10);
+20 renamed sessions in the source tree carried one. The hook now copies the
+title synchronously, before either child is spawned; the directory sidecars stay
+deferred.
+
 **Ticket 44 (2026-09-28): `archive_root` may live on a network share.** Whether this
 ships as 0.1.5 or as an in-place reinstall at 0.1.4 is the operator's call at
 reinstall time: `renderer_version` is `__version__`, so a bump re-renders every
