@@ -15,7 +15,7 @@ Four jobs, all under `~/Library/LaunchAgents/`, all currently loaded
 | Job | Schedule | Command | Log |
 |---|---|---|---|
 | `com.captaincodeau.ccw-sweep` | daily 12:30 | `ccw sweep --quiet` | `~/.claude/logs/ccw-sweep.log` |
-| `com.captaincodeau.ccw-repair` | daily 12:45 | `ccw repair --quiet` | `~/.claude/logs/ccw-repair.log` |
+| `com.captaincodeau.ccw-repair` | daily 15:30 (was 12:45 until 2026-09-29, ticket 44) | `ccw repair --quiet` | `~/.claude/logs/ccw-repair.log` |
 | `com.captaincodeau.ccw-archive` | weekly, Sunday 03:00 | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/.claude/logs/ccw-archive.log` |
 | `com.captaincodeau.ccstats-dashboard` | daily 13:00 | `.venv/bin/python3 tools/ccstats/refresh.py --quiet` | `~/.claude/logs/ccstats-dashboard.log` |
 
@@ -32,7 +32,7 @@ Notes:
   likely ones the sweep stored minutes earlier and had not yet rendered. On the network
   share the sweep is expected to take 2 to 2.5 hours (ticket 44, accepted and to be
   measured). Moving the repair job past the sweep's real end is a plist edit outside this
-  repo and waits for the operator's word; the proposed slot is 15:30.
+  repo; MOVED to 15:30 on 2026-09-29 with the operator's word (dated `.bak` beside the plist).
 - All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
   `--quiet` means **no stdout on success, failures still print**, so an empty log file is
   the expected healthy state, not evidence the job never ran. Check `launchctl list` for
