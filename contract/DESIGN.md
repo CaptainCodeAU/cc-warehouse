@@ -2234,7 +2234,7 @@ carries a `dispatched` line.
 
 **2026-09-28, ticket 44: `archive_root` may live on a network share; `root` may
 not; and an archive root must announce itself.** The principal wants the 18 GB
-archive on the SMB share at `/Volumes/mac` to free the laptop's disk (11 GB free).
+archive on the SMB share at `/Volumes/mac` to free this Mac Mini's disk (11 GB free).
 Four audit helpers measured the share and the code; the conductor re-checked every
 load-bearing claim. The names are safe (0 case, Unicode, length or reserved-word
 hazards across 229k files) and the writers are safe (`os.replace` with a same-dir

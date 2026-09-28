@@ -6,11 +6,11 @@ word at the moment of running. Opened 2026-09-28.
 
 ## Why
 
-The laptop has 11 GB free and `~/cc-warehouse-archive` is 18 GB. The principal
+This Mac Mini has 11 GB free and `~/cc-warehouse-archive` is 18 GB. The principal
 wants the archive to live on the SMB share mounted at `/Volumes/mac` (server on the home LAN,
 a container on the Proxmox host, share path `/srv/fileshare/mac`
 inside the container, owner the share user; exact host, container id and user names live in the Network_Plan repo, not here). `~/cc-warehouse-data` (catalog, locks,
-logs) STAYS on the laptop. Rulings taken 2026-09-28:
+logs) STAYS on this Mac Mini. Rulings taken 2026-09-28:
 
 - move the archive, not the catalog;
 - the SanDisk stick is not to be touched;
