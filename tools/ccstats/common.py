@@ -38,7 +38,24 @@ from pathlib import Path
 # ------------------------------------------------------------------- paths
 
 HOME = Path.home()
-ARCHIVE = HOME / "cc-warehouse-archive"
+
+
+def _archive_root() -> Path:
+    """The live archive_root from ccw's own config, falling back to the historical
+    default. Ticket 44 moved the archive onto a network share, so a hard-coded
+    HOME path would have read a frozen copy from then on."""
+    try:
+        from cc_warehouse.config import load_config
+
+        root = load_config().archive_root
+        if root is not None:
+            return root
+    except Exception:  # noqa: BLE001 - a stats tool must not die on a config problem
+        pass
+    return HOME / "cc-warehouse-archive"
+
+
+ARCHIVE = _archive_root()
 LIVE = HOME / ".claude" / "projects"
 CATALOG = HOME / "cc-warehouse-data" / "catalog.sqlite"
 

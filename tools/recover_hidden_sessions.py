@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from cc_warehouse import catalog, config, parser  # noqa: E402
 
-ARCHIVE_ROOT = Path.home() / "cc-warehouse-archive"
+# Ticket 44: the live archive_root from config, not a hard-coded HOME path.
+ARCHIVE_ROOT = config.load_config().archive_root or Path.home() / "cc-warehouse-archive"
 CCW_BIN = Path.home() / ".local" / "bin" / "ccw"
 
 

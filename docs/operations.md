@@ -16,7 +16,7 @@ Four jobs, all under `~/Library/LaunchAgents/`, all currently loaded
 |---|---|---|---|
 | `com.captaincodeau.ccw-sweep` | daily 12:30 | `ccw sweep --quiet` | `~/.claude/logs/ccw-sweep.log` |
 | `com.captaincodeau.ccw-repair` | daily 12:45 | `ccw repair --quiet` | `~/.claude/logs/ccw-repair.log` |
-| `com.captaincodeau.ccw-archive` | weekly, Sunday 03:00 | `ccw archive --to ~/cc-warehouse-archive` | `~/.claude/logs/ccw-archive.log` |
+| `com.captaincodeau.ccw-archive` | weekly, Sunday 03:00 | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/.claude/logs/ccw-archive.log` |
 | `com.captaincodeau.ccstats-dashboard` | daily 13:00 | `.venv/bin/python3 tools/ccstats/refresh.py --quiet` | `~/.claude/logs/ccstats-dashboard.log` |
 
 Notes:
