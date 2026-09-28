@@ -163,8 +163,14 @@ def _short_key(conn: sqlite3.Connection, sha256: str) -> str:
     return sha256
 
 
-def _latest_version(conn: sqlite3.Connection, session_uuid: str | None) -> str | None:
+def latest_version(conn: sqlite3.Connection, session_uuid: str | None) -> str | None:
     """Hash of the latest existing version of this session_uuid.
+
+    PUBLIC since 2026-09-29 (open item W-20260929-A58): `build.build` asks it,
+    per head and just before acting, whether the head it snapshotted is still
+    the head. It is the same question `_HEAD_RANK_CTE` answers for rn = 1, in
+    the same order, so the build's re-check cannot disagree with its snapshot
+    (R9).
 
     Recency is the payload-internal last_ts, not warehouse capture order (R12):
     a NULL last_ts falls back to captured_at, ties break on captured_at then
@@ -221,7 +227,7 @@ def add_session(
         if existing is not None:
             return cast(str, cast(tuple[object, ...], existing)[0])
         short = _short_key(conn, meta.sha256)
-        supersedes = _latest_version(conn, meta.session_uuid)
+        supersedes = latest_version(conn, meta.session_uuid)
         conn.execute(
             "INSERT INTO session (hash, short, project_id, source_kind, session_uuid,"
             " supersedes, slug, git_branch, cwd, first_ts, last_ts, size_bytes,"

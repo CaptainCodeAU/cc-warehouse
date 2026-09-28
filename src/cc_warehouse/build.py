@@ -304,14 +304,14 @@ def write_projection(
 
 
 #  A head is the row whose PAYLOAD is the most recent for its session_uuid - the same
-#  question `catalog._latest_version` already answers when it picks a new row's
+#  question `catalog.latest_version` already answers when it picks a new row's
 #  `supersedes` target (R12: content time, never insertion order). It is NOT "the row
 #  no other row supersedes": `add_session` always points a new row's `supersedes` at
 #  whatever was previously latest, so that predicate picks the newest INSERT regardless
 #  of its own last_ts - a late-imported or out-of-order truncated capture could become
 #  head over a fuller, chronologically-later one (ticket 29 mechanism 1, fixed here).
 #  ROW_NUMBER ranks each session_uuid's rows by the same COALESCE(last_ts, captured_at)
-#  DESC, captured_at DESC, rowid DESC order _latest_version uses, so the two functions
+#  DESC, captured_at DESC, rowid DESC order latest_version uses, so the two functions
 #  agree on "latest" (R9). PARTITION BY COALESCE(session_uuid, 'row-' || rowid) keeps a
 #  NULL-uuid row in a singleton partition of its own, matching the old predicate's
 #  behaviour: a row with no session_uuid never supersedes anything, so it was always
@@ -525,6 +525,32 @@ BUILD_LOCK_HELD = "lock-held"
 # end report keys on it, same shape as BUILD_LOCK_HELD above.
 UNCHANGED = "unchanged"
 
+# A head that was the head when this run took its snapshot, but that a newer row
+# of the same session_uuid has since superseded (open item W-20260929-A58,
+# ruling option A, 2026-09-29). A NON-failure: nothing is wrong, the hook simply
+# captured a newer version while the build was running, and that newer version is
+# the hook render child's to render now and the next build's to confirm. Public:
+# the CLI end report keys on it, same shape as UNCHANGED above.
+SUPERSEDED = "superseded"
+
+
+def _superseded_by(conn: sqlite3.Connection, head: _Head) -> str | None:
+    """The hash that has replaced `head` as its session's head since the snapshot,
+    or None when `head` is still current.
+
+    Asks `catalog.latest_version`, which ranks a session_uuid's rows in the same
+    order as `_HEAD_RANK_CTE` (R9), so a head the snapshot chose is still chosen
+    here unless a row has arrived since. One indexed lookup (idx_session_uuid) per
+    head. A row with no session_uuid is its own singleton chain and can never be
+    superseded, so it is never asked about.
+    """
+    if head.session_uuid is None:
+        return None
+    latest = catalog.latest_version(conn, head.session_uuid)
+    if latest is None or latest == head.hash:
+        return None
+    return latest
+
 
 def _archive_dir_for(config: Config, head: _Head) -> Path | None:
     """This head's archive folder, computed from catalog columns alone - no
@@ -631,40 +657,97 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
     try:
         conn = catalog.open_catalog(root)
         try:
-            heads = _heads(conn, include_hidden)
+            return _build_heads(
+                config, conn, projections, options, rebuild=rebuild, include_hidden=include_hidden
+            )
         finally:
             conn.close()
-
-        outcomes: list[ItemOutcome] = []
-        expected: set[Path] = set()
-        for head in heads:
-            directory = projection_dir(
-                projections, head.label, head.first_ts, head.slug, head.short
-            )
-            expected.add(directory)
-            try:
-                if not rebuild and _head_is_current(config, head, directory, options):
-                    outcomes.append(ItemOutcome(head.short, UNCHANGED, ""))
-                    continue
-                data = _read(config, head)
-                if config.keep_projections:
-                    write_projection(directory, data, options, force=rebuild)
-                # `ccw build` has to keep meaning something once the old tree is
-                # retired: it is the verb that rebuilds after a render change,
-                # so it rebuilds whichever tree still exists (slice 19j).
-                _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
-                outcomes.append(ItemOutcome(head.short, "built", ""))
-            except Exception as exc:  # report and continue past a bad item (R10)
-                outcomes.append(
-                    ItemOutcome(head.short, "error", f"{type(exc).__name__}: {exc}")
-                )
-        # Prune retired dirs ONLY on a fully-successful build. If any head errored
-        # the new tree is incomplete, so keeping the last-good projections is the
-        # conservative branch (F7/F9); the next clean build reconciles.
-        if config.keep_projections and not any(
-            outcome.action == "error" for outcome in outcomes
-        ):
-            _prune(projections, expected)
-        return BatchReport(tuple(outcomes))
     finally:
         store.release_lock(root, _BUILD_LOCK)
+
+
+def _build_heads(
+    config: Config,
+    conn: sqlite3.Connection,
+    projections: Path,
+    options: render.RenderOptions,
+    *,
+    rebuild: bool,
+    include_hidden: bool,
+) -> BatchReport:
+    """The body of `build()`, run under its lock with one catalog connection.
+
+    THE SNAPSHOT GOES STALE, and on the network share it goes stale for hours
+    (open item W-20260929-A58). The heads are read once, then acted on one by
+    one; the SessionEnd hook does not take locks/build, so it can insert a newer
+    version of a session the loop has not reached yet and rewrite that session's
+    archive JSONL. Measured live 2026-09-28 (5f32 -> 086a): acting on the stale
+    head then failed the read with the vault retired, would have written a
+    misleading `replace_refused` into the manifest with the vault kept, and would
+    have pruned the new head's projection dir with projections kept. So:
+
+    - Each head is re-checked against the catalog just before anything is done
+      with it, and a superseded one is reported as SUPERSEDED and left alone. The
+      check sits ahead of `_head_is_current` as well as ahead of the read,
+      because an UNCHANGED stale head is the same prune hazard as a built one.
+    - The prune's `expected` set also takes every head that is current at prune
+      time, so a version that lands after its old head was already handled (or
+      in the sub-second gap between a re-check and the read) is kept out of the
+      prune.
+      The old head's dir stays this run; the next build retires it.
+
+    `archive.read_payload`'s refusal to serve a hash the archive does not hold
+    stays exactly as it was, as the backstop for that sub-second gap (R5/F7).
+    """
+    heads = _heads(conn, include_hidden)
+    outcomes: list[ItemOutcome] = []
+    expected: set[Path] = set()
+    for head in heads:
+        directory = projection_dir(
+            projections, head.label, head.first_ts, head.slug, head.short
+        )
+        expected.add(directory)
+        try:
+            newer = _superseded_by(conn, head)
+            if newer is not None:
+                outcomes.append(
+                    ItemOutcome(
+                        head.short, SUPERSEDED,
+                        f"superseded during this run by {newer[:12]}",
+                    )
+                )
+                continue
+            if not rebuild and _head_is_current(config, head, directory, options):
+                outcomes.append(ItemOutcome(head.short, UNCHANGED, ""))
+                continue
+            data = _read(config, head)
+            if config.keep_projections:
+                write_projection(directory, data, options, force=rebuild)
+            # `ccw build` has to keep meaning something once the old tree is
+            # retired: it is the verb that rebuilds after a render change,
+            # so it rebuilds whichever tree still exists (slice 19j).
+            _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
+            outcomes.append(ItemOutcome(head.short, "built", ""))
+        except Exception as exc:  # report and continue past a bad item (R10)
+            outcomes.append(
+                ItemOutcome(head.short, "error", f"{type(exc).__name__}: {exc}")
+            )
+    # Prune retired dirs ONLY on a fully-successful build. If any head errored
+    # the new tree is incomplete, so keeping the last-good projections is the
+    # conservative branch (F7/F9); the next clean build reconciles.
+    if config.keep_projections and not any(
+        outcome.action == "error" for outcome in outcomes
+    ):
+        # Every head current NOW is kept too, not only the snapshot's (see the
+        # docstring). When that read fails, nothing is pruned: a missed prune is
+        # the next build's to do, a wrongful one deletes a current page.
+        try:
+            current = _heads(conn, include_hidden)
+        except sqlite3.Error:
+            return BatchReport(tuple(outcomes))
+        for head in current:
+            expected.add(
+                projection_dir(projections, head.label, head.first_ts, head.slug, head.short)
+            )
+        _prune(projections, expected)
+    return BatchReport(tuple(outcomes))

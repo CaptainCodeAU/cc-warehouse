@@ -1167,6 +1167,11 @@ def _run_build(args: Sequence[str]) -> int:
         f"{len(report.outcomes)} sessions, {built} built, "
         f"{unchanged} unchanged, {len(failures)} failed"
     )
+    # W-20260929-A58: a head a hook capture superseded mid-run is not a failure,
+    # and says so only when it happened, so an ordinary run's line is unchanged.
+    superseded = sum(1 for outcome in report.outcomes if outcome.action == build.SUPERSEDED)
+    if superseded:
+        summary += f", {superseded} superseded during this run"
     _log_run_summary(config, "build", "error" if failures else "ok", summary)
     print(f"build: {summary}")
     return 1 if failures else 0
