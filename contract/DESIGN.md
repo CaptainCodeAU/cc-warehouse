@@ -2231,3 +2231,40 @@ CORRECTED IN PASSING: `_dispatch_gap`'s docstring asserted a missing `started` l
 that, for exactly the reason above. It now says the hook never reached its first log
 write, and that the two cases stay indistinguishable until enough log history
 carries a `dispatched` line.
+
+**2026-09-28, ticket 44: `archive_root` may live on a network share; `root` may
+not; and an archive root must announce itself.** The principal wants the 18 GB
+archive on the SMB share at `/Volumes/mac` to free the laptop's disk (11 GB free).
+Four audit helpers measured the share and the code; the conductor re-checked every
+load-bearing claim. The names are safe (0 case, Unicode, length or reserved-word
+hazards across 229k files) and the writers are safe (`os.replace` with a same-dir
+tmp file, no hard links, no mtime skips). Two things are not: `store.acquire_lock`
+publishes locks with `os.link`, which the share refuses outright (errno 45, 200 of
+200), and SQLite commits cost 0.26 s there. So `root` (catalog, locks, logs) STAYS
+LOCAL and only `archive_root` moves. The two keys were already independent.
+
+THE DECISION WITH TEETH: an archive root carries a marker file, `_archive-root.json`,
+holding the pinned `archive_timezone`, and every writer refuses when it is absent
+or names a different zone. Today nothing checks that `archive_root` is the tree it
+was configured as: a leftover empty mount directory would let the hook `mkdir` the
+tree onto the boot disk and fork the archive with no signal but doctor's `overdue`
+line. The marker turns that into a named refusal (R10, R14), and it also closes an
+older gap the config file only warned about in prose: a zone change now refuses
+instead of naming every new session in a second zone beside the old ones.
+`ccw archive --to X --init` is the one way a marker is created.
+
+DOCTOR STOPS WALKING THE ARCHIVE. It walked the whole tree three times per run
+(292k filesystem calls, 8 s local, an estimated 15 to 40 min on the share against a
+55 s hook budget). The archived set and the recency sample now come from the
+catalog, and the existing 25-folder verify is the honesty control on the catalog.
+R12 holds: the anchors are payload timestamps, never mtimes. A test fixes the
+call count independent of tree size, so the walk cannot creep back.
+
+ACCEPTED, NOT FIXED: the daily sweep's build re-hashes every companion file and is
+expected to run 2 to 2.5 h on the share instead of 40 min. Measure it for a week
+before deciding; an incremental sweep is a separate ticket if the number hurts.
+
+NOT A BACKUP STORY. The share is a single disk with server backups parked by the
+principal (Network_Plan, 2026-09-17), the SanDisk copy is not to be touched, and
+the old local tree stays frozen until he deletes it himself. Recorded so nobody
+later reads "the archive is on the server" as "the archive is backed up".
