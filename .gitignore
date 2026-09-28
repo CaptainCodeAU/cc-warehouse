@@ -8,3 +8,8 @@ __pycache__/
 .ruff_cache/
 dist/
 *.egg-info/
+
+# Per-worker git worktrees live INSIDE the repo by machine convention. hatchling
+# never reads a global ignore, so this line plus the sdist exclude in pyproject.toml
+# keep a second checkout out of the build (2026-09-28, ticket 44).
+.worktree/

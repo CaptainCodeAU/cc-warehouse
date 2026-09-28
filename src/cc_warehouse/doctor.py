@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import archive, parser, reconcile, status, store, sweep
+from cc_warehouse import archive, build, parser, reconcile, status, store, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
@@ -401,21 +401,116 @@ def _folder_moment(name: str) -> datetime | None:
         return None
 
 
-def _recent_archive_folders(archive_root: Path, limit: int) -> list[Path]:
-    """The `limit` most-recently-STARTED archive folders, newest first.
+@dataclass(frozen=True)
+class _Recent:
+    """One head in the recency sample: where its folder should be, and when the
+    catalog says it was captured (wall-clock, for the pending grace only)."""
 
-    Ordered by the payload-derived start time encoded in the folder name (R12), never by
-    mtime: an untouched folder still sorts by when its session happened, not by when this
-    check last ran. `archive.walk_folders` sorts by label then name, which is only
-    chronological WITHIN one label, so the moments are collected and re-sorted globally
-    here rather than trusting that order directly."""
-    dated: list[tuple[datetime, Path]] = []
-    for folder in archive.walk_folders(archive_root):
-        moment = _folder_moment(folder.name)
-        if moment is not None:
-            dated.append((moment, folder))
-    dated.sort(key=lambda pair: pair[0], reverse=True)
-    return [folder for _, folder in dated[:limit]]
+    folder: Path
+    captured_at: str | None
+
+
+@dataclass(frozen=True)
+class _CatalogIndex:
+    """What doctor asks the catalog instead of the archive tree (ticket 44b).
+
+    THE WHOLE REASON THIS EXISTS. Doctor used to answer "which sessions are
+    archived" by listing every label directory and every session folder, three
+    times per run, plus `status.uncaptured_gap`'s own walk and one file open per
+    folder for the two coverage lines: 292,286 filesystem calls under
+    archive_root on the real tree (measured 2026-09-28, 33.7 s on local disk).
+    With archive_root on a network share at 3 ms per stat that is 15 to 40
+    minutes at every SessionStart, against a 55 s hook budget.
+
+    The catalog is the archive's index (DESIGN 15, archive-first: "the catalog
+    becomes a disposable index"), rebuilt from the tree by `ccw reindex`, and on
+    real data its session_uuid set was byte-for-byte the walk's (31,112 = 31,112,
+    0 either way). So it answers the SET question. The recency sample's 25
+    folders are still verified on disk (`desync_detail`), and that verify is the
+    honesty control on the catalog: a row whose folder is missing is a FAIL, not
+    a skip. R12 holds throughout: `newest_start` and the sample order come from
+    payload `first_ts`, never mtime.
+    """
+
+    archived: frozenset[str]
+    newest_start: datetime | None
+    recent: tuple[_Recent, ...]
+
+
+def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
+    """One read-only pass over the catalog: every archived uuid, the newest
+    payload start, and the `limit` most recently STARTED heads with their
+    computed folder paths. No catalog, or an unreadable one, is an empty index,
+    never an exception and never a created file."""
+    empty = _CatalogIndex(frozenset(), None, ())
+    path = config.root / "catalog.sqlite"
+    if not path.is_file() or config.archive_root is None:
+        return empty
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return empty
+    try:
+        rows = cast(
+            list[tuple[str, str, str | None, str, str | None]],
+            conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT short, label, first_ts, session_uuid, captured_at FROM ranked"
+                " WHERE rn = 1 AND session_uuid IS NOT NULL"
+            ).fetchall(),
+        )
+    except sqlite3.Error:
+        return empty
+    finally:
+        conn.close()
+    archived: set[str] = set()
+    dated: list[tuple[datetime, str, str, str | None, str, str | None]] = []
+    newest: datetime | None = None
+    for short, label, first_ts, session_uuid, captured_at in rows:
+        archived.add(session_uuid)
+        moment = _moment(first_ts)
+        if moment is None:
+            continue
+        if newest is None or moment > newest:
+            newest = moment
+        dated.append((moment, short, label, first_ts, session_uuid, captured_at))
+    dated.sort(key=lambda row: row[0], reverse=True)
+    recent = tuple(
+        _Recent(
+            build.archive_dir(
+                config.archive_root,
+                label,
+                first_ts,
+                session_uuid,
+                config.archive_timezone,
+                fallback_stem=f"session-{short}",
+            ),
+            captured_at,
+        )
+        for _moment_, short, label, first_ts, session_uuid, captured_at in dated[:limit]
+    )
+    return _CatalogIndex(frozenset(archived), newest, recent)
+
+
+def _desync_scan(
+    config: Config,
+) -> tuple[list[_Recent], list[tuple[Path, list[archive.FolderProblem]]]]:
+    """The recency sample from the catalog, verified on disk (ticket 44b).
+
+    ORDERED BY PAYLOAD START (R12), as the folder-name walk it replaces was: an
+    untouched folder still sorts by when its session happened. A sampled folder
+    that is NOT on disk is verified anyway and fails with "no session JSONL in
+    the folder", which is the point: it is the one place doctor checks the
+    catalog against the tree."""
+    if config.archive_root is None or not config.archive_root.is_dir():
+        return [], []
+    index = _catalog_index(config, _DESYNC_SAMPLE)
+    broken = [
+        (item.folder, problems)
+        for item in index.recent
+        if (problems := archive.verify_folder(item.folder, config.archive_timezone))
+    ]
+    return list(index.recent), broken
 
 
 def desync_detail(
@@ -427,16 +522,12 @@ def desync_detail(
     repair` (the write-side companion, cli.py `_run_repair`) both read this
     rather than re-walking the archive a second time (R9). PUBLIC, deliberately
     (unlike most of this module): it is the one thing outside doctor.py that
-    legitimately needs doctor's own recency scan rather than a second copy of it."""
-    if config.archive_root is None or not config.archive_root.is_dir():
-        return [], []
-    folders = _recent_archive_folders(config.archive_root, _DESYNC_SAMPLE)
-    broken = [
-        (folder, problems)
-        for folder in folders
-        if (problems := archive.verify_folder(folder, config.archive_timezone))
-    ]
-    return folders, broken
+    legitimately needs doctor's own recency scan rather than a second copy of it.
+
+    Since ticket 44b the sample is chosen from the CATALOG and only those
+    folders are touched on disk; see `_CatalogIndex`."""
+    recent, broken = _desync_scan(config)
+    return [item.folder for item in recent], broken
 
 
 def _history_staleness(config: Config, home: Path) -> tuple[bool, str]:
@@ -613,13 +704,8 @@ def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, st
             continue
         started.add(session)
 
-    archived: set[str] = set()
-    if config.archive_root is not None and config.archive_root.is_dir():
-        for label_dir in config.archive_root.iterdir():
-            if label_dir.is_dir():
-                for session_dir in label_dir.iterdir():
-                    if session_dir.is_dir():
-                        archived.add(session_dir.name.partition("_")[2])
+    # Ticket 44b: the archived set is the catalog's, not a tree walk.
+    archived = _catalog_index(config, 0).archived
 
     sessions, _subagents = sweep.source_transcripts(walk_root)
     grace_cutoff = now - timedelta(seconds=_DISPATCH_GRACE_SECONDS)
@@ -689,18 +775,26 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     genuinely stuck pending item does not become invisible, it just does not
     trip the alarm on its own.
     """
-    folders, broken = desync_detail(config)
+    recent, broken = _desync_scan(config)
+    folders = [item.folder for item in recent]
     if not broken:
         return len(folders), 0, 0, None
-    # broken is non-empty only when desync_detail actually walked a configured
+    # broken is non-empty only when the scan actually verified a configured
     # archive, so config.root is a real warehouse to check locks against.
     batch_active = _batch_render_in_progress(config.root)
     now = datetime.now(UTC)
     problems: list[tuple[Path, list[archive.FolderProblem]]] = []
     pending_count = 0
+    captured = {item.folder: item.captured_at for item in recent}
     for folder, folder_problems in broken:
         only_missing_files = all(p.problem.startswith("missing ") for p in folder_problems)
-        moment = _folder_moment(folder.name)
+        # TICKET 44c: the grace is measured from CAPTURE time (the catalog's
+        # wall-clock `captured_at`), not from the session's own start time in
+        # the folder name. A 2020 session swept a minute ago is exactly the
+        # shape of a render child still running on a slow disk, and the old
+        # anchor called it broken on sight. The folder-name moment is only the
+        # fallback for a folder the catalog does not carry a stamp for.
+        moment = _moment(captured.get(folder)) or _folder_moment(folder.name)
         within_grace = moment is not None and (now - moment) <= timedelta(
             seconds=_PENDING_GRACE_SECONDS
         )
@@ -730,20 +824,12 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     """
     if config.archive_root is None:
         return 0, None
-    archived: set[str] = set()
-    newest_archived: datetime | None = None
-    if config.archive_root.is_dir():
-        for label_dir in config.archive_root.iterdir():
-            if label_dir.is_dir():
-                for session_dir in label_dir.iterdir():
-                    if session_dir.is_dir():
-                        _stamp, _sep, tail = session_dir.name.partition("_")
-                        archived.add(tail)
-                        moment = _folder_moment(session_dir.name)
-                        if moment is not None and (
-                            newest_archived is None or moment > newest_archived
-                        ):
-                            newest_archived = moment
+    # Ticket 44b: both the archived set and the newest payload start come from
+    # the catalog (`_CatalogIndex`), which is the same R12 anchor the folder
+    # names carried, without listing 31k folders at every SessionStart.
+    index = _catalog_index(config, 0)
+    archived = index.archived
+    newest_archived = index.newest_start
     # ONLY THE UNCAPTURED ARE READ. The first version parsed every transcript in
     # the source tree to find the newest activity: 35 SECONDS on a 14,000-session
     # corpus. A health check nobody wants to wait for does not get run, which is
@@ -821,7 +907,9 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     )
 
-    gap = status.uncaptured_gap(config, walk_root)
+    # Ticket 44b: the session figure from the catalog, no tree walk; the
+    # sub-agent figure stays with `ccw status` until ticket 44d indexes it.
+    gap = status.uncaptured_gap(config, walk_root, subagents=False)
     checks.append(Check("uncaptured", True, status.gap_line(gap), blocking=False))
 
     count, oldest = _overdue(config, walk_root)
@@ -867,15 +955,27 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     # `Uncaptured` figure sits permanently at 250-350 on a healthy install, and a
     # chronic red banner is one nobody reads. The interruption is `notify.alert`,
     # fired once per NEW anomaly, not this line.
-    sidecar = status.sidecar_gap(config, walk_root)
-    checks.append(
-        Check(
-            "sidecars",
-            sidecar.notices == 0,
-            status.sidecar_line(sidecar),
-            blocking=False,
+    #
+    # TICKET 44b: the figure is CORPUS-WIDE still, but the walk that produces it
+    # now runs inside `ccw sweep` (`status.write_coverage`), and this line
+    # reports the last sweep's answer with its age. Two file opens per folder
+    # at every SessionStart (this line and `prompts` below) were 62k of doctor's
+    # 292k archive calls on the real tree; over a network share that alone is
+    # minutes. "as of <when>" is what keeps a stale sweep from reading as clean.
+    coverage = status.read_coverage(config)
+    if config.archive_root is None:
+        sidecars_ok, sidecars_detail = True, status.sidecar_line(
+            status.sidecar_gap(config, walk_root)
         )
-    )
+    elif coverage is None:
+        sidecars_ok = True
+        sidecars_detail = (
+            "not measured yet: the next ccw sweep writes logs/coverage.json"
+        )
+    else:
+        sidecars_ok = coverage.sidecars.notices == 0
+        sidecars_detail = f"{status.sidecar_line(coverage.sidecars)} (as of {coverage.at})"
+    checks.append(Check("sidecars", sidecars_ok, sidecars_detail, blocking=False))
 
     # Ticket 39c. Same never-blocking posture as `sidecars` just above, and the
     # same reason: worth knowing, not a broken capture.
@@ -885,14 +985,14 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     # Ticket 39f. Same never-blocking posture as `sidecars`/`history` above:
     # corpus-wide coverage of prompts.jsonl (39d) and referenced paste-cache
     # files (39e) is worth knowing, and is not itself a broken capture.
-    checks.append(
-        Check(
-            "prompts",
-            True,
-            status.paste_line(status.paste_gap(config)),
-            blocking=False,
-        )
-    )
+    # Same ticket 44b shape as `sidecars`: the last sweep's corpus-wide figure.
+    if config.archive_root is None:
+        prompts_detail = status.paste_line(status.paste_gap(config))
+    elif coverage is None:
+        prompts_detail = "not measured yet: the next ccw sweep writes logs/coverage.json"
+    else:
+        prompts_detail = f"{status.paste_line(coverage.prompts)} (as of {coverage.at})"
+    checks.append(Check("prompts", True, prompts_detail, blocking=False))
 
     # Ticket 37 Part B. Same never-blocking posture as `sidecars`/`history`/
     # `prompts` above: a stalled detached companions child is worth knowing

@@ -121,6 +121,7 @@ def test_doctor_names_the_folder_and_the_sibling_it_found(
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     plant_notice(archived_session(ccw_env, archive_root), "zzz-probe")
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0  # 44b: sweep measures
     _code, out = doctor(ccw_env)
     line = sidecar_line(out)
     assert "1 folder(s) with unarchived siblings" in line
@@ -140,6 +141,7 @@ def test_a_sidecars_anomaly_does_not_move_doctors_exit_code(
     folder = archived_session(ccw_env, archive_root)
     clean_code, _clean = doctor(ccw_env)
     plant_notice(folder, "zzz-probe")
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0  # 44b: sweep measures
     code, _out = doctor(ccw_env)
     assert clean_code == 0
     assert code == clean_code
@@ -153,6 +155,7 @@ def test_an_anomalous_sidecars_line_never_renders_as_FAIL(
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     plant_notice(archived_session(ccw_env, archive_root), "zzz-probe")
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0  # 44b: sweep measures
     _code, out = doctor(ccw_env)
     assert not sidecar_line(out).strip().startswith("FAIL")
 
@@ -169,9 +172,11 @@ def test_the_uncaptured_line_is_unchanged_by_this_ticket(
     _code, out = doctor(ccw_env)
     line = next(x for x in out.splitlines() if "Uncaptured:" in x)
     projects = Path(ccw_env["HOME"]) / ".claude" / "projects"
+    # Ticket 44b changed the tail of this line (the sub-agent figure moved to
+    # `ccw status`); the parsed prefix `Uncaptured: <N> session` is unchanged.
     assert line.strip() == (
-        f"ok  uncaptured  Uncaptured: 0 session(s), 0 sub-agent(s) in {projects}"
-        " with no archive folder"
+        f"ok  uncaptured  Uncaptured: 0 session(s) in {projects}"
+        " with no catalog row (sub-agents: ccw status)"
     )
 
 
@@ -190,6 +195,7 @@ def test_the_sidecars_figure_covers_the_whole_corpus_not_a_recent_sample(
         newer.mkdir()
         (newer / "x.jsonl").write_bytes(b"{}\n")
     plant_notice(oldest, "zzz-probe")
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0  # 44b: sweep measures
     _code, out = doctor(ccw_env)
     assert "1 folder(s) with unarchived siblings" in sidecar_line(out)
 
@@ -202,6 +208,7 @@ def test_doctor_reports_a_sidecar_dir_with_no_transcript_beside_it(
     archived_session(ccw_env, archive_root)
     projects = Path(ccw_env["HOME"]) / ".claude" / "projects" / ENCODED
     (projects / "99999999-0000-0000-0000-000000000000").mkdir(parents=True, exist_ok=True)
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0  # 44b: sweep measures
     _code, out = doctor(ccw_env)
     assert "1 sidecar dir(s) without a transcript" in sidecar_line(out)
 
@@ -216,6 +223,7 @@ def test_doctor_reports_a_project_level_stranger(
     archived_session(ccw_env, archive_root)
     projects = Path(ccw_env["HOME"]) / ".claude" / "projects" / ENCODED
     (projects / "settings.json").write_bytes(b"{}")
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0  # 44b: sweep measures
     _code, out = doctor(ccw_env)
     assert "project-level: settings.json" in sidecar_line(out)
 

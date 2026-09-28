@@ -528,6 +528,19 @@ def test_desync_check_is_bounded_to_the_recent_sample(
 # ---------------------------------------------------------------------------
 
 
+def _age_capture(env: dict[str, str], uuid: str, *, seconds_ago: int) -> None:
+    """Move a catalog row's captured_at into the past (test-only, scratch catalog)."""
+    import sqlite3
+
+    stamp = (datetime.now(UTC) - timedelta(seconds=seconds_ago)).isoformat()
+    conn = sqlite3.connect(warehouse_root(env) / "catalog.sqlite")
+    try:
+        with conn:
+            conn.execute("UPDATE session SET captured_at = ? WHERE session_uuid = ?", (stamp, uuid))
+    finally:
+        conn.close()
+
+
 def _break_render(folder: Path) -> None:
     """Simulate a folder whose generated pages have not landed yet: the JSONL
     arrives (the hook's synchronous, safe half); none of the five generated
@@ -550,6 +563,10 @@ def test_an_old_missing_render_with_no_batch_running_is_still_a_real_problem(
     assert run_ccw(["sweep"], ccw_env).code == 0
     folder = next(archive.walk_folders(archive_root))
     _break_render(folder)
+    # Ticket 44c: "old" means CAPTURED long ago, not "a session that happened long
+    # ago". The grace window is measured from the catalog's captured_at, so a 2020
+    # session swept just now would legitimately be pending; age the capture itself.
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
 
     config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
     checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
@@ -617,6 +634,8 @@ def test_a_missing_render_is_pending_while_a_batch_lock_is_held(
     assert run_ccw(["sweep"], ccw_env).code == 0
     folder = next(archive.walk_folders(archive_root))
     _break_render(folder)
+    # Ticket 44c: the grace window keys on captured_at, so "old" is an old CAPTURE.
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
 
     root = warehouse_root(ccw_env)
     assert store.acquire_lock(root, "build")

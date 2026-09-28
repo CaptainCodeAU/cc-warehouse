@@ -57,6 +57,20 @@ def install_hook(env: dict[str, str], *, command: str = "ccw hook") -> None:
     )
 
 
+def _age_capture(env: dict[str, str], uuid: str, *, seconds_ago: int) -> None:
+    """Move a catalog row's captured_at into the past (test-only, scratch catalog)."""
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    stamp = (datetime.now(UTC) - timedelta(seconds=seconds_ago)).isoformat()
+    conn = sqlite3.connect(warehouse_root(env) / "catalog.sqlite")
+    try:
+        with conn:
+            conn.execute("UPDATE session SET captured_at = ? WHERE session_uuid = ?", (stamp, uuid))
+    finally:
+        conn.close()
+
+
 def _break_render(folder: Path) -> None:
     """Simulate the real incident: the JSONL + subagents/ arrive (the hook's
     synchronous, safe half); none of the five generated files do (the
@@ -78,6 +92,9 @@ def test_repair_fixes_a_session_missing_all_generated_files(
 
     folder = next(archive.walk_folders(archive_root))
     _break_render(folder)
+    # Ticket 44c: doctor's pending grace keys on captured_at, so a folder swept
+    # seconds ago reads as pending (exit 0). Age the capture to make it "broken".
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
     assert run_ccw(["doctor"], ccw_env).code != 0, "fixture precondition: not yet broken"
 
     result = run_ccw(["repair"], ccw_env)

@@ -25,6 +25,14 @@ Notes:
   for the same catalog lock (`locks/sweep` and `locks/build` are separate locks, but
   running them back to back rather than concurrently was the simpler choice made when
   `ccw-repair` was added).
+  **THAT PREMISE IS FALSE BY MEASUREMENT (ticket 44, 2026-09-28).** From
+  `~/cc-warehouse-data/logs/capture.jsonl`, the daily sweep runs 34 to 41 minutes on local
+  disk and ends between 13:00 and 13:11, so the 12:45 repair fires INSIDE the sweep's
+  window every day, and so does the 13:00 dashboard. The folders repair "fixes" are most
+  likely ones the sweep stored minutes earlier and had not yet rendered. On the network
+  share the sweep is expected to take 2 to 2.5 hours (ticket 44, accepted and to be
+  measured). Moving the repair job past the sweep's real end is a plist edit outside this
+  repo and waits for the operator's word; the proposed slot is 15:30.
 - All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
   `--quiet` means **no stdout on success, failures still print**, so an empty log file is
   the expected healthy state, not evidence the job never ran. Check `launchctl list` for
@@ -114,9 +122,17 @@ No crontab entries exist for this user (`crontab -l` -> "no crontab").
 independent scripts, neither owned by this repo's own test suite, parse them. Changing
 doctor's wording or exit-code semantics without checking both can break either silently.
 
-**`ccw-watch`** (external, `fifty-shades-of-dotfiles`). Runs `ccw doctor` at the start of
+**`ccw-watch`** (external, `fifty-shades-of-dotfiles`). **STALE BELOW THIS LINE, corrected
+2026-09-28 (ticket 44): `ccw-watch` STOPPED calling `ccw doctor` on 2026-09-07.** Its own
+header says so ("NARROWED 2026-09-07. IT NO LONGER ASKS `ccw doctor` ANYTHING"): it now
+checks only that the capture plugin is installed and reports `capture installed -- ccw
+<version>, plugin <hash>` at SessionStart. So `ccw-freshness-check.py` below is the ONLY
+consumer of doctor's text and exit code, and the only doctor wording it depends on is the
+literal `Uncaptured: <N> session` prefix (regex `Uncaptured:\s*(\d+)\s*session`) plus
+the exit code. The account that follows is kept as the record of what `ccw-watch` did
+until 2026-09-07. Ran `ccw doctor` at the start of
 EVERY Claude Code session in EVERY project on this machine (not just this repo). On a
-non-zero exit code it shows an escalating banner:
+non-zero exit code it showed an escalating banner:
 - day 0-2: a plain red line, `RED capture is NOT working -- <N>d`, plus the FAILING
   check's own detail text verbatim (doctor already names what's wrong and by how much;
   `ccw-watch` does not re-word it).
@@ -155,8 +171,31 @@ becoming a fourth thing that shouts:
 ```
 
 **It is NEVER blocking.** It does not move `ccw doctor`'s exit code, so neither
-consumer above ever sees it: `ccw-watch` branches on the exit code and greps for
-`^\s*FAIL`, and `ccw-freshness-check.py` escalates on the exit code. Both are pinned
+consumer above ever sees it: `ccw-watch` branched on the exit code and grepped for
+`^\s*FAIL` (until 2026-09-07, see above), and `ccw-freshness-check.py` escalates on the exit code.
+
+**SINCE TICKET 44b (2026-09-28) THE FIGURE IS MEASURED BY `ccw sweep`, NOT BY DOCTOR.**
+This line and the `prompts` line are still corpus-wide, but reading one file in every
+one of 31k archive folders at every SessionStart was 62k file opens, and with
+`archive_root` on a network share that alone is minutes against a 55 s hook budget. The
+daily sweep, which lists every folder anyway, now writes both figures to
+`~/cc-warehouse-data/logs/coverage.json` after its post-sweep build, and doctor prints
+them with the sweep's timestamp: `... (as of 2026-09-28T02:31:07+00:00)`. Before the
+first sweep after upgrading, doctor prints `not measured yet: the next ccw sweep writes
+logs/coverage.json` and stays `ok`. `ccw status`, which is run by hand, still walks and
+reports live figures. The same ticket moved doctor's other tree walks to the catalog:
+one `ccw doctor` used to make 292,286 filesystem calls under `archive_root` (measured
+2026-09-28); it now touches only the 25 most recently captured folders.
+
+**The SessionEnd hook's budget, recorded here because ticket 44 moves the archive onto a
+slower disk.** `plugins/cc-capture/hooks/hooks.json` gives `ccw-hook.py` 45 s and the
+wrapper kills the `ccw hook` child at 40 s. The ONLY synchronous write to `archive_root`
+inside that budget is the session's JSONL (`capture._archive_source`); rendering and the
+companion copies run in detached children afterwards. Measured locally the capture
+median is 69 ms, p95 0.5 s; on the share about 0.5 s typical and 2 s at p99. A payload
+above roughly 90 MB would not finish in 40 s at the share's 2.4 MB/s; exactly one
+archived session (114 MB) is that large, and a killed hook is not a lost session: the
+next `ccw sweep` captures it. Both are pinned
 by tests that run their REAL sed and grep commands against a report carrying an
 anomaly. This is deliberate, and it is the ticket 24.7 lesson: the `Uncaptured: N`
 figure on this machine sits between 200 and 350 permanently on a healthy install, and

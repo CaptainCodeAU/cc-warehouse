@@ -816,6 +816,19 @@ def _run_sweep(args: Sequence[str]) -> int:
             print(f"sweep: projection failed: {outcome.item}: {outcome.detail}", file=sys.stderr)
             _log_build_failure(config, outcome, "sweep-triggered build")
         failures = failures + build_failures
+    # TICKET 44b, and LAST for a reason: the two corpus-wide coverage figures
+    # `ccw doctor` used to walk the whole archive for at every SessionStart are
+    # measured here, once per sweep, AFTER the build above has rendered the
+    # manifests they read. The sweep is the batch job that already pays for a
+    # full listing; doctor reads the record with its age. A failure is one
+    # named line and a failed item (R10), never a lost sweep.
+    if config.archive_root is not None:
+        try:
+            status.write_coverage(config, source)
+        except OSError as exc:
+            detail = f"coverage not recorded: {exc}"
+            print(f"sweep: {status.COVERAGE_NAME}: {detail}", file=sys.stderr)
+            failures = failures + (ItemOutcome(status.COVERAGE_NAME, "error", detail),)
     sidecar_note = f", {archived_sidecars} with sidecars" if archived_sidecars else ""
     summary = (
         f"{len(report.outcomes)} items, {stored} stored{sidecar_note}, {len(failures)} failed"

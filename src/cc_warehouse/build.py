@@ -314,6 +314,7 @@ def write_projection(
 _HEAD_RANK_CTE = """
 WITH ranked AS (
     SELECT s.hash, s.short, p.label, s.first_ts, s.slug, s.session_uuid, s.hidden,
+           s.captured_at,
            ROW_NUMBER() OVER (
                PARTITION BY COALESCE(s.session_uuid, 'row-' || s.rowid)
                ORDER BY COALESCE(s.last_ts, s.captured_at) DESC, s.captured_at DESC,

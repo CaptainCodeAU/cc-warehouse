@@ -206,3 +206,53 @@ to cover all six walkers, and two of them sit on earlier rulings:
 - Also corrected: `CLAUDE.md` says `ccw-watch` parses doctor's text; it stopped
   on 2026-09-07 (its own header says so). The freshness hook is the only
   consumer, and it reads the exit code plus the `Uncaptured: N session` figure.
+
+## 44b and 44c DONE 2026-09-28 (conductor, on master)
+
+**What shipped.** `ccw doctor` no longer walks the archive. A new read-only
+`doctor._catalog_index` answers the three questions the walks used to answer:
+the archived uuid set (`_dispatch_gap`, `_overdue`), the newest payload start
+(`_overdue`'s R12 anchor) and the `_DESYNC_SAMPLE` most recently STARTED heads
+with their computed folder paths (`_desync_scan`, through `build.archive_dir`,
+the one naming function). `status.uncaptured_gap` takes the session figure from
+a new `status.cataloged_session_uuids` in both `status` and `doctor`; the
+sub-agent figure is computed only for `status` (`subagents=True`) and doctor's
+line now reads `Uncaptured: N session(s) in <src> with no catalog row
+(sub-agents: ccw status)`. The two corpus-wide coverage lines are measured by
+`ccw sweep` after its post-sweep build (`status.write_coverage`, tmp + replace
+into `<root>/logs/coverage.json`) and doctor prints them from
+`status.read_coverage` with `(as of <iso>)`; before the first sweep after
+upgrading it prints `not measured yet: the next ccw sweep writes
+logs/coverage.json` and stays ok. `_desync`'s pending grace is measured from the
+catalog's `captured_at`, falling back to the folder-name moment (44c).
+`build._HEAD_RANK_CTE` gained `s.captured_at` (additive; both consumers select
+by name). `docs/operations.md` and `CLAUDE.md` corrected (ccw-watch stopped
+calling doctor 2026-09-07; the repair job runs inside the sweep window; the hook
+budget recorded). `pyproject.toml`'s sdist exclude gained `.worktree` after the
+packaging test shipped a worker's whole checkout (217 members).
+
+**Measured, real data, read-only.** `ccw doctor` archive filesystem calls
+292,286 -> 1,080 (all inside the 25 sampled folders); wall 33.7 s -> 6.4 s, the
+remainder being the local source-tree walk. Catalog uuid set == archive walk set:
+31,112 = 31,112, 0 either way. Old frozen `ccw status` and new code agree on
+`Uncaptured: 37 session(s), 25 sub-agent(s)`.
+
+**Tests.** New `tests/test_doctor_catalog_index.py`, 14 arms; 10 failed on
+master's code, 4 are semantic controls that pass on both. Three existing tests
+re-anchored from "old session" to "old CAPTURE" by aging `captured_at` in the
+scratch catalog (`test_doctor.py` x2, `test_repair.py` x1); six
+`test_sidecar_signal.py` tests now sweep after planting an anomaly, because the
+figure is the sweep's; the whole-line `Uncaptured` pin updated to the new tail.
+`tests/test_doctor_external_contract.py` (the real sed) untouched and green.
+Suite before 1,633 pass + 10 fail (the 10 above), after: see the merge commit.
+pyright strict 0 errors, ruff check clean.
+
+**Chosen on my own, recorded:** `write_coverage` lives in `cli._run_sweep`
+after `build.build`, not inside `sweep.sweep()`, because the manifests it
+counts are rendered by that build (a first cut inside `sweep()` measured 0/0
+on a fresh sweep). A coverage-write failure is one `ItemOutcome` error and a
+stderr line, never a failed sweep. `sweep.sweep()` called in-process writes
+no coverage file; only the CLI verb does.
+
+**Not done here:** the repair plist reschedule (outside the repo, the
+operator's go-ahead); 44d (sub-agent index); the reinstall and every later phase.

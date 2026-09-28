@@ -11,13 +11,22 @@ the store (R4).
 
 import json
 import re
+import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from cc_warehouse import build, catalog, sidecars, store, sweep
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
+
+# Ticket 44b: the corpus-wide coverage figures `ccw doctor` used to compute by
+# walking every archive folder are now written here by `ccw sweep`, which walks
+# the tree anyway, and doctor prints them with their age. Lives under the
+# warehouse root (local, beside the catalog), never under archive_root.
+COVERAGE_NAME = "coverage.json"
+_COVERAGE_SCHEMA = 1
 
 # How many rows the human status summary lists at a glance; the CLI could widen these
 # with flags in a later slice.
@@ -105,13 +114,59 @@ class UncapturedGap:
     """
 
     sessions: int
-    subagents: int
+    # None when the caller asked for the cheap form (ticket 44b): the sub-agent
+    # figure needs the archive TREE until ticket 44d indexes sub-agents in the
+    # catalog, and `ccw doctor` no longer walks the tree at SessionStart.
+    subagents: int | None
     source: Path
     archive_root: Path | None
 
 
-def uncaptured_gap(config: Config, source: Path | None = None) -> UncapturedGap:
+def cataloged_session_uuids(root: Path) -> set[str]:
+    """Every session uuid the catalog holds a row for, read-only (ticket 44b).
+
+    THE CHEAP TWIN of `archived_session_uuids` above, and the one `ccw doctor`
+    uses: one local SQLite query instead of a two-level listing of the whole
+    archive tree, which is 31k `stat` calls on this machine and minutes over a
+    network share. On real data the two sets were the same (31,112 = 31,112,
+    0 either way, measured 2026-09-28); where they ever differ, the desync
+    check's 25-folder verify is what catches a row whose folder is gone.
+
+    Opened `mode=ro` so a missing catalog is an empty set, never a created
+    file (doctor's own read-only-by-construction rule).
+    """
+    path = root / "catalog.sqlite"
+    if not path.is_file():
+        return set()
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return set()
+    try:
+        rows = cast(
+            list[tuple[str]],
+            conn.execute(
+                "SELECT DISTINCT session_uuid FROM session WHERE session_uuid IS NOT NULL"
+            ).fetchall(),
+        )
+    except sqlite3.Error:
+        return set()
+    finally:
+        conn.close()
+    return {row[0] for row in rows}
+
+
+def uncaptured_gap(
+    config: Config, source: Path | None = None, *, subagents: bool = True
+) -> UncapturedGap:
     """Sessions and sub-agents in the source tree with no archive folder.
+
+    TICKET 44b: the SESSION figure comes from the catalog (`cataloged_session_uuids`),
+    not from a walk, in both `ccw status` and `ccw doctor` -- one instrument for one
+    figure (R9). The SUB-AGENT figure still needs the tree, so it is computed only
+    when `subagents` is true (`ccw status`); doctor passes false and reports None,
+    because that walk alone was 67k filesystem calls per SessionStart on this
+    machine and sub-agents are not in the catalog until ticket 44d.
 
     THE FIGURE THIS EXISTS FOR: on 2026-08-03 the warehouse held 13,836 sessions
     while the source tree held 1,857 the archive had never seen, and nothing in
@@ -135,19 +190,16 @@ def uncaptured_gap(config: Config, source: Path | None = None) -> UncapturedGap:
     """
     walk_root = source if source is not None else Path.home() / ".claude" / "projects"
     if config.archive_root is None:
-        return UncapturedGap(0, 0, walk_root, None)
-    archived: set[str] = set()
+        return UncapturedGap(0, 0 if subagents else None, walk_root, None)
+    archived = cataloged_session_uuids(config.root)
     subagent_ids: set[str] = set()
-    if config.archive_root.is_dir():
+    if subagents and config.archive_root.is_dir():
         for label_dir in config.archive_root.iterdir():
             if not label_dir.is_dir() or label_dir.name in build.RESERVED_LABELS:
                 continue
             for session_dir in label_dir.iterdir():
                 if not session_dir.is_dir():
                     continue
-                _stamp, _sep, tail = session_dir.name.partition("_")
-                if _UUID_RE.match(tail):
-                    archived.add(tail)
                 nested = session_dir / "subagents"
                 if nested.is_dir():
                     for agent_dir in nested.iterdir():
@@ -166,18 +218,32 @@ def uncaptured_gap(config: Config, source: Path | None = None) -> UncapturedGap:
         if _UUID_RE.match(path.name[: -len(_JSONL_SUFFIX)])
         and path.name[: -len(_JSONL_SUFFIX)] not in archived
     )
-    subagents = sum(
-        1
-        for path in subagent_paths
-        if path.name[: -len(_JSONL_SUFFIX)].split("-", 1)[1] not in subagent_ids
+    outstanding = (
+        sum(
+            1
+            for path in subagent_paths
+            if path.name[: -len(_JSONL_SUFFIX)].split("-", 1)[1] not in subagent_ids
+        )
+        if subagents
+        else None
     )
-    return UncapturedGap(sessions, subagents, walk_root, config.archive_root)
+    return UncapturedGap(sessions, outstanding, walk_root, config.archive_root)
 
 
 def gap_line(gap: UncapturedGap) -> str:
-    """One line an operator can read at a glance, in `status` and in `doctor`."""
+    """One line an operator can read at a glance, in `status` and in `doctor`.
+
+    `Uncaptured: <N> session` is a PUBLIC SURFACE: `ccw-freshness-check.py`
+    reads the figure out of it with a regex. Nothing may go between the word
+    and the number (`tests/test_doctor_external_contract.py`).
+    """
     if gap.archive_root is None:
         return "Uncaptured: (no archive configured; set archive_root to track this)"
+    if gap.subagents is None:
+        return (
+            f"Uncaptured: {gap.sessions} session(s) in {gap.source}"
+            " with no catalog row (sub-agents: ccw status)"
+        )
     return (
         f"Uncaptured: {gap.sessions} session(s), {gap.subagents} sub-agent(s)"
         f" in {gap.source} with no archive folder"
@@ -333,6 +399,94 @@ def paste_line(gap: PasteGap) -> str:
         f"Prompts: {gap.sessions_with_prompts}/{gap.sessions_total} session(s) have"
         f" prompts.jsonl, {gap.sessions_with_pastes} reference paste-cache files"
     )
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """The two corpus-wide coverage figures as the last `ccw sweep` measured them
+    (ticket 44b). `at` is when the sweep wrote them, so a reader can tell a
+    stale measurement from a clean one."""
+
+    at: str
+    sidecars: SidecarGap
+    prompts: PasteGap
+
+
+def coverage_path(config: Config) -> Path:
+    return config.root / "logs" / COVERAGE_NAME
+
+
+def write_coverage(config: Config, source: Path | None = None) -> Path:
+    """Measure both corpus-wide figures and record them (sweep's job, ticket 44b).
+
+    THE WALK LIVES HERE NOW, not in doctor. Ticket 38 ruling (e) made the
+    `sidecars` figure corpus-wide on purpose: the failure it exists for was four
+    months old before anyone noticed, and a recency sample could not have found
+    it. That intent is kept; what moved is WHEN the tree is read. The daily sweep
+    already lists every folder, so it pays for this pass; `ccw doctor`, which
+    runs at every SessionStart against a 55 s hook budget, reads the result.
+    Written tmp + `os.replace` (R2) under the warehouse root, never the archive.
+    """
+    sidecar = sidecar_gap(config, source)
+    paste = paste_gap(config)
+    body = {
+        "schema": _COVERAGE_SCHEMA,
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "sidecars": {
+            "notices": sidecar.notices,
+            "stranded": sidecar.stranded,
+            "first": sidecar.first,
+            "strangers": list(sidecar.strangers),
+        },
+        "prompts": {
+            "sessions_with_prompts": paste.sessions_with_prompts,
+            "sessions_total": paste.sessions_total,
+            "sessions_with_pastes": paste.sessions_with_pastes,
+        },
+    }
+    path = coverage_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    store.atomic_write(path, (json.dumps(body, indent=2) + "\n").encode("utf-8"))
+    return path
+
+
+def read_coverage(config: Config) -> Coverage | None:
+    """The last sweep's figures, or None when no sweep has written them yet or
+    the file is unreadable. Any doubt reads as absent; doctor says so rather
+    than guessing (the same posture as `archive.read_sidecar_notice`)."""
+    try:
+        body = json.loads(coverage_path(config).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    typed = cast(dict[str, object], body)
+    at = typed.get("at")
+    side = typed.get("sidecars")
+    paste = typed.get("prompts")
+    if not isinstance(at, str) or not isinstance(side, dict) or not isinstance(paste, dict):
+        return None
+    side_t = cast(dict[str, object], side)
+    paste_t = cast(dict[str, object], paste)
+    try:
+        first = side_t.get("first")
+        strangers = cast(list[object], side_t.get("strangers") or [])
+        sidecars_gap = SidecarGap(
+            int(cast(int, side_t.get("notices", 0))),
+            int(cast(int, side_t.get("stranded", 0))),
+            first if isinstance(first, str) else None,
+            tuple(str(s) for s in strangers),
+            config.archive_root,
+        )
+        prompts_gap = PasteGap(
+            int(cast(int, paste_t.get("sessions_with_prompts", 0))),
+            int(cast(int, paste_t.get("sessions_total", 0))),
+            int(cast(int, paste_t.get("sessions_with_pastes", 0))),
+            config.archive_root,
+        )
+    except (TypeError, ValueError):
+        return None
+    return Coverage(at, sidecars_gap, prompts_gap)
 
 
 def _recent_errors(config: Config, limit: int) -> list[tuple[str, str | None, str]]:

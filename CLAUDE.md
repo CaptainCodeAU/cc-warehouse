@@ -334,7 +334,14 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   **`ccw doctor`'s TEXT OUTPUT IS THEREFORE A PUBLIC
   COMPATIBILITY SURFACE, not an internal detail**: `ccw-watch` parses the `hook` line's
   wording and the `Uncaptured: N session(s)` figure with a regex. Changing that wording or
-  dropping that figure breaks an external consumer silently. This dependency is also the
+  dropping that figure breaks an external consumer silently.
+  **HALF STALE, corrected 2026-09-28 (ticket 44): `ccw-watch` stopped calling `ccw doctor`
+  on 2026-09-07 (its own header says so) and now only checks the plugin is installed.**
+  The surviving consumer is this repo's own `ccw-freshness-check.py`, which reads the exit
+  code and the literal `Uncaptured: <N> session` prefix. That prefix is still pinned
+  (`tests/test_doctor_external_contract.py`); the rest of the line changed in 44b
+  (sub-agents moved to `ccw status`). See `docs/operations.md`.
+  The ORIGINAL `ccw-watch` dependency was also the
   direct cause of the `_hook_commands` SessionEnd-scoping bug fixed the same day
   (`CHANGELOG.md` 0.1.2): `ccw-watch`'s own command string is what tripped it, by
   containing the substring `ccw`. Separately, a weekly `launchd` job,

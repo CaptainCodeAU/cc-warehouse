@@ -22,6 +22,42 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Ticket 44 (2026-09-28): `archive_root` may live on a network share.** Whether this
+ships as 0.1.5 or as an in-place reinstall at 0.1.4 is the operator's call at
+reinstall time: `renderer_version` is `__version__`, so a bump re-renders every
+archive folder (31k, and on the share that is hours), and nothing below changes a
+rendered byte. Same reasoning as the ticket 42 entry that follows.
+
+- **44b: `ccw doctor` no longer walks the archive.** Measured on the real tree, one
+  doctor run made 292,286 filesystem calls under `archive_root` (six full walks of
+  31k folders, two of them opening a file per folder), 33.7 s on local disk and an
+  estimated 15 to 40 minutes on the SMB share against the SessionStart hook's 55 s
+  budget. The archived set, the overdue anchor and the 25-folder recency sample now
+  come from the catalog (`doctor._catalog_index`, read-only, R12 kept: payload
+  timestamps, never mtime); only those 25 folders are touched on disk, and that
+  verify is the honesty control on the catalog (a row whose folder is missing FAILS).
+  After: 1,080 calls, 6.4 s. The catalog's session set equalled the walk's on real
+  data (31,112 = 31,112).
+  - The `Uncaptured:` line in doctor reads `Uncaptured: N session(s) in <src> with no
+    catalog row (sub-agents: ccw status)`. The parsed prefix `Uncaptured: N session`
+    is unchanged (`ccw-freshness-check.py` is now its only consumer; `ccw-watch`
+    stopped calling doctor on 2026-09-07). The sub-agent figure moved to `ccw status`
+    until ticket 44d indexes sub-agents in the catalog.
+  - The `sidecars` and `prompts` lines stay corpus-wide (ticket 38 ruling (e)) but are
+    measured by `ccw sweep` after its post-sweep build, written to
+    `<root>/logs/coverage.json`, and doctor prints them `(as of <iso>)`. Before the
+    first sweep after upgrading, doctor prints `not measured yet: the next ccw sweep
+    writes logs/coverage.json` and stays ok.
+- **44c: the desync pending grace keys on capture time.** `_desync`'s 120 s window is
+  measured from the catalog's `captured_at`, not the session's own start time in the
+  folder name, so a 2020 session swept a minute ago with its render still running
+  reads as pending rather than broken. Three tests that meant "old capture" and wrote
+  "old session" were re-anchored.
+- `pyproject.toml` sdist exclude gained `.worktree`: a worker's git worktree inside the
+  repo rode into the sdist (217 members) until the packaging test caught it.
+
+### Earlier, still unreleased (2026-09-09)
+
 Logging-only fixes, deliberately shipped WITHOUT a version bump (2026-09-09, ticket
 42 items #2/#3/#7). `render.py`'s `renderer_version` is `__version__`, so bumping the
 package version would re-render all 29,700+ archive folders for a change set with no
