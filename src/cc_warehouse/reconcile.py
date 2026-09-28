@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import sweep
+from cc_warehouse import archive, sweep
 from cc_warehouse.config import Config
 from cc_warehouse.status import archived_session_uuids
 
@@ -82,6 +82,83 @@ _GRACE = timedelta(hours=1)
 # ticket's own 7-14 day suggestion, at the wider end: measured live, a 7-day window
 # would have caught 7 of the 21 real losses, a 14-day window caught 14.
 DEFAULT_WINDOW = timedelta(days=14)
+
+
+# EMPTY SESSIONS ARE NOT LOSSES (W-20260929-A60; ruling: Gavin, 2026-09-29, option
+# B). A session opened and closed without a word never gets a transcript, and its
+# SessionEnd hook still logs "unreadable transcript", so every such session used to
+# be announced as permanently unrecoverable. Nothing was lost. The only instrument
+# that knows what a session SAID without its transcript is `~/.claude/history.jsonl`
+# (one row per typed input), so:
+#   - every history row for the session is exactly `/quit` or `/exit` (surrounding
+#     whitespace stripped, case kept: " /quit" is a real row, "/QUIT" is not in the
+#     ruling) with no pasted content -> empty;
+#   - ZERO rows -> empty ONLY when `~/.claude/session-env/<uuid>` is a directory.
+#     Zero rows alone proves nothing: measured 2026-09-29, 3,550 real September
+#     headless (`sdk-cli`) sessions with typed prompts had no history rows at all,
+#     while 763 of 770 interactive sessions had a session-env dir.
+# Every doubt fails toward ALERTING (a false alarm beats a silent real loss): no
+# history file, an unreadable one, a history whose oldest row is not older than the
+# error (rows for this session may have been cut), or a session-env that is not a
+# directory. Other slash commands (`/clear`, `/model`, ...) are outside the ruling.
+_EMPTY_SESSION_INPUTS = frozenset({"/quit", "/exit"})
+
+
+@dataclass(frozen=True)
+class _History:
+    by_session: dict[str, bytes]
+    oldest: datetime | None
+
+
+def _read_history(home: Path) -> _History | None:
+    """`history.jsonl` grouped by session through the sweep's own splitter (R9), or
+    None when it cannot be read, which callers treat as "cannot vouch"."""
+    try:
+        data = (home / ".claude" / "history.jsonl").read_bytes()
+    except OSError:
+        return None
+    by_session = archive.split_history_by_session(data)
+    oldest: datetime | None = None
+    for lines in by_session.values():
+        for row in _rows(lines):
+            stamp = row.get("timestamp")
+            if isinstance(stamp, int | float) and not isinstance(stamp, bool):
+                moment = datetime.fromtimestamp(stamp / 1000, UTC)
+                if oldest is None or moment < oldest:
+                    oldest = moment
+    return _History(by_session, oldest)
+
+
+def _rows(lines: bytes) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for line in lines.splitlines():
+        try:
+            row = cast("object", json.loads(line))
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            out.append(cast("dict[str, object]", row))
+    return out
+
+
+def _said_nothing(history: _History | None, home: Path, finding: "Finding") -> bool:
+    """Whether the session a finding names provably said nothing (the ruling above).
+    False whenever the evidence is missing or doubtful."""
+    if history is None:
+        return False
+    lines = history.by_session.get(finding.session_uuid)
+    if lines is None:
+        ended = _parse_at(finding.at)
+        if history.oldest is None or ended is None or history.oldest >= ended:
+            return False
+        return (home / ".claude" / "session-env" / finding.session_uuid).is_dir()
+    for row in _rows(lines):
+        display = row.get("display")
+        if row.get("pastedContents"):
+            return False
+        if not isinstance(display, str) or display.strip() not in _EMPTY_SESSION_INPUTS:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -211,6 +288,11 @@ def find_unrecoverable(
     filed under a folder name that differs from its legacy identity still has a
     catalog row, so the catalog check alone can save it from a false alarm.
 
+    A session that misses all three but provably SAID NOTHING (`_said_nothing`, the
+    2026-09-29 ruling above `Finding`) is dropped too: no transcript was ever
+    written, so nothing was lost. `history.jsonl` is read at most once per call,
+    and only when some candidate has already missed all three instruments.
+
     `since=None` (the default) checks the WHOLE log; pass an explicit cutoff (e.g.
     `datetime.now(UTC) - DEFAULT_WINDOW`) to look only at recent activity. The
     source/archive/catalog walk is skipped ENTIRELY when there are zero candidates in
@@ -235,6 +317,9 @@ def find_unrecoverable(
         path.name[: -len(".jsonl")] for path in session_paths if path.name.endswith(".jsonl")
     }
     archived = archived_session_uuids(config.archive_root)
+    history_home = home if home is not None else Path.home()
+    history: _History | None = None
+    history_read = False
     findings: list[Finding] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -245,6 +330,11 @@ def find_unrecoverable(
         if _catalog_has_session(config.root, candidate.session_uuid):
             continue
         seen.add(candidate.session_uuid)
+        if not history_read:
+            history = _read_history(history_home)
+            history_read = True
+        if _said_nothing(history, history_home, candidate):
+            continue
         findings.append(candidate)
     return tuple(sorted(findings, key=lambda f: f.at))
 

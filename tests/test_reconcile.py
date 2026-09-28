@@ -433,3 +433,275 @@ def test_repair_quiet_still_dedups_but_prints_nothing(
     assert reconcile.known_unrecoverable_uuids(config) == frozenset({LOST_UUID}), (
         "the dedup record must still be written under --quiet"
     )
+
+
+# ---------------------------------------------------------------------------
+# Empty sessions are not losses (W-20260929-A60, ruling: Gavin, 2026-09-29)
+# ---------------------------------------------------------------------------
+#
+# THE FALSE ALARM THIS EXISTS FOR: `ccw repair` announced "5 sessions are
+# permanently unrecoverable. Their transcripts vanished before capture." All 5
+# were sessions where nothing was said, so Claude Code never wrote a transcript
+# and nothing was lost. THE RULING: a session whose only `history.jsonl` input is
+# `/quit` or `/exit` is empty; a session with ZERO history rows is empty only when
+# `~/.claude/session-env/<uuid>` exists as a directory (option B). Zero rows alone
+# is NOT enough: measured 2026-09-29, 3,550 real September headless (`sdk-cli`)
+# sessions with typed prompts had no history rows at all. Every doubt (missing or
+# unreadable history, a history file that starts after the session ended, a
+# session-env that is not a directory) fails toward ALERTING.
+#
+# History rows are copied in SHAPE from a real row: the five keys every one of
+# 22,822 real rows carries (`display`, `pastedContents`, `project`, `sessionId`,
+# `timestamp` as integer milliseconds), with an externalised or inlined paste as
+# `{"<n>": {"id": <int>, "type": "text", ...}}`. The text is invented.
+
+QUIT_UUID = "33333333-3333-4333-8333-333333333333"
+EXIT_UUID = "44444444-4444-4444-8444-444444444444"
+SILENT_UUID = "55555555-5555-4555-8555-555555555555"
+REAL_UUID = "66666666-6666-4666-8666-666666666666"
+OTHER_UUID = "77777777-7777-4777-8777-777777777777"
+
+
+def history_row(session_uuid: str, display: str, *, at: datetime, pasted: object = None) -> str:
+    row: dict[str, object] = {
+        "display": display,
+        "pastedContents": pasted if pasted is not None else {},
+        "timestamp": int(at.timestamp() * 1000),
+        "project": "/Users/alice/proj",
+        "sessionId": session_uuid,
+    }
+    return json.dumps(row)
+
+
+def write_history(env: dict[str, str], *lines: str) -> Path:
+    """`~/.claude/history.jsonl` in the sandbox, always led by an OLDER row from
+    an unrelated session, so the file demonstrably covers the time the lost
+    sessions ran (the truncation guard is tested on its own, below)."""
+    three_days_ago = datetime.now(UTC) - timedelta(days=3)
+    old = history_row(OTHER_UUID, "an older unrelated prompt", at=three_days_ago)
+    path = Path(env["HOME"]) / ".claude" / "history.jsonl"
+    path.write_text("\n".join((old, *lines)) + "\n", encoding="utf-8")
+    return path
+
+
+def make_session_env(env: dict[str, str], session_uuid: str) -> Path:
+    path = Path(env["HOME"]) / ".claude" / "session-env" / session_uuid
+    path.mkdir(parents=True)
+    return path
+
+
+def log_lost(env: dict[str, str], *uuids: str) -> None:
+    for session_uuid in uuids:
+        append_log(
+            env,
+            session_uuid=session_uuid,
+            message=f"unreadable transcript /x/{session_uuid}.jsonl: boom",
+            at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+        )
+
+
+def lost_uuids(env: dict[str, str], archive_root: Path) -> set[str]:
+    config = Config(root=warehouse_root(env), archive_root=archive_root, archive_timezone=ZONE)
+    findings = reconcile.find_unrecoverable(config, home=Path(env["HOME"]), now=datetime.now(UTC))
+    return {f.session_uuid for f in findings}
+
+
+@pytest.mark.parametrize("display", ["/quit", "/exit", " /quit"])
+def test_a_quit_or_exit_only_session_is_not_unrecoverable(
+    ccw_env: dict[str, str], tmp_path: Path, display: str
+) -> None:
+    """RULING, arm 1. `" /quit"` is a real variant (1 of 22,822 rows measured),
+    so surrounding whitespace is stripped before the exact match."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    at = datetime.now(UTC) - timedelta(hours=3)
+    write_history(ccw_env, history_row(QUIT_UUID, display, at=at))
+    log_lost(ccw_env, QUIT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == set()
+
+
+def test_zero_history_rows_with_a_session_env_dir_is_not_unrecoverable(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """RULING, arm 2 (option B): nothing typed at all, in an interactive session."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_history(ccw_env)
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, SILENT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == set()
+
+
+def test_zero_history_rows_without_a_session_env_dir_still_alerts(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """THE CASE OPTION B EXISTS FOR: a headless session never writes history rows
+    even when it has real prompts, so zero rows alone proves nothing."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_history(ccw_env)
+    log_lost(ccw_env, SILENT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {SILENT_UUID}
+
+
+@pytest.mark.parametrize(
+    "displays",
+    [
+        ["a real prompt"],
+        ["a real prompt", "/quit"],
+        ["/clear"],
+        ["/model", "/exit"],
+        ["exit"],
+        ["/QUIT"],
+    ],
+)
+def test_a_session_with_any_other_input_still_alerts(
+    ccw_env: dict[str, str], tmp_path: Path, displays: list[str]
+) -> None:
+    """Real input, and everything OUTSIDE the ruling: other slash commands, the
+    bare word `exit` (7 real rows) and case variants are not silenced."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    at = datetime.now(UTC) - timedelta(hours=3)
+    write_history(ccw_env, *(history_row(REAL_UUID, d, at=at) for d in displays))
+    make_session_env(ccw_env, REAL_UUID)
+    log_lost(ccw_env, REAL_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {REAL_UUID}
+
+
+def test_a_paste_only_row_is_real_input(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """Edge case 4: `pastedContents` present means something was said, whatever
+    `display` reads."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    pasted = {"1": {"id": 1, "type": "text", "contentHash": "0123456789abcdef"}}
+    write_history(
+        ccw_env,
+        history_row(REAL_UUID, "/quit", at=datetime.now(UTC) - timedelta(hours=3), pasted=pasted),
+    )
+    log_lost(ccw_env, REAL_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {REAL_UUID}
+
+
+def test_missing_history_fails_toward_alerting(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """Edge case 1: without history.jsonl nothing proves a session was empty."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, SILENT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {SILENT_UUID}
+
+
+def test_unreadable_history_fails_toward_alerting(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    (Path(ccw_env["HOME"]) / ".claude" / "history.jsonl").mkdir()
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, SILENT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {SILENT_UUID}
+
+
+def test_a_session_env_that_is_not_a_directory_fails_toward_alerting(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_history(ccw_env)
+    env_dir = Path(ccw_env["HOME"]) / ".claude" / "session-env"
+    env_dir.mkdir(parents=True)
+    (env_dir / SILENT_UUID).write_text("", encoding="utf-8")
+    log_lost(ccw_env, SILENT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {SILENT_UUID}
+
+
+def test_zero_rows_in_a_history_that_starts_after_the_session_still_alerts(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Edge case 5: when every surviving history row is NEWER than the error, the
+    file cannot vouch that the session said nothing (its rows may have been cut)."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    newer = history_row(OTHER_UUID, "a newer prompt", at=datetime.now(UTC) - timedelta(minutes=5))
+    (Path(ccw_env["HOME"]) / ".claude" / "history.jsonl").write_text(newer + "\n", encoding="utf-8")
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, SILENT_UUID)
+
+    assert lost_uuids(ccw_env, archive_root) == {SILENT_UUID}
+
+
+def _record_alerts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    from cc_warehouse import notify
+
+    fired: list[str] = []
+
+    def record(_config: Config, _title: str, message: str) -> None:
+        fired.append(message)
+
+    def silent(_config: Config, _message: str) -> None:
+        return None
+
+    monkeypatch.setattr(notify, "alert", record)
+    monkeypatch.setattr(notify, "speak", silent)
+    return fired
+
+
+def test_repair_writes_no_record_and_no_alert_for_empty_sessions(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported incident, end to end: every empty shape at once, nothing
+    announced and nothing added to the dedup ledger."""
+    from conftest import run_cli
+
+    fired = _record_alerts(monkeypatch)
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    at = datetime.now(UTC) - timedelta(hours=3)
+    write_history(
+        ccw_env, history_row(QUIT_UUID, "/quit", at=at), history_row(EXIT_UUID, "/exit", at=at)
+    )
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, QUIT_UUID, EXIT_UUID, SILENT_UUID)
+
+    result = run_cli(["repair"])
+
+    assert result.code == 0, result.err
+    assert "newly-confirmed" not in result.out
+    assert fired == []
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset()
+
+
+def test_repair_on_a_mix_announces_exactly_the_real_losses(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import run_cli
+
+    fired = _record_alerts(monkeypatch)
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    at = datetime.now(UTC) - timedelta(hours=3)
+    write_history(
+        ccw_env,
+        history_row(QUIT_UUID, "/quit", at=at),
+        history_row(EXIT_UUID, "/exit", at=at),
+        history_row(REAL_UUID, "a real prompt", at=at),
+    )
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, QUIT_UUID, EXIT_UUID, SILENT_UUID, REAL_UUID, LOST_UUID)
+
+    result = run_cli(["repair"])
+
+    assert result.code == 0, result.err
+    assert "2 newly-confirmed unrecoverable" in result.out
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({REAL_UUID, LOST_UUID})
+    assert len(fired) == 1, fired
+    assert fired[0].startswith("cc-warehouse: 2 sessions are permanently unrecoverable."), fired

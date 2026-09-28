@@ -22,6 +22,27 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw repair` no longer calls an empty session "permanently unrecoverable"
+(2026-09-29, W-20260929-A60).** A session opened and closed without a word never
+gets a transcript, but its SessionEnd hook still logs "unreadable transcript", so
+`ccw repair` announced 5 such sessions as lost. Nothing was lost. Ruling (Gavin,
+2026-09-29, option B): `reconcile.find_unrecoverable` now drops a session whose
+every `~/.claude/history.jsonl` row is exactly `/quit` or `/exit` (whitespace
+stripped, case kept, no pasted content), and a session with ZERO history rows only
+when `~/.claude/session-env/<uuid>` is a directory. Zero rows alone is not enough:
+measured the same day, 3,550 real September headless (`sdk-cli`) sessions with
+typed prompts had no history rows, while 763 of 770 interactive sessions had a
+session-env directory. Every doubt fails toward alerting: no or unreadable
+history, a history whose oldest row is not older than the error, or a session-env
+that is not a directory. Other slash commands (`/clear`, `/model`) and the bare
+word `exit` are outside the ruling and still alert. History is parsed with the
+sweep's own `archive.split_history_by_session`. Measured read-only against this
+machine's 56 records already on file: 38 would now be silenced (11 `/quit` or
+`/exit` only, 27 zero rows with a session-env), 18 still alert, and all 5 from the
+reported alert are among the 38. Records already written stay in `capture.jsonl`
+(append-only), so `ccw doctor`'s reconcile count does not drop by itself; `ccw
+reconcile` stops listing the empty ones.
+
 **`ccw doctor` no longer FAILs on a sweep's own not-yet-rendered writes
 (2026-09-29).** A hand-run `ccw sweep` against the network share held its build
 lock for over an hour between copying a larger payload and `prompts.jsonl` into
