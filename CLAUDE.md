@@ -738,6 +738,14 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   checked for the flag. Exit 0 plus output is NOT evidence nothing happened; the test that
   catches it asks whether the world changed. Fixed at the dispatcher, because per-verb
   guards are only as complete as whoever remembered to add them.
+- **Prove a sandbox with a read-only verb before running a writing verb in it.**
+  2026-09-28: a session ran `ccw sweep --config <sandbox>` to reproduce a finding;
+  most verbs ignore `--config` (backlog 28.26), so the sweep ran against the REAL
+  warehouse and wrote a stray folder into the real archive, removed to the Trash on
+  the principal's word. `ccw doctor` or `ccw status` under the same flags would have
+  shown the real paths in their `config` line first. The safe sandbox is
+  `HOME`/`XDG_CONFIG_HOME`/`CCW_ROOT` pointed into a scratch dir, the shape
+  `tests/conftest.py` uses, and the first command in it is always a read-only one.
 - **A status note can go stale the same day it was written, and a session can act
   without recording that it did.** 2026-09-10: `OPENING-PROMPT.md` and a ticket file both
   said ticket 42 #6 was "coded, tested, NOT yet reinstalled - needs the operator's

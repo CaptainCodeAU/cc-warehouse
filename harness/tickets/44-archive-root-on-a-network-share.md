@@ -183,7 +183,7 @@ Nothing in 44c changes the hook's timeout or the sweep's algorithm.
 ## Rulings taken during the build, 2026-09-28 (44b widened by measurement)
 
 The audit's "two walks" undercounted. Measured on the real archive with a
-call-attributing instrument (`count_doctor_walks.py`, session scratchpad): one
+call-attributing instrument (`count_doctor_walks.py`, `temp/ticket-44-evidence/` (gitignored, copied out of the session scratchpad at wrap-up)): one
 `ccw doctor` run makes 292,286 archive filesystem calls in 33.7 s local:
 `_dispatch_gap` and `_overdue` 64k stats, the desync recency sample 32k via
 `walk_folders`, `status.uncaptured_gap` 67k (sessions AND their `subagents/`
@@ -367,7 +367,7 @@ SSH to the Proxmox host and unpacked straight into the share's dataset with
 `--no-same-owner`, then `chown -R` to the share user's shifted uid on the host. 27
 minutes for 18 GB (macOS bsdtar emits AppleDouble `._*` files for xattrs unless
 `COPYFILE_DISABLE=1` is set; found on the tiny pipe test, not on the real run).
-ZFS lz4 stores it as 9.2 GB. Script: session scratchpad `phase4-copy.sh`.
+ZFS lz4 stores it as 9.2 GB. Script: `temp/ticket-44-evidence/` (gitignored, copied out of the session scratchpad at wrap-up) `phase4-copy.sh`.
 
 **5 Verify.** Host-side sha256 of every file compared to the local manifest: 227,812 =
 227,812, 0 only-local, 0 only-remote, 0 hash differences, control path present on

@@ -12,7 +12,7 @@ it ADDITIVE, never a MIRROR, so the source tree can be pruned and the disk
 reclaimed. (The standing CLAUDE.md rule that AGENTS never delete from `~/.claude`
 is unchanged by this ticket; the deletion here is his own hand, later.)
 
-## What was measured (2026-09-28, session scratchpad `additive/`, all sandboxed)
+## What was measured (2026-09-28, `temp/ticket-44-evidence/` (gitignored, copied out of the session scratchpad at wrap-up) `additive/`, all sandboxed)
 
 **Additive: YES.** Three helpers, then the conductor re-checked the load-bearing
 claims against the code and the real archive:
@@ -69,7 +69,7 @@ or `UNHELD`. Exit 0 only when every candidate is IDENTICAL or ARCHIVE-SUPERSET
 with zero UNHELD. It must NOT consult the catalog's hash set for the verdict (F5).
 `--manifest` writes `<archive_root>/_not-sessions/deletions/<date>.json` (path,
 sha256, archive folder, verdict) so "was X ever here" has an answer afterwards.
-Reference prototype: `additive/redteam/absorbed.py` from the session scratchpad
+Reference prototype: `additive/redteam/absorbed.py` from the `temp/ticket-44-evidence/` (gitignored, copied out of the session scratchpad at wrap-up)
 (flagged all four sandbox edge cases where `sweep --dry-run` flagged none).
 
 **45b the four fixes**, each small, each with an oracle test that fails first:
@@ -100,8 +100,9 @@ verify are green.
 ## Out of scope, recorded
 
 - 44d (sub-agent index in the catalog) stays its own slice; 45a reads the tree.
-- Making a deleted ARCHIVE folder self-heal from a still-present source (the
-  sandbox's negative control) is a separate decision: it means the pre-filter
+- **OPEN DECIDE ROW (operator, 2026-09-29: "decide inside ticket 45").** Making a
+  deleted ARCHIVE folder self-heal from a still-present source (the sandbox's negative
+  control) is a decision this ticket must carry: it means the pre-filter
   keys on "folder present", not "hash cataloged", and costs one stat per
   candidate on the share.
 - What the OPERATOR loses outside this product when he deletes sources, stated

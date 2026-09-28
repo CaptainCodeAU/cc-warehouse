@@ -92,3 +92,8 @@ facts" while actually holding five - fixed here.)
   the useful check is that the gates run on the commit you are tagging is already
   green - not that the suite passes on your laptop, which is a different runner
   with different timing.
+- **`plutil -replace ProgramArguments.N` on this macOS INSERTED a new element at N and
+  kept the old one at N+1** (2026-09-29, ticket 44 phase 6): the weekly archive plist
+  briefly carried two `--to` paths. Caught only by reading the plist back with
+  `plutil -p` after the edit; fixed with `plutil -remove ProgramArguments.N+1`. Always
+  print the whole array after editing one, and keep a dated `.bak` beside the plist.

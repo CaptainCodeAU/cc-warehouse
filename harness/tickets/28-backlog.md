@@ -619,6 +619,11 @@ here into their own ticket when they are taken up.
   word says otherwise. Scope: distinguish "never existed" from "existed and
   vanished" in `reconcile`, keeping the doctor line's wording stable for
   `ccw-watch` (28.22's fence) or changing both together.
+  CORRECTED 2026-09-29 (wrap-up sweep of the session that opened this): `ccw-watch`
+  stopped parsing doctor on 2026-09-07 and ticket 44b already reworded doctor's
+  `Uncaptured` tail; the only surviving consumer is `ccw-freshness-check.py`, which
+  reads the exit code and the `Uncaptured: N session` prefix. The constraint here
+  is therefore "keep that prefix and the exit-code semantics", not the whole line.
 
 - **28.28  Three one-line sessions archived under their own uuid as the
   project label (opened 2026-09-28, low value).** `<archive>/<uuid>/undated_<uuid>/`

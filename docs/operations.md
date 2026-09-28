@@ -95,6 +95,11 @@ specifically (not something `cc-warehouse` the package controls):
 **Global, every project** - `~/.claude/settings.json`'s own `SessionStart` array includes:
 ```
 test -x "$HOME/.local/bin/ccw-watch" && "$HOME/.local/bin/ccw-watch" || true
+
+Also at SessionStart, since 2026-09-28 and outside this repo: this repository is on the
+machine's `ci-watch` watchlist (the operator ran `ci-watch --add .` by hand), so the start
+card shows the last CI result for `cc-warehouse master`. `ci-watch` lives in the dotfiles
+repo; nothing here configures it.
 ```
 `ccw-watch` is NOT part of this repo. It is a bash script in a different repo entirely,
 `fifty-shades-of-dotfiles`, tracked under that repo's own `home` subtree (which mirrors a
