@@ -179,3 +179,30 @@ Nothing in 44c changes the hook's timeout or the sweep's algorithm.
   clean, no exception.
 - A label directory whose name starts with `_` that is NOT the marker must still be
   skipped exactly as before.
+
+## Rulings taken during the build, 2026-09-28 (44b widened by measurement)
+
+The audit's "two walks" undercounted. Measured on the real archive with a
+call-attributing instrument (`count_doctor_walks.py`, session scratchpad): one
+`ccw doctor` run makes 292,286 archive filesystem calls in 33.7 s local:
+`_dispatch_gap` and `_overdue` 64k stats, the desync recency sample 32k via
+`walk_folders`, `status.uncaptured_gap` 67k (sessions AND their `subagents/`
+dirs), and `status.sidecar_gap` plus `status.paste_gap` 62k file OPENS (one
+`sidecars.json` or `manifest.json` per folder) on top of 64k stats. So 44b has
+to cover all six walkers, and two of them sit on earlier rulings:
+
+- **Sub-agents are not in the catalog.** Principal ruled: doctor's `Uncaptured:`
+  line reports the SESSION figure from the catalog (the literal `Uncaptured: N
+  session` is what `ccw-freshness-check.py` parses and stays) and points to
+  `ccw status` for sub-agents, which keeps walking. A new slice **44d** (not
+  started) adds a sub-agent table to the catalog, written at capture and sweep
+  and rebuilt by `ccw reindex`, so the exact figure returns to doctor.
+- **The two corpus-wide coverage lines (`sidecars`, `prompts`, ticket 38 ruling
+  (e)) keep their corpus-wide meaning by moving the WORK to the daily sweep.**
+  The sweep already walks every folder; it writes the two figures to
+  `<root>/logs/coverage.json` (tmp + `os.replace`) and doctor prints them with
+  the sweep's timestamp ("as of <when>"). No file under the archive is opened
+  by doctor for these lines. `ccw status` computes them live as before.
+- Also corrected: `CLAUDE.md` says `ccw-watch` parses doctor's text; it stopped
+  on 2026-09-07 (its own header says so). The freshness hook is the only
+  consumer, and it reads the exit code plus the `Uncaptured: N session` figure.
