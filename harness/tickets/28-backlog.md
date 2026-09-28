@@ -566,6 +566,72 @@ here into their own ticket when they are taken up.
 - **28.15  SSH key drops out of the agent repeatedly** (twice on 2026-08-03).
   Worth making survive a lock.
 
+- **28.25  Workflow journals captured by the hook or sweep are filed as fake
+  projects (opened 2026-09-28).** REPRODUCED, not inferred: a sandboxed `ccw
+  sweep` (config via `XDG_CONFIG_HOME`, real warehouse fingerprinted before and
+  after and unchanged) over one real session plus one real
+  `<uuid>/subagents/workflows/wf_<id>/journal.jsonl` filed the session correctly
+  and the journal at `<archive>/wf_<id>/undated_session/session.jsonl`, with a
+  `project.json` and a catalog row, as if it were a session. Mechanism (code
+  read): `sweep._walk_source` yields it (its name does not start with `agent-`),
+  `archive.is_subagent` says no (a journal has `started`/`result` entries, no
+  conversational ones), so it reaches `capture.capture_transcript`, which never
+  asks `archive.is_session`; the label comes from the parent dir name. Only
+  `ccw import` routes non-sessions to `archive.write_not_a_session`.
+  **Live archive today: 3 such labels** (`wf_d5953815-844`, `wf_49ec7684-38a`,
+  `wf_66773c3e-9bb`, written by the daily sweep 2026-08-22/29/30). All 10
+  journals in `~/.claude/projects` are in the archive by content hash (7 under
+  `_not-sessions/journals/`, these 3 misfiled). **This was seen once before and
+  dropped**: DESIGN 15's 2026-08-23 entry names `wf_d5953815-844` as "worth a
+  future session's look"; nothing filed it, and it tripled. Fix shape to scope:
+  an `is_session` gate on the capture path routing to `write_not_a_session`
+  (one home for all non-sessions, R9), then relocating the 3 existing ones is a
+  DESTRUCTIVE step on archive data and needs the principal's word at the time.
+
+- **28.26  `--config PATH` / `--no-config` are ignored by most verbs,
+  including writers (opened 2026-09-28; first seen 2026-08-04 and never
+  filed).** DESIGN 7 makes both "global config-source switches on every verb".
+  Ticket 25's "Also found, not fixed (ticket 28 material)" recorded four verbs
+  ignoring them (`hook`, `status`, `doctor`, `verify`); it never reached this
+  register. Measured 2026-09-28 by AST over `cli.py`: 15 argument-less
+  `load_config()` calls, in `_bare`, `_run_hook`, `_run_sweep`, `_run_notify`,
+  `_run_companions`, `_out_under_warehouse`, `_run_project`, `_run_migrate`,
+  `_run_status`, `_run_doctor`, `_run_verify`, `_run_reconcile`,
+  `_run_relocate`, `_run_share` (x2), plus one in `__main__.py`. **It bit on
+  2026-09-28**: `ccw sweep --config <sandbox> --source <sandbox>` accepted the
+  flag, ran against the LIVE warehouse, and wrote one
+  `_not-sessions/stranded-sidecars/<fake-uuid>/` folder (a duplicate journal
+  copy, since moved to Trash on the principal's word), one `capture.jsonl` line
+  and a `catalog.sqlite` touch. The same class as the `ccw sweep -h` lesson in
+  CLAUDE.md: fix at the dispatcher (every verb gets its config from the parsed
+  args, or a verb that cannot honour the flag REFUSES it), with an oracle test
+  that runs every verb with `--config <tmp>` and asserts the live root is
+  untouched. Until then, isolate with `XDG_CONFIG_HOME` + `CCW_ROOT` and prove
+  it with `ccw doctor`'s `config` line first.
+
+- **28.27  `ccw doctor`'s "unrecoverable" count reads as data loss but is
+  sessions that never had a transcript (opened 2026-09-28).** Measured: all 51
+  `unrecoverable` records trace to one original error, `unreadable transcript
+  ... [Errno 2] No such file or directory`, i.e. the SessionEnd hook fired for
+  a session Claude Code never wrote a file for. `history.jsonl` holds typed
+  input for 8 of the 51 and every one is `/quit`, `/exit` or `/clear`. 50 of
+  51 are from September, 34 of them from one project. Nothing is lost, but the figure only ever climbs and the
+  word says otherwise. Scope: distinguish "never existed" from "existed and
+  vanished" in `reconcile`, keeping the doctor line's wording stable for
+  `ccw-watch` (28.22's fence) or changing both together.
+
+- **28.28  Three one-line sessions archived under their own uuid as the
+  project label (opened 2026-09-28, low value).** `<archive>/<uuid>/undated_<uuid>/`
+  for 3 sessions whose only transcript line is `permission-mode`, written
+  2026-09-08 16:38; the source files are gone from `~/.claude/projects`.
+  Harmless (content is one line), recorded so a future census does not
+  rediscover them as a bug. Not investigated: which path chose the uuid as the
+  label.
+
+  **THE CLASS BEHIND 28.25 AND 28.26:** both were found, written into a
+  ticket's side notes or a DESIGN entry, and never entered here. A finding that
+  says "ticket 28 material" is not filed until it has a 28.N number.
+
 ## If the repository goes public
 
 **RESOLVED 2026-08-10. The repository IS public.** 28.16, 28.17 and 28.18 are
