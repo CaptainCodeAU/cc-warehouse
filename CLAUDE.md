@@ -150,9 +150,18 @@ edits to the principal instead.
   and docs use generic placeholders.
 - No em-dashes in any authored text (docs, comments, commit messages). ASCII
   punctuation in code tokens.
-- Never start a Bash command with `cd`; prefer `git -C` / absolute paths. Bash-tool
-  `rm`/`cp`/`mv` bypass the shell safety wrappers; deletions are permanent, so get
-  explicit confirmation first.
+- Never start a Bash command with `cd`; prefer `git -C` / absolute paths.
+  **CORRECTED 2026-09-28 (measured, and confirmed by the dotfiles session that owns
+  the wrappers):** this line used to say Bash-tool `rm`/`cp`/`mv` bypass the shell
+  safety wrappers and deletions are permanent. They do NOT: the shell snapshot carries
+  the wrappers into Bash-tool calls (dotfiles measurements 2026-06-08 and 2026-09-24),
+  a `~/.local/bin/rm` PATH shim (since 2026-09-04) sends even script and `xargs`
+  deletes to the Trash, and a Bash-tool `rm -r` on 2026-09-28 printed "Trashed ...
+  recover: Finder -> Put Back". Two things still hold: get explicit confirmation before
+  deleting anything, and `test -e` after every `rm`, because inside the sandbox the
+  Trash move can fail (afpAccessDenied) and leave the file in place. What the guard
+  cannot see is a SCRIPT that rewrites a file's contents; never use one to reach an
+  effect the deletion hook has just refused.
 
 ## Layout (grows during the build)
 
