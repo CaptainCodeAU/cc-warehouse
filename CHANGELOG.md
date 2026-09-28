@@ -43,6 +43,23 @@ reported alert are among the 38. Records already written stay in `capture.jsonl`
 (append-only), so `ccw doctor`'s reconcile count does not drop by itself; `ccw
 reconcile` stops listing the empty ones.
 
+**The hook's render now waits for the companions copy (2026-09-29).** The hook
+spawned the render child and the companions child at the same moment, and the
+render child's manifest lists the session folder's companion dirs as they
+stand when it runs. Live on 2026-09-28, session 17756a71's manifest recorded a
+`file_history` entry under the copier's own tmp name
+(`.05ffbee409e8ffe2@v2.uthseyoc.tmp`) and `ccw doctor` FAILed until the next
+build. Principal ruling, "copy, then render": with an archive configured the
+hook now spawns only the companions child, and that child spawns the render
+child on every way out (done, failed, no catalog row, unloadable config). The
+hook spawns the render itself when the companions child cannot be started, and
+at once when no archive is configured. The render child is unchanged, including
+its error-notify path. Accepted cost: the render, and the open-folder reveal it
+triggers, now lands after the copy, and a companions child killed outright
+leaves its session to the next `ccw repair` or `ccw build`. The
+`custom-title.json` fix below stays in place. Pinned by
+`tests/test_render_after_companions.py`.
+
 **`ccw doctor` no longer FAILs on a sweep's own not-yet-rendered writes
 (2026-09-29).** A hand-run `ccw sweep` against the network share held its build
 lock for over an hour between copying a larger payload and `prompts.jsonl` into

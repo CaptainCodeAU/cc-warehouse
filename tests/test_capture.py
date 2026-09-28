@@ -268,10 +268,13 @@ def test_hook_spawns_detached_render_child(
     result = run_cli(["hook"], stdin=hook_payload(transcript))
     assert result.code == 0
 
+    # The verb as its own argv token, not a substring of any part: the
+    # interpreter path is argv[0] too, and a checkout under a directory named
+    # like `fix-render-after-companions` made the companions child match.
     render_calls = [
         (args, kwargs)
         for args, kwargs in calls
-        if any("render" in str(part) for part in args)
+        if "render" in [str(part) for part in cast(tuple[object, ...], args[0])]
     ]
     assert len(render_calls) == 1
     args, kwargs = render_calls[0]
