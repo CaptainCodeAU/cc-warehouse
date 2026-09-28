@@ -179,3 +179,94 @@ Nothing in 44c changes the hook's timeout or the sweep's algorithm.
   clean, no exception.
 - A label directory whose name starts with `_` that is NOT the marker must still be
   skipped exactly as before.
+
+## 44a DONE 2026-09-28 (branch `t44a-marker`, not merged)
+
+**What shipped.** `archive.ROOT_MARKER` (`_archive-root.json`, holding
+`cc_warehouse`, `archive_timezone`, `created`), one read-only diagnosis
+`archive.root_problem(root, zone) -> str | None` that never raises and never
+creates anything, `archive.require_root` raising the one named exception
+`archive.ArchiveRootRefused`, `archive.init_root`, and `archive.root_refusal`
+(the batch-report form sweep, build and import return). Entry checks, each
+before the first write: `capture._archive_source`, `capture.archive_companions`
+(the detached companions child's whole body), `sweep.sweep`, `build.build`,
+`ccw render --session` (the hook's detached render child), `ccw archive --to`,
+`import_tree.import_tree`, `ccw repair`. `ccw archive --to X --init` writes the
+marker. `ccw doctor` gains a BLOCKING `archive root` line (new
+`doctor._archive_root_check`, one appended `Check`; `_dispatch_gap`, `_overdue`,
+`_recent_archive_folders` and `_desync` untouched). The marker name joined
+`build.RESERVED_LABELS`, and `archive.read_projects` now skips reserved names
+the way `walk_folders` already did (it only skipped non-directories before).
+`docs/agent-setup-contract.md` and `docs/reference-config.toml` say to run
+`--init` once.
+
+**Tests.** Before: 1629 passed. After: 1675 passed, 1 xfailed. New file
+`tests/test_archive_root_marker.py`, 47 arms: 40 failed on master's code
+(committed red first, `43bf074`), 6 pass on both (positive controls: hook,
+sweep and `ccw archive` writing into a MARKED root; regression pins:
+`--verify` on an unmarked tree, a marker file beside labels, `_`-prefixed labels
+that are not the marker), 1 strict xfail (below). The 40 failed on: missing
+`archive.require_root`/`ROOT_MARKER`/`ArchiveRootRefused` (unit arms); `--init`
+being an unknown flag; every writer writing into or creating the unmarked
+root (hook, sweep, build, render, import, capture with and without the vault,
+the companions child); repair exiting 0; doctor having no `archive root` line;
+and `read_projects` yielding a DIRECTORY named `_archive-root.json` as a label.
+
+**The six ticket edge cases,** each a test: malformed marker (bad JSON, not an
+object, wrong kind, empty file) refuses and names the file; a marker with no
+zone refuses; an absent path makes doctor FAIL without raising, every writer
+refuse, and nothing created (hook arm and `require_root` arm); catalog empty
+with a marked empty archive runs doctor and sweep clean; `_not-sessions`
+still skipped and `_unlabeled` still walked. The fifth, a catalog row whose
+folder is missing, is `xfail(strict=True)` because it needs 44b's catalog-driven
+recency sample; strict means it turns red the moment 44b makes it pass, so the
+mark cannot outlive the fix. Brief extras also covered: `created` is never
+compared; `--init` on a same-zone marker exits 0 and rewrites nothing (bytes,
+inode and mtime_ns unchanged); `_archive_source` with the vault on stores the
+session and logs one `error` line naming the marker, with it off re-raises.
+
+**Existing tests touched (251 went red, all fixed).** Every per-file config
+helper that sets `archive_root` now calls the new `conftest.mark_archive`,
+which uses the product's own `init_root`; tests that build with `ccw archive
+--to` run `--init` first. Four dry-run tests asserted `not archive_root.exists()`;
+the root now exists up front, so they assert the tree snapshot is unchanged
+instead (same property). Six tests made the archive unwritable by nesting it
+under a FILE, which is now a marker refusal before any write; they use a marked
+root with mode 0o555 instead, so they still exercise a write failure after the
+check. That arm assumes tests do not run as root.
+
+**Chosen on my own.**
+- `--init` marks and STOPS; it never builds. The same-zone no-op requirement
+  ruled out a build in the same run, and marking an 18 GB tree should never
+  turn into a rebuild by accident.
+- `--init` creates X but never X's parents (a missing parent is what an
+  unmounted share looks like). It refuses any existing marker it cannot prove
+  (other zone, no zone, malformed) rather than replacing it, and `--init
+  --verify` together is a usage error (exit 2).
+- `ccw archive --to X` without a marker is refused even when X is empty or
+  absent, not only when it holds session folders: the ticket's first rule
+  ("every writer refuses when the marker is absent") is the stricter reading.
+- `build.build` refuses the whole build, projections included, rather than
+  failing each head; `ccw render --session` refuses before writing the
+  projection too.
+- The refusal log line on the vault-on capture path is its own function
+  (`capture._log_root_refusal`), because `_log_stage_failure`'s wording says the
+  archive write already succeeded.
+- `archive_companions` returns silently on an unproven root; the parent's
+  refusal was already logged or raised for the same session.
+- The doctor check is named `archive root` as the ticket words it; at 12
+  characters it pushes its detail one column right of the others. No existing
+  line changed.
+
+**Left undone.**
+- `ccw sweep --dry-run` (`sweep.plan`) still predicts a normal run against an
+  unmarked root; the real run then refuses. Read-only verbs were ruled
+  unchanged, so it was left alone.
+- `ruff format --check` fails repo-wide on master (117 files) and still does;
+  this branch adds no new formatting diffs (per-file diff sizes compared
+  against master, the only change being fewer in `build.py`).
+- DEPLOY ORDER MATTERS: the moment the frozen reinstall (phase 3) lands, the
+  live archive has no marker, so every writer refuses it, the hook re-raises
+  (the live config has `keep_objects = false`) and doctor goes FAIL. Phase 4's
+  `ccw archive --to ~/cc-warehouse-archive --init` must run immediately after
+  phase 3, before the next session ends.
