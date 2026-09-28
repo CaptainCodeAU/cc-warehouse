@@ -47,4 +47,22 @@ saving is measured against a real baseline rather than an estimate.
 
 ## Measurements appended as they land
 
-- 2026-09-29 00:22 catch-up `ccw sweep` against the share: (pending)
+- 2026-09-29 00:22 catch-up `ccw sweep` against the share: STILL RUNNING at
+  02:18 (1h56m elapsed); the end time and the run summary line are appended when
+  it exits. Phase timeline so far, all local time (AEST), each from the named
+  instrument:
+  - 00:22:41 start (`ps -o lstart` on pid 67450, hand-run, no `--quiet`).
+  - 00:23 first payloads replaced in archive folders (JSONL mtimes on the share).
+  - 01:53:35 `prompts.jsonl` split into folders (mtimes), 01:56 `pastes/` (mtime).
+    `_process_history` runs after the per-item loop (`sweep.py`, code order), so
+    the item loop plus per-item copies took about 1h31m; that split is inferred
+    from code order, not timed directly.
+  - 01:56 `locks/build` taken (lock file mtime): the post-sweep `build.build()`
+    started, and at 02:18 it is still running.
+  - So the pre-build half alone (~1h33m) is most of the 2 to 2.5 h estimate above,
+    before the build half this ticket names as the main cost has finished.
+  - Side effect, fixed: while the build lock was held, `ccw doctor` FAILed its
+    desync check on 5 folders the sweep had written but not yet re-rendered, and
+    the SessionStart check reported capture broken 5 times in a row. Fixed in
+    `a60d50d` (pending, not FAIL, under a live lock when the file is newer than
+    its manifest); live once the frozen install is refreshed.
