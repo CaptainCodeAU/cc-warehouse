@@ -81,6 +81,7 @@ def populated(env: dict[str, str], tmp_path: Path) -> Path:
     capture(env, UUID_A, session(UUID_A, CWD_A), CWD_A)
     capture(env, UUID_B, session(UUID_B, CWD_B, prompt="Second thing"), CWD_B)
     target = tmp_path / "archive"
+    assert run_ccw(["archive", "--to", str(target), "--init"], env).code == 0
     result = run_ccw(["archive", "--to", str(target)], env)
     assert result.code == 0, result.err
     return target

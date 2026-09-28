@@ -21,6 +21,7 @@ from typing import cast
 from conftest import (
     basic_session,
     hook_payload,
+    mark_archive,
     run_ccw,
     settle_companions,
     tree_snapshot,
@@ -47,6 +48,7 @@ def configure(env: dict[str, str], archive_root: Path, *, file_history: bool | N
         lines.append(f"archive_file_history = {'true' if file_history else 'false'}")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def claude_home(env: dict[str, str]) -> Path:
@@ -266,10 +268,13 @@ def test_a_dry_run_gathers_nothing(ccw_env: dict[str, str], tmp_path: Path) -> N
     warehouse it is describing."""
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
+    # Ticket 44a: configure() marks the root, so it exists up front; the
+    # property is unchanged, the rehearsal writes nothing into it.
+    before = tree_snapshot(archive_root)
     plant(ccw_env)
     result = run_ccw(["sweep", "--dry-run"], ccw_env)
     assert result.code == 0, result.err
-    assert not archive_root.exists()
+    assert tree_snapshot(archive_root) == before
 
 
 # ---------------------------------------------------------------------------

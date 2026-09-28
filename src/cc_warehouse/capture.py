@@ -113,6 +113,29 @@ def _log_stage_failure(config: Config, digest: str, stage: str, exc: Exception) 
         return
 
 
+def _log_root_refusal(config: Config, digest: str, exc: Exception) -> None:
+    """The only trace of an `archive_root` refusal on the vault-on path (ticket 44a).
+
+    With `keep_objects` true the vault already holds the session, so the refusal
+    is not re-raised; without this line the archive would quietly stop growing.
+    A separate line from `_log_stage_failure` because that one says the archive
+    write SUCCEEDED, and here it never ran. Best-effort, like every sink."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "error",
+                "session": digest,
+                "project": None,
+                "message": f"archive write refused, the vault holds the session: {exc}",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
 def _acquire_capture_lock(root: Path, name: str, deadline: float) -> bool:
     """Contend for the per-hash lock until won or the deadline passes.
 
@@ -291,16 +314,31 @@ def _archive_source(
     sources being read-only (F9), so a loud failure is one `ccw sweep` from
     recovery. A silent one is equally recoverable and nobody ever goes looking,
     which is the difference that matters.
+
+    THE ROOT IS CHECKED FIRST (ticket 44a). An unmarked or wrong-zone
+    `archive_root` is refused before anything is written, so an empty mount
+    directory cannot become a second archive on the boot disk. The refusal
+    follows the same flip: with no vault it raises like any other archive
+    failure; with the vault it is LOGGED to capture.jsonl, because a refusal
+    swallowed here would leave the operator with a warehouse whose archive
+    quietly stopped growing and no line anywhere saying why.
     """
     if config.archive_root is None:
+        return
+    from cc_warehouse import archive
+
+    try:
+        archive.require_root(config.archive_root, config.archive_timezone)
+    except archive.ArchiveRootRefused as exc:
+        if not config.keep_objects:
+            raise
+        _log_root_refusal(config, store.sha256_hex(data), exc)
         return
     try:
         row = conn.execute(
             "SELECT label FROM project WHERE id = ?", (project_id,)
         ).fetchone()
         label = str(row[0]) if row else "_unlabeled"
-        from cc_warehouse import archive
-
         archive.write_source(config.archive_root, label, data, config.archive_timezone)
     except Exception:
         if not config.keep_objects:
@@ -377,7 +415,19 @@ def archive_companions(
     Every step here is wrapped never-fatal (DESIGN 12): whichever caller invokes
     this, the session is already stored, and no copier or signal may turn that
     into a reported failure.
+
+    AN UNPROVEN ROOT WRITES NOTHING (ticket 44a). This is the detached
+    companions child's whole body, so it is a writer entry of its own. Without
+    the check, a refused parent would leave its sub-agents to land in
+    `_orphaned-subagents/` and bring the unmarked tree into being on their own.
+    Silent here because `_archive_source` already logged or raised the same
+    refusal for this session.
     """
+    if config.archive_root is not None:
+        from cc_warehouse import archive
+
+        if archive.root_problem(config.archive_root, config.archive_timezone) is not None:
+            return
     _archive_subagents_of(config, conn, project_id, transcript_path, session_uuid)
     refused: tuple[str, ...] = ()
     try:

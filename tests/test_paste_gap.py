@@ -20,7 +20,7 @@ from pathlib import Path
 from cc_warehouse import doctor as doctor_module
 from cc_warehouse import status
 from cc_warehouse.config import load_config
-from conftest import basic_session, run_ccw, warehouse_root, write_transcript
+from conftest import basic_session, mark_archive, run_ccw, warehouse_root, write_transcript
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -38,6 +38,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def claude_home(env: dict[str, str]) -> Path:
@@ -78,7 +79,7 @@ def test_no_archive_configured_reports_zero_without_crashing(
 def test_an_empty_archive_reports_zero(ccw_env: dict[str, str], tmp_path: Path) -> None:
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
-    archive_root.mkdir()
+    archive_root.mkdir(exist_ok=True)  # configure() already made it (ticket 44a marker)
     config = load(ccw_env)
     gap = status.paste_gap(config)  # type: ignore[arg-type]
     assert gap.sessions_total == 0

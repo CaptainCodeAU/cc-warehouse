@@ -24,7 +24,16 @@ import pytest
 
 from cc_warehouse import archive, doctor
 from cc_warehouse.config import Config
-from conftest import basic_session, entry, jsonl, run_ccw, run_cli, warehouse_root, write_transcript
+from conftest import (
+    basic_session,
+    entry,
+    jsonl,
+    mark_archive,
+    run_ccw,
+    run_cli,
+    warehouse_root,
+    write_transcript,
+)
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -41,6 +50,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def install_hook(env: dict[str, str], *, command: str = "ccw hook") -> None:

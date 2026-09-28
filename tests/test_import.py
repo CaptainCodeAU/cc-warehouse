@@ -32,6 +32,7 @@ from cc_warehouse import archive, build
 from conftest import (
     basic_session,
     jsonl,
+    mark_archive,
     record_opens,
     run_ccw,
     run_cli,
@@ -110,6 +111,8 @@ def configure(env: dict[str, str], archive_root: Path | None = None) -> None:
         lines.append(f'archive_root = "{archive_root}"')
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(Path(env["HOME"]) / ".config")
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 # ---------------------------------------------------------------------------

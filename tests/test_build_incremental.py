@@ -37,6 +37,7 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    mark_archive,
     record_opens,
     run_ccw,
     run_cli,
@@ -61,6 +62,8 @@ def configure(env: dict[str, str], *, archive_root: Path | None, keep: bool | No
         lines.append(f"keep_projections = {'true' if keep else 'false'}")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 def capture(

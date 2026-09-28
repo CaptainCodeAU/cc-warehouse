@@ -28,6 +28,20 @@ reinstall time: `renderer_version` is `__version__`, so a bump re-renders every
 archive folder (31k, and on the share that is hours), and nothing below changes a
 rendered byte. Same reasoning as the ticket 42 entry that follows.
 
+- **44a: an archive root must announce itself.** `archive_root` now carries a marker,
+  `_archive-root.json`, holding the pinned `archive_timezone`, and EVERY writer (the
+  hook, the companions child, `sweep`, `build`, `render --session`, `archive --to`,
+  `import`, `repair`) refuses when it is absent, malformed or names another zone
+  (`archive.require_root`, one named exception, one batch-report form). Before this,
+  nothing checked that `archive_root` was the tree it was configured as: a leftover
+  empty mount directory would have let the hook build a second archive on the boot
+  disk with no signal. `ccw archive --to DIR --init` is the one way a marker is
+  created; it marks and stops, never builds, and refuses a marker it cannot prove.
+  `ccw doctor` gains a BLOCKING `archive root` line that names the exact `--init`
+  command. **UPGRADE STEP, once per machine:** run `ccw archive --to <archive_root>
+  --init` on the existing tree, or every capture refuses until you do (the next
+  sweep recovers them; nothing is lost). Read-only verbs are unchanged, and
+  `ccw sweep --dry-run` still predicts a normal run against an unmarked root (open).
 - **44b: `ccw doctor` no longer walks the archive.** Measured on the real tree, one
   doctor run made 292,286 filesystem calls under `archive_root` (six full walks of
   31k folders, two of them opening a file per folder), 33.7 s on local disk and an

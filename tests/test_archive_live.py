@@ -26,6 +26,7 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    mark_archive,
     run_ccw,
     tree_snapshot,
     warehouse_root,
@@ -71,6 +72,8 @@ def configure(env: dict[str, str], tmp_path: Path, archive_root: Path | None) ->
         lines.append(f'archive_root = "{archive_root}"')
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(Path(env["HOME"]) / ".config")
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 def capture(env: dict[str, str], uuid: str, data: bytes) -> None:
@@ -246,9 +249,12 @@ def test_an_unwritable_archive_root_does_not_lose_the_capture(
     """DESIGN 12 / R5: the detached child's failures must never turn a STORED
     capture into a lost one. The session is already in the store by the time the
     archive write is attempted, and it must stay there."""
-    blocker = tmp_path / "not-a-directory"
-    blocker.write_text("this is a file, so mkdir under it must fail", encoding="utf-8")
-    configure(ccw_env, tmp_path, blocker / "archive")
+    # Ticket 44a: a root under a FILE is now refused by the marker check before
+    # any write, so the write failure this test is about is made the other way:
+    # a proven (marked) root that cannot be written to.
+    unwritable = tmp_path / "archive"
+    configure(ccw_env, tmp_path, unwritable)
+    unwritable.chmod(0o555)
 
     transcript = write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
     result = run_ccw(
@@ -266,9 +272,12 @@ def test_the_ordinary_projection_survives_an_archive_failure(
 ) -> None:
     """The archive is the NEW tree and the projections are the LIVE one. An
     archive problem must not cost the tree the operator actually uses today."""
-    blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory", encoding="utf-8")
-    configure(ccw_env, tmp_path, blocker / "archive")
+    # Ticket 44a: a root under a FILE is now refused by the marker check before
+    # any write, so the write failure this test is about is made the other way:
+    # a proven (marked) root that cannot be written to.
+    unwritable = tmp_path / "archive"
+    configure(ccw_env, tmp_path, unwritable)
+    unwritable.chmod(0o555)
     transcript = write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
     run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, cwd=CWD, session_id=UUID_A))
     run_ccw(["render", "--session", f"s:{_short(ccw_env, UUID_A)}"], ccw_env)

@@ -857,6 +857,28 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     return len(overdue), (oldest.isoformat() if oldest else None)
 
 
+def _archive_root_check(config: Config) -> tuple[bool, str]:
+    """Is `archive_root` the tree it was configured as (ticket 44a)?
+
+    BLOCKING, unlike the informational lines around it, because an unproven
+    root is not a figure to watch: every writer refuses it, so capture into the
+    archive has stopped until the operator marks the tree or remounts the share.
+    Sharing `archive.root_problem` with the writers (R9) means this line and the
+    refusal a writer prints are the same sentence.
+
+    Never raises and never creates anything: `root_problem` turns every OSError
+    into a sentence and only reads, so a nonexistent path is a FAIL line, not a
+    traceback and not a new directory.
+    """
+    if config.archive_root is None:
+        return True, "no archive configured"
+    problem = archive.root_problem(config.archive_root, config.archive_timezone)
+    if problem is not None:
+        return False, problem
+    marker = config.archive_root / archive.ROOT_MARKER
+    return True, f"marker present at {marker}, zone {config.archive_timezone}"
+
+
 def diagnose(config: Config, home: Path | None = None, source: Path | None = None) -> Report:
     """Every check, in the order an operator would ask them."""
     where = home if home is not None else Path.home()
@@ -1017,6 +1039,10 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     )
     checks.append(Check("reconcile", True, reconcile_detail, blocking=False))
+
+    # Ticket 44a. BLOCKING: see `_archive_root_check`.
+    root_ok, root_detail = _archive_root_check(config)
+    checks.append(Check("archive root", root_ok, root_detail))
 
     module = Path(cc_warehouse.__file__).parent
     mode = install_mode(module)

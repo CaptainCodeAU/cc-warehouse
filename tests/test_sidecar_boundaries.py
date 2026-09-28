@@ -25,6 +25,7 @@ from typing import cast
 from conftest import (
     basic_session,
     hook_payload,
+    mark_archive,
     run_ccw,
     settle_companions,
     warehouse_root,
@@ -53,6 +54,7 @@ def configure(
         lines.append(f'roots = ["{relocate_root}"]')
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def plant_and_capture(env: dict[str, str], archive_root: Path) -> Path:

@@ -192,7 +192,13 @@ def import_tree(
     a rescued non-session is written to a content-addressed name. Re-running over
     the same tree therefore writes nothing new, which is what makes it safe to
     run again after a partial run.
+
+    An unproven `archive_root` (ticket 44a) refuses the import before the lock
+    or any capture, the same entry check `ccw sweep` makes.
     """
+    refused = archive.root_refusal(config)
+    if refused is not None:
+        return refused
     if not store.acquire_lock(config.root, _IMPORT_LOCK):
         return BatchReport(
             (ItemOutcome(_LOCK_HELD_ITEM, LOCK_HELD_ACTION, "import lock held by a live holder"),)

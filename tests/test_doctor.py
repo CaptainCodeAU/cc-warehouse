@@ -37,6 +37,7 @@ from conftest import (
     basic_session,
     entry,
     jsonl,
+    mark_archive,
     run_ccw,
     tree_snapshot,
     warehouse_root,
@@ -57,6 +58,8 @@ def configure(env: dict[str, str], archive_root: Path | None) -> None:
         lines.append(f'archive_root = "{archive_root}"')
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 def install_hook(env: dict[str, str], *, command: str = "ccw hook") -> None:

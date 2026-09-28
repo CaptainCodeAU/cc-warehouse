@@ -29,6 +29,7 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    mark_archive,
     run_ccw,
     session_count,
     warehouse_root,
@@ -76,6 +77,8 @@ def configure(
         lines.append(f"keep_objects = {'true' if keep_objects else 'false'}")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 def hook(env: dict[str, str], uuid: str, data: bytes) -> int:
@@ -142,9 +145,12 @@ def test_with_a_store_an_archive_failure_is_survivable(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
     """Today's behaviour, pinned so the change below is visible as a CHANGE."""
-    blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory", encoding="utf-8")
-    configure(ccw_env, archive_root=blocker / "archive", keep_objects=True)
+    # Ticket 44a: a root under a FILE is now refused by the marker check before
+    # any write, so the write failure this test is about is made the other way:
+    # a proven (marked) root that cannot be written to.
+    unwritable = tmp_path / "archive"
+    configure(ccw_env, archive_root=unwritable, keep_objects=True)
+    unwritable.chmod(0o555)
     assert hook(ccw_env, UUID_A, session(UUID_A)) == 0
     assert stored_objects(ccw_env) == 1, "the store took the session"
 
@@ -168,9 +174,12 @@ def test_without_a_store_an_archive_failure_is_REPORTED_not_swallowed(
     """
     import json
 
-    blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory", encoding="utf-8")
-    configure(ccw_env, archive_root=blocker / "archive", keep_objects=False)
+    # Ticket 44a: a root under a FILE is now refused by the marker check before
+    # any write, so the write failure this test is about is made the other way:
+    # a proven (marked) root that cannot be written to.
+    unwritable = tmp_path / "archive"
+    configure(ccw_env, archive_root=unwritable, keep_objects=False)
+    unwritable.chmod(0o555)
     assert hook(ccw_env, UUID_A, session(UUID_A)) == 0, "SPEC 2.6: never raise into the harness"
 
     log = warehouse_root(ccw_env) / "logs" / "capture.jsonl"
@@ -188,9 +197,12 @@ def test_the_source_transcript_is_untouched_by_the_failure(
     would be just as recoverable and nobody would ever go looking."""
     from conftest import claude_projects, tree_snapshot
 
-    blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory", encoding="utf-8")
-    configure(ccw_env, archive_root=blocker / "archive", keep_objects=False)
+    # Ticket 44a: a root under a FILE is now refused by the marker check before
+    # any write, so the write failure this test is about is made the other way:
+    # a proven (marked) root that cannot be written to.
+    unwritable = tmp_path / "archive"
+    configure(ccw_env, archive_root=unwritable, keep_objects=False)
+    unwritable.chmod(0o555)
     write_transcript(ccw_env, session(UUID_A), session_id=UUID_A, name=f"{UUID_A}.jsonl")
     before = tree_snapshot(claude_projects(ccw_env))
     hook(ccw_env, UUID_A, session(UUID_A))

@@ -46,6 +46,7 @@ from conftest import (
     basic_session,
     entry,
     jsonl,
+    mark_archive,
     run_ccw,
     tree_snapshot,
     warehouse_root,
@@ -69,6 +70,9 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
         encoding="utf-8",
     )
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    # Ticket 44a: every writer refuses an unmarked root, so a configured
+    # archive is marked exactly as `ccw archive --to DIR --init` would.
+    mark_archive(archive_root, ZONE)
 
 
 def install_hook(env: dict[str, str]) -> None:

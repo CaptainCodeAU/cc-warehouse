@@ -35,6 +35,9 @@
 # The timezone archive folder names are rendered in. Pinned rather than read from
 # the machine, so the same session gets the same folder name on any machine.
 # Default: "UTC" - the one zone that's correct everywhere and never surprises.
+# The archive root's marker records this zone; changing it later makes every
+# writer refuse the existing tree rather than rename new sessions into a second
+# zone beside the old ones (ticket 44a).
 # archive_timezone = "UTC"
 
 # Where the archive-first tree (a second, human-readable copy of every session,
@@ -42,6 +45,10 @@
 # it did before this feature existed, i.e. vault-only (see keep_objects below).
 # Setting this is the single biggest decision in this file - it determines
 # whether this machine gets a readable, browsable session history or not.
+# Since ticket 44a the directory must carry a marker, written once with
+#   ccw archive --to /home/you/cc-warehouse-archive --init
+# Every writer refuses an archive_root without one, and `ccw doctor` fails its
+# `archive root` line, so an unmounted share can never fork the archive.
 # archive_root = "/home/you/cc-warehouse-archive"
 
 # Whether the OLD projections/ tree (inside root, not the archive) is still

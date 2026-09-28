@@ -25,6 +25,7 @@ from cc_warehouse import capture, catalog, doctor, notify
 from cc_warehouse.config import Config
 from conftest import (
     basic_session,
+    mark_archive,
     run_ccw,
     run_cli,
     subagent_meta,
@@ -33,6 +34,7 @@ from conftest import (
     write_transcript,
 )
 
+MARKER_NAME = "_archive-root.json"
 ZONE = "Australia/Melbourne"
 PARENT = "d3111111-2222-3333-4444-555555555551"
 AGENT = "a94d30c1d877f964d"
@@ -66,6 +68,7 @@ def _archive_files(archive_root: Path) -> list[str]:
 
 def test_defer_companions_true_leaves_the_subagent_uncopied(tmp_path: Path) -> None:
     transcript = _plant_source(tmp_path / "source")
+    mark_archive(tmp_path / "archive", ZONE)
     config = Config(root=tmp_path / "wh", archive_root=tmp_path / "archive", archive_timezone=ZONE)
     result = capture.capture_transcript(
         config, transcript, session_id=None, cwd="/home/alice/x", defer_companions=True
@@ -83,6 +86,7 @@ def test_defer_companions_false_is_the_default_and_archives_inline(tmp_path: Pat
     """Today's behaviour, byte for byte: omitting the flag must still write the
     sub-agent synchronously, exactly as it did before this ticket."""
     transcript = _plant_source(tmp_path / "source")
+    mark_archive(tmp_path / "archive", ZONE)
     config = Config(root=tmp_path / "wh", archive_root=tmp_path / "archive", archive_timezone=ZONE)
     result = capture.capture_transcript(config, transcript, session_id=None, cwd="/home/alice/x")
     assert result.action == "stored"
@@ -99,6 +103,8 @@ def test_archive_companions_produces_the_identical_tree_to_the_inline_path(
     compared across the whole session folder, not one file (the standing "a
     census on one file is still an instance fix" lesson)."""
     source = _plant_source(tmp_path / "source")
+    mark_archive(tmp_path / "archive-inline", ZONE)
+    mark_archive(tmp_path / "archive-deferred", ZONE)
 
     inline_config = Config(
         root=tmp_path / "wh-inline", archive_root=tmp_path / "archive-inline", archive_timezone=ZONE
@@ -132,7 +138,9 @@ def test_archive_companions_produces_the_identical_tree_to_the_inline_path(
         only the relative shape needs to match, not the absolute prefix."""
         out: dict[str, bytes] = {}
         for path in sorted(root.rglob("*")):
-            if path.is_file():
+            # The root marker (ticket 44a) is not part of the session tree, and
+            # its informational `created` differs between the two roots.
+            if path.is_file() and path.relative_to(root) != Path(MARKER_NAME):
                 out[str(path.relative_to(root))] = path.read_bytes()
         assert out, f"fixture precondition: nothing archived under {root}"
         return out
@@ -164,6 +172,7 @@ def _configure(env: dict[str, str], archive_root: Path) -> None:
         encoding="utf-8",
     )
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def _log_records(env: dict[str, str]) -> list[dict[str, object]]:

@@ -1093,6 +1093,15 @@ def sweep(
     unaffected - it reads `objects/`, not the source tree, and is not the cost
     this flag exists to bound."""
     walk_root = source if source is not None else _default_source()
+    # Ticket 44a: an unproven archive root refuses the whole run BEFORE the lock
+    # or any capture, so not even the vault or the catalog moves. Capturing into
+    # the vault alone and archiving later would leave a batch of sessions the
+    # archive silently lacks, which is the fork this check exists to prevent.
+    from cc_warehouse import archive
+
+    refused = archive.root_refusal(config)
+    if refused is not None:
+        return refused
     if not store.acquire_lock(config.root, _SWEEP_LOCK):
         return BatchReport(
             (ItemOutcome(_LOCK_HELD_ITEM, LOCK_HELD_ACTION, "sweep lock held by a live holder"),)

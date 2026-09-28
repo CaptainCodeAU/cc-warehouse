@@ -78,6 +78,7 @@ def test_each_project_folder_gets_a_project_json(
     capture(ccw_env, UUID_A, CWD_A, "-home-alice-projects-widget")
     capture(ccw_env, UUID_B, CWD_B, "-home-alice-projects-gadget")
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
 
     labels = [d for d in target.iterdir() if d.is_dir()]
@@ -94,6 +95,7 @@ def test_project_json_carries_the_label_and_the_known_paths(
     folder name, the aliases are not recoverable from anything."""
     capture(ccw_env, UUID_A, CWD_A, "-home-alice-projects-widget")
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
 
     label_dir = next(d for d in target.iterdir() if d.is_dir())
@@ -124,6 +126,7 @@ def test_project_json_survives_a_rename(
         conn.close()
 
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     label_dir = next(d for d in target.iterdir() if d.is_dir())
     payload = json.loads((label_dir / "project.json").read_text(encoding="utf-8"))
@@ -145,6 +148,7 @@ def test_deleting_the_catalog_loses_nothing_the_archive_can_rebuild(
     capture(ccw_env, UUID_A, CWD_A, "-home-alice-projects-widget")
     capture(ccw_env, UUID_B, CWD_B, "-home-alice-projects-gadget")
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
 
     conn = catalog.open_catalog(warehouse_root(ccw_env))
@@ -227,6 +231,7 @@ def test_writing_project_json_is_idempotent(
 ) -> None:
     capture(ccw_env, UUID_A, CWD_A, "-home-alice-projects-widget")
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     first = tree_snapshot(target)
     assert run_cli(["archive", "--to", str(target)]).code == 0
@@ -240,6 +245,7 @@ def test_project_json_is_not_mistaken_for_a_session_folder(
     must not be walked into or counted."""
     capture(ccw_env, UUID_A, CWD_A, "-home-alice-projects-widget")
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     folders = list(archive.walk_folders(target))
     assert len(folders) == 1
@@ -251,6 +257,7 @@ def test_verify_ignores_the_project_json_sidecar(
 ) -> None:
     capture(ccw_env, UUID_A, CWD_A, "-home-alice-projects-widget")
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     result = run_cli(["archive", "--to", str(target), "--verify"])
     assert result.code == 0, result.err + result.out

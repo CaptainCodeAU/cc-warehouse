@@ -133,6 +133,16 @@ machines runs today - so don't treat "no config" as broken. It just means nobody
   ```toml
   archive_root = "/home/<user>/cc-warehouse-archive"   # or the path they gave you
   ```
+  Then mark that directory as the archive root, once (ticket 44a). This is safe
+  to run on an empty directory or an existing tree, writes only
+  `_archive-root.json`, and creates the directory itself but never its parents:
+
+  ```
+  ccw archive --to /home/<user>/cc-warehouse-archive --init
+  ```
+  Without the marker every writer refuses the archive root and `ccw doctor` reports
+  `FAIL archive root`. That refusal is the guard against an unmounted share or a stale
+  directory silently becoming a second archive, so never work around it by hand.
   `docs/reference-config.toml` in this repo lists every key this file understands, each
   commented with its default - read it before writing anything, since the schema has
   changed shape before and this document's own memory of the field list can drift.
