@@ -304,6 +304,7 @@ def test_a_second_archive_run_reports_everything_as_unchanged(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     result = run_cli(["archive", "--to", str(target)])
     assert result.code == 0, result.err
@@ -318,6 +319,7 @@ def test_a_second_archive_run_never_reads_the_stored_payload_for_unchanged_sessi
     on the second run; instead it must not even be touched."""
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
 
     root = warehouse_root(ccw_env)
@@ -336,6 +338,7 @@ def test_a_second_run_is_a_true_no_op_on_the_tree(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     before = tree_snapshot(target)
     assert run_cli(["archive", "--to", str(target)]).code == 0
@@ -347,6 +350,7 @@ def test_rebuild_forces_every_folder_through_the_full_path_even_when_current(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     result = run_cli(["archive", "--to", str(target), "--rebuild"])
     assert result.code == 0, result.err

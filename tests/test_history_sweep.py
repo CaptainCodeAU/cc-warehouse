@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import cast
 
 from cc_warehouse import store
-from conftest import basic_session, run_ccw, tree_snapshot, warehouse_root, write_transcript
+from conftest import (
+    basic_session,
+    mark_archive,
+    run_ccw,
+    tree_snapshot,
+    warehouse_root,
+    write_transcript,
+)
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -40,6 +47,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def claude_home(env: dict[str, str]) -> Path:
@@ -110,11 +118,14 @@ def test_a_dry_run_reports_the_would_be_snapshot_and_writes_nothing(
 ) -> None:
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
+    # Ticket 44a: configure() marks the root, so it exists up front; the
+    # property is unchanged, the rehearsal writes nothing into it.
+    before = tree_snapshot(archive_root)
     plant_history(ccw_env)
     result = run_ccw(["sweep", "--dry-run"], ccw_env)
     assert result.code == 0, result.err
     assert "would-archive-history-snapshot" in result.out, result.out
-    assert not archive_root.exists()
+    assert tree_snapshot(archive_root) == before
 
 
 def test_a_dry_run_reports_nothing_once_a_snapshot_already_exists(
@@ -534,6 +545,7 @@ def configure_off(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def test_the_switch_off_stops_the_whole_history_pass(

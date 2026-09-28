@@ -27,12 +27,14 @@ import json
 import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from cc_warehouse import __version__, build, catalog, external, parser, render, sidecars, store
 from cc_warehouse.config import Config
 from cc_warehouse.parser import parse_session
+from cc_warehouse.reports import BatchReport, ItemOutcome
 
 _JSONL_SUFFIX = ".jsonl"
 _MANIFEST = "manifest.json"
@@ -1684,6 +1686,10 @@ def read_projects(archive_root: Path) -> list[ProjectRecord]:
     """
     out: list[ProjectRecord] = []
     for label_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
+        # Reserved names are never labels, the same rule `walk_folders` applies
+        # (ticket 44a: the root marker's name joined the set).
+        if label_dir.name in build.RESERVED_LABELS:
+            continue
         sidecar = label_dir / PROJECT_JSON
         if not sidecar.is_file():
             continue
@@ -1926,3 +1932,172 @@ def walk_folders(archive_root: Path) -> Iterator[Path]:
         if label_dir.name in build.RESERVED_LABELS:
             continue
         yield from sorted(p for p in label_dir.iterdir() if p.is_dir())
+
+
+# ---------------------------------------------------------------------------
+# The archive root marker (ticket 44a)
+# ---------------------------------------------------------------------------
+
+# The file that says "this directory IS the archive root, pinned to this zone".
+# Underscore-prefixed beside `_not-sessions/`, and reserved in
+# `build.RESERVED_LABELS` so no walker reads it as a project label.
+ROOT_MARKER = "_archive-root.json"
+_MARKER_KIND = "archive_root"
+
+
+class ArchiveRootRefused(Exception):
+    """A writer declined to touch `archive_root` because it cannot prove the
+    directory is the archive it was configured as (ticket 44a).
+
+    ONE named exception for every writer, so the hook, the batch verbs and the
+    tests all catch the same thing rather than a family of look-alikes (R9). The
+    message is `root_problem`'s own sentence, which names the path and the fix.
+    """
+
+
+def root_problem(archive_root: Path, zone: str) -> str | None:
+    """Why `archive_root` is not a proven archive root for `zone`, or None.
+
+    THE FAILURE THIS CLOSES (DESIGN 15, 2026-09-28). With the archive on a
+    network share, an unmounted share can leave an empty directory where the
+    tree should be. Every writer did `mkdir(parents=True)`, so the hook would
+    have written onto the boot disk, the catalog would have recorded it, and a
+    re-mount elsewhere would have forked the archive with no signal. A marker
+    at the top of the tree is the proof a bare directory cannot give.
+
+    It also turns a zone change into a refusal. The zone is baked into every
+    folder name, so a changed `archive_timezone` used to name every new session
+    in a second zone beside the old ones, a hazard `config.toml` only warned
+    about in prose.
+
+    READ-ONLY AND NEVER RAISES, because `ccw doctor` calls it and doctor runs
+    precisely when things are broken; any OSError becomes a sentence. It never
+    creates anything either, so an absent path stays absent. `created` is
+    informational and never compared: two markers written at different moments
+    for the same zone are the same proof.
+
+    Shared by `require_root` (writers) and doctor's `archive root` line (R9):
+    the refusal and the diagnosis are one sentence from one function.
+    """
+    marker = archive_root / ROOT_MARKER
+    try:
+        if not archive_root.is_dir():
+            return (
+                f"MISSING at {archive_root}: no such directory (an unmounted share"
+                " looks like this); nothing was created"
+            )
+        if not marker.exists() and not marker.is_symlink():
+            return (
+                f"MISSING at {archive_root}: no {ROOT_MARKER} marker; if this IS the"
+                f" archive, adopt it once with `ccw archive --to {archive_root} --init`"
+            )
+        raw = marker.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"unreadable marker {marker}: {exc}"
+    try:
+        loaded: object = json.loads(raw)
+    except ValueError as exc:
+        return f"malformed marker {marker}: {exc}"
+    if not isinstance(loaded, dict):
+        return f"malformed marker {marker}: not a JSON object"
+    payload = cast(dict[str, object], loaded)
+    if payload.get("cc_warehouse") != _MARKER_KIND:
+        return f"malformed marker {marker}: not an archive_root marker"
+    marked = payload.get("archive_timezone")
+    if marked != zone:
+        named = repr(marked) if isinstance(marked, str) else "no zone"
+        return (
+            f"zone mismatch at {marker}: the marker names {named}, the config says"
+            f" {zone!r}; folder names are rendered in the zone, so writing here would"
+            " fork the tree into two zones"
+        )
+    return None
+
+
+def require_root(archive_root: Path, zone: str) -> Path:
+    """Return `archive_root` when its marker names `zone`, else raise
+    `ArchiveRootRefused` (ticket 44a).
+
+    Called ONCE at the entry of every writer that targets the archive: the
+    capture path (`capture._archive_source`, and `archive_companions` for the
+    detached child), `ccw sweep`, `ccw build`'s mirror, `ccw render --session`,
+    `ccw archive --to`, `ccw import` and `ccw repair`. At the entry rather than
+    at every `mkdir` site, so a refusal happens before the first write rather
+    than partway through a batch (R10, R14). Read-only verbs never call it.
+    """
+    problem = root_problem(archive_root, zone)
+    if problem is not None:
+        raise ArchiveRootRefused(f"archive root refused: {problem}")
+    return archive_root
+
+
+def init_root(archive_root: Path, zone: str) -> bool:
+    """Write the marker into `archive_root` for `zone`; True when it wrote.
+
+    The ONE way a marker comes into being (`ccw archive --to X --init`). It
+    marks an empty directory or an existing tree alike, and touches nothing but
+    the marker.
+
+    A same-zone marker already there is a no-op returning False, and nothing is
+    rewritten. Any OTHER marker, a different zone, a missing zone or one that
+    does not parse, is refused rather than replaced: `--init` is for adopting an
+    unmarked tree, never for re-zoning a marked one, which would rename every
+    folder in it.
+
+    It creates `archive_root` itself when that is missing, but NEVER its
+    parents. A missing parent is what an unmounted share looks like, and
+    conjuring it into existence would recreate the exact fork the marker exists
+    to prevent.
+    """
+    if root_problem(archive_root, zone) is None:
+        return False
+    marker = archive_root / ROOT_MARKER
+    if archive_root.is_dir():
+        if marker.exists() or marker.is_symlink():
+            raise ArchiveRootRefused(
+                f"archive root refused: {root_problem(archive_root, zone)};"
+                " --init never replaces an existing marker"
+            )
+    elif archive_root.exists():
+        raise ArchiveRootRefused(
+            f"archive root refused: {archive_root} exists and is not a directory"
+        )
+    elif not archive_root.parent.is_dir():
+        raise ArchiveRootRefused(
+            f"archive root refused: {archive_root.parent} does not exist; --init"
+            " creates the archive directory itself, never its parents (an unmounted"
+            " share looks like this)"
+        )
+    else:
+        archive_root.mkdir()
+    payload = {
+        "cc_warehouse": _MARKER_KIND,
+        "archive_timezone": zone,
+        "created": datetime.now(UTC).isoformat(),
+    }
+    data = (json.dumps(payload, indent=2) + "\n").encode("utf-8")
+    if store.write_if_absent(marker, data) == "refused":
+        # Another writer placed a marker between the check above and this write.
+        raise ArchiveRootRefused(
+            f"archive root refused: {marker} appeared while --init was running"
+        )
+    return True
+
+
+def root_refusal(config: Config) -> BatchReport | None:
+    """None when a BATCH writer may proceed; otherwise a one-item report naming
+    the refusal, for `ccw sweep`, `ccw build` and `ccw import` to return before
+    they take a lock or write anything (ticket 44a).
+
+    A report rather than a raise, because those three already speak in batch
+    reports: an `error` item is named on stderr, logged, and makes the verb exit
+    non-zero (R10), with no new path through the CLI. One helper for all three
+    so the refusal reads the same wherever it comes from (R9).
+    """
+    if config.archive_root is None:
+        return None
+    try:
+        require_root(config.archive_root, config.archive_timezone)
+    except ArchiveRootRefused as exc:
+        return BatchReport((ItemOutcome(str(config.archive_root), "error", str(exc)),))
+    return None

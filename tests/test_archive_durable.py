@@ -28,6 +28,7 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    mark_archive,
     run_ccw,
     session_count,
     tree_snapshot,
@@ -72,6 +73,8 @@ def configure(env: dict[str, str], archive_root: Path | None) -> None:
         lines.append(f'archive_root = "{archive_root}"')
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 def hook_only(env: dict[str, str], uuid: str, data: bytes) -> None:
@@ -193,9 +196,12 @@ def test_an_unwritable_archive_still_stores_the_session(
     it remains the fallback, so an archive problem must not fail the capture.
     When `objects/` is eventually retired this becomes the LAST line of defence
     and will need re-deciding - recorded here rather than assumed away."""
-    blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory", encoding="utf-8")
-    configure(ccw_env, blocker / "archive")
+    # Ticket 44a: a root under a FILE is now refused by the marker check before
+    # any write, so the write failure this test is about is made the other way:
+    # a proven (marked) root that cannot be written to.
+    unwritable = tmp_path / "archive"
+    configure(ccw_env, unwritable)
+    unwritable.chmod(0o555)
     hook_only(ccw_env, UUID_A, session(UUID_A))
     assert session_count(ccw_env) == 1
 

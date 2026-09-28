@@ -28,7 +28,7 @@ import pytest
 
 from cc_warehouse import reconcile
 from cc_warehouse.config import Config
-from conftest import basic_session, run_ccw, warehouse_root, write_transcript
+from conftest import basic_session, mark_archive, run_ccw, warehouse_root, write_transcript
 
 ZONE = "Australia/Melbourne"
 LOST_UUID = "11111111-1111-4111-8111-111111111111"
@@ -45,6 +45,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def append_log(env: dict[str, str], **fields: object) -> None:

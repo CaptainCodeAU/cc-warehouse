@@ -106,6 +106,7 @@ def test_archive_builds_the_tree_at_the_named_target(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     result = run_cli(["archive", "--to", str(target)])
     assert result.code == 0, result.err
     folders = list(archive.walk_folders(target))
@@ -123,6 +124,7 @@ def test_archive_leaves_the_source_warehouse_byte_identical(
     archive is that the old tree is not a participant."""
     populated(ccw_env)
     before = tree_snapshot(warehouse_root(ccw_env))
+    assert run_cli(["archive", "--to", str(tmp_path / "archive"), "--init"]).code == 0
     result = run_cli(["archive", "--to", str(tmp_path / "archive")])
     assert result.code == 0, result.err
     assert tree_snapshot(warehouse_root(ccw_env)) == before
@@ -156,6 +158,7 @@ def test_archive_prints_a_report_naming_what_it_did(
 ) -> None:
     """R10: a batch ends with a named-item report, not a bare count."""
     populated(ccw_env)
+    assert run_cli(["archive", "--to", str(tmp_path / "archive"), "--init"]).code == 0
     result = run_cli(["archive", "--to", str(tmp_path / "archive")])
     assert "2 folders written" in result.out
     assert "0 failed" in result.out
@@ -166,6 +169,7 @@ def test_archive_is_idempotent_across_two_runs(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     first = tree_snapshot(target)
     assert run_cli(["archive", "--to", str(target)]).code == 0
@@ -185,7 +189,9 @@ def test_the_zone_flag_overrides_the_configured_one(
     populated(ccw_env)
     melbourne = tmp_path / "melbourne"
     utc = tmp_path / "utc"
+    assert run_cli(["archive", "--to", str(melbourne), "--init", "--zone", ZONE]).code == 0
     assert run_cli(["archive", "--to", str(melbourne), "--zone", ZONE]).code == 0
+    assert run_cli(["archive", "--to", str(utc), "--init", "--zone", "UTC"]).code == 0
     assert run_cli(["archive", "--to", str(utc), "--zone", "UTC"]).code == 0
     mel_names = sorted(d.name for d in archive.walk_folders(melbourne))
     utc_names = sorted(d.name for d in archive.walk_folders(utc))
@@ -216,6 +222,7 @@ def test_verify_flag_checks_an_existing_tree_and_exits_zero_when_clean(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     result = run_cli(["archive", "--to", str(target), "--verify"])
     assert result.code == 0, result.err
@@ -229,6 +236,7 @@ def test_verify_exits_non_zero_and_names_a_tampered_folder(
     something an operator can act on."""
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     folder = next(archive.walk_folders(target))
     (folder / "conversation.html").rename(folder / "moved-away.html")
@@ -244,6 +252,7 @@ def test_verify_writes_nothing(ccw_env: dict[str, str], tmp_path: Path) -> None:
     is not evidence that nothing happened (2026-08-01)."""
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     before = tree_snapshot(target)
     run_cli(["archive", "--to", str(target), "--verify"])
@@ -267,6 +276,7 @@ def test_the_manifest_written_through_the_verb_carries_the_new_keys(
     library call a test made up."""
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     folder = next(archive.walk_folders(target))
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
@@ -288,6 +298,7 @@ def test_render_flags_reach_the_archive_verb(
     configuration silently does not apply."""
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     result = run_cli(
         ["archive", "--to", str(target), "--thinking-withheld", "marker"]
     )
@@ -302,6 +313,7 @@ def test_the_archive_verb_uses_the_default_render_options_otherwise(
 ) -> None:
     populated(ccw_env)
     target = tmp_path / "archive"
+    assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     assert run_cli(["archive", "--to", str(target)]).code == 0
     folder = next(archive.walk_folders(target))
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))

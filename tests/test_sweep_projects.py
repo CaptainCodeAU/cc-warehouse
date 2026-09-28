@@ -30,7 +30,15 @@ from pathlib import Path
 from typing import cast
 
 from cc_warehouse import store
-from conftest import basic_session, catalog_rows, run_ccw, warehouse_root, write_transcript
+from conftest import (
+    basic_session,
+    catalog_rows,
+    mark_archive,
+    run_ccw,
+    tree_snapshot,
+    warehouse_root,
+    write_transcript,
+)
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -54,6 +62,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
         encoding="utf-8",
     )
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def _session_dirs(archive_root: Path) -> list[Path]:
@@ -134,11 +143,14 @@ def test_a_dry_run_still_writes_nothing(ccw_env: dict[str, str], tmp_path: Path)
     """Whatever rendering the real sweep now does, the rehearsal must not do it."""
     archive = tmp_path / "archive"
     configure(ccw_env, archive)
+    # Ticket 44a: configure() marks the root, so it exists up front; the
+    # property is unchanged, the rehearsal writes nothing into it.
+    before = tree_snapshot(archive)
     write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
 
     assert run_ccw(["sweep", "--dry-run"], ccw_env).code == 0
 
-    assert not archive.exists(), "a dry-run rendered into the archive"
+    assert tree_snapshot(archive) == before, "a dry-run rendered into the archive"
     assert not warehouse_root(ccw_env).exists(), "a dry-run created the warehouse"
 
 

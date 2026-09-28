@@ -24,6 +24,7 @@ from pathlib import Path
 
 from conftest import (
     basic_session,
+    mark_archive,
     run_ccw,
     subagent_session,
     tree_snapshot,
@@ -44,6 +45,8 @@ def configure(env: dict[str, str], archive_root: Path | None) -> None:
         lines.append(f'archive_root = "{archive_root}"')
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
 
 
 def test_status_reports_sessions_the_archive_has_never_seen(

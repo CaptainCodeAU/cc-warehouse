@@ -21,6 +21,7 @@ from cc_warehouse import reconcile, sweep
 from cc_warehouse.config import Config
 from conftest import (
     basic_session,
+    mark_archive,
     run_ccw,
     warehouse_root,
     write_transcript,
@@ -41,6 +42,7 @@ def configure_archive(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def _log_records(env: dict[str, str]) -> list[dict[str, object]]:

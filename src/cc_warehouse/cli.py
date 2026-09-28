@@ -1293,6 +1293,11 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
         config.root / "projections", head.label, head.first_ts, head.slug, head.short
     )
     try:
+        # Ticket 44a: the mirror below writes into the archive, so an unproven
+        # root is refused here, before anything is written, and reported through
+        # the same error path as any other render failure.
+        if config.archive_root is not None:
+            archive.require_root(config.archive_root, config.archive_timezone)
         data = archive.read_payload(
             config,
             label=head.label,
@@ -1875,6 +1880,15 @@ def _run_repair(rest: Sequence[str]) -> int:
     separate, always-best-effort signal (desktop + voice), not a repair failure."""
     quiet = "--quiet" in rest
     config = _load(rest)
+    # Ticket 44a: repair re-renders INTO the archive, so an unproven root is
+    # refused before any work, named on stderr and logged like any repair failure.
+    if config.archive_root is not None:
+        try:
+            archive.require_root(config.archive_root, config.archive_timezone)
+        except archive.ArchiveRootRefused as exc:
+            _log_repair_outcome(config, "error", None, str(exc))
+            print(f"repair: {exc}", file=sys.stderr)
+            return 1
     reconcile_since = datetime.now(UTC) - reconcile.DEFAULT_WINDOW
     reconcile_findings = reconcile.find_unrecoverable(config, since=reconcile_since)
     reconcile_known = reconcile.known_unrecoverable_uuids(config)
@@ -1973,6 +1987,14 @@ def _run_archive(args: Sequence[str]) -> int:
     oracle test snapshots the tree and compares it afterwards, since exit 0 plus
     output is NOT evidence that nothing happened (learned 2026-08-01, when
     `ccw sweep -h` imported 13,836 sessions while appearing to print help).
+
+    THE TARGET MUST CARRY THE ROOT MARKER (ticket 44a). A build into DIR is
+    refused unless `DIR/_archive-root.json` names the zone in use, so a stale or
+    unmounted directory can never become a second archive. `--init` is the one
+    way the marker is written: it marks DIR (empty, or an existing tree without
+    one) and STOPS, so adopting a large tree never turns into a full rebuild by
+    accident. It refuses a marker that names another zone, and creates DIR but
+    never DIR's parents.
     """
     config = _load(args)
     target_raw = _flag_value(args, "to")
@@ -1989,6 +2011,9 @@ def _run_archive(args: Sequence[str]) -> int:
         return 2
 
     if "--verify" in args:
+        if "--init" in args:
+            print("Error: --init and --verify do not combine; run them separately", file=sys.stderr)
+            return 2
         return _archive_verify(target, zone)
 
     # The one target that would make this destructive: writing the new tree on
@@ -2001,7 +2026,20 @@ def _run_archive(args: Sequence[str]) -> int:
         )
         return 2
 
-    target.mkdir(parents=True, exist_ok=True)
+    if "--init" in args:
+        try:
+            wrote = archive.init_root(target, zone)
+        except archive.ArchiveRootRefused as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        verb = "marked" if wrote else "already marked"
+        print(f"archive: {target} {verb} as the archive root for {zone}")
+        return 0
+    try:
+        archive.require_root(target, zone)
+    except archive.ArchiveRootRefused as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     rebuild = "--rebuild" in args
     report = archive.migrate(
         config.root, target, build.render_options(config), zone, rebuild=rebuild
@@ -2502,6 +2540,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--verify", "check an existing tree instead of building; writes nothing"),
             ("--zone NAME", "IANA zone for folder names (default: [archive_timezone])"),
             ("--rebuild", "regenerate every folder, not just changed ones"),
+            ("--init", "mark DIR as the archive root for the zone, then stop"),
         ),
         # content=True: the archive is built by the same emitters as everything
         # else, so the same content flags govern it (R9). A tree whose rendering

@@ -34,6 +34,7 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    mark_archive,
     run_ccw,
     warehouse_root,
     write_transcript,
@@ -77,6 +78,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
         encoding="utf-8",
     )
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def capture(env: dict[str, str], uuid: str, cwd: str, encoded: str = "-home-alice") -> None:

@@ -78,7 +78,9 @@ def raw_marker(archive_root: Path, payload: object) -> Path:
     return path
 
 
-def good_marker(archive_root: Path, zone: str = ZONE, created: str = "2026-09-28T00:00:00Z") -> Path:
+def good_marker(
+    archive_root: Path, zone: str = ZONE, created: str = "2026-09-28T00:00:00Z"
+) -> Path:
     return raw_marker(
         archive_root,
         {"cc_warehouse": "archive_root", "archive_timezone": zone, "created": created},
@@ -111,9 +113,7 @@ def place_transcript(tmp_path: Path, uuid: str = UUID_A, *, with_subagent: bool 
     if with_subagent:
         agents = project / uuid / "subagents"
         agents.mkdir(parents=True)
-        (agents / "agent-a94d30c1d877f964d.jsonl").write_bytes(
-            subagent_session(parent_uuid=uuid)
-        )
+        (agents / "agent-a94d30c1d877f964d.jsonl").write_bytes(subagent_session(parent_uuid=uuid))
     return path
 
 
@@ -632,7 +632,9 @@ def test_repair_refuses_an_unmarked_root(ccw_env: dict[str, str], tmp_path: Path
 def test_doctor_archive_root_line_is_ok_on_a_marked_root(tmp_path: Path) -> None:
     target = tmp_path / "archive"
     good_marker(target)
-    line = check(doctor.diagnose(config_for(tmp_path, target), home=tmp_path / "home"), "archive root")
+    line = check(
+        doctor.diagnose(config_for(tmp_path, target), home=tmp_path / "home"), "archive root"
+    )
     assert line.ok
     assert line.blocking
     assert "marker present" in line.detail
@@ -664,13 +666,17 @@ def test_doctor_archive_root_line_fails_and_does_not_raise_on_an_absent_path(
 def test_doctor_archive_root_line_fails_on_a_zone_mismatch(tmp_path: Path) -> None:
     target = tmp_path / "archive"
     good_marker(target, zone=OTHER_ZONE)
-    line = check(doctor.diagnose(config_for(tmp_path, target), home=tmp_path / "home"), "archive root")
+    line = check(
+        doctor.diagnose(config_for(tmp_path, target), home=tmp_path / "home"), "archive root"
+    )
     assert not line.ok
     assert OTHER_ZONE in line.detail
 
 
 def test_doctor_archive_root_line_is_ok_with_no_archive_configured(tmp_path: Path) -> None:
-    line = check(doctor.diagnose(config_for(tmp_path, None), home=tmp_path / "home"), "archive root")
+    line = check(
+        doctor.diagnose(config_for(tmp_path, None), home=tmp_path / "home"), "archive root"
+    )
     assert line.ok
 
 
@@ -705,9 +711,7 @@ def test_fresh_install_with_a_marked_empty_archive_runs_clean(
     assert run_cli(["archive", "--to", str(target), "--init"]).code == 0
     sweep_result = run_ccw(["sweep"], ccw_env)
     assert sweep_result.code == 0, sweep_result.err
-    report = doctor.diagnose(
-        config_for(tmp_path, target), home=Path(ccw_env["HOME"])
-    )
+    report = doctor.diagnose(config_for(tmp_path, target), home=Path(ccw_env["HOME"]))
     assert check(report, "archive root").ok
     assert check(report, "desync").ok
 

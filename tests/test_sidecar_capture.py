@@ -21,6 +21,7 @@ from typing import cast
 from conftest import (
     basic_session,
     hook_payload,
+    mark_archive,
     run_ccw,
     settle_companions,
     subagent_meta,
@@ -50,6 +51,7 @@ def configure(env: dict[str, str], archive_root: Path, *, tool_results: bool | N
         lines.append(f"archive_tool_results = {'true' if tool_results else 'false'}")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def sidecar_root(env: dict[str, str]) -> Path:

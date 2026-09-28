@@ -27,7 +27,7 @@ import pytest
 
 from cc_warehouse import notify
 from cc_warehouse.config import Config
-from conftest import basic_session, run_ccw, warehouse_root, write_transcript
+from conftest import basic_session, mark_archive, run_ccw, warehouse_root, write_transcript
 
 ZONE = "Australia/Melbourne"
 UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
@@ -44,6 +44,7 @@ def configure(env: dict[str, str], archive_root: Path) -> None:
         encoding="utf-8",
     )
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, ZONE)
 
 
 def install_hook(env: dict[str, str]) -> None:

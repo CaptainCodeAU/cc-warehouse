@@ -31,6 +31,7 @@ from conftest import (
     basic_session,
     catalog_rows,
     claude_projects,
+    mark_archive,
     record_opens,
     run_cli,
     warehouse_root,
@@ -52,6 +53,7 @@ def _configure_archive(env: dict[str, str], archive_root: Path) -> None:
         encoding="utf-8",
     )
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, "Australia/Melbourne")
 
 
 def test_a_second_sweep_never_calls_capture_transcript_for_an_unchanged_session(

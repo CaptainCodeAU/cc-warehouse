@@ -32,6 +32,7 @@ from conftest import (
     catalog_path,
     catalog_rows,
     hook_payload,
+    mark_archive,
     run_ccw,
     run_cli,
     warehouse_root,
@@ -73,6 +74,8 @@ def configure(env: dict[str, str], tmp_path: Path, *, archive: bool) -> Path | N
         lines.append("keep_projections = false")
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    if archive_root is not None:
+        mark_archive(archive_root, ZONE)
     return archive_root
 
 

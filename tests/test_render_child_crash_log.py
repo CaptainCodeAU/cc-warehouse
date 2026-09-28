@@ -27,6 +27,7 @@ from conftest import (
     catalog_path,
     catalog_rows,
     hook_payload,
+    mark_archive,
     run_ccw,
     run_cli,
     warehouse_root,
@@ -90,6 +91,7 @@ def configure_archive(env: dict[str, str], archive_root: Path) -> None:
     ]
     (cfg / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     env["XDG_CONFIG_HOME"] = str(cfg.parent)
+    mark_archive(archive_root, "Australia/Melbourne")
 
 
 def test_a_mirror_to_archive_failure_reaches_render_sessions_own_error_path(

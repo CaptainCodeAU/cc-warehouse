@@ -130,10 +130,15 @@ def projection_dir(
 # root beside these two (DESIGN 15, 2026-08-02).
 #
 # The literals are repeated here rather than imported from `archive`, which
-# imports THIS module; `archive.ORPHAN_LABEL` and `archive.NOT_SESSIONS_LABEL`
-# are the names, and a test asserts each is a member so the two cannot drift.
+# imports THIS module; `archive.ORPHAN_LABEL`, `archive.NOT_SESSIONS_LABEL` and
+# `archive.ROOT_MARKER` are the names, and a test asserts each is a member so the
+# two cannot drift.
+#
+# `_archive-root.json` (ticket 44a) is a FILE, and every walker already skips
+# non-directories, but a walker that skipped it only for being a file would read
+# a directory of that name as a project label. The reserved set holds on its own.
 RESERVED_LABELS = frozenset(
-    {"locks", "catalog.sqlite", "_orphaned-subagents", "_not-sessions"}
+    {"locks", "catalog.sqlite", "_orphaned-subagents", "_not-sessions", "_archive-root.json"}
 )
 
 _UNDATED = "undated"
@@ -611,6 +616,13 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
     root = config.root
     projections = root / "projections"
     options = render_options(config)
+    # Ticket 44a: `_mirror` writes into the archive, so an unproven root refuses
+    # the build at entry, projections included, rather than failing every head.
+    from cc_warehouse import archive
+
+    refused = archive.root_refusal(config)
+    if refused is not None:
+        return refused
     if not store.acquire_lock(root, _BUILD_LOCK):
         return BatchReport(
             (ItemOutcome(_LOCK_HELD_ITEM, BUILD_LOCK_HELD, "build lock held by a live holder"),)

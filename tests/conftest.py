@@ -195,6 +195,23 @@ def ccw_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return env
 
 
+def mark_archive(archive_root: Path, zone: str = "UTC") -> Path:
+    """Make `archive_root` a proven archive root for `zone` (ticket 44a).
+
+    Every writer now refuses an archive root without `_archive-root.json`, so a
+    test that configures `archive_root` and then captures, sweeps, builds or
+    imports marks it first, exactly as an operator runs `ccw archive --to DIR
+    --init` once. The marker comes from the product's own `init_root`, never
+    typed by hand, so the fixture cannot drift from what the real tool writes.
+    Creates the directory, parents included: a test's tmp_path is not a mount
+    point, and whether a missing parent is refused is `--init`'s own test."""
+    from cc_warehouse import archive
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    archive.init_root(archive_root, zone)
+    return archive_root
+
+
 def warehouse_root(env: Mapping[str, str]) -> Path:
     return Path(env["CCW_ROOT"])
 
