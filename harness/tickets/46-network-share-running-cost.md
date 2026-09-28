@@ -47,10 +47,13 @@ saving is measured against a real baseline rather than an estimate.
 
 ## Measurements appended as they land
 
-- 2026-09-29 00:22 catch-up `ccw sweep` against the share: STILL RUNNING at
-  02:18 (1h56m elapsed); the end time and the run summary line are appended when
-  it exits. Phase timeline so far, all local time (AEST), each from the named
-  instrument:
+- 2026-09-29 00:22 catch-up `ccw sweep` against the share: **4h29m55s** (00:22:41
+  to 04:52:36, process exit seen by a `kill -0` watch). Run summary in
+  `capture.jsonl`: `sweep: 29957 items, 7 stored, 13 with sidecars, 1 failed`
+  (the one failure was a build item, `5f32eac9e690`, "no bytes ... in the vault
+  (objects/ missing)"; not a share cost, filed separately). Against the 2 to
+  2.5 h estimate above: about double. Phase timeline, all local time (AEST), each
+  from the named instrument:
   - 00:22:41 start (`ps -o lstart` on pid 67450, hand-run, no `--quiet`).
   - 00:23 first payloads replaced in archive folders (JSONL mtimes on the share).
   - 01:53:35 `prompts.jsonl` split into folders (mtimes), 01:56 `pastes/` (mtime).
@@ -58,9 +61,14 @@ saving is measured against a real baseline rather than an estimate.
     the item loop plus per-item copies took about 1h31m; that split is inferred
     from code order, not timed directly.
   - 01:56 `locks/build` taken (lock file mtime): the post-sweep `build.build()`
-    started, and at 02:18 it is still running.
-  - So the pre-build half alone (~1h33m) is most of the 2 to 2.5 h estimate above,
-    before the build half this ticket names as the main cost has finished.
+    started. The lock was still present at 04:05 and gone at 04:33 (`ls
+    locks/`); the last of three tracked folders re-rendered at 04:09 (manifest
+    mtime). Build half: roughly 2h10m to 2h35m.
+  - 04:33 to 04:52 `status.write_coverage` (code order; `coverage.json` mtime
+    04:52): about 20 min for the corpus-wide coverage figures on the share.
+  - Totals, approximate: item loop ~1h31m, build ~2h20m, coverage ~20m. CPU time
+    at exit was about 16 min of the 4h30m (`ps -o time`, state `UN` throughout):
+    the run is bound by waiting on the share, not by computation.
   - Side effect, fixed: while the build lock was held, `ccw doctor` FAILed its
     desync check on 5 folders the sweep had written but not yet re-rendered, and
     the SessionStart check reported capture broken 5 times in a row. Fixed in
