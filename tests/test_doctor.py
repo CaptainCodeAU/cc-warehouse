@@ -26,6 +26,7 @@ plus output is not evidence that nothing happened (2026-08-01).
 """
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -654,6 +655,96 @@ def test_a_missing_render_is_pending_while_a_batch_lock_is_held(
     # Same folder, same problems, lock released: must revert to a real problem.
     checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
     assert problems >= 1, "the desync was not reinstated once the batch lock was released"
+    assert first is not None and folder.name in first
+
+
+def _sweep_rewrites_after_manifest(folder: Path) -> None:
+    """Simulate `ccw sweep` mid-run, measured live 2026-09-29: it replaced the
+    folder's JSONL with a larger payload and split `prompts.jsonl` into it, and
+    its own `build.build()` had not yet rewritten the manifest. Both files end
+    up NEWER than `manifest.json`, which is the one thing that tells this shape
+    apart from a file altered after its manifest was last written."""
+    jsonl_path = archive.sole_jsonl(folder)
+    assert jsonl_path is not None
+    jsonl_path.write_bytes(jsonl_path.read_bytes() + b'{"type":"other","extra":true}\n')
+    (folder / archive.PROMPTS_FILE).write_bytes(b'{"display":"hi"}\n')
+    manifest = folder / "manifest.json"
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(manifest, (old, old))
+
+
+def test_a_stale_manifest_is_pending_while_a_batch_lock_is_held(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The live false alarm of 2026-09-29: a hand-run sweep held the build lock
+    for over an hour, and doctor FAILed on 5 folders whose JSONL and
+    `prompts.jsonl` the sweep itself had written after their manifests. Those
+    are "not yet re-rendered", the same state ticket 34 already excuses for a
+    missing generated file, so they read as pending while the lock is held and
+    revert to real problems once it is released."""
+    from cc_warehouse import store
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
+    _sweep_rewrites_after_manifest(folder)
+
+    root = warehouse_root(ccw_env)
+    config = Config(root=root, archive_root=archive_root, archive_timezone=ZONE)
+    shapes = {p.problem for p in archive.verify_folder(folder, ZONE)}
+    assert shapes == {
+        "JSONL does not match manifest source_hash",
+        "prompts.jsonl exists but the manifest says none",
+    }, shapes
+
+    assert store.acquire_lock(root, "build")
+    try:
+        checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+        assert checked == 1
+        assert problems == 0, "a sweep's own not-yet-rendered writes tripped the alarm"
+        assert pending == 2
+    finally:
+        store.release_lock(root, "build")
+
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert pending == 0
+    assert problems == 2, "the stale manifest was not reinstated once the lock was released"
+    assert first is not None and folder.name in first
+
+
+def test_a_file_older_than_its_manifest_is_never_pending_under_a_lock(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The narrowing: a live lock alone excuses nothing. A mismatched JSONL that
+    is OLDER than its manifest was not written by the running batch, so it is
+    a real problem even while that batch holds its lock."""
+    from cc_warehouse import store
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
+    _tamper(folder)
+    jsonl_path = archive.sole_jsonl(folder)
+    assert jsonl_path is not None
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(jsonl_path, (old, old))
+
+    root = warehouse_root(ccw_env)
+    config = Config(root=root, archive_root=archive_root, archive_timezone=ZONE)
+    assert store.acquire_lock(root, "build")
+    try:
+        checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        store.release_lock(root, "build")
+    assert checked == 1
+    assert pending == 0, "a mismatch older than its manifest was excused by the lock"
+    assert problems >= 1
     assert first is not None and folder.name in first
 
 

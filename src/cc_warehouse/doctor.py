@@ -740,6 +740,38 @@ def _batch_render_in_progress(root: Path) -> bool:
     return any(store.lock_is_held(root, name) for name in _BATCH_LOCK_NAMES)
 
 
+def _stale_manifest_file(folder: Path, problem: str) -> Path | None:
+    """The file a `_STALE_MANIFEST_SHAPES` problem is about, or None for any
+    other problem shape. Resolved the same way `archive.verify_folder` resolves
+    it (`archive.sole_jsonl` for the payload), never by a second rule."""
+    if problem == "JSONL does not match manifest source_hash":
+        return archive.sole_jsonl(folder)
+    if problem in (
+        f"{archive.PROMPTS_FILE} exists but the manifest says none",
+        f"{archive.PROMPTS_FILE} does not match its hash",
+    ):
+        return folder / archive.PROMPTS_FILE
+    return None
+
+
+def _written_after_manifest(folder: Path, problem: str) -> bool:
+    """True when `problem` names a file the batch rewrote after the folder's
+    manifest was last written (2026-09-29): `ccw sweep` replaces a payload with a
+    larger one and splits `prompts.jsonl` in its first pass, and only its own
+    later `build.build()` rewrites the manifest to match. Only consulted while a
+    batch lock is held. A file OLDER than its manifest is never excused: the
+    running batch did not write it."""
+    target = _stale_manifest_file(folder, problem)
+    if target is None:
+        return False
+    # R1 as amended: sha256 in `verify_folder` already decided these bytes
+    # differ; mtime only orders "which was written later" for alarm timing.
+    try:
+        return target.stat().st_mtime > (folder / "manifest.json").stat().st_mtime
+    except OSError:
+        return False
+
+
 def _desync(config: Config) -> tuple[int, int, int, str | None]:
     """Verify the most recently captured archive folders against their own manifests
     (ticket 31.5). Returns (checked, problems, pending, first problem description or
@@ -774,6 +806,16 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     Pending folders are still counted and still surfaced in the detail text -- a
     genuinely stuck pending item does not become invisible, it just does not
     trip the alarm on its own.
+
+    WIDENED 2026-09-29, for one more "still queued" shape and only under a live
+    batch lock: a payload or `prompts.jsonl` mismatch whose file is NEWER than
+    the folder's manifest (`_written_after_manifest`). A hand-run sweep on the
+    network share held its lock for over an hour between writing those files
+    and re-rendering the manifests, and doctor FAILed five session-starts in a
+    row on folders that were only waiting. The cost, accepted: a file altered
+    by something else DURING a batch reads as pending until the lock is
+    released, then fails. With no lock held the old narrow rule applies
+    unchanged, so the grace window never excuses a hash mismatch.
     """
     recent, broken = _desync_scan(config)
     folders = [item.folder for item in recent]
@@ -788,6 +830,10 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     captured = {item.folder: item.captured_at for item in recent}
     for folder, folder_problems in broken:
         only_missing_files = all(p.problem.startswith("missing ") for p in folder_problems)
+        batch_queued = batch_active and all(
+            p.problem.startswith("missing ") or _written_after_manifest(folder, p.problem)
+            for p in folder_problems
+        )
         # TICKET 44c: the grace is measured from CAPTURE time (the catalog's
         # wall-clock `captured_at`), not from the session's own start time in
         # the folder name. A 2020 session swept a minute ago is exactly the
@@ -798,7 +844,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
         within_grace = moment is not None and (now - moment) <= timedelta(
             seconds=_PENDING_GRACE_SECONDS
         )
-        if only_missing_files and (batch_active or within_grace):
+        if batch_queued or (only_missing_files and within_grace):
             # Counted the same unit as `problem_count` below (individual
             # FolderProblem entries, e.g. up to one per GENERATED_NAMES file),
             # not folders -- so "N problem(s)" and "M pending render(s)" stay

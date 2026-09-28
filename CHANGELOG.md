@@ -22,6 +22,18 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw doctor` no longer FAILs on a sweep's own not-yet-rendered writes
+(2026-09-29).** A hand-run `ccw sweep` against the network share held its build
+lock for over an hour between copying a larger payload and `prompts.jsonl` into
+five folders and re-rendering their manifests, and the SessionStart freshness
+check reported capture broken five times in a row. The ticket 34 pending rule
+covered only missing generated files. While a sweep or build lock is held, a
+payload or `prompts.jsonl` mismatch whose file is newer than the folder's
+manifest now also reads as pending. A file older than its manifest, or any
+mismatch with no lock held, still FAILs. Accepted cost: a file altered by
+something else during a batch reads as pending until the lock is released. No
+rendered byte changes.
+
 **Ticket 44 (2026-09-28): `archive_root` may live on a network share.** Whether this
 ships as 0.1.5 or as an in-place reinstall at 0.1.4 is the operator's call at
 reinstall time: `renderer_version` is `__version__`, so a bump re-renders every
