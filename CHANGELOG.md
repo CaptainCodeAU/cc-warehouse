@@ -22,23 +22,47 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
-**`ccw repair` no longer re-renders over a change it cannot explain (2026-09-29,
-W-20260929-A82; ruling: Gavin).** Repair re-rendered every folder its full check flagged,
-and a re-render rewrites the manifest from the files on disk, so a file whose bytes
-changed for a reason ccw cannot explain was recorded as the new truth. Repair logged "1
-fixed", exited 0, and every later check read the folder as clean, which erased the only
-evidence now that doctor's desync check is quick (W-20260929-A74). Repair now re-renders
-only what `doctor.unexplained` calls explained: a missing generated file, or a payload
-mismatch whose JSONL hashes to the catalog head (a re-capture). Anything else leaves the
-folder untouched, whole even when pages are also missing. It is reported `still broken`
-with exit 1 and an `error` record every run, and announced once by one desktop and voice
-alert with a `repair-refused` line in `logs/capture.jsonl`. That line is keyed on
-(session_uuid, message), so the same problems never re-alert and a new problem does; its
+**No writer records a changed file as the new truth any more, and `ccw repair` stops
+re-rendering over a change it cannot explain (2026-09-29, W-20260929-A82 and A88; ruling:
+Gavin, F1, F2 (a), F3).** Verified in a sandbox with the real verbs: `ccw build`, a `ccw
+sweep` that stores anything (its build covers the whole archive), the weekly `ccw archive
+--to` job and `ccw repair` all re-rendered a folder whose sub-agent or copied companion
+file had changed, and the re-render rebuilt the manifest's records from the files on
+disk, so the changed bytes became the record and `ccw archive --verify` then reported 0
+problems. Three parts:
+(F3) The shared manifest writer keeps the OLD record, through one rule read by the writer
+and by `folder_is_current` alike (`archive.kept_companion_records`,
+`archive.kept_subagent_records`), so all four writers inherit it and a damaged folder is
+not re-rendered on every build. A companion file (tool-results, workflows, file-history,
+todos, pastes; all written with `write_if_absent`, never rewritten or deleted by ccw)
+keeps its old record when it changed or vanished. A sub-agent keeps its old record when
+it changed without growing, or vanished; a GROWN sub-agent is adopted, since ccw itself
+replaces sub-agents only with larger ones (closes W-20260929-A76). NOT covered, by the
+ruling: `prompts.jsonl` and `custom-title.json`. ccw legitimately rewrites both (an
+extraction fix, a rename) and nothing in the archive tells that from damage, so a change
+to either is still adopted by the next render. A damaged file that a storing sweep can
+copy again from an intact, larger source in `~/.claude` is healed by the existing
+replace-if-larger rule, which is the right outcome.
+(F2 (a)) `ccw repair` re-renders only what `doctor.unexplained` calls explained: a missing
+generated file, a payload mismatch whose JSONL hashes to the catalog head (a re-capture),
+or a sub-agent that grew. Anything else leaves the folder untouched, whole even when
+pages are also missing. It is reported `still broken`, writes an `error` record and exits
+1 on EVERY run until a human fixes it (the freshness hook shows that at each session
+start). One desktop and voice alert fires per folder and distinct problem set, recorded
+as a `repair-refused` line in `logs/capture.jsonl` keyed on (session_uuid, message); its
 message starts `repair: `, so the reconciliation ledger never reads it as a capture error.
-`doctor._payload_is_head` is now the one "hashes to the catalog head" rule that doctor's
-re-capture pending and repair's refusal both read. Known limit, open as W-20260929-A76: a
-sub-agent that grew during a live resume, when its render never landed, is refused
-(sub-agents have no catalog row to explain the new bytes). Tests:
+(F1) While any batch lock is held, a mismatch on a file newer than its manifest is the
+batch's own write: repair logs one `pending` line for the folder and does not render,
+refuse or alert, exit 0. This is doctor's a60d50d rule, now one function for both
+(`doctor.pending_under_lock`), and it reads the file `verify_folder` names on the problem
+(`FolderProblem.path`, new) instead of re-deriving it from the message text, so it covers
+every file-level shape; doctor's own batch pending widens by the same amount (a sub-agent,
+companion or `custom-title.json` newer than its manifest reads pending while a lock is
+held, then fails once it is released, as payload and prompts already did).
+`doctor._payload_is_head` is the one "hashes to the catalog head" rule doctor's re-capture
+pending and repair's refusal both read. Tests: `tests/test_writers_keep_evidence.py` (a
+real-verb matrix of the four writers against four kinds of damage, every companion kind
+at unit level, the prompts/custom-title limit, A76, and the lock rule) and
 `tests/test_repair_refuses_unexplained.py`, every render real.
 
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the

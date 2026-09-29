@@ -192,27 +192,55 @@ sha256-hashed and the payload parsed) and weekly-or-by-hand in `ccw archive --ve
 so such a change is DETECTED within a day. A manifest record written before records
 carried `bytes` is hashed instead of skipped. Pinned by
 `tests/test_doctor_quick_desync.py`.
-**What repair does with what it finds, since 2026-09-29 (W-20260929-A82; ruling:
-Gavin).** Until then repair re-rendered every flagged folder, and a re-render rewrites
-the manifest from the files on disk, so a changed file was recorded as the new truth:
-repair logged "1 fixed", exited 0, and every later check read the folder as clean
-(verified in a test sandbox for all five recorded kinds). Now repair re-renders ONLY
-what ccw itself explains:
-- a missing generated file (the render child died, ticket 32), and
-- a payload mismatch whose JSONL hashes to the catalog head (a re-capture whose render
-  never landed).
+**What repair does with what it finds, since 2026-09-29 (W-20260929-A82, A88; ruling:
+Gavin, F1, F2 (a), F3).** Until then every writer that re-renders a folder (`ccw build`,
+a sweep that stores anything, the weekly `ccw archive --to` job, `ccw repair`) rebuilt
+the manifest's records from the files on disk, so a changed file was recorded as the new
+truth and every later check read the folder as clean (verified in a test sandbox). Now:
 
-Anything else (a sub-agent, tool result, file-history or paste file, `prompts.jsonl` or
-`custom-title.json` that no longer matches, a payload that matches no catalog head) is
-LEFT UNTOUCHED: repair prints `still broken, left untouched, ccw cannot explain: ...` on
-stderr, writes an `error` record to `logs/capture.jsonl` every run, and exits 1, so
-`launchctl list` shows a non-zero last exit. A folder with BOTH missing pages and an
-unexplained change is left untouched whole; its pages stay missing so the change stays
-visible. It also raises ONE desktop and voice alert, recorded as a `repair-refused` line
-in `logs/capture.jsonl` keyed on the session and its exact problem list: the same folder
-with the same problems never alerts again, and a new problem on it alerts once more.
-Clearing one is a human decision: restore the file from the backup, or re-render by hand
-(`ccw render --session s:<short>`) to accept the new bytes. Pinned by
+- **No writer adopts damage.** A copied companion file (tool results, workflows,
+  file-history, todos, pastes) that changed or vanished keeps its OLD record in the
+  manifest, because ccw never rewrites or deletes one. A sub-agent keeps its old record
+  when it changed without growing or vanished; a sub-agent that GREW is adopted (a live
+  resume). The change therefore stays flagged by doctor (when its size changed), by
+  `ccw repair` and by `ccw archive --verify`. **Not covered:** `prompts.jsonl` and
+  `custom-title.json`, which ccw itself legitimately rewrites; a change to either is
+  still adopted by the next render.
+- **Repair re-renders only what ccw explains:** a missing generated file (the render
+  child died, ticket 32), a payload that hashes to the catalog head (a re-capture whose
+  render never landed), or a grown sub-agent. Anything else leaves the folder
+  UNTOUCHED, whole even when pages are also missing, so the change stays visible.
+- **Such a folder fails repair every day until someone acts.** Repair prints `still
+  broken, left untouched, ccw cannot explain: ...` on stderr, writes an `error` record
+  to `logs/capture.jsonl` and exits 1 on every run, which the freshness hook shows at
+  each session start. It raises ONE desktop and voice alert per folder and problem set
+  (a `repair-refused` line in the same log is the dedup record); a new problem on the
+  same folder alerts once more.
+- **While a batch is running** (any batch lock held), a mismatch on a file newer than its
+  manifest is the batch's own write: repair logs one `pending` line and leaves it for the
+  batch's own build, exit 0. A file OLDER than its manifest is never excused.
+
+**Clearing a refused folder** (a human decision, one of two):
+1. Restore the file. Copy the original from the external backup of the archive into the
+   same place in the folder, so it matches its manifest record again.
+2. Accept the new bytes as correct. Re-render the folder by hand, which records the file
+   as it now is (find `<short>` with `ccw status` or in the repair log line):
+
+   ```
+   ccw render --session s:<short>
+   ```
+
+   For a companion file or a sub-agent that did not grow this keeps the old record (the
+   rule above), so accepting one of those means restoring it (option 1) instead.
+
+Then run the job once so its last exit code, which the freshness hook reads, turns green
+without waiting for 15:30:
+
+```
+launchctl kickstart gui/$(id -u)/com.captaincodeau.ccw-repair
+```
+
+Pinned by `tests/test_writers_keep_evidence.py` and
 `tests/test_repair_refuses_unexplained.py`.
 
 ## The `sidecars` line, and the alert that is not a banner (ticket 38, 2026-09-08)
