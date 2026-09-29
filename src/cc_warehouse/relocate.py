@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import catalog, registry, store
+from cc_warehouse import archive, catalog, external, registry, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -164,6 +164,52 @@ def _relocate_roots(config: Config) -> tuple[tuple[Path, ...], str | None]:
     if config.config_errors:
         return (), config.config_errors[0]
     return tuple(_absolute(root) for root in config.relocate_roots), None
+
+
+# The session stores ccw archives out of `~/.claude`, beside `projects/`: session
+# data, so read-only to everything, relocate included (W-20260929-A102). The names
+# are the ones the archiver itself uses (R9).
+_SESSION_STORES = (
+    external.FILE_HISTORY_DIR,
+    external.TODOS_DIR,
+    archive.PASTE_CACHE_DIR,
+    "history.jsonl",
+)
+
+
+def _protected(config: Config) -> list[tuple[Path, str]]:
+    """Every tree the content scan must never descend or rewrite, RESOLVED, with the
+    reason the plan names it by (DESIGN 11, ticket 12a, W-20260929-A102).
+
+    DESIGN 11's scope is memory and inventory files under the configured roots. The
+    warehouse (stored objects are content-addressed), the archive (its transcripts are
+    source-class data, R4 as amended) and the session stores Claude Code writes under
+    `~/.claude` are data this project keeps, never text it edits: a root that reaches
+    them is still scanned for everything else, and each of them is named as declined.
+    """
+    out: list[tuple[Path, str]] = [
+        (_resolved(_absolute(config.root)), "warehouse not scanned (stored objects are immutable)")
+    ]
+    if config.archive_root is not None:
+        out.append((
+            _resolved(_absolute(config.archive_root)),
+            "archive not scanned (archived sessions are read-only)",
+        ))
+    projects_link = _claude_projects()
+    if projects_link is not None:
+        # Captured transcripts are SOURCES: read-only forever (R4/F9). SPEC 10.2 keeps
+        # the specimen's rule that nothing outside the memory roots is string-edited;
+        # the encoded dirs are renamed instead.
+        out.append((
+            _resolved(projects_link),
+            "captured transcripts not scanned (sources are read-only)",
+        ))
+        claude = projects_link.parent
+        out.extend(
+            (_resolved(claude / name), f"{name} not scanned (session data is read-only)")
+            for name in _SESSION_STORES
+        )
+    return out
 
 
 def _form_patterns(
@@ -318,9 +364,7 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
     and one config.toml shared across machines may legitimately name an absent root.
     """
     roots, config_error = _relocate_roots(config)
-    warehouse = _resolved(_absolute(config.root))
-    projects_link = _claude_projects()
-    projects = _resolved(projects_link) if projects_link is not None else None
+    protected = _protected(config)
     targets: list[Path] = []
     skipped: list[tuple[Path, str]] = []
     named: set[Path] = set()
@@ -333,13 +377,9 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
             skipped.append((path, reason))
 
     def exclusion(real: Path) -> str | None:
-        if warehouse == real or warehouse in real.parents:
-            return "warehouse not scanned (stored objects are immutable)"
-        if projects is not None and (projects == real or projects in real.parents):
-            # Captured transcripts are SOURCES: read-only forever (R4/F9). SPEC 10.2 keeps
-            # the specimen's rule that nothing outside the memory roots is string-edited;
-            # the encoded dirs are renamed instead.
-            return "captured transcripts not scanned (sources are read-only)"
+        for base, reason in protected:
+            if base == real or base in real.parents:
+                return reason
         return None
 
     def onerror(exc: OSError) -> None:
@@ -359,6 +399,7 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
             continue
         for dirpath, dirnames, filenames in os.walk(root, onerror=onerror):
             here = Path(dirpath)
+            here_real = _resolved(here)
             keep: list[str] = []
             for name in sorted(dirnames):
                 child = here / name
@@ -383,6 +424,12 @@ def _scan_content(config: Config, patterns: list[tuple[re.Pattern[str], str]]) -
                 seen.add(path)
                 if path.is_symlink():
                     note(path, "symlink not rewritten")
+                    continue
+                # A protected FILE (`history.jsonl`) sits in a directory that is itself
+                # in scope, so directory pruning alone cannot reach it (W-20260929-A102).
+                file_excluded = exclusion(here_real / name)
+                if file_excluded:
+                    note(path, file_excluded)
                     continue
                 if not path.is_file():
                     # Classified by stat, never by reading: opening a FIFO named *.md

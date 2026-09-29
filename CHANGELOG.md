@@ -22,6 +22,19 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw relocate` never rewrites the archive or `~/.claude`'s session stores (2026-09-29,
+W-20260929-A102; ruling: Gavin, "fix all five").** The content scan string-edits files under
+`[relocate].roots` and excluded only the warehouse and `~/.claude/projects`, so a root that
+reached `archive_root` or `~/.claude` rewrote archived transcripts, `prompts.jsonl`,
+`history.jsonl`, `file-history/`, `todos/` and `paste-cache/`; reproduced in a sandbox, all
+six rewritten by one `--apply`. New `relocate._protected` lists every tree the scan must never
+touch (warehouse, archive, `~/.claude/projects` and the four session stores, named by the
+archiver's own constants), compared resolved; directories are pruned as before and files are
+now checked too, since `history.jsonl` sits in a directory that is otherwise in scope. Each
+declined tree is named in the plan with "not scanned", like every earlier exclusion. DESIGN
+11's scope still works: memory and inventory files under the configured roots are repaired,
+including ones under `~/.claude` (the test's control).
+
 **An `archive_root` that overlaps the warehouse root is refused (2026-09-29,
 W-20260929-A101; ruling: Gavin, "fix all five").** `ccw build` deletes whatever it did not
 expect under `<root>/projections/`, so an archive at or inside the warehouse root could have
