@@ -733,8 +733,13 @@ def log_recorded(env: dict[str, str], *uuids: str) -> None:
 
 
 def ledger(env: dict[str, str]) -> list[dict[str, object]]:
+    """The reconciliation ledger lines. Excludes `repair-summary`, which every
+    `ccw repair` run appends once BY DESIGN since W-20260929-A82 item 6 (the
+    start-up hook's count), so "a second run appends nothing" still means
+    nothing to this ledger."""
     path = warehouse_root(env) / "logs" / "capture.jsonl"
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    return [r for r in lines if r.get("status") != "repair-summary"]
 
 
 def retractions(env: dict[str, str]) -> list[dict[str, object]]:

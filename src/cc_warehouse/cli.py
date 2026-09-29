@@ -1234,6 +1234,13 @@ def _run_build(args: Sequence[str]) -> int:
     superseded = sum(1 for outcome in report.outcomes if outcome.action == build.SUPERSEDED)
     if superseded:
         summary += f", {superseded} superseded during this run"
+    # W-20260929-A82: a folder with an unreadable manifest is held for repair,
+    # named here and on stderr, never a failure of this run.
+    held = [outcome for outcome in report.outcomes if outcome.action == build.HELD]
+    if held:
+        summary += f", {len(held)} held for repair"
+        for outcome in held:
+            print(f"build held: {outcome.item}: {outcome.detail}", file=sys.stderr)
     _log_run_summary(config, "build", "error" if failures else "ok", summary)
     print(f"build: {summary}")
     return 1 if failures else 0
@@ -1957,6 +1964,48 @@ def _retract_unrecoverable(config: Config, findings: Sequence[reconcile.Finding]
             continue
 
 
+def _announce_refusals(config: Config, refusals: Sequence[tuple[str, str, str]]) -> None:
+    """(session_uuid, folder name, message) for each folder repair left untouched
+    this run (W-20260929-A82). One `repair-refused` record per folder whose
+    (session_uuid, message) is NEW, plus ONE combined desktop+voice alert for the
+    new ones. A folder already announced with the same problems stays silent, so
+    a daily job never nags (the ticket 24.7 trap); `_log_repair_outcome` still
+    records every run. Same shape and best-effort contract (DESIGN 12) as
+    `_announce_unrecoverable`."""
+    known = reconcile.known_refusals(config)
+    new = [r for r in refusals if (r[0], r[2]) not in known]
+    if not new:
+        return
+    now_iso = datetime.now(UTC).isoformat()
+    for session_uuid, _name, message in new:
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": now_iso,
+                    "status": reconcile.REPAIR_REFUSED,
+                    "session": None,
+                    "project": None,
+                    "message": message,
+                    "elapsed_ms": None,
+                    "session_uuid": session_uuid,
+                },
+            )
+        except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+            continue
+    first = new[0]
+    plural = "s" if len(new) != 1 else ""
+    sentence = (
+        f"cc-warehouse: repair left {len(new)} archive folder{plural} untouched because a"
+        f" file changed and ccw cannot explain it. First: {first[1]}."
+    )
+    try:
+        notify.alert(config, "cc-warehouse", sentence)
+        notify.speak(config, sentence)
+    except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+        return
+
+
 def _run_repair(rest: Sequence[str]) -> int:
     """`ccw repair`: re-render any of the same recent archive folders `ccw doctor`'s
     desync check flags (ticket 32 -- a real 2026-08-23 incident: the hook's detached
@@ -1998,7 +2047,26 @@ def _run_repair(rest: Sequence[str]) -> int:
 
     W-20260929-A61: the same pass then RETRACTS any already-recorded session the
     empty-session ruling now calls empty (`_retract_unrecoverable`), sharing one
-    history.jsonl read with the new-loss check and raising no alert."""
+    history.jsonl read with the new-loss check and raising no alert.
+
+    W-20260929-A82 (ruling: Gavin, 2026-09-29): repair re-renders ONLY what ccw
+    itself explains (`doctor.unexplained`). A re-render rewrites the manifest from
+    the files on disk, so rendering over any other mismatch recorded the changed
+    bytes as the new truth, logged "fixed", and left every later check clean.
+    Such a folder is first RESTORED from ~/.claude when a source file hashes to
+    the manifest's kept record (`archive.restore_from_sources`); otherwise it is
+    HELD: left untouched (whole, even with missing pages), announced once per
+    distinct problem set (`_announce_refusals`), and re-checked on every run until
+    it verifies clean, in or out of the 25-folder sample. While a batch lock is
+    held, a mismatch on a file written after that lock was taken, and after its
+    manifest, is the batch's own write and is PENDING instead
+    (`doctor.pending_under_lock`): no render, no refusal, no alert, one `pending`
+    log line.
+
+    EXIT CODE (send-back item 6): 1 only when repair ITSELF failed. A held folder
+    exits 0 and is counted in the one `repair-summary` line each run writes
+    (`_write_repair_summary`), which the start-up hook reads on its own clock
+    (tests/test_repair_refuses_unexplained.py, tests/test_repair_sendback.py)."""
     quiet = "--quiet" in rest
     config = _load(rest)
     # Ticket 44a: repair re-renders INTO the archive, so an unproven root is
@@ -2021,23 +2089,24 @@ def _run_repair(rest: Sequence[str]) -> int:
     _announce_unrecoverable(config, reconcile_new)
     retracted = reconcile.find_retractable(config, history=history)
     _retract_unrecoverable(config, retracted)
-    folders, broken = doctor.desync_detail(config)
-    if not broken:
-        if not quiet:
-            print(f"repair: 0 problems in the {len(folders)} most recently captured folder(s)")
-            if reconcile_new:
-                print(
-                    f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)"
-                )
-            if retracted:
-                print(f"repair: {len(retracted)} unrecoverable session(s) retracted as empty")
-        return 0
-    conn = catalog.open_catalog(config.root)
+    open_before = reconcile.open_refusals(config)
+    folders, broken = doctor.desync_detail(config, also=frozenset(open_before))
+    claude_home = Path.home() / ".claude"
+    _report_stray_temps(config, folders)
+    since = doctor.batch_started_at(config.root)
+    zone = config.archive_timezone
+    fixed = 0
+    pending = 0
+    still_broken: list[str] = []
+    held: dict[str, str] = {}
+    refusals: list[tuple[str, str, str]] = []
+    unresolved: set[str] = set()
+    conn = catalog.open_catalog(config.root) if broken else None
     try:
-        fixed = 0
-        still_broken: list[str] = []
-        for folder, _problems in broken:
+        for folder, problems in broken:
+            assert conn is not None
             session_uuid = folder.name.partition("_")[2]
+            unresolved.add(session_uuid)
             row = conn.execute(
                 "SELECT short FROM session WHERE session_uuid = ? "
                 "ORDER BY captured_at DESC LIMIT 1",
@@ -2049,6 +2118,57 @@ def _run_repair(rest: Sequence[str]) -> int:
                 _log_repair_outcome(config, "error", None, message)
                 continue
             short = cast(str, row[0])
+            head = conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT hash FROM ranked WHERE rn = 1 AND session_uuid = ?",
+                (session_uuid,),
+            ).fetchone()
+            head_hash = cast(str, head[0]) if head is not None else None
+            copies_ok = any(
+                p.problem == "missing manifest.json" for p in problems
+            ) and archive.copies_match_sources(folder, claude_home, session_uuid)
+            refused = doctor.unexplained(
+                folder, problems, head_hash, copies_match_sources=copies_ok
+            )
+            waiting = [
+                p for p in refused
+                if since is not None and doctor.pending_under_lock(folder, p, since)
+            ]
+            if waiting and len(waiting) == len(refused):
+                # The running batch wrote these after its lock was taken and after
+                # the manifest; its own build re-renders them (F1, item 2).
+                detail = "; ".join(sorted({p.problem for p in waiting}))
+                _log_repair_outcome(
+                    config, "pending", short, f"pending, a batch is running: {detail}"
+                )
+                pending += 1
+                continue
+            if [p for p in refused if p not in waiting] and config.archive_root is not None:
+                # Item 5: a byte-for-byte restore from ~/.claude when a source
+                # hashes to the kept record; never an accept.
+                restored = archive.restore_from_sources(
+                    config.archive_root, folder, claude_home, session_uuid
+                )
+                if restored:
+                    _log_repair_outcome(
+                        config, "ok", short,
+                        f"restored from ~/.claude: {', '.join(sorted(restored))}",
+                    )
+                    problems = archive.verify_folder(folder, zone)
+                    if not problems:
+                        fixed += 1
+                        unresolved.discard(session_uuid)
+                        continue
+                    refused = doctor.unexplained(
+                        folder, problems, head_hash, copies_match_sources=copies_ok
+                    )
+            if refused := [p for p in refused if p not in waiting]:
+                detail = "; ".join(sorted({p.problem for p in refused}))
+                message = f"left untouched, ccw cannot explain: {detail}"
+                held[session_uuid] = f"{folder.name}: held, {message}"
+                _log_repair_outcome(config, "error", short, f"still broken, {message}")
+                refusals.append((session_uuid, folder.name, f"repair: {message}"))
+                continue
             # See the docstring above: this is an unattended, scheduled render, never
             # a human ending a real session, so the open-folder reveal is forced off
             # for this child regardless of what config.toml says.
@@ -2065,31 +2185,124 @@ def _run_repair(rest: Sequence[str]) -> int:
                 still_broken.append(f"{folder.name}: {message}")
                 _log_repair_outcome(config, "error", short, message)
                 continue
-            remaining = archive.verify_folder(folder, config.archive_timezone)
+            remaining = archive.verify_folder(folder, zone)
             if remaining:
                 message = f"still broken: {remaining[0].problem}"
                 still_broken.append(f"{folder.name}: {message}")
                 _log_repair_outcome(config, "error", short, message)
                 continue
             fixed += 1
+            unresolved.discard(session_uuid)
             _log_repair_outcome(config, "ok", short, "fixed")
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+    _announce_refusals(config, refusals)
+    checked = {folder.name.partition("_")[2] for folder in folders}
+    _resolve_refusals(
+        config, [u for u in open_before if u in checked and u not in unresolved]
+    )
+    open_after = _write_repair_summary(config)
     if not quiet:
         if reconcile_new:
             print(f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)")
         if retracted:
             print(f"repair: {len(retracted)} unrecoverable session(s) retracted as empty")
-        total_problems = sum(len(p) for _, p in broken)
-        print(
-            f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
-            f"{len(folders)} most recently captured: {fixed} fixed, "
-            f"{len(still_broken)} still broken"
-        )
-    for line in still_broken:
+        if not broken:
+            print(f"repair: 0 problems in the {len(folders)} most recently captured folder(s)")
+        else:
+            total_problems = sum(len(p) for _, p in broken)
+            pending_note = f", {pending} pending behind a running batch" if pending else ""
+            print(
+                f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
+                f"{len(folders)} most recently captured: {fixed} fixed, "
+                f"{len(still_broken)} still broken, {len(held)} held{pending_note}"
+            )
+        if open_after:
+            print(f"repair: {open_after} open refusal(s), see docs/operations.md")
+    for line in [*still_broken, *held.values()]:
         print(f"  {line}", file=sys.stderr)
+    # Item 6: exit 1 means repair ITSELF failed. A held folder is evidence kept,
+    # counted in the `repair-summary` line the start-up hook reads on its clock.
     return 0 if not still_broken else 1
 
+
+def _report_stray_temps(config: Config, folders: Sequence[Path]) -> None:
+    """Name every temp-shaped file in the checked folders (W-20260929-A82 item
+    1): never recorded, never deleted (R4), never an exit code. One log line
+    per folder per run, on stderr too."""
+    for folder in folders:
+        strays = archive.stray_temp_files(folder)
+        if not strays:
+            continue
+        names = ", ".join(p.relative_to(folder).as_posix() for p in strays)
+        line = f"{folder.name}: stray temp file(s), never recorded: {names}"
+        print(f"  {line}", file=sys.stderr)
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": datetime.now(UTC).isoformat(),
+                    "status": "repair-stray-temp",
+                    "session": None,
+                    "project": None,
+                    "message": f"repair: {line}",
+                    "elapsed_ms": None,
+                    "session_uuid": folder.name.partition("_")[2],
+                },
+            )
+        except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+            continue
+
+
+def _resolve_refusals(config: Config, session_uuids: Sequence[str]) -> None:
+    """Close each open refusal whose folder verified clean this run (restored,
+    re-rendered, or fixed by a human), so it stops counting and the same
+    problem later alerts again (W-20260929-A82 item 6)."""
+    now_iso = datetime.now(UTC).isoformat()
+    for session_uuid in session_uuids:
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": now_iso,
+                    "status": reconcile.REPAIR_REFUSAL_RESOLVED,
+                    "session": None,
+                    "project": None,
+                    "message": "repair: refused folder verified clean again",
+                    "elapsed_ms": None,
+                    "session_uuid": session_uuid,
+                },
+            )
+        except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+            continue
+
+
+def _write_repair_summary(config: Config) -> int:
+    """The ONE line per run the start-up hook reads (W-20260929-A82 item 6):
+    how many refusals are open, counting EVERY session with an unresolved
+    `repair-refused` record whether or not it is still in the 25-folder sample,
+    and when the oldest was first refused, so the hook's time clock starts from
+    the damage and not from today. Returns the open count."""
+    state = reconcile.open_refusals(config)
+    oldest = min((r.first_at for r in state.values() if r.first_at), default=None)
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": reconcile.REPAIR_SUMMARY,
+                "session": None,
+                "project": None,
+                "message": f"repair: {len(state)} open refusal(s)",
+                "elapsed_ms": None,
+                "open_refusals": len(state),
+                "oldest_refusal_at": oldest,
+            },
+        )
+    except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+        pass
+    return len(state)
 
 def _flag_value(args: Sequence[str], name: str) -> str | None:
     """The value following `--name`, or None. Exact equality, so `--to` never

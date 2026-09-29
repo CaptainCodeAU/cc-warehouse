@@ -691,18 +691,20 @@ def test_a_stale_manifest_is_pending_while_a_batch_lock_is_held(
     assert run_ccw(["sweep"], ccw_env).code == 0
     folder = next(archive.walk_folders(archive_root))
     _age_capture(ccw_env, UUID_A, seconds_ago=3600)
-    _sweep_rewrites_after_manifest(folder)
 
     root = warehouse_root(ccw_env)
     config = Config(root=root, archive_root=archive_root, archive_timezone=ZONE)
-    shapes = {p.problem for p in archive.verify_folder(folder, ZONE)}
-    assert shapes == {
-        "JSONL does not match manifest source_hash",
-        "prompts.jsonl exists but the manifest says none",
-    }, shapes
 
+    # W-20260929-A82 item 2: a batch's own writes come AFTER it took its lock;
+    # only those are excused (test_repair_sendback.py has the "before" case).
     assert store.acquire_lock(root, "build")
     try:
+        _sweep_rewrites_after_manifest(folder)
+        shapes = {p.problem for p in archive.verify_folder(folder, ZONE)}
+        assert shapes == {
+            "JSONL does not match manifest source_hash",
+            "prompts.jsonl exists but the manifest says none",
+        }, shapes
         checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
         assert checked == 1
         assert problems == 0, "a sweep's own not-yet-rendered writes tripped the alarm"
@@ -1055,12 +1057,12 @@ def test_every_batch_writer_lock_excuses_its_own_writes(
     assert run_ccw(["sweep"], ccw_env).code == 0
     folder = next(archive.walk_folders(archive_root))
     _age_capture(ccw_env, UUID_A, seconds_ago=3600)
-    _sweep_rewrites_after_manifest(folder)
     root = warehouse_root(ccw_env)
     config = Config(root=root, archive_root=archive_root, archive_timezone=ZONE)
 
     assert store.acquire_lock(root, lock)
     try:
+        _sweep_rewrites_after_manifest(folder)  # after the lock (A82 item 2)
         _checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
     finally:
         store.release_lock(root, lock)

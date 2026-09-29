@@ -48,6 +48,20 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# The name `atomic_write`'s mkstemp gives its temp file: `.<name>.<8 chars>.tmp`,
+# 8 from tempfile's own alphabet. Owned here, beside the one writer that makes
+# such files, so nothing else re-derives the shape (R9).
+_TEMP_NAME = re.compile(r"^\..+\.[a-z0-9_]{8}\.tmp$")
+
+
+def is_temp_name(name: str) -> bool:
+    """True for a file name shaped like `atomic_write`'s own half-finished temp
+    file (W-20260929-A82). Such a file is never data: it is a write in flight,
+    or one a killed process left behind. Nothing records it; nothing deletes it
+    either (R4), it is only reported."""
+    return bool(_TEMP_NAME.match(name))
+
+
 def atomic_write(path: Path, data: bytes) -> None:
     """The one sanctioned file-write primitive: tmp file in the same dir, then os.replace.
 
@@ -334,6 +348,21 @@ def acquire_lock(root: Path, name: str) -> bool:
         return False  # retry budget exhausted under contention: refuse (R5)
     finally:
         scratch.unlink(missing_ok=True)
+
+
+def lock_taken_at(root: Path, name: str) -> float | None:
+    """When `locks/<name>` was taken (its mtime), or None when it is not held.
+
+    The lock file is a hard link to a scratch file `acquire_lock` writes the
+    moment it takes the lock, and nothing rewrites it while it is held, so its
+    mtime is the start of the batch (W-20260929-A82 item 2). Same liveness rule
+    as `lock_is_held`: a stale lock reads as not held."""
+    if not lock_is_held(root, name):
+        return None
+    try:
+        return (root / "locks" / name).stat().st_mtime
+    except OSError:
+        return None
 
 
 def release_lock(root: Path, name: str) -> None:

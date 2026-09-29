@@ -26,7 +26,8 @@ LOCK_DELETE_SANCTIONED: dict[str, set[str]] = {
 }
 
 # The ONE function allowed to compare a file's size for equality (W-20260929-A74;
-# ruling: Gavin, 2026-09-29, option 1). It is `ccw doctor`'s quick integrity
+# ruling: Gavin, 2026-09-29, option 1; fence exemption approved as option A, same
+# day, recorded in DESIGN 15). It is `ccw doctor`'s quick integrity
 # screen, and it never decides identity: a size DIFFERENCE is reported as a
 # mismatch (sound, different lengths are different bytes), an equal size only
 # means "not checked further here", and the full sha256 check in `ccw repair`
@@ -63,6 +64,13 @@ GUARANTEE_PROOFS: dict[tuple[str, str], str] = {
     # one name (ticket 21b).
     ("build.py", "identical"): "test_the_zone_comes_from_config_not_the_machine",
     ("archive.py", "never delete"): "test_the_archive_module_has_no_deletion_primitive_at_all",
+    # W-20260929-A82 send-back. archive.py's restore puts a file back "byte for
+    # byte" and doctor.py's missing-manifest rule needs copies equal to their
+    # sources "byte for byte": each test compares the actual bytes. cli.py's
+    # stray-temp report "never deletes" one: its test asserts the file is still there.
+    ("archive.py", "byte for byte"): "test_repair_restores_a_changed_file_from_its_intact_source",
+    ("doctor.py", "byte for byte"): "test_a_missing_manifest_is_not_rerendered_over_damage",
+    ("cli.py", "never delete"): "test_a_stray_temp_file_is_reported_by_repair_not_recorded",
     # `sidecar_bytes` claims an unchanged project produces BYTE-IDENTICAL output.
     # That is not a nicety: it is what `write_project_file`'s skip rests on, and
     # the skip is what stops a 4,756-payload import rewriting one sidecar

@@ -22,6 +22,95 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**A82, three more rulings (2026-09-29, W-20260929-A82; Gavin).** (1) An unreadable
+`manifest.json` HOLDS its folder instead of failing the run: `ccw build`, every sweep and
+the weekly `ccw archive --to` skip it (`build.HELD` outcome, `MigrationReport.held`), log a
+`writer-held` line (`archive.record_hold`), and exit 0 for that reason alone; build and
+the archive job also say `N held for repair` (the sweep's own summary does not). A `writer-held` line opens a refusal in `reconcile.open_refusals`, so
+`ccw repair` re-checks the folder every run, counts it in `repair-summary` and raises its
+one alert, in or out of its sample. (2) "The sub-agent grew" now means it was APPENDED
+to: `archive._appended` needs the file longer AND the sha256 of its first <recorded
+bytes> bytes equal to the kept record, wherever growth is explained (the manifest writer
+and `folder_is_current` via `kept_subagent_records`, and `FolderProblem.grew`, which
+repair reads). A longer file that is not the old bytes plus more is held. (3) Copies set
+aside under `_not-sessions/displaced/` are pinned untouchable: `ccw build --rebuild`, a
+storing sweep, `ccw archive --to` (with and without `--rebuild`), `ccw archive --verify`,
+`ccw repair` and `ccw doctor` leave every byte and mtime there as it was and report
+nothing about it, and a second restore of different bytes adds a second copy without
+touching the first. `notify.append_log_under` added so a writer with only the warehouse
+root (migrate) can log. Tests: `tests/test_a82_held_growth_displaced.py`.
+
+**A82 send-back: six holes in the evidence rules closed (2026-09-29, W-20260929-A82;
+ruling: Gavin, "send back", after a five-reviewer sandbox review of 51523da).**
+(1) A temp-shaped name (`.<name>.<8 chars>.tmp`, `store.atomic_write`'s own mkstemp, now
+`store.is_temp_name`) is never recorded in a manifest, and one an older render recorded
+is dropped, not kept; repair reports stray temp files (`repair-stray-temp` log line) and
+never deletes them. Before, a render during a companion copy recorded the tmp and the
+keep-old rule kept it forever, through `--rebuild`.
+(2) The batch-lock excuse covers only files written AFTER the lock was taken
+(`store.lock_taken_at`, `doctor.batch_started_at`), for doctor and repair alike. Before, a
+15:30 repair inside the 12:30 sweep's lock called older damage "pending" every day.
+(3) A missing `manifest.json` counts as explained only when every copied file matches its
+original in `~/.claude` byte for byte (`archive.copies_match_sources`); an unreadable one
+is never replaced by any writer (`archive.ManifestUnreadable`).
+(4) Repair explains a changed `prompts.jsonl` or `custom-title.json` (ccw rewrites both),
+as the writers already did; a rename during a resume no longer raises a false refusal.
+(5) Repair restores a changed or deleted companion file or sub-agent byte for byte from
+`~/.claude` when a source file's sha256 equals the manifest's kept record
+(`archive.restore_from_sources`), after setting the changed copy aside under
+`_not-sessions/displaced/`; with no matching source the folder stays held.
+(6) `ccw repair` exits 1 only when repair itself failed. A held folder exits 0 and is
+counted in one `repair-summary` log line per run (`open_refusals`, `oldest_refusal_at`),
+which the start-up hook reads on its own time clock. Every open refusal is re-checked on
+every run, even outside the 25-folder sample, and closes (`repair-refusal-resolved`) only
+when its folder verifies clean. Changed tests, each for the ruling it follows: refusals
+now exit 0 and change the source so no restore applies; batch-lock tests write after the
+lock; the reconciliation ledger helper ignores the new per-run summary line. Tests:
+`tests/test_repair_sendback.py`.
+
+**No writer records a changed file as the new truth any more, and `ccw repair` stops
+re-rendering over a change it cannot explain (2026-09-29, W-20260929-A82 and A88; ruling:
+Gavin, F1, F2 (a), F3).** Verified in a sandbox with the real verbs: `ccw build`, a `ccw
+sweep` that stores anything (its build covers the whole archive), the weekly `ccw archive
+--to` job and `ccw repair` all re-rendered a folder whose sub-agent or copied companion
+file had changed, and the re-render rebuilt the manifest's records from the files on
+disk, so the changed bytes became the record and `ccw archive --verify` then reported 0
+problems. Three parts:
+(F3) The shared manifest writer keeps the OLD record, through one rule read by the writer
+and by `folder_is_current` alike (`archive.kept_companion_records`,
+`archive.kept_subagent_records`), so all four writers inherit it and a damaged folder is
+not re-rendered on every build. A companion file (tool-results, workflows, file-history,
+todos, pastes; all written with `write_if_absent`, never rewritten or deleted by ccw)
+keeps its old record when it changed or vanished. A sub-agent keeps its old record when
+it changed without growing, or vanished; a GROWN sub-agent is adopted, since ccw itself
+replaces sub-agents only with larger ones (closes W-20260929-A76). NOT covered, by the
+ruling: `prompts.jsonl` and `custom-title.json`. ccw legitimately rewrites both (an
+extraction fix, a rename) and nothing in the archive tells that from damage, so a change
+to either is still adopted by the next render. A damaged file that a storing sweep can
+copy again from an intact, larger source in `~/.claude` is healed by the existing
+replace-if-larger rule, which is the right outcome.
+(F2 (a)) `ccw repair` re-renders only what `doctor.unexplained` calls explained: a missing
+generated file, a payload mismatch whose JSONL hashes to the catalog head (a re-capture),
+or a sub-agent that grew. Anything else leaves the folder untouched, whole even when
+pages are also missing. It is reported `still broken` and writes an `error` record every
+run. (It exited 1 on every run here; SUPERSEDED the same day by the send-back entry
+above: a held folder exits 0 and is counted in a `repair-summary` line.) One desktop and voice alert fires per folder and distinct problem set, recorded
+as a `repair-refused` line in `logs/capture.jsonl` keyed on (session_uuid, message); its
+message starts `repair: `, so the reconciliation ledger never reads it as a capture error.
+(F1) While any batch lock is held, a mismatch on a file newer than its manifest is the
+batch's own write: repair logs one `pending` line for the folder and does not render,
+refuse or alert, exit 0. This is doctor's a60d50d rule, now one function for both
+(`doctor.pending_under_lock`), and it reads the file `verify_folder` names on the problem
+(`FolderProblem.path`, new) instead of re-deriving it from the message text, so it covers
+every file-level shape; doctor's own batch pending widens by the same amount (a sub-agent,
+companion or `custom-title.json` newer than its manifest reads pending while a lock is
+held, then fails once it is released, as payload and prompts already did).
+`doctor._payload_is_head` is the one "hashes to the catalog head" rule doctor's re-capture
+pending and repair's refusal both read. Tests: `tests/test_writers_keep_evidence.py` (a
+real-verb matrix of the four writers against four kinds of damage, every companion kind
+at unit level, the prompts/custom-title limit, A76, and the lock rule) and
+`tests/test_repair_refuses_unexplained.py`, every render real.
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because
@@ -43,10 +132,9 @@ companion file listings are each shared by the record writer and the verifier. T
 fence (`tests/test_fences.py::test_no_size_or_mtime_EQUALITY_anywhere`) gains a one-entry,
 function-named exemption for `archive._size_matches`, which screens and never decides
 identity; any other size or mtime equality still fails it. Accepted trade-off: a same-size
-rewrite passes doctor and is detected by the next daily repair. OPEN, pre-existing and now
-load-bearing: repair then re-renders the folder, which records the changed bytes' hashes in
-the manifest, logs "fixed" and exits 0, so the change stops being visible to every check
-(docs/operations.md). Measured on the real machine:
+rewrite passes doctor and is detected by the next daily repair. Repair then used to
+re-render over it and erase the evidence; fixed by the W-20260929-A82 entry above.
+Measured on the real machine:
 `ccw doctor` 7.1 to 9.7 s over five runs against 14.0 to 44.9 s for the installed 0.1.4,
 interleaved. Tests: `tests/test_doctor_quick_desync.py`.
 
