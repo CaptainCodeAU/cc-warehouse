@@ -22,6 +22,15 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw render --out` and `ccw share --out` refuse the archive (2026-09-29, W-20260929-A103;
+ruling: Gavin, "fix all five").** The ad-hoc `--out` guard covered the warehouse's `objects/`
+and `projections/` but not `archive_root`, so `ccw render <jsonl> --out <archive folder>`
+exited 0 and overwrote the folder's generated files with a bare manifest, dropping its
+sub-agent and companion records; reproduced in a sandbox by plain path, by `..` and through a
+symlink. `_out_under_warehouse` now guards `archive_root` too, resolved, and `ccw share --out`,
+which shares the guard, is closed with it. The message reads "must not be inside the warehouse
+store, projections or archive".
+
 **`ccw relocate` never rewrites the archive or `~/.claude`'s session stores (2026-09-29,
 W-20260929-A102; ruling: Gavin, "fix all five").** The content scan string-edits files under
 `[relocate].roots` and excluded only the warehouse and `~/.claude/projects`, so a root that

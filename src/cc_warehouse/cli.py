@@ -1428,18 +1428,25 @@ def _render_options(rest: Sequence[str]) -> RenderOptions:
 
 
 def _out_under_warehouse(out: str) -> bool:
-    """True when an ad-hoc --out resolves inside the warehouse store or projections.
+    """True when an ad-hoc --out resolves inside the warehouse store, projections or
+    the archive.
 
     Guarded only when a warehouse root is configured; with none configured there is
     nothing to protect and the caller renders freely. The target and each guarded root
     are resolved before the ancestor check, so a symlinked or relative --out cannot slip
-    an ad-hoc render's write into objects/ or projections/ and clobber the store (F9)."""
+    an ad-hoc render's write into objects/ or projections/ and clobber the store (F9).
+    `archive_root` joined the list (W-20260929-A103): a render into an archive folder
+    overwrote its manifest with a bare one and dropped the folder's evidence, and
+    `ccw share --out` shares this guard, so it is closed there too."""
     try:
         config = load_config()
     except Exception:
         return False
     target = Path(out).resolve()
-    for guarded in (config.root / "objects", config.root / "projections"):
+    guarded_roots = [config.root / "objects", config.root / "projections"]
+    if config.archive_root is not None:
+        guarded_roots.append(config.archive_root)
+    for guarded in guarded_roots:
         anchor = guarded.resolve()
         if target == anchor or anchor in target.parents:
             return True
@@ -1462,7 +1469,7 @@ def _render_adhoc(
         return 1
     if out is not None and _out_under_warehouse(out):
         print(
-            "Error: --out must not be inside the warehouse store or projections",
+            "Error: --out must not be inside the warehouse store, projections or archive",
             file=sys.stderr,
         )
         return 1
@@ -2531,7 +2538,7 @@ def _run_share(args: Sequence[str]) -> int:
     out_path = Path(out)
     if _out_under_warehouse(out):
         print(
-            "Error: --out must not be inside the warehouse store or projections",
+            "Error: --out must not be inside the warehouse store, projections or archive",
             file=sys.stderr,
         )
         return 2
