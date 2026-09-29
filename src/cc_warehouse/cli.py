@@ -2220,7 +2220,9 @@ def _archive_verify(target: Path, zone: str) -> int:
     # on the network share). A folder whose read raised is one named problem,
     # and the rest are still checked (R10); before the pool it ended the run.
     for chunk in parallel.chunks(list(archive.walk_folders(target))):
-        checked = parallel.map_reads(lambda folder: archive.verify_folder(folder, zone), chunk)
+        checked = parallel.map_reads(
+            lambda folder: archive.verify_folder(folder, zone), chunk, weigh=archive.payload_bytes
+        )
         for folder, read in zip(chunk, checked, strict=True):
             folders += 1
             if read.error is not None:

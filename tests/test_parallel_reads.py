@@ -626,3 +626,72 @@ def test_read_ahead_yields_every_item_in_order_after_warming_its_chunk() -> None
     log.clear()
     assert list(consume(3)) == [0, 1, 2]
     assert "w2" not in log and "y2" in log
+
+
+def test_weighed_reads_never_exceed_the_byte_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Edge case 3: several large sessions landing in one chunk. Weighed items
+    wait until they fit; one heavier than the whole budget runs alone."""
+    monkeypatch.setattr(parallel, "READ_BUDGET_BYTES", 100)
+    lock = threading.Lock()
+    flight: list[int] = []
+    peaks: list[int] = []
+    alone: list[int] = []
+
+    def fn(weight: int) -> int:
+        with lock:
+            flight.append(weight)
+            peaks.append(sum(min(w, 100) for w in flight))
+            if weight > 100:
+                alone.append(len(flight))
+        time.sleep(0.02)
+        with lock:
+            flight.remove(weight)
+        return weight
+
+    items = [60, 30, 60, 500, 30, 60, 10, 60]
+    results = parallel.map_reads(fn, items, workers=4, weigh=lambda w: w)
+
+    assert [r.get() for r in results] == items
+    assert max(peaks) <= 100, peaks
+    assert max(peaks) > 60, "control: nothing ever ran side by side"
+    assert alone == [1]
+
+
+def test_a_weight_that_raises_is_that_items_error() -> None:
+    def weigh(n: int) -> int:
+        if n == 2:
+            raise OSError("Host is down")
+        return n
+
+    results = parallel.map_reads(lambda n: n, [1, 2, 3], workers=3, weigh=weigh)
+
+    assert [r.error is None for r in results] == [True, False, True]
+    assert results[2].get() == 3
+
+
+def test_both_full_verifies_are_weighed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A one-byte budget makes every weighed item run alone, so a peak of one
+    proves `ccw repair`'s scan and `ccw archive --verify` both pass a weight;
+    doctor's quick scan, which opens no JSONL, is not weighed."""
+    config = _built(tmp_path, monkeypatch)
+    assert config.archive_root is not None
+    _pooled(monkeypatch, workers=3, chunk=6)
+    monkeypatch.setattr(parallel, "READ_BUDGET_BYTES", 1)
+    gauges: list[_Gauge] = []
+    real = archive.verify_folder
+
+    def wrap() -> None:
+        gauge = _Gauge()
+        gauges.append(gauge)
+        monkeypatch.setattr(archive, "verify_folder", gauge.wrap(real))
+
+    wrap()
+    doctor.desync_detail(config)
+    wrap()
+    assert run_cli(["archive", "--to", str(config.archive_root), "--verify"]).code == 0
+    wrap()
+    doctor._desync_scan(config, quick=True)  # pyright: ignore[reportPrivateUsage]
+
+    assert [g.calls for g in gauges] == [len(UUIDS)] * 3
+    assert [g.peak for g in gauges[:2]] == [1, 1]
+    assert gauges[2].peak >= 2, "control: the quick scan should still overlap"

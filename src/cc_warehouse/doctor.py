@@ -563,6 +563,7 @@ def _desync_scan(
             item.folder, config.archive_timezone, known=item.known if quick else None
         ),
         index.recent,
+        weigh=None if quick else (lambda item: archive.payload_bytes(item.folder)),
     )
     broken = [
         (item.folder, problems)

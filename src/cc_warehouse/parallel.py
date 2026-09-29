@@ -29,16 +29,18 @@ which is both the serial baseline the tests compare against and the reason the
 single-session hook path can never start one.
 """
 
+import threading
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import cast
 
-# Threads per pool. Measured on the share over Wi-Fi, 2026-09-29, against real
-# archive folders (harness/tickets/46-network-share-running-cost.md):
-# 16 is where the per-file cost flattens; 32 buys little more and doubles the
-# worst-case bytes in flight. Read at call time, so a test can set it to 1 for
-# the serial baseline.
+# Threads per pool. Measured on the share over Wi-Fi, 2026-09-29, on real heads
+# (harness/tickets/46-network-share-running-cost.md): at normal priority 16
+# beat or matched 32 for the build check and the full verify, and 32 won only
+# the small-file coverage read; under the scheduled jobs' IO throttle 32 was
+# about 20% faster than 16. 16 is the smaller load on the share for most of
+# the gain. Read at call time, so a test can set it to 1 for the serial baseline.
 READ_WORKERS = 16
 
 # Items checked ahead of where the serial loop acts. The build acts on a head
@@ -63,6 +65,36 @@ class Read[R]:
         return cast(R, self.value)
 
 
+# Payload bytes the pool may hold at once when the caller says what an item
+# weighs (the full verify, which reads and parses whole JSONLs). Measured
+# 2026-09-29 on the share: the 114 MB session alone peaks the process at 1.7 GB,
+# and the 8 largest heads checked 16 at a time reached 2.4 GB. Nothing bounded
+# that as sessions grow; with the cap the peak stays near this many payload
+# bytes times the parse overhead. An item heavier than the cap runs alone.
+READ_BUDGET_BYTES = 256 * 1024 * 1024
+
+
+class _Budget:
+    """Weighed bytes in flight across the pool's workers, never above `total`."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.free = total
+        self.ready = threading.Condition()
+
+    def take(self, amount: int) -> int:
+        amount = max(0, min(amount, self.total))
+        with self.ready:
+            self.ready.wait_for(lambda: self.free >= amount)
+            self.free -= amount
+        return amount
+
+    def give(self, amount: int) -> None:
+        with self.ready:
+            self.free += amount
+            self.ready.notify_all()
+
+
 def _answer[T, R](fn: Callable[[T], R], item: T) -> Read[R]:
     try:
         return Read(fn(item))
@@ -71,19 +103,37 @@ def _answer[T, R](fn: Callable[[T], R], item: T) -> Read[R]:
 
 
 def map_reads[T, R](
-    fn: Callable[[T], R], items: Sequence[T], *, workers: int | None = None
+    fn: Callable[[T], R],
+    items: Sequence[T],
+    *,
+    workers: int | None = None,
+    weigh: Callable[[T], int] | None = None,
 ) -> list[Read[R]]:
     """`fn` over every item, at most `workers` at once, answers in item order.
 
-    BYTES IN FLIGHT are bounded by the pool, not by a budget: each worker holds
-    one item's reads at a time, so the peak is `workers` times the largest file
-    one call reads, never a whole set of files.
+    BYTES IN FLIGHT: each worker holds one item's reads at a time, so without
+    `weigh` the peak is `workers` times the largest file one call reads. With
+    `weigh` (an item's size in bytes, asked on the worker), an item also waits
+    until its weight fits in `READ_BUDGET_BYTES`
+    (tests/test_parallel_reads.py::test_weighed_reads_never_exceed_the_byte_budget).
+    A `weigh` that raises is that item's error, the same as `fn` raising.
     """
     count = READ_WORKERS if workers is None else workers
     if count <= 1 or len(items) <= 1:
         return [_answer(fn, item) for item in items]
+    budget = _Budget(READ_BUDGET_BYTES) if weigh is not None else None
+
     def one(item: T) -> Read[R]:
-        return _answer(fn, item)
+        if budget is None or weigh is None:
+            return _answer(fn, item)
+        try:
+            held = budget.take(weigh(item))
+        except Exception as exc:  # noqa: BLE001 - R10: the item's failure, handed back
+            return Read(error=exc)
+        try:
+            return _answer(fn, item)
+        finally:
+            budget.give(held)
 
     with ThreadPoolExecutor(max_workers=min(count, len(items))) as pool:
         return list(pool.map(one, items))
