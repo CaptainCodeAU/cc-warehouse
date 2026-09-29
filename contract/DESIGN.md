@@ -2313,3 +2313,20 @@ the same size, so the new manifest approved the damage (agent-reported). The pri
 ruled the same day that repair re-renders only mismatches ccw explains (missing
 generated files, or a payload hashing to the catalog head) and reports anything else
 as still broken with an alert; the quick check merged first, that fix next.
+
+**2026-09-29, W-20260929-A109: ticket 34's pending rule was narrowed three times; the
+rulings behind each, recorded here because none had a contract entry.** Ticket 34
+said a hash mismatch is real "regardless of timing" and only a missing generated
+file may read as pending. Three changes the same day excuse more, each on a principal
+ruling given in session 4ad4e307: (1) a60d50d, ruled at about 02:10 ("widen doctor's
+exception"): under a held batch lock, a payload or prompts.jsonl mismatch whose file
+is newer than the manifest reads as pending; (2) 0b0eff4, option 2 of W-20260929-A62:
+with no lock, a re-capture reads as pending while its save pipeline is visibly
+running (companions and render-done lines, 300 s ceiling from the last line) and only
+when the payload hashes to the catalog head, so a changed file stays red; (3) the
+unmerged fix-doctor-quick branch (W-20260929-A82 F1) extends the lock excuse to
+repair. A wide review the same day found the lock excuse too broad (repair at 15:30
+runs under the 12:30 sweep's lock, so a same-size change would never alarm) and the
+lock itself trustable after its holder died (W-20260929-A84); both are being fixed
+(only files written after the lock was taken are excused; an OS-released lock). The
+ticket 34 principle stands for everything not listed here.

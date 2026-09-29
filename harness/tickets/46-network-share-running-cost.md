@@ -74,3 +74,17 @@ saving is measured against a real baseline rather than an estimate.
     the SessionStart check reported capture broken 5 times in a row. Fixed in
     `a60d50d` (pending, not FAIL, under a live lock when the file is newer than
     its manifest); live once the frozen install is refreshed.
+- 2026-09-29 12:30 scheduled sweep: SKIPPED on the principal's word (job booted out
+  12:12, re-bootstrapped 12:40, did not run; `launchctl print` state "not running",
+  runs 0). No measurement.
+- 2026-09-29 ~13:50, the likely main cause, VERIFIED read-only: all three launchd jobs
+  (ccw-sweep, ccw-archive, ccw-repair) carried `LowPriorityIO=true` and
+  `ProcessType=Background`. Reading `manifest.json` files on the share took 38 to 55 ms
+  each at normal priority and 1,176 to 1,250 ms under `taskpolicy -d throttle` (two
+  runs each, different files, so not a cache effect), about 25x slower. A reviewer
+  measured that 16 to 32 parallel readers help only 1.2 to 1.6x at low priority against
+  about 4x at normal (agent-reported). The principal ruled "turn it off" (~14:05): both
+  keys removed from all three plists (backups `*.bak-20260929-pre-priority` beside
+  them), each reloaded without running. Tomorrow's 12:30 sweep is the first at normal
+  priority; record its wall time here. Trade-off accepted: while a job runs it competes
+  with interactive use for disk and network.
