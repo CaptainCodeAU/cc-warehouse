@@ -1897,6 +1897,38 @@ def _announce_unrecoverable(config: Config, findings: Sequence[reconcile.Finding
         return
 
 
+def _retract_unrecoverable(config: Config, findings: Sequence[reconcile.Finding]) -> None:
+    """One `unrecoverable-retracted` record per recorded session the empty-session
+    ruling now calls empty (W-20260929-A61; ruling: Gavin, 2026-09-29, option b).
+
+    The same keys as the unrecoverable record it cancels, so capture.jsonl gains no
+    new field; the reason folds into `message`. Append-only: the record it cancels
+    stays in the file. NO ALERT: a retraction is good news, and a banner nobody
+    needs is the ticket 24.7 trap (tests/test_reconcile.py::
+    test_a_retraction_raises_no_alert). Best-effort like every sink (DESIGN 12)."""
+    now_iso = datetime.now(UTC).isoformat()
+    for finding in findings:
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": now_iso,
+                    "status": reconcile.RETRACTED,
+                    "session": None,
+                    "project": None,
+                    "message": (
+                        "retracted unrecoverable: the session said nothing"
+                        f" (only /quit or /exit, or no input with a session-env dir);"
+                        f" error was: {finding.message}"
+                    ),
+                    "elapsed_ms": None,
+                    "session_uuid": finding.session_uuid,
+                },
+            )
+        except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+            continue
+
+
 def _run_repair(rest: Sequence[str]) -> int:
     """`ccw repair`: re-render any of the same recent archive folders `ccw doctor`'s
     desync check flags (ticket 32 -- a real 2026-08-23 incident: the hook's detached
@@ -1934,7 +1966,11 @@ def _run_repair(rest: Sequence[str]) -> int:
     a check placed after that return would never run on exactly the machines where it
     matters. This does not change repair's own return contract: the exit code still
     reflects desync-repair success/failure only; the reconciliation alert is a
-    separate, always-best-effort signal (desktop + voice), not a repair failure."""
+    separate, always-best-effort signal (desktop + voice), not a repair failure.
+
+    W-20260929-A61: the same pass then RETRACTS any already-recorded session the
+    empty-session ruling now calls empty (`_retract_unrecoverable`), sharing one
+    history.jsonl read with the new-loss check and raising no alert."""
     quiet = "--quiet" in rest
     config = _load(rest)
     # Ticket 44a: repair re-renders INTO the archive, so an unproven root is
@@ -1947,10 +1983,16 @@ def _run_repair(rest: Sequence[str]) -> int:
             print(f"repair: {exc}", file=sys.stderr)
             return 1
     reconcile_since = datetime.now(UTC) - reconcile.DEFAULT_WINDOW
-    reconcile_findings = reconcile.find_unrecoverable(config, since=reconcile_since)
+    # One history.jsonl read, shared by the new-loss check and the retraction pass.
+    history = reconcile.HistoryOnce(Path.home())
+    reconcile_findings = reconcile.find_unrecoverable(
+        config, since=reconcile_since, history=history
+    )
     reconcile_known = reconcile.known_unrecoverable_uuids(config)
     reconcile_new = [f for f in reconcile_findings if f.session_uuid not in reconcile_known]
     _announce_unrecoverable(config, reconcile_new)
+    retracted = reconcile.find_retractable(config, history=history)
+    _retract_unrecoverable(config, retracted)
     folders, broken = doctor.desync_detail(config)
     if not broken:
         if not quiet:
@@ -1959,6 +2001,8 @@ def _run_repair(rest: Sequence[str]) -> int:
                 print(
                     f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)"
                 )
+            if retracted:
+                print(f"repair: {len(retracted)} unrecoverable session(s) retracted as empty")
         return 0
     conn = catalog.open_catalog(config.root)
     try:
@@ -2006,6 +2050,8 @@ def _run_repair(rest: Sequence[str]) -> int:
     if not quiet:
         if reconcile_new:
             print(f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)")
+        if retracted:
+            print(f"repair: {len(retracted)} unrecoverable session(s) retracted as empty")
         total_problems = sum(len(p) for _, p in broken)
         print(
             f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "

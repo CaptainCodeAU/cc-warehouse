@@ -705,3 +705,251 @@ def test_repair_on_a_mix_announces_exactly_the_real_losses(
     assert reconcile.known_unrecoverable_uuids(config) == frozenset({REAL_UUID, LOST_UUID})
     assert len(fired) == 1, fired
     assert fired[0].startswith("cc-warehouse: 2 sessions are permanently unrecoverable."), fired
+
+
+# ---------------------------------------------------------------------------
+# Retraction records (W-20260929-A61; ruling: Gavin, 2026-09-29, option b)
+# ---------------------------------------------------------------------------
+#
+# The empty-session ruling above only stops NEW announcements. Sessions `ccw
+# repair` had already announced stay in the append-only ledger, so doctor kept
+# counting them (56 on the real machine, 38 of them empty). `ccw repair` now
+# appends one `unrecoverable-retracted` record per recorded uuid the same
+# classifier calls empty, and the cheap readers subtract it. No line of
+# capture.jsonl is ever rewritten or removed.
+
+RETRACTED = "unrecoverable-retracted"
+
+
+def log_recorded(env: dict[str, str], *uuids: str) -> None:
+    """The dedup record `ccw repair` wrote before the empty-session ruling."""
+    for session_uuid in uuids:
+        append_log(
+            env,
+            status="unrecoverable",
+            session_uuid=session_uuid,
+            message=f"confirmed unrecoverable: unreadable transcript /x/{session_uuid}.jsonl",
+        )
+
+
+def ledger(env: dict[str, str]) -> list[dict[str, object]]:
+    path = warehouse_root(env) / "logs" / "capture.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def retractions(env: dict[str, str]) -> list[dict[str, object]]:
+    return [r for r in ledger(env) if r.get("status") == RETRACTED]
+
+
+def empty_and_real_fixture(env: dict[str, str], archive_root: Path) -> None:
+    """QUIT said only /quit, SILENT has no rows and a session-env dir, REAL typed
+    a prompt: all three were announced before the ruling."""
+    configure(env, archive_root)
+    at = datetime.now(UTC) - timedelta(hours=3)
+    write_history(
+        env, history_row(QUIT_UUID, "/quit", at=at), history_row(REAL_UUID, "a real prompt", at=at)
+    )
+    make_session_env(env, SILENT_UUID)
+    log_lost(env, QUIT_UUID, SILENT_UUID, REAL_UUID)
+    log_recorded(env, QUIT_UUID, SILENT_UUID, REAL_UUID)
+
+
+def test_doctor_count_excludes_retracted_uuids(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    from conftest import run_cli
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    log_recorded(ccw_env, LOST_UUID, QUIT_UUID)
+    append_log(ccw_env, status=RETRACTED, session_uuid=QUIT_UUID, message="retracted")
+
+    result = run_cli(["doctor"])
+
+    assert "1 session(s) on record as unrecoverable" in result.out, result.out
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({LOST_UUID})
+
+
+def test_duplicate_records_count_once_and_orphan_retractions_are_ignored(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Edge cases 1 and 2: two unrecoverable lines for one uuid count once, and a
+    retraction naming a uuid with no unrecoverable record changes nothing."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    log_recorded(ccw_env, LOST_UUID, LOST_UUID)
+    append_log(ccw_env, status=RETRACTED, session_uuid=OTHER_UUID, message="retracted")
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+
+    count, latest = reconcile.known_unrecoverable_count(config)
+
+    assert count == 1
+    assert latest is not None
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({LOST_UUID})
+
+
+def test_the_cheap_count_never_reads_history(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Edge case 3: `known_unrecoverable_count` is on the SessionStart path."""
+
+    def forbidden(_home: Path) -> None:
+        raise AssertionError("history.jsonl read on the SessionStart path")
+
+    monkeypatch.setattr(reconcile, "_read_history", forbidden)
+    archive_root = tmp_path / "archive"
+    empty_and_real_fixture(ccw_env, archive_root)
+    append_log(ccw_env, status=RETRACTED, session_uuid=QUIT_UUID, message="retracted")
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+
+    assert reconcile.known_unrecoverable_count(config)[0] == 2
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({SILENT_UUID, REAL_UUID})
+
+
+def test_repair_retracts_each_newly_empty_recorded_uuid_exactly_once(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    from conftest import run_cli
+
+    archive_root = tmp_path / "archive"
+    empty_and_real_fixture(ccw_env, archive_root)
+    log_recorded(ccw_env, SILENT_UUID)  # edge case 1: a duplicate line, retracted once
+    before = ledger(ccw_env)
+
+    first = run_cli(["repair"])
+
+    assert first.code == 0, first.err
+    after_first = ledger(ccw_env)
+    assert after_first[: len(before)] == before, "an existing ledger line was rewritten"
+    assert sorted(str(r["session_uuid"]) for r in retractions(ccw_env)) == sorted(
+        [QUIT_UUID, SILENT_UUID]
+    )
+    recorded_keys = {k for k in before[-1]}
+    assert all(set(r) == recorded_keys for r in retractions(ccw_env)), retractions(ccw_env)
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({REAL_UUID})
+
+    second = run_cli(["repair"])
+
+    assert second.code == 0, second.err
+    assert ledger(ccw_env) == after_first, "a second repair appended again"
+
+
+def test_a_recorded_uuid_that_is_still_unrecoverable_is_not_retracted(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """REAL typed a prompt; LOST has no rows and no session-env dir (a headless
+    session): both stay on record."""
+    from conftest import run_cli
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    at = datetime.now(UTC) - timedelta(hours=3)
+    write_history(ccw_env, history_row(REAL_UUID, "a real prompt", at=at))
+    log_lost(ccw_env, REAL_UUID, LOST_UUID)
+    log_recorded(ccw_env, REAL_UUID, LOST_UUID)
+
+    result = run_cli(["repair"])
+
+    assert result.code == 0, result.err
+    assert retractions(ccw_env) == []
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({REAL_UUID, LOST_UUID})
+
+
+def test_a_retraction_raises_no_alert(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conftest import run_cli
+
+    fired = _record_alerts(monkeypatch)
+    archive_root = tmp_path / "archive"
+    empty_and_real_fixture(ccw_env, archive_root)
+
+    result = run_cli(["repair"])
+
+    assert result.code == 0, result.err
+    assert len(retractions(ccw_env)) == 2, "control: the fixture must retract something"
+    assert fired == []
+
+
+def test_an_unreadable_history_retracts_nothing(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    from conftest import run_cli
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    (Path(ccw_env["HOME"]) / ".claude" / "history.jsonl").mkdir()
+    make_session_env(ccw_env, SILENT_UUID)
+    log_lost(ccw_env, SILENT_UUID)
+    log_recorded(ccw_env, SILENT_UUID)
+
+    result = run_cli(["repair"])
+
+    assert result.code == 0, result.err
+    assert retractions(ccw_env) == []
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({SILENT_UUID})
+
+
+def test_repair_reads_history_at_most_once_and_only_when_needed(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One read covers both the new-loss check and the retraction pass; a ledger
+    with nothing left to reconsider and no candidate costs no read at all."""
+    from conftest import run_cli
+
+    real_read = reconcile._read_history  # pyright: ignore[reportPrivateUsage]
+    calls: list[Path] = []
+
+    def counting(home: Path) -> object:
+        calls.append(home)
+        return real_read(home)
+
+    monkeypatch.setattr(reconcile, "_read_history", counting)
+    archive_root = tmp_path / "archive"
+    empty_and_real_fixture(ccw_env, archive_root)
+    log_lost(ccw_env, LOST_UUID)  # an unannounced loss: find_unrecoverable needs history too
+
+    assert run_cli(["repair"]).code == 0
+    assert len(calls) == 1, calls
+
+
+def test_repair_skips_history_when_nothing_is_left_to_reconsider(
+    ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every recorded uuid already retracted, and no fresh candidate: no read."""
+    from conftest import run_cli
+
+    calls: list[Path] = []
+
+    def counting(home: Path) -> None:
+        calls.append(home)
+
+    monkeypatch.setattr(reconcile, "_read_history", counting)
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    log_recorded(ccw_env, QUIT_UUID)
+    append_log(ccw_env, status=RETRACTED, session_uuid=QUIT_UUID, message="retracted")
+
+    assert run_cli(["repair"]).code == 0
+    assert calls == [], "history read with nothing to reconsider"
+
+
+def test_a_retracted_uuid_announced_again_counts_again(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Out of scope in the ruling, pinned so the behaviour is chosen, not
+    accidental: the LATEST record for a uuid decides, so a later unrecoverable
+    record after a retraction puts it back on record."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    log_recorded(ccw_env, LOST_UUID)
+    append_log(ccw_env, status=RETRACTED, session_uuid=LOST_UUID, message="retracted")
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset()
+
+    log_recorded(ccw_env, LOST_UUID)
+
+    assert reconcile.known_unrecoverable_uuids(config) == frozenset({LOST_UUID})
+    assert reconcile.known_unrecoverable_count(config)[0] == 1

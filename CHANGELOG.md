@@ -22,6 +22,21 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw repair` retracts the empty sessions it had already announced as unrecoverable
+(2026-09-29, W-20260929-A61).** The empty-session ruling (A60, below) stopped new
+announcements, but the 56 dedup records repair had already appended stayed in the
+append-only `logs/capture.jsonl`, so `ccw doctor` kept reporting 56. Ruling (Gavin,
+2026-09-29, option b): repair now appends one `unrecoverable-retracted` record, with the
+same keys as the record it cancels, for each recorded session that
+`reconcile._said_nothing` now calls empty, and `known_unrecoverable_count` /
+`known_unrecoverable_uuids` subtract it. The latest record for a uuid decides, so a
+session announced again after a retraction is back on record. No line is rewritten or
+removed, a second repair appends nothing, no alert is raised, an unreadable history
+retracts nothing, and one repair reads `history.jsonl` at most once, shared with the
+new-loss check. The doctor count still reads only the ledger. Measured on a copy of the
+real ledger: 38 of 56 retract (11 said only `/quit` or `/exit`, 27 had no history rows and
+a session-env directory), 18 stay.
+
 **`ccw repair` no longer calls an empty session "permanently unrecoverable"
 (2026-09-29, W-20260929-A60).** A session opened and closed without a word never
 gets a transcript, but its SessionEnd hook still logs "unreadable transcript", so
