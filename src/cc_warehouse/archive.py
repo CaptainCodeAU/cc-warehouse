@@ -25,7 +25,7 @@ permanently.
 
 import json
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -491,19 +491,29 @@ def subagent_records(session_dir: Path) -> list[dict[str, object]]:
     five valid files, a matching source hash and a correct folder name, and
     report clean. That is the most dangerous kind of green.
     """
+    out: list[dict[str, object]] = []
+    for agent_id, jsonl in _subagent_files(session_dir):
+        payload = jsonl.read_bytes()
+        out.append({
+            "agent_id": agent_id,
+            "sha256": store.sha256_hex(payload),
+            "bytes": len(payload),
+        })
+    return out
+
+
+def _subagent_files(session_dir: Path) -> list[tuple[str, Path]]:
+    """(agent_id, path) for every sub-agent JSONL in this folder: the ONE listing
+    both `subagent_records` (what a manifest records) and `_subagent_problems`
+    (what verify compares against it) read, so the two cannot disagree (R9)."""
     subs = session_dir / SUBAGENTS_DIR
     if not subs.is_dir():
         return []
-    out: list[dict[str, object]] = []
-    for folder in sorted(p for p in subs.iterdir() if p.is_dir()):
-        for jsonl in sorted(folder.glob(f"*{_JSONL_SUFFIX}")):
-            payload = jsonl.read_bytes()
-            out.append({
-                "agent_id": jsonl.stem,
-                "sha256": store.sha256_hex(payload),
-                "bytes": len(payload),
-            })
-    return out
+    return [
+        (jsonl.stem, jsonl)
+        for folder in sorted(p for p in subs.iterdir() if p.is_dir())
+        for jsonl in sorted(folder.glob(f"*{_JSONL_SUFFIX}"))
+    ]
 
 
 @dataclass(frozen=True)
@@ -628,21 +638,30 @@ def companion_records(session_dir: Path, name: str) -> list[dict[str, object]]:
     report clean. `name` is the path RELATIVE to the sidecar dir, in POSIX form,
     so the nesting survives the record too.
     """
-    root = session_dir / name
-    if not root.is_dir():
-        return []
     out: list[dict[str, object]] = []
-    for path in root.rglob("*"):
-        relative = path.relative_to(root)
-        if any(part in sidecars.IGNORED for part in relative.parts) or not path.is_file():
-            continue
+    for relative, path in _companion_files(session_dir, name):
         payload = path.read_bytes()
         out.append({
-            "name": relative.as_posix(),
+            "name": relative,
             "sha256": store.sha256_hex(payload),
             "bytes": len(payload),
         })
     return sorted(out, key=lambda record: str(record["name"]))
+
+
+def _companion_files(session_dir: Path, name: str) -> list[tuple[str, Path]]:
+    """(POSIX relative name, path) for every file under one companion directory:
+    the ONE listing `companion_records` and `_companion_problems` both read (R9)."""
+    root = session_dir / name
+    if not root.is_dir():
+        return []
+    out: list[tuple[str, Path]] = []
+    for path in root.rglob("*"):
+        relative = path.relative_to(root)
+        if any(part in sidecars.IGNORED for part in relative.parts) or not path.is_file():
+            continue
+        out.append((relative.as_posix(), path))
+    return out
 
 
 def write_sidecar_notice(
@@ -1722,13 +1741,68 @@ class FolderProblem:
     problem: str
 
 
-def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
+@dataclass(frozen=True)
+class KnownPayload:
+    """What the catalog already records about the payload a folder should hold,
+    handed to `verify_folder` to make it the QUICK check (W-20260929-A74).
+
+    `sizes` maps each catalog version of this session (sha256) to its
+    `size_bytes`, so the main JSONL's expected length is looked up by the hash
+    the folder's OWN manifest names, never assumed to be the newest row's."""
+
+    session_uuid: str | None
+    first_ts: str | None
+    hidden: bool
+    sizes: Mapping[str, int]
+
+
+# Does the file at `path` still hold what a record says: (path, sha256, recorded
+# bytes or None). The full check and the quick check differ ONLY here; every
+# other rule in `verify_folder` is shared, so the two cannot drift (R9).
+_Matches = Callable[[Path, str, object], bool]
+
+
+def _hash_matches(path: Path, sha256: str, _size: object) -> bool:
+    return store.sha256_hex(path.read_bytes()) == sha256
+
+
+def _size_matches(path: Path, sha256: str, size: object) -> bool:
+    """Recorded length against the file's length, one stat. A record with no
+    size (written before records carried `bytes`) is hashed instead: checked the
+    slow way, never skipped. R1: a size difference PROVES the bytes differ; an
+    equal size proves nothing, which is the trade-off the quick check accepts
+    (tests/test_doctor_quick_desync.py::
+    test_a_same_size_change_passes_doctor_but_the_full_check_catches_it)."""
+    if isinstance(size, int) and not isinstance(size, bool):
+        # R1: the one sanctioned size equality (tests/test_fences.py
+        # SIZE_EQUALITY_SANCTIONED). It screens, it never decides identity.
+        return path.stat().st_size == size
+    return _hash_matches(path, sha256, size)
+
+
+def verify_folder(
+    directory: Path, timezone: str, *, known: KnownPayload | None = None
+) -> list[FolderProblem]:
     """Archive integrity for one folder (ruling (b), 2026-08-02).
 
     Three questions, all answerable from the folder alone with no vault and no
     catalog: does the JSONL still match the `source_hash` its manifest recorded,
     are all five generated files present, and does the folder NAME agree with
     the payload's own uuid and start time.
+
+    TWO DEPTHS, ONE SET OF RULES (W-20260929-A74; ruling: Gavin, 2026-09-29,
+    option 1). With `known` omitted this is the FULL check: every recorded file
+    is read and sha256-hashed and the JSONL is parsed. `ccw repair`, `ccw archive
+    --verify` and every writer's own re-check use it. With `known` given it is
+    the QUICK check `ccw doctor` runs at SessionStart: presence and recorded
+    size by `stat`, the hidden flag and the name from the catalog's row, and no
+    file is opened except `manifest.json`
+    (tests/test_doctor_quick_desync.py::
+    test_doctor_desync_opens_only_manifests_and_hashes_nothing_when_healthy).
+    Measured 2026-09-29 on the network share: the full check over doctor's 25
+    folders read 118 MB in 557 opens and took 17 to 44 s against a 45 s hook
+    budget. What the quick check cannot see, a same-size rewrite, the daily
+    repair and the weekly verify still do.
     """
     problems: list[FolderProblem] = []
     jsonl = _sole_jsonl(directory)
@@ -1736,49 +1810,72 @@ def verify_folder(directory: Path, timezone: str) -> list[FolderProblem]:
         return [FolderProblem(directory, "no session JSONL in the folder")]
 
     manifest_path = directory / _MANIFEST
-    data = jsonl.read_bytes()
-    meta = parse_session(data)
+    data: bytes | None = None
+    if known is None:
+        data = jsonl.read_bytes()
+        meta = parse_session(data)
+        hidden, first_ts, session_uuid = meta.hidden, meta.first_ts, meta.session_uuid
+        matches: _Matches = _hash_matches
+    else:
+        hidden, first_ts, session_uuid = known.hidden, known.first_ts, known.session_uuid
+        matches = _size_matches
 
-    if meta.hidden:
+    if hidden:
         # Archived without projections by design; only the name is checkable.
-        return _name_problems(directory, meta, timezone)
+        return _name_problems(directory, first_ts, session_uuid, timezone)
 
     for name in GENERATED_NAMES:
         if not (directory / name).exists():
             problems.append(FolderProblem(directory, f"missing {name}"))
     if manifest_path.exists():
+        manifest: dict[str, object] | None = None
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = cast(
+                dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8"))
+            )
             recorded = str(manifest.get("source_hash", ""))
         except (OSError, ValueError) as exc:
             problems.append(FolderProblem(directory, f"unreadable manifest: {exc}"))
             recorded = ""
-        if recorded and recorded != store.sha256_hex(data):
-            problems.append(
-                FolderProblem(directory, "JSONL does not match manifest source_hash")
+        if recorded:
+            if data is not None:
+                # Already read for the parse; hashing it again from disk would
+                # double the one large read on the full path.
+                same = recorded == store.sha256_hex(data)
+            else:
+                assert known is not None
+                same = matches(jsonl, recorded, known.sizes.get(recorded))
+            if not same:
+                problems.append(
+                    FolderProblem(directory, "JSONL does not match manifest source_hash")
+                )
+        if manifest is not None:
+            problems.extend(_subagent_problems(directory, manifest, matches))
+            problems.extend(_companion_problems(directory, manifest, matches))
+            problems.extend(
+                _single_file_problems(directory, manifest, "prompts", PROMPTS_FILE, matches)
             )
-        problems.extend(_subagent_problems(directory, manifest_path))
-        problems.extend(_companion_problems(directory, manifest_path))
-        problems.extend(_prompts_problems(directory, manifest_path))
-        problems.extend(_custom_title_problems(directory, manifest_path))
-    problems.extend(_name_problems(directory, meta, timezone))
+            problems.extend(
+                _single_file_problems(
+                    directory, manifest, "custom_title", CUSTOM_TITLE_FILE, matches
+                )
+            )
+    problems.extend(_name_problems(directory, first_ts, session_uuid, timezone))
     return problems
 
 
-def _subagent_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+def _subagent_problems(
+    directory: Path, manifest: dict[str, object], matches: _Matches
+) -> list[FolderProblem]:
     """Every sub-agent the manifest lists must still be present and unaltered.
 
     Without this a deleted sub-agent folder is invisible to verify: five valid
     files, a matching source hash and a correct folder name all still hold.
     """
-    try:
-        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return []
     listed = manifest.get("subagents")
     if not isinstance(listed, list):
         return []
-    live = {str(r["agent_id"]): str(r["sha256"]) for r in subagent_records(directory)}
+    live = dict(_subagent_files(directory))
     out: list[FolderProblem] = []
     for raw in cast(list[object], listed):
         if not isinstance(raw, dict):
@@ -1788,12 +1885,14 @@ def _subagent_problems(directory: Path, manifest_path: Path) -> list[FolderProbl
         want = str(rec.get("sha256", ""))
         if agent_id not in live:
             out.append(FolderProblem(directory, f"sub-agent {agent_id} is missing"))
-        elif want and live[agent_id] != want:
+        elif want and not matches(live[agent_id], want, rec.get("bytes")):
             out.append(FolderProblem(directory, f"sub-agent {agent_id} does not match its hash"))
     return out
 
 
-def _companion_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
+def _companion_problems(
+    directory: Path, manifest: dict[str, object], matches: _Matches
+) -> list[FolderProblem]:
     """Every copied sidecar file the manifest lists must still be there, unaltered.
 
     NO PROBLEM STRING MAY START WITH `missing `, and that is a real constraint
@@ -1811,89 +1910,65 @@ def _companion_problems(directory: Path, manifest_path: Path) -> list[FolderProb
     manifest, so its sidecars are copied but never hash-verified. That is exactly
     the position sub-agents are in today.
     """
-    try:
-        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return []
     out: list[FolderProblem] = []
     for name, key in COMPANION_MANIFEST_KEYS.items():
         listed = manifest.get(key)
         if not isinstance(listed, list):
             continue
         noun = _COMPANION_NOUNS[name]
-        live = {str(r["name"]): str(r["sha256"]) for r in companion_records(directory, name)}
+        live = dict(_companion_files(directory, name))
         for raw in cast(list[object], listed):
             if not isinstance(raw, dict):
                 continue
             rec = cast(dict[str, object], raw)
-            name = str(rec.get("name", ""))
+            relative = str(rec.get("name", ""))
             want = str(rec.get("sha256", ""))
-            if name not in live:
-                out.append(FolderProblem(directory, f"{noun} {name} is missing"))
-            elif want and live[name] != want:
-                out.append(FolderProblem(directory, f"{noun} {name} does not match its hash"))
+            if relative not in live:
+                out.append(FolderProblem(directory, f"{noun} {relative} is missing"))
+            elif want and not matches(live[relative], want, rec.get("bytes")):
+                out.append(FolderProblem(directory, f"{noun} {relative} does not match its hash"))
     return out
 
 
-def _prompts_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
-    """`prompts.jsonl` must still match what the manifest recorded (ticket 39d).
+def _single_file_problems(
+    directory: Path, manifest: dict[str, object], key: str, filename: str, matches: _Matches
+) -> list[FolderProblem]:
+    """A single-file record (`prompts` -> `prompts.jsonl`, ticket 39d;
+    `custom_title` -> `custom-title.json`) must still match what the manifest
+    recorded. One rule for both, which used to be two copies of it.
 
     Same "NO PROBLEM STRING MAY START WITH `missing `" constraint
     `_companion_problems` states, for the same reason (`doctor._desync`'s
-    pending-render carve-out). A manifest with no `prompts` key at all yields
-    NOTHING - it predates this feature, same as an old manifest with no
+    pending-render carve-out). A manifest with no such key at all yields
+    NOTHING - it predates the feature, same as an old manifest with no
     companion keys.
     """
-    try:
-        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return []
-    recorded = manifest.get("prompts")
+    recorded = manifest.get(key)
     if not isinstance(recorded, dict):
         return []
     recorded = cast(dict[str, object], recorded)
-    live = prompts_record(directory)
-    if recorded.get("present") and not live.get("present"):
-        return [FolderProblem(directory, "prompts.jsonl is missing")]
-    if recorded.get("present") and recorded.get("sha256") != live.get("sha256"):
-        return [FolderProblem(directory, "prompts.jsonl does not match its hash")]
-    if not recorded.get("present") and live.get("present"):
-        return [FolderProblem(directory, "prompts.jsonl exists but the manifest says none")]
+    path = directory / filename
+    present = path.is_file()
+    if recorded.get("present") and not present:
+        return [FolderProblem(directory, f"{filename} is missing")]
+    if recorded.get("present") and not matches(
+        path, str(recorded.get("sha256")), recorded.get("bytes")
+    ):
+        return [FolderProblem(directory, f"{filename} does not match its hash")]
+    if not recorded.get("present") and present:
+        return [FolderProblem(directory, f"{filename} exists but the manifest says none")]
     return []
 
 
-def _custom_title_problems(directory: Path, manifest_path: Path) -> list[FolderProblem]:
-    """`custom-title.json` must still match what the manifest recorded.
-
-    Same "NO PROBLEM STRING MAY START WITH `missing `" constraint
-    `_prompts_problems` states, for the same reason (`doctor._desync`'s
-    pending-render carve-out). A manifest with no `custom_title` key at all
-    yields NOTHING - it predates this feature.
-    """
-    try:
-        manifest = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return []
-    recorded = manifest.get("custom_title")
-    if not isinstance(recorded, dict):
-        return []
-    recorded = cast(dict[str, object], recorded)
-    live = custom_title_record(directory)
-    if recorded.get("present") and not live.get("present"):
-        return [FolderProblem(directory, "custom-title.json is missing")]
-    if recorded.get("present") and recorded.get("sha256") != live.get("sha256"):
-        return [FolderProblem(directory, "custom-title.json does not match its hash")]
-    if not recorded.get("present") and live.get("present"):
-        return [FolderProblem(directory, "custom-title.json exists but the manifest says none")]
-    return []
-
-
-def _name_problems(directory: Path, meta: object, timezone: str) -> list[FolderProblem]:
-    from cc_warehouse.parser import ParsedSession
-
-    assert isinstance(meta, ParsedSession)
+def _name_problems(
+    directory: Path, first_ts: str | None, session_uuid: str | None, timezone: str
+) -> list[FolderProblem]:
+    """The folder name against the payload's start time and uuid. On the quick
+    path those come from the catalog row the folder's path was computed from, so
+    a folder whose name disagrees with its payload shows up there as a path that
+    does not exist ("no session JSONL in the folder"), never as a pass."""
     expected = build.archive_folder_name(
-        meta.first_ts, meta.session_uuid, timezone, fallback_stem=directory.name.split("_", 1)[-1]
+        first_ts, session_uuid, timezone, fallback_stem=directory.name.split("_", 1)[-1]
     )
     if directory.name != expected:
         return [

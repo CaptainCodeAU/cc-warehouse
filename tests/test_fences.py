@@ -25,6 +25,18 @@ LOCK_DELETE_SANCTIONED: dict[str, set[str]] = {
     "store.py": {"acquire_lock", "release_lock"},
 }
 
+# The ONE function allowed to compare a file's size for equality (W-20260929-A74;
+# ruling: Gavin, 2026-09-29, option 1). It is `ccw doctor`'s quick integrity
+# screen, and it never decides identity: a size DIFFERENCE is reported as a
+# mismatch (sound, different lengths are different bytes), an equal size only
+# means "not checked further here", and the full sha256 check in `ccw repair`
+# and `ccw archive --verify` still owns "are these the same bytes". Nothing
+# captures, dedups, skips or overwrites on its answer. Named by function, not by
+# line, so the exemption cannot quietly widen; a rename fails the fence below.
+SIZE_EQUALITY_SANCTIONED: dict[str, set[str]] = {
+    "archive.py": {"_size_matches"},
+}
+
 # Modules sanctioned to open file handles for writing: store.py owns the write
 # primitive (tmp + os.replace) and the O_EXCL locks; notify.py owns the
 # O_APPEND audit log (DESIGN section 13 closed list).
@@ -174,9 +186,17 @@ def test_no_size_or_mtime_EQUALITY_anywhere() -> None:
     """
     identity_ops = (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)
     offenders: list[str] = []
+    found_sanctioned: set[tuple[str, str]] = set()
     for path in runtime_files():
-        for node in ast.walk(parse(path)):
-            if not isinstance(node, ast.Compare):
+        tree = parse(path)
+        sanctioned_funcs = SIZE_EQUALITY_SANCTIONED.get(path.name, set())
+        skip_lines: set[int] = set()
+        for top in tree.body:
+            if isinstance(top, ast.FunctionDef) and top.name in sanctioned_funcs:
+                found_sanctioned.add((path.name, top.name))
+                skip_lines.update(range(top.lineno, (top.end_lineno or top.lineno) + 1))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or node.lineno in skip_lines:
                 continue
             if not any(isinstance(op, identity_ops) for op in node.ops):
                 continue
@@ -184,6 +204,10 @@ def test_no_size_or_mtime_EQUALITY_anywhere() -> None:
             if hit:
                 offenders.append(f"{path.name}:{node.lineno} tests {hit} for equality")
     assert not offenders, f"stat-attribute EQUALITY, identity by proxy (F1): {offenders}"
+    wanted = {(name, func) for name, funcs in SIZE_EQUALITY_SANCTIONED.items() for func in funcs}
+    assert found_sanctioned == wanted, (
+        f"a sanctioned size-equality function no longer exists: {wanted - found_sanctioned}"
+    )
 
 
 def test_a_size_comparison_is_ordering_only_and_says_why() -> None:

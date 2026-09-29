@@ -80,6 +80,10 @@ _WRAPPER_READ_LIMIT = 64 * 1024
 # everything").
 _DESYNC_SAMPLE = 25
 
+# W-20260929-A74: says on the desync line which depth ran, so nobody reads a
+# clean doctor as "every byte was hashed". The full check is `ccw repair`.
+_QUICK_NOTE = "(quick check: present and right size; ccw repair checks hashes)"
+
 # Ticket 37 Part B: how far back to look in logs/capture.jsonl for a
 # companions-started/companions-done pairing. Matches the "bounded window"
 # posture ticket 42's own proposal #5 uses for the planned capture.jsonl
@@ -408,12 +412,15 @@ def _folder_moment(name: str) -> datetime | None:
 @dataclass(frozen=True)
 class _Recent:
     """One head in the recency sample: where its folder should be, and when the
-    catalog says it was captured (wall-clock, for the pending grace only)."""
+    catalog says it was captured (wall-clock, for the pending grace only).
+    `known` is what doctor's QUICK verify needs from the catalog instead of
+    opening the payload (W-20260929-A74)."""
 
     folder: Path
     captured_at: str | None
     payload_hash: str | None = None
     short: str | None = None
+    known: archive.KnownPayload | None = None
 
 
 @dataclass(frozen=True)
@@ -458,29 +465,33 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
         return empty
     try:
         rows = cast(
-            list[tuple[str, str, str | None, str, str | None, str]],
+            list[tuple[str, str, str | None, str, str | None, str, int]],
             conn.execute(
                 build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
-                + "SELECT short, label, first_ts, session_uuid, captured_at, hash FROM ranked"
-                " WHERE rn = 1 AND session_uuid IS NOT NULL"
+                + "SELECT short, label, first_ts, session_uuid, captured_at, hash, hidden"
+                " FROM ranked WHERE rn = 1 AND session_uuid IS NOT NULL"
             ).fetchall(),
         )
+        archived: set[str] = set()
+        dated: list[tuple[datetime, str, str, str | None, str, str | None, str, int]] = []
+        newest: datetime | None = None
+        for short, label, first_ts, session_uuid, captured_at, payload_hash, hidden in rows:
+            archived.add(session_uuid)
+            moment = _moment(first_ts)
+            if moment is None:
+                continue
+            if newest is None or moment > newest:
+                newest = moment
+            dated.append(
+                (moment, short, label, first_ts, session_uuid, captured_at, payload_hash, hidden)
+            )
+        dated.sort(key=lambda row: row[0], reverse=True)
+        sample = dated[:limit]
+        sizes = _payload_sizes(conn, {row[4] for row in sample})
     except sqlite3.Error:
         return empty
     finally:
         conn.close()
-    archived: set[str] = set()
-    dated: list[tuple[datetime, str, str, str | None, str, str | None, str]] = []
-    newest: datetime | None = None
-    for short, label, first_ts, session_uuid, captured_at, payload_hash in rows:
-        archived.add(session_uuid)
-        moment = _moment(first_ts)
-        if moment is None:
-            continue
-        if newest is None or moment > newest:
-            newest = moment
-        dated.append((moment, short, label, first_ts, session_uuid, captured_at, payload_hash))
-    dated.sort(key=lambda row: row[0], reverse=True)
     recent = tuple(
         _Recent(
             build.archive_dir(
@@ -494,16 +505,40 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
             captured_at,
             payload_hash,
             short,
+            archive.KnownPayload(session_uuid, first_ts, bool(hidden), sizes.get(session_uuid, {})),
         )
-        for _moment_, short, label, first_ts, session_uuid, captured_at, payload_hash in dated[
-            :limit
-        ]
+        for _moment_, short, label, first_ts, session_uuid, captured_at, payload_hash, hidden in (
+            sample
+        )
     )
     return _CatalogIndex(frozenset(archived), newest, recent)
 
 
+def _payload_sizes(conn: sqlite3.Connection, uuids: set[str]) -> dict[str, dict[str, int]]:
+    """sha256 -> `size_bytes` for EVERY catalog version of each sampled session,
+    so the quick verify finds the length of whichever payload a folder's own
+    manifest names (a re-captured folder's manifest still names the older one
+    until its render lands). A version with no recorded size is left out, and
+    the quick verify hashes that file instead (`archive._size_matches`)."""
+    if not uuids:
+        return {}
+    marks = ",".join("?" * len(uuids))
+    rows = cast(
+        list[tuple[str, str, int | None]],
+        conn.execute(
+            f"SELECT session_uuid, hash, size_bytes FROM session WHERE session_uuid IN ({marks})",
+            sorted(uuids),
+        ).fetchall(),
+    )
+    out: dict[str, dict[str, int]] = {}
+    for session_uuid, payload_hash, size in rows:
+        if size is not None:
+            out.setdefault(session_uuid, {})[payload_hash] = size
+    return out
+
+
 def _desync_scan(
-    config: Config,
+    config: Config, *, quick: bool
 ) -> tuple[list[_Recent], list[tuple[Path, list[archive.FolderProblem]]]]:
     """The recency sample from the catalog, verified on disk (ticket 44b).
 
@@ -511,14 +546,22 @@ def _desync_scan(
     untouched folder still sorts by when its session happened. A sampled folder
     that is NOT on disk is verified anyway and fails with "no session JSONL in
     the folder", which is the point: it is the one place doctor checks the
-    catalog against the tree."""
+    catalog against the tree.
+
+    `quick` picks the depth of `archive.verify_folder` (W-20260929-A74):
+    presence and recorded size for doctor at SessionStart, the full sha256
+    check for `ccw repair`. Same sample, same rules, one scan."""
     if config.archive_root is None or not config.archive_root.is_dir():
         return [], []
     index = _catalog_index(config, _DESYNC_SAMPLE)
     broken = [
         (item.folder, problems)
         for item in index.recent
-        if (problems := archive.verify_folder(item.folder, config.archive_timezone))
+        if (
+            problems := archive.verify_folder(
+                item.folder, config.archive_timezone, known=item.known if quick else None
+            )
+        )
     ]
     return list(index.recent), broken
 
@@ -535,8 +578,15 @@ def desync_detail(
     legitimately needs doctor's own recency scan rather than a second copy of it.
 
     Since ticket 44b the sample is chosen from the CATALOG and only those
-    folders are touched on disk; see `_CatalogIndex`."""
-    recent, broken = _desync_scan(config)
+    folders are touched on disk; see `_CatalogIndex`.
+
+    THE FULL CHECK, DELIBERATELY (W-20260929-A74): every recorded file is read
+    and sha256-hashed. Doctor's own summary runs the quick check over the same
+    sample, so this (the daily `ccw repair`) and the weekly `ccw archive
+    --verify` are where a same-size rewrite is caught
+    (tests/test_doctor_quick_desync.py::
+    test_a_same_size_change_passes_doctor_but_the_full_check_catches_it)."""
+    recent, broken = _desync_scan(config, quick=False)
     return [item.folder for item in recent], broken
 
 
@@ -774,8 +824,9 @@ def _written_after_manifest(folder: Path, problem: str) -> bool:
     target = _stale_manifest_file(folder, problem)
     if target is None:
         return False
-    # R1 as amended: sha256 in `verify_folder` already decided these bytes
-    # differ; mtime only orders "which was written later" for alarm timing.
+    # R1 as amended: `verify_folder` already decided these bytes differ (by
+    # sha256 on the full check, by a length that proves it on doctor's quick
+    # check); mtime only orders "which was written later" for alarm timing.
     try:
         return target.stat().st_mtime > (folder / "manifest.json").stat().st_mtime
     except OSError:
@@ -876,9 +927,19 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     (ticket 31.5). Returns (checked, problems, pending, first problem description or
     None) -- `problems` is what blocks `report.ok`; `pending` never does.
 
-    BOUNDED, DELIBERATELY (see `_DESYNC_SAMPLE`): `archive.verify_folder` reads and
-    re-hashes each folder's JSONL, so a full pass over a 21,000+ folder tree is not
-    SessionStart-cheap -- that cost is exactly what ticket 31 exists to remove elsewhere.
+    BOUNDED, DELIBERATELY (see `_DESYNC_SAMPLE`): a full pass over a 21,000+
+    folder tree is not SessionStart-cheap -- that cost is exactly what ticket 31
+    exists to remove elsewhere.
+
+    QUICK, DELIBERATELY (W-20260929-A74; ruling: Gavin, 2026-09-29, option 1):
+    each sampled folder gets `archive.verify_folder`'s quick depth, presence and
+    recorded size by `stat`, with no sha256 and no JSONL parse. The full check
+    over the same 25 folders read 118 MB in 557 opens over the network share and
+    took 17 to 44 s against the freshness hook's 45 s. A re-capture still shows:
+    its new JSONL is longer than the payload the stale manifest names, so the
+    mismatch appears and the pending rules below judge it exactly as before,
+    hashing that ONE file only then. A same-size rewrite does not show here;
+    `desync_detail` (daily `ccw repair`) and the weekly verify catch it.
 
     PENDING VS. PROBLEM (ticket 34). A folder missing its generated files is not
     always broken: `ccw sweep` can capture hundreds of sessions in under two
@@ -933,7 +994,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     problem (test_a_mismatch_after_render_done_fails_at_once,
     test_a_recapture_past_the_ceiling_with_no_render_done_fails).
     """
-    recent, broken = _desync_scan(config)
+    recent, broken = _desync_scan(config, quick=True)
     folders = [item.folder for item in recent]
     if not broken:
         return len(folders), 0, 0, None
@@ -1146,11 +1207,12 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     elif problems == 0:
         desync_detail = (
             f"0 problems{pending_suffix} in the {checked} most recently captured folder(s)"
+            f" {_QUICK_NOTE}"
         )
     else:
         desync_detail = (
             f"{problems} problem(s){pending_suffix} in the {checked} most recently captured"
-            f" folder(s), e.g. {first_problem}"
+            f" folder(s) {_QUICK_NOTE}, e.g. {first_problem}"
         )
     checks.append(Check("desync", problems == 0, desync_detail))
 
