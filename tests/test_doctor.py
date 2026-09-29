@@ -1579,6 +1579,9 @@ def test_dispatch_check_never_blocks_doctors_exit_code(
     old_enough = datetime.now(UTC) - timedelta(hours=1)
     write_transcript(ccw_env, session_at(UUID_B, old_enough), session_id=UUID_B)
     append_hook_log(ccw_env, "some-unrelated-uuid", moment=old_enough)
+    # A FINISHED run: since W-20260929-A105 a `started` with nothing after it is a
+    # dead hook, which fails doctor on its own; this test is about the dispatch gap.
+    append_hook_log(ccw_env, "some-unrelated-uuid", status="ok", moment=old_enough)
 
     config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
     dispatch_check = next(

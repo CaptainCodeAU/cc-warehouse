@@ -22,6 +22,24 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw doctor` fails on a SessionEnd hook that started and never finished (2026-09-29,
+W-20260929-A105; ruling: Gavin, "fix all five").** A hook killed mid-capture leaves a
+`started` line in `ccw-hook.log` with nothing after it, a half-written `.tmp` in the archive
+folder and no catalog row, and doctor stayed green: on 2026-09-29 the installed doctor exited
+0 ("capture is working") with two such sessions (f952df5f, fc69613b; 3.2 and 4.0 MB `.tmp`
+files on the share). New `doctor._hook_unfinished` pairs each `started` with a later line for
+the same session over the dispatch check's 7-day window, and a new BLOCKING `hook runs` line
+FAILS when a run older than 120 s (the hook's 45 s timeout plus a margin) never finished and
+its session has no catalog row; a run since captured is reported without failing. Stray `.tmp`
+files are found without walking the archive (the session's or its project's catalog label,
+then one label listing) and named, never deleted; the next `ccw sweep` re-captures from
+`~/.claude`. 0.25 s on the real machine. Measured, read-only: 11 of 775 hook runs since
+2026-09-06 never finished; 10 of the 11 were on transcripts of 1.7 MB or more (7 of 94 runs
+at 3 MB or more died, against 1 of 442 under 1.5 MB), and finished runs reached 28 s, so
+Claude Code's configured 45 s timeout is not what kills them; a shorter kill on some exit
+paths is consistent with the data but not proven, because the log does not record the
+SessionEnd reason. A hook killed before it writes `started` leaves nothing for this check.
+
 **`ccw render --out` and `ccw share --out` refuse the archive (2026-09-29, W-20260929-A103;
 ruling: Gavin, "fix all five").** The ad-hoc `--out` guard covered the warehouse's `objects/`
 and `projections/` but not `archive_root`, so `ccw render <jsonl> --out <archive folder>`

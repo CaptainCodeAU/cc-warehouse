@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import archive, build, parser, reconcile, status, store, sweep
+from cc_warehouse import archive, build, parser, reconcile, registry, status, store, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
@@ -114,6 +114,12 @@ _DISPATCH_GRACE_SECONDS = 15 * 60
 # (ticket 41 Finding 4), not to audit history -- `ccw reconcile` is the
 # permanent record for an old, already-known loss.
 _DISPATCH_WINDOW = timedelta(days=7)
+
+
+# W-20260929-A105: how long a `started` line in ccw-hook.log may go unanswered
+# before the run counts as dead rather than still running. The plugin's
+# hooks.json gives the SessionEnd hook 45 s; this is that plus a margin.
+_HOOK_GRACE_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -792,6 +798,131 @@ def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, st
     )
 
 
+def _stray_tmps(config: Config, session_uuid: str, transcript: Path) -> list[Path]:
+    """The half-written `store.atomic_write` temp files in one dead hook run's
+    archive folder, found without walking the archive: the label comes from the
+    catalog (the session's row, or else the project capture registered for its
+    cwd before it wrote anything), then ONE label listing finds the folder.
+    Read-only and never raises: any doubt is "none found" (W-20260929-A105)."""
+    if config.archive_root is None:
+        return []
+    path = config.root / "catalog.sqlite"
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = cast(
+                "tuple[object, ...] | None",
+                conn.execute(
+                    "SELECT p.label FROM session s JOIN project p ON p.id = s.project_id"
+                    " WHERE s.session_uuid = ? LIMIT 1",
+                    (session_uuid,),
+                ).fetchone(),
+            )
+            if row is None:
+                cwd = parser.parse_session(transcript.read_bytes()).cwd
+                project = (
+                    registry.project_for_path(conn, cwd, "cwd")
+                    if cwd
+                    else registry.project_for_path(conn, transcript.parent.name, "encoded_dir")
+                )
+                if project is not None:
+                    row = cast(
+                        "tuple[object, ...] | None",
+                        conn.execute(
+                            "SELECT label FROM project WHERE id = ?", (project,)
+                        ).fetchone(),
+                    )
+        finally:
+            conn.close()
+        if row is None:
+            return []
+        folder = archive.session_folder(
+            config.archive_root, str(row[0]), session_uuid, config.archive_timezone
+        )
+        return sorted(folder.glob(".*.tmp")) if folder is not None else []
+    except (OSError, sqlite3.Error, ValueError):
+        return []
+
+
+def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str]:
+    """SessionEnd hook runs that wrote `started` and never finished (W-20260929-A105).
+
+    `ccw-hook.py` writes `started` before it runs `ccw hook` and an `ok`, `error`
+    or `capture-error` line after; a `started` with nothing after it, older than
+    the hook's own timeout plus a margin, is a run that was killed. Read over the
+    same bounded window as the dispatch check.
+
+    BLOCKING when such a run's session has NO catalog row: the session then
+    exists only in `~/.claude` until the next `ccw sweep` re-captures it, which
+    is exactly the "is capture working" question this command answers. Chosen as
+    the conservative setting (false positives over misses); a run the sweep has
+    since captured is reported without failing. Stray `.tmp` files in those runs'
+    folders are NAMED, never deleted (R4): a later capture of the same session
+    writes a new temp name and replaces the JSONL beside them.
+
+    A hook killed before it wrote `started` leaves nothing here to find.
+    """
+    log_path = home / ".claude" / "logs" / "ccw-hook.log"
+    try:
+        text = log_path.read_text(encoding="utf-8")
+    except OSError:
+        return True, "no ccw-hook.log on this machine yet"
+    now = datetime.now(UTC)
+    cutoff = now - _DISPATCH_WINDOW
+    pending: dict[str, tuple[datetime, str]] = {}
+    for line in text.splitlines():
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if record.get("source", "ccw-hook") != "ccw-hook":
+            continue
+        state, session = record.get("status"), record.get("session")
+        stamp = record.get("ts")
+        moment = _moment(stamp if isinstance(stamp, str) else None)
+        if not isinstance(session, str) or moment is None or moment < cutoff:
+            continue
+        if state == "started":
+            pending[session] = (moment, str(record.get("detail", "")))
+        elif state != "dispatched":
+            pending.pop(session, None)
+    dead = sorted(
+        (
+            (session, moment, detail)
+            for session, (moment, detail) in pending.items()
+            if (now - moment).total_seconds() >= _HOOK_GRACE_SECONDS
+        ),
+        key=lambda item: item[1],
+    )
+    if not dead:
+        return True, "0 hook run(s) started and never finished in the last 7 days"
+    cataloged = status.cataloged_session_uuids(config.root)
+    lost = [item for item in dead if item[0] not in cataloged]
+    strays = [
+        tmp
+        for session, _moment, detail in dead
+        for tmp in _stray_tmps(config, session, Path(detail))
+    ]
+    tmp_note = (
+        f"; {len(strays)} stray .tmp file(s) left in place, e.g. {strays[0]}"
+        if strays
+        else ""
+    )
+    if lost:
+        session, moment, _detail = lost[0]
+        return (
+            False,
+            f"{len(lost)} hook run(s) started and never finished, no catalog row,"
+            f" e.g. {session} started {moment.isoformat()}; the next ccw sweep"
+            f" re-captures from ~/.claude{tmp_note}",
+        )
+    return (
+        True,
+        f"{len(dead)} hook run(s) never finished in the last 7 days, all since"
+        f" captured{tmp_note}",
+    )
+
+
 def _batch_render_in_progress(root: Path) -> bool:
     """True while `ccw sweep` or `ccw build` is actively running against this
     warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
@@ -1201,6 +1332,11 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     # broken capture -- sweep does not depend on the hook ever having fired.
     dispatch_ok, dispatch_detail = _dispatch_gap(config, walk_root, where)
     checks.append(Check("dispatch", dispatch_ok, dispatch_detail, blocking=False))
+
+    # W-20260929-A105. BLOCKING, unlike `dispatch` above: a run that started and
+    # died with no catalog row is a session that is captured nowhere yet.
+    hook_runs_ok, hook_runs_detail = _hook_unfinished(config, where)
+    checks.append(Check("hook runs", hook_runs_ok, hook_runs_detail))
 
     checked, problems, pending, first_problem = _desync(config)
     pending_suffix = f", {pending} pending render(s)" if pending else ""
