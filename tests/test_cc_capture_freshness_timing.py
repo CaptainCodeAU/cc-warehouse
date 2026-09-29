@@ -832,19 +832,17 @@ def test_a_dead_holder_never_leaves_a_stale_lock(tmp_path: Path) -> None:
 # the same clock, from `oldest_refusal_at`, with its own dedup.
 # ---------------------------------------------------------------------------
 
-# FIXTURE TO BE REPLACED with a line from the real writer once the
-# fix-doctor-quick branch lands it (the conductor will name the commit). Copied
-# from the agreed interface, 2026-09-29.
-_SUMMARY_FIXTURE = {
-    "at": "2026-09-29T05:30:00+00:00",
-    "status": "repair-summary",
-    "session": None,
-    "project": None,
-    "elapsed_ms": None,
-    "message": "repair: 2 open refusal(s)",
-    "open_refusals": 2,
-    "oldest_refusal_at": "2026-09-29T05:30:00+00:00",
-}
+# A line the REAL writer produced (integrate-0929, 2026-09-29): `ccw repair` run
+# in a sandbox on a folder it had to hold (a changed tool result whose source had
+# changed too), copied verbatim from logs/capture.jsonl. Note the microseconds in
+# both timestamps. tests/test_integration_0929.py pins the writer to this exact
+# key set and these value types, so neither side can drift alone.
+_SUMMARY_FIXTURE = json.loads(
+    '{"at": "2026-09-29T05:28:39.478309+00:00", "status": "repair-summary",'
+    ' "session": null, "project": null, "message": "repair: 1 open refusal(s)",'
+    ' "elapsed_ms": null, "open_refusals": 1,'
+    ' "oldest_refusal_at": "2026-09-29T05:28:39.478226+00:00"}'
+)
 
 
 def _summary(tmp_path: Path, at: datetime, open_refusals: int, oldest: datetime | None) -> None:
