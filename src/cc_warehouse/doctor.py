@@ -817,7 +817,7 @@ def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, st
 
 
 def _stray_tmps(config: Config, session_uuid: str, transcript: Path) -> list[Path]:
-    """The half-written `store.atomic_write` temp files in one dead hook run's
+    """The half-written temp files `store`'s writer leaves in one dead hook run's
     archive folder, found without walking the archive: the label comes from the
     catalog (the session's row, or else the project capture registered for its
     cwd before it wrote anything), then ONE label listing finds the folder.
@@ -862,21 +862,51 @@ def _stray_tmps(config: Config, session_uuid: str, transcript: Path) -> list[Pat
         return []
 
 
-def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str]:
+# A completed `ccw sweep` writes this run summary to capture.jsonl as it ends
+# (cli._log_run_summary); a refusal writes "sweep: refused: ...", which is not one.
+_SWEEP_DONE = re.compile(r"^sweep: \d+ items")
+
+
+def _last_sweep_completed(config: Config) -> datetime | None:
+    """When the most recent `ccw sweep` finished, from its run summary in
+    capture.jsonl, or None when no completed sweep is recorded. Read-only."""
+    try:
+        text = (config.root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    latest: datetime | None = None
+    for line in text.splitlines():
+        if '"sweep: ' not in line:
+            continue
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        message, at = record.get("message"), record.get("at")
+        if not isinstance(message, str) or not _SWEEP_DONE.match(message):
+            continue
+        moment = _moment(at if isinstance(at, str) else None)
+        if moment is not None and (latest is None or moment > latest):
+            latest = moment
+    return latest
+
+
+def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str, bool]:
     """SessionEnd hook runs that wrote `started` and never finished (W-20260929-A105).
 
-    `ccw-hook.py` writes `started` before it runs `ccw hook` and an `ok`, `error`
-    or `capture-error` line after; a `started` with nothing after it, older than
-    the hook's own timeout plus a margin, is a run that was killed. Read over the
-    same bounded window as the dispatch check.
+    Returns (ok, detail, blocking). `ccw-hook.py` writes `started` before it runs
+    `ccw hook` and an `ok`, `error` or `capture-error` line after; a `started` with
+    nothing after it, older than the hook's own timeout plus a margin, is a run
+    that was killed. Read over the same bounded window as the dispatch check.
 
-    BLOCKING when such a run's session has NO catalog row: the session then
-    exists only in `~/.claude` until the next `ccw sweep` re-captures it, which
-    is exactly the "is capture working" question this command answers. Chosen as
-    the conservative setting (false positives over misses); a run the sweep has
-    since captured is reported without failing. Stray `.tmp` files in those runs'
-    folders are NAMED, never deleted (R4): a later capture of the same session
-    writes a new temp name and replaces the JSONL beside them.
+    TWO SEVERITIES (Gavin, 2026-09-29, option 1). A dead run whose session has no
+    catalog row is a WARNING at once: the next `ccw sweep` re-captures it from
+    `~/.claude`. It turns BLOCKING only when a sweep has COMPLETED after the run
+    started (its run summary in capture.jsonl) and the session still has no row,
+    because then the net meant to catch it has missed. A run since captured is
+    clean. Stray `.tmp` files in those runs' folders are named and left in place
+    (tests/test_doctor_dead_hook.py::
+    test_a_dead_hook_with_no_sweep_since_is_a_warning_that_names_the_tmp).
 
     A hook killed before it wrote `started` leaves nothing here to find.
     """
@@ -884,7 +914,7 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str]:
     try:
         text = log_path.read_text(encoding="utf-8")
     except OSError:
-        return True, "no ccw-hook.log on this machine yet"
+        return True, "no ccw-hook.log on this machine yet", False
     now = datetime.now(UTC)
     cutoff = now - _DISPATCH_WINDOW
     pending: dict[str, tuple[datetime, str]] = {}
@@ -913,7 +943,7 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str]:
         key=lambda item: item[1],
     )
     if not dead:
-        return True, "0 hook run(s) started and never finished in the last 7 days"
+        return True, "0 hook run(s) started and never finished in the last 7 days", False
     cataloged = status.cataloged_session_uuids(config.root)
     lost = [item for item in dead if item[0] not in cataloged]
     strays = [
@@ -926,18 +956,31 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str]:
         if strays
         else ""
     )
-    if lost:
-        session, moment, _detail = lost[0]
+    if not lost:
+        return (
+            True,
+            f"{len(dead)} hook run(s) never finished in the last 7 days, all since"
+            f" captured{tmp_note}",
+            False,
+        )
+    swept = _last_sweep_completed(config)
+    missed = [item for item in lost if swept is not None and swept > item[1]]
+    if missed:
+        session, moment, _detail = missed[0]
         return (
             False,
-            f"{len(lost)} hook run(s) started and never finished, no catalog row,"
-            f" e.g. {session} started {moment.isoformat()}; the next ccw sweep"
-            f" re-captures from ~/.claude{tmp_note}",
+            f"{len(missed)} hook run(s) started and never finished and a ccw sweep"
+            f" completed since ({swept.isoformat() if swept else ''}) without capturing"
+            f" them, e.g. {session} started {moment.isoformat()}{tmp_note}",
+            True,
         )
+    session, moment, _detail = lost[0]
     return (
-        True,
-        f"{len(dead)} hook run(s) never finished in the last 7 days, all since"
-        f" captured{tmp_note}",
+        False,
+        f"{len(lost)} hook run(s) started and never finished, no catalog row yet,"
+        f" e.g. {session} started {moment.isoformat()}; the next ccw sweep"
+        f" re-captures from ~/.claude{tmp_note}",
+        False,
     )
 
 
@@ -1433,10 +1476,12 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     dispatch_ok, dispatch_detail = _dispatch_gap(config, walk_root, where)
     checks.append(Check("dispatch", dispatch_ok, dispatch_detail, blocking=False))
 
-    # W-20260929-A105. BLOCKING, unlike `dispatch` above: a run that started and
-    # died with no catalog row is a session that is captured nowhere yet.
-    hook_runs_ok, hook_runs_detail = _hook_unfinished(config, where)
-    checks.append(Check("hook runs", hook_runs_ok, hook_runs_detail))
+    # W-20260929-A105: a warning while the next sweep is still expected to
+    # re-capture a dead run, blocking once a completed sweep has missed it.
+    hook_runs_ok, hook_runs_detail, hook_runs_blocking = _hook_unfinished(config, where)
+    checks.append(
+        Check("hook runs", hook_runs_ok, hook_runs_detail, blocking=hook_runs_blocking)
+    )
 
     checked, problems, pending, first_problem = _desync(config)
     pending_suffix = f", {pending} pending render(s)" if pending else ""

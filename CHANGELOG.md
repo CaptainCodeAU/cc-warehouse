@@ -22,15 +22,17 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
-**`ccw doctor` fails on a SessionEnd hook that started and never finished (2026-09-29,
+**`ccw doctor` reports a SessionEnd hook that started and never finished (2026-09-29,
 W-20260929-A105; ruling: Gavin, "fix all five").** A hook killed mid-capture leaves a
 `started` line in `ccw-hook.log` with nothing after it, a half-written `.tmp` in the archive
 folder and no catalog row, and doctor stayed green: on 2026-09-29 the installed doctor exited
 0 ("capture is working") with two such sessions (f952df5f, fc69613b; 3.2 and 4.0 MB `.tmp`
 files on the share). New `doctor._hook_unfinished` pairs each `started` with a later line for
-the same session over the dispatch check's 7-day window, and a new BLOCKING `hook runs` line
-FAILS when a run older than 120 s (the hook's 45 s timeout plus a margin) never finished and
-its session has no catalog row; a run since captured is reported without failing. Stray `.tmp`
+the same session over the dispatch check's 7-day window. A new `hook runs` line WARNS when a
+run older than 120 s (the hook's 45 s timeout plus a margin) never finished and its session has
+no catalog row, and turns BLOCKING only once a `ccw sweep` has completed after that run (its
+run summary in capture.jsonl; a refused sweep does not count) and the session is still
+uncaptured (Gavin, 2026-09-29, option 1); a run since captured is clean. Stray `.tmp`
 files are found without walking the archive (the session's or its project's catalog label,
 then one label listing) and named, never deleted; the next `ccw sweep` re-captures from
 `~/.claude`. 0.25 s on the real machine. Measured, read-only: 11 of 775 hook runs since

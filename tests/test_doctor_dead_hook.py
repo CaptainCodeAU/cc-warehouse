@@ -8,12 +8,14 @@ ask the catalog, so it stayed green while the session existed only in
 `~/.claude`. Live 2026-09-29: f952df5f and fc69613b, 3.2 and 4.0 MB `.tmp` files on
 the share; 11 of 775 hook runs since 2026-09-06 started and never finished.
 
-THE RULE. Doctor reads the hook log (bounded to the same 7-day window as its
-dispatch check), pairs each `started` with a later line for the same session,
-and FAILS when a run older than the hook's own timeout never finished and the
-catalog has no row for its session. Stray `.tmp` files in those runs' folders are
-named, never deleted: the next `ccw sweep` re-captures from `~/.claude`. A run
-that has since been captured is reported without failing.
+THE RULE (Gavin, 2026-09-29, option 1). Doctor reads the hook log (bounded to
+the same 7-day window as its dispatch check) and pairs each `started` with a later
+line for the same session. A run older than the hook's own timeout that never
+finished, with no catalog row for its session, is a WARNING at once (the next
+`ccw sweep` is expected to re-capture it from `~/.claude`), and turns BLOCKING
+only once a sweep has COMPLETED after the run started and the session still has
+no row: then the net that was meant to catch it has missed. A run since captured
+is clean. Stray `.tmp` files in those runs' folders are named and left in place.
 
 A hook killed BEFORE it wrote `started` leaves nothing here to find; the
 `dispatch` line's own caveat covers what can and cannot be seen of that.
@@ -85,6 +87,22 @@ def _world(ccw_env: dict[str, str], tmp_path: Path) -> tuple[Config, Path, Path,
     return config, home, dead, tmp
 
 
+def _sweep_completed(config: Config, seconds_ago: float) -> None:
+    """The run-summary line `ccw sweep` writes to capture.jsonl when it finishes."""
+    path = config.root / "logs" / "capture.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "at": _at(seconds_ago),
+        "status": "ok",
+        "session": None,
+        "project": None,
+        "message": "sweep: 29944 items, 38 stored, 0 failed",
+        "elapsed_ms": None,
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
 def _started(home: Path, transcript: Path, seconds_ago: float, session: str = DEAD) -> None:
     _log(
         home,
@@ -105,19 +123,54 @@ def _check(config: Config, home: Path) -> doctor.Check:
     return found[0]
 
 
-def test_a_dead_hook_with_no_catalog_row_fails_doctor_and_names_the_tmp(
+def test_a_dead_hook_with_no_sweep_since_is_a_warning_that_names_the_tmp(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
     config, home, dead, tmp = _world(ccw_env, tmp_path)
+    _sweep_completed(config, seconds_ago=3600)  # BEFORE the run: does not count
     _started(home, dead, seconds_ago=600)
 
     check = _check(config, home)
 
-    assert not check.ok and check.blocking
+    assert not check.ok and not check.blocking
     assert DEAD[:8] in check.detail and "never finished" in check.detail
     assert tmp.name in check.detail
-    assert tmp.read_bytes() == b"half a payload", "doctor must never delete the stray .tmp"
+    assert tmp.read_bytes() == b"half a payload", "doctor must leave the stray .tmp in place"
+
+
+def test_a_dead_hook_still_uncaptured_after_a_completed_sweep_fails_doctor(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    config, home, dead, tmp = _world(ccw_env, tmp_path)
+    _started(home, dead, seconds_ago=600)
+    _sweep_completed(config, seconds_ago=60)
+
+    check = _check(config, home)
+
+    assert not check.ok and check.blocking
+    assert DEAD[:8] in check.detail and "sweep" in check.detail
+    assert tmp.name in check.detail
     assert not doctor.diagnose(config, home=home).ok
+
+
+def test_a_refused_sweep_is_not_a_completed_one(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    config, home, dead, _tmp = _world(ccw_env, tmp_path)
+    _started(home, dead, seconds_ago=600)
+    path = config.root / "logs" / "capture.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    refused = {
+        "at": _at(60),
+        "status": "error",
+        "session": None,
+        "project": None,
+        "message": "sweep: refused: lock held by a live holder",
+        "elapsed_ms": None,
+    }
+    path.write_text(json.dumps(refused) + "\n", encoding="utf-8")
+
+    check = _check(config, home)
+
+    assert not check.ok and not check.blocking
 
 
 @pytest.mark.parametrize(
@@ -141,6 +194,7 @@ def test_runs_that_are_not_lost_do_not_fail(
     else:
         _started(home, dead, seconds_ago=600)
         assert capture.capture_transcript(config, dead, session_id=DEAD, cwd=CWD).action == "stored"
+        _sweep_completed(config, seconds_ago=60)
 
     check = _check(config, home)
 
