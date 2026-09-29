@@ -6,16 +6,17 @@ exclusion) and 9 (batch failure posture); rules R10, R14; FINDINGS F3, F7, F9.
 """
 
 import hashlib
-import os
 import stat
 from pathlib import Path
 from typing import cast
 
+from cc_warehouse import store
 from conftest import (
     DEAD_PID,
     basic_session,
     catalog_rows,
     claude_projects,
+    lock_held_elsewhere,
     run_ccw,
     session_count,
     tree_snapshot,
@@ -100,15 +101,15 @@ def test_sweep_never_modifies_the_source_tree(ccw_env: dict[str, str]) -> None:
 
 
 def test_sweep_refuses_to_run_beside_a_live_holder(ccw_env: dict[str, str]) -> None:
-    """R14: locks/sweep with O_EXCL semantics; a live holder wins."""
+    """R14: one holder of locks/sweep; a live holder wins. Held by another
+    process the real way (a kernel flock since A84)."""
     seed_two_sessions(ccw_env)
-    lock = warehouse_root(ccw_env) / "locks" / "sweep"
-    lock.parent.mkdir(parents=True)
-    lock.write_text(str(os.getpid()))
-    result = run_ccw(["sweep"], ccw_env)
-    assert result.code != 0
-    assert session_count(ccw_env) == 0
-    assert lock.read_text().strip() == str(os.getpid())
+    root = warehouse_root(ccw_env)
+    with lock_held_elsewhere(root, "sweep"):
+        result = run_ccw(["sweep"], ccw_env)
+        assert result.code != 0
+        assert session_count(ccw_env) == 0
+        assert store.lock_is_held(root, "sweep")
 
 
 def test_sweep_takes_over_a_stale_lock(ccw_env: dict[str, str]) -> None:

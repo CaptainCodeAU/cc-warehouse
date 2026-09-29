@@ -22,6 +22,7 @@ from cc_warehouse import archive
 from conftest import (
     basic_session,
     hook_payload,
+    lock_held_elsewhere,
     mark_archive,
     run_ccw,
     run_cli,
@@ -121,15 +122,10 @@ def test_sweep_triggered_build_failure_also_writes_an_error_run_summary(
 
 
 def test_sweep_lock_refusal_is_logged(ccw_env: dict[str, str], tmp_path: Path) -> None:
-    import os
-
     archive_root = tmp_path / "archive"
     configure_archive(ccw_env, archive_root)
-    lock = warehouse_root(ccw_env) / "locks" / "sweep"
-    lock.parent.mkdir(parents=True)
-    lock.write_text(str(os.getpid()))
-
-    result = run_ccw(["sweep"], ccw_env)
+    with lock_held_elsewhere(warehouse_root(ccw_env), "sweep"):
+        result = run_ccw(["sweep"], ccw_env)
     assert result.code == 2
 
     summaries = _run_summaries(ccw_env, "sweep")

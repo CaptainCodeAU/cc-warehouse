@@ -22,6 +22,25 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Batch and capture locks are kernel flocks the operating system releases when the holder dies
+(2026-09-29, W-20260929-A84; ruling: Gavin, "OS-released lock").** A lock used to be an O_EXCL
+file holding a PID, trusted through `os.kill(pid, 0)`: a dead holder's PID reused by an
+unrelated process read as a live holder forever, and an age rule proposed to fix that could
+free a lock whose holder was still running. `store.acquire_lock` now holds `flock(LOCK_EX)` on
+`<root>/locks/<name>` for the job's life and keeps the descriptor; `release_lock` removes the
+file while still holding it and then closes; an acquirer that wins a flock re-checks that the
+path still names its inode. `lock_is_held` asks with `LOCK_SH|LOCK_NB` on an existing file and
+never creates one, so doctor and repair can ask "is a batch running" without becoming a
+holder; an acquirer retries a would-block for up to a second so a momentary probe never reads
+as "busy". New: `store.lock_acquired_at` (the file's mtime, stamped at acquire even when the
+PID text cannot be written, or None when nobody holds it), `store.held_lock_names`, and a
+non-blocking `ccw doctor` `locks` line naming the locks held right now. Every caller keeps the
+same API. The pre-change code survives, labelled PID FALLBACK, only where `fcntl` cannot be
+imported. Tests hold a lock the real way through one shared helper,
+`conftest.lock_held_elsewhere`, instead of writing a PID. Deploy note in `docs/operations.md`:
+reinstall `ccw` only while no lock is held, because old and new builds do not see each
+other's locks.
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because

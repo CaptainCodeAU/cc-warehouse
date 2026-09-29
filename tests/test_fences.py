@@ -20,9 +20,12 @@ DELETE_SANCTIONED = {"build.py", "share.py"}
 # closed list sanctions lock files "created/removed with O_EXCL semantics" and
 # DESIGN R4's closed list names lock release. Function-scoped so the store's
 # object/catalog surface stays delete-free. Decided at slice-01 triage,
-# 2026-07-18 (principal).
+# 2026-07-18 (principal). Since W-20260929-A84 the lock is a kernel flock and
+# only release_lock removes its file; the pre-A84 O_EXCL code survives, under
+# the _pid_ names, as the labelled PID FALLBACK for a platform without fcntl,
+# removing the same lock files it always did. Same files, same closed list.
 LOCK_DELETE_SANCTIONED: dict[str, set[str]] = {
-    "store.py": {"acquire_lock", "release_lock"},
+    "store.py": {"acquire_lock", "release_lock", "_pid_acquire_lock", "_pid_release_lock"},
 }
 
 # The ONE function allowed to compare a file's size for equality (W-20260929-A74;

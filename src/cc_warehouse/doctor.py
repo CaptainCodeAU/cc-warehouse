@@ -1308,6 +1308,21 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         )
     )
 
+    # W-20260929-A84: which locks some process holds right now (kernel flocks,
+    # probed without taking them). Informational, never blocking. It exists
+    # so the deploy step "reinstall ccw only when no batch is running" can be
+    # checked by eye: a ccw from before A84 writes PID files and a ccw from
+    # after takes flocks, and the two do not see each other's locks.
+    held = store.held_lock_names(config.root)
+    checks.append(
+        Check(
+            "locks",
+            True,
+            f"held: {', '.join(held)} (a batch or capture is running)" if held else "none held",
+            blocking=False,
+        )
+    )
+
     checks.append(
         Check(
             "config",

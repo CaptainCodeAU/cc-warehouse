@@ -13,12 +13,11 @@ reviewer clusters the oracle did not cover. Cited in ticket 08.
 """
 
 import hashlib
-import os
 from pathlib import Path
 
 from cc_warehouse import build, catalog, registry, store
 from cc_warehouse.config import Config
-from conftest import basic_session, run_ccw, warehouse_root
+from conftest import basic_session, lock_held_elsewhere, run_ccw, warehouse_root
 
 
 def _session_dirs(env: dict[str, str]) -> list[Path]:
@@ -94,13 +93,11 @@ def test_build_refuses_beside_a_live_lock_holder(ccw_env: dict[str, str]) -> Non
     builds nothing, exits non-zero, and leaves the lock untouched."""
     root = warehouse_root(ccw_env)
     _seed_real_session(root)
-    lock = root / "locks" / "build"
-    lock.parent.mkdir(parents=True)
-    lock.write_text(str(os.getpid()))
-    result = run_ccw(["build"], ccw_env)
-    assert result.code != 0
-    assert _session_dirs(ccw_env) == []
-    assert lock.read_text().strip() == str(os.getpid())
+    with lock_held_elsewhere(root, "build"):
+        result = run_ccw(["build"], ccw_env)
+        assert result.code != 0
+        assert _session_dirs(ccw_env) == []
+        assert store.lock_is_held(root, "build")
 
 
 def test_adhoc_render_refuses_out_under_the_store(ccw_env: dict[str, str], tmp_path: Path) -> None:
