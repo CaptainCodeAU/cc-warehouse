@@ -34,7 +34,15 @@ from test_doctor_quick_desync import UUID_A, flip_one_byte, rich_folder, targets
 from cc_warehouse import archive, doctor, notify, store
 from cc_warehouse.config import Config
 from cc_warehouse.render import RenderOptions
-from conftest import basic_session, entry, jsonl, run_ccw, run_cli, write_transcript
+from conftest import (
+    basic_session,
+    claude_projects,
+    entry,
+    jsonl,
+    run_ccw,
+    run_cli,
+    write_transcript,
+)
 
 ZONE = "Australia/Melbourne"
 UUID_NEW = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee"
@@ -176,10 +184,16 @@ def test_a_storing_sweep_heals_a_truncated_subagent_from_its_source(
 def test_a_size_changing_damage_stays_visible_to_doctors_quick_check(
     ccw_env: dict[str, str], tmp_path: Path, writer: str
 ) -> None:
+    """Repair may instead HEAL the file from its intact source in ~/.claude
+    (A82 item 5); that is the one other right answer."""
     config, folder = rich_folder(ccw_env, tmp_path)
+    original = targets(folder)["tool-result"].read_bytes()
     damage_truncated_tool_result(folder)
     WRITERS[writer](ccw_env, config)
     _checked, problems, _pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    if targets(folder)["tool-result"].read_bytes() == original:
+        assert problems == 0
+        return
     assert problems >= 1, f"doctor went clean after {writer}"
     assert first is not None and "tool-result" in first
 
@@ -299,14 +313,34 @@ def age_manifest(folder: Path) -> None:
     os.utime(folder / "manifest.json", (old, old))
 
 
-@pytest.mark.parametrize("kind", ("prompts", "custom-title", "tool-result"))
+def change_source(env: dict[str, str], kind: str) -> None:
+    """Make the ~/.claude source differ too, so repair cannot restore from it
+    (A82 item 5) and the case under test is the refusal itself."""
+    beside = next(claude_projects(env).glob(f"*/{UUID_A}"))
+    source = (
+        beside / "tool-results" / "toolu_01stdout.txt"
+        if kind == "tool-result"
+        else next((beside / "subagents").glob("*.jsonl"))
+    )
+    source.write_bytes(source.read_bytes() + b"moved on\n")
+
+
+def open_refusals_now(config: Config) -> object:
+    lines = (config.root / "logs" / "capture.jsonl").read_text("utf-8").splitlines()
+    summaries = [json.loads(line) for line in lines if '"repair-summary"' in line]
+    return summaries[-1]["open_refusals"]
+
+
+@pytest.mark.parametrize("kind", ("tool-result", "sub-agent"))
 def test_a_newer_mismatch_is_pending_for_repair_while_a_batch_lock_is_held(
     ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
+    """Changed since A82's send-back: the write happens AFTER the lock was taken
+    (item 2), and prompts/custom-title are no longer cases here because repair
+    now explains and re-renders them (item 4)."""
     config, folder = rich_folder(ccw_env, tmp_path)
-    flip_one_byte(targets(folder)[kind])
+    change_source(ccw_env, kind)
     age_manifest(folder)
-    before = manifest_of(folder)
     alerts: list[str] = []
 
     def record(_config: object, _title: str, message: str) -> None:
@@ -316,6 +350,8 @@ def test_a_newer_mismatch_is_pending_for_repair_while_a_batch_lock_is_held(
     monkeypatch.setattr(notify, "speak", silent)
     assert store.acquire_lock(config.root, "sweep")
     try:
+        flip_one_byte(targets(folder)[kind])
+        before = manifest_of(folder)
         result = run_cli(["repair", "--quiet"])
     finally:
         store.release_lock(config.root, "sweep")
@@ -326,16 +362,19 @@ def test_a_newer_mismatch_is_pending_for_repair_while_a_batch_lock_is_held(
     log = (config.root / "logs" / "capture.jsonl").read_text("utf-8").splitlines()
     pending = [line for line in log if '"status": "pending"' in line and "repair: " in line]
     assert len(pending) == 1, pending
+    assert open_refusals_now(config) == 0
 
-    # The lock released, the same folder is an unexplained change again.
-    assert run_cli(["repair", "--quiet"]).code == 1
+    # The lock released, the same folder is an unexplained change: held, counted.
+    assert run_cli(["repair", "--quiet"]).code == 0
     assert len(alerts) == 1
+    assert open_refusals_now(config) == 1
 
 
 def test_a_mismatch_older_than_its_manifest_is_never_pending_under_a_lock(
     ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, folder = rich_folder(ccw_env, tmp_path)
+    change_source(ccw_env, "tool-result")
     path = targets(folder)["tool-result"]
     flip_one_byte(path)
     old = (datetime.now(UTC) - timedelta(hours=3)).timestamp()
@@ -347,4 +386,5 @@ def test_a_mismatch_older_than_its_manifest_is_never_pending_under_a_lock(
         result = run_cli(["repair", "--quiet"])
     finally:
         store.release_lock(config.root, "sweep")
-    assert result.code == 1, "a file the batch did not write was excused by the lock"
+    assert result.code == 0, result.err
+    assert open_refusals_now(config) == 1, "a file the batch did not write was excused"

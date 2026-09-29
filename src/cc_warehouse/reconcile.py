@@ -370,6 +370,21 @@ RETRACTED = "unrecoverable-retracted"
 # message); its message starts "repair: ", so `_candidates` never reads it as a
 # capture error (_EXCLUDED_PREFIXES).
 REPAIR_REFUSED = "repair-refused"
+# The folder verified clean again (restored, or re-rendered because ccw can now
+# explain it). Closes every open refusal for that session_uuid, so the same
+# problem appearing later alerts again (W-20260929-A82 item 6).
+REPAIR_REFUSAL_RESOLVED = "repair-refusal-resolved"
+# One per `ccw repair` run: the count the start-up hook reads (item 6).
+REPAIR_SUMMARY = "repair-summary"
+
+
+@dataclass(frozen=True)
+class OpenRefusal:
+    """A session repair has refused and not yet seen verify clean: when it was
+    first refused, and every problem-set message announced for it since."""
+
+    first_at: str
+    messages: frozenset[str]
 
 
 def _on_record(records: list[dict[str, object]]) -> dict[str, str | None]:
@@ -433,21 +448,42 @@ def known_unrecoverable_uuids(config: Config) -> frozenset[str]:
     return frozenset(_on_record(_iter_records(config)))
 
 
-def known_refusals(config: Config) -> frozenset[tuple[str, str]]:
-    """Every (session_uuid, message) `ccw repair` has already alerted on as a
-    refusal (W-20260929-A82). THE DEDUP IS THE LOG COMPARE, the same principle
-    `cli._announce_unrecoverable` states: the same folder with the same problems
-    stays silent on every later run, and a different problem set on it re-fires.
-    Reads capture.jsonl only."""
-    out: set[tuple[str, str]] = set()
+def open_refusals(config: Config) -> dict[str, OpenRefusal]:
+    """Every session `ccw repair` has refused and not since seen verify clean
+    (W-20260929-A82). Repair re-checks each of these on every run, whether or
+    not it is still in the 25-folder sample, so a refusal cannot clear itself
+    just because newer sessions pushed it out. Reads capture.jsonl only."""
+    state: dict[str, OpenRefusal] = {}
     for record in _iter_records(config):
-        if record.get("status") != REPAIR_REFUSED:
-            continue
+        status = record.get("status")
         session_uuid = record.get("session_uuid")
-        message = record.get("message")
-        if isinstance(session_uuid, str) and isinstance(message, str):
-            out.add((session_uuid, message))
-    return frozenset(out)
+        if not isinstance(session_uuid, str):
+            continue
+        if status == REPAIR_REFUSAL_RESOLVED:
+            state.pop(session_uuid, None)
+        elif status == REPAIR_REFUSED:
+            at = record.get("at")
+            message = record.get("message")
+            prev = state.get(session_uuid)
+            first = prev.first_at if prev is not None else (at if isinstance(at, str) else "")
+            messages = prev.messages if prev is not None else frozenset[str]()
+            if isinstance(message, str):
+                messages = messages | {message}
+            state[session_uuid] = OpenRefusal(first, messages)
+    return state
+
+
+def known_refusals(config: Config) -> frozenset[tuple[str, str]]:
+    """Every (session_uuid, message) `ccw repair` has already alerted on, among
+    refusals still open. THE DEDUP IS THE LOG COMPARE, the same principle
+    `cli._announce_unrecoverable` states: the same folder with the same problems
+    stays silent on every later run, a different problem set on it re-fires, and
+    after the folder verifies clean the same problem alerts again."""
+    return frozenset(
+        (session_uuid, message)
+        for session_uuid, refusal in open_refusals(config).items()
+        for message in refusal.messages
+    )
 
 
 def known_unrecoverable_count(config: Config) -> tuple[int, str | None]:

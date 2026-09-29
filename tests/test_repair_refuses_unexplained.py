@@ -24,7 +24,6 @@ from typing import cast
 
 import pytest
 from test_doctor_quick_desync import (
-    KINDS,
     UUID_A,
     flip_one_byte,
     rich_folder,
@@ -33,7 +32,7 @@ from test_doctor_quick_desync import (
 
 from cc_warehouse import archive, capture, doctor, notify, store
 from cc_warehouse.config import Config
-from conftest import entry, jsonl, run_ccw, run_cli, write_transcript
+from conftest import claude_projects, entry, jsonl, run_ccw, run_cli, write_transcript
 
 
 def silent(*_args: object) -> None:
@@ -66,15 +65,38 @@ def repair_records(config: Config) -> list[dict[str, object]]:
 
 
 # ---------------------------------------------------------------------------
-# 1. an unexplained change is left untouched, reported, exit 1 (every kind)
+# 1. an unexplained change is left untouched, held and counted
+#
+# CHANGED by the A82 send-back (ruling: Gavin): a held folder exits 0 and is
+# counted in the `repair-summary` line (item 6); repair first restores from an
+# intact ~/.claude source (item 5), so these tests change the source too; and
+# prompts/custom-title are ccw-rewritable and re-rendered (item 4).
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", KINDS)
+def change_source(env: dict[str, str], kind: str) -> None:
+    """Make the ~/.claude source differ as well, so no restore is possible."""
+    beside = next(claude_projects(env).glob(f"*/{UUID_A}"))
+    source = (
+        beside / "tool-results" / "toolu_01stdout.txt"
+        if kind == "tool-result"
+        else next((beside / "subagents").glob("*.jsonl"))
+    )
+    source.write_bytes(source.read_bytes() + b"moved on\n")
+
+
+def open_refusals_now(config: Config) -> object:
+    summaries = [r for r in repair_records(config) if r.get("status") == "repair-summary"]
+    return summaries[-1]["open_refusals"]
+
+
+@pytest.mark.parametrize("kind", ("payload", "sub-agent", "tool-result"))
 def test_repair_leaves_a_same_size_change_untouched(
     ccw_env: dict[str, str], tmp_path: Path, kind: str
 ) -> None:
     config, folder = rich_folder(ccw_env, tmp_path)
+    if kind != "payload":
+        change_source(ccw_env, kind)
     flip_one_byte(targets(folder)[kind])
     before = snapshot(folder)
     flagged = full_problems(config)
@@ -82,11 +104,26 @@ def test_repair_leaves_a_same_size_change_untouched(
 
     result = run_ccw(["repair"], ccw_env)
 
-    assert result.code == 1, f"repair did not fail on an unexplained {kind} change: {result.out!r}"
+    assert result.code == 0, f"a held folder went through the failure exit: {result.err!r}"
     assert snapshot(folder) == before, f"repair wrote into a folder with a changed {kind}"
     assert full_problems(config) == flagged, "the evidence did not survive repair"
     assert folder.name in result.err, result.err
-    assert "still broken" in result.out + result.err
+    assert "held" in result.err
+    assert open_refusals_now(config) == 1
+
+
+@pytest.mark.parametrize("kind", ("prompts", "custom-title"))
+def test_repair_rerenders_a_file_ccw_may_rewrite(
+    ccw_env: dict[str, str], tmp_path: Path, kind: str
+) -> None:
+    """A82 item 4: ccw rewrites both itself, so repair explains them, the same
+    stated limit the writers have."""
+    config, folder = rich_folder(ccw_env, tmp_path)
+    flip_one_byte(targets(folder)[kind])
+    result = run_ccw(["repair"], ccw_env)
+    assert result.code == 0, result.err
+    assert full_problems(config) == []
+    assert open_refusals_now(config) == 0
 
 
 def test_repair_leaves_a_truncated_payload_untouched(
@@ -100,9 +137,10 @@ def test_repair_leaves_a_truncated_payload_untouched(
 
     result = run_ccw(["repair"], ccw_env)
 
-    assert result.code == 1, result.out
+    assert result.code == 0, result.err
     assert snapshot(folder) == before
     assert "JSONL does not match manifest source_hash" in full_problems(config)
+    assert open_refusals_now(config) == 1
 
 
 def test_a_folder_missing_pages_and_changed_is_left_untouched(
@@ -112,13 +150,15 @@ def test_a_folder_missing_pages_and_changed_is_left_untouched(
     the manifest over the changed file, so the whole folder is refused: the pages
     stay missing and the change stays visible."""
     config, folder = rich_folder(ccw_env, tmp_path)
+    change_source(ccw_env, "tool-result")
     flip_one_byte(targets(folder)["tool-result"])
     (folder / "conversation.html").unlink()
     before = snapshot(folder)
 
     result = run_ccw(["repair"], ccw_env)
 
-    assert result.code == 1, result.out
+    assert result.code == 0, result.err
+    assert open_refusals_now(config) == 1
     assert snapshot(folder) == before
     problems = full_problems(config)
     assert "missing conversation.html" in problems
@@ -184,20 +224,23 @@ def test_the_refusal_alert_fires_once_and_refires_on_a_new_problem(
 
     monkeypatch.setattr(notify, "alert", record)
     monkeypatch.setattr(notify, "speak", silent)
+    change_source(ccw_env, "tool-result")
+    change_source(ccw_env, "sub-agent")
     flip_one_byte(targets(folder)["tool-result"])
 
     first = run_cli(["repair", "--quiet"])
-    assert first.code == 1
+    assert first.code == 0
     assert len(alerts) == 1, alerts
     assert folder.name in alerts[0] or "1 archive folder" in alerts[0], alerts[0]
 
     second = run_cli(["repair", "--quiet"])
-    assert second.code == 1, "a refused folder must keep failing the job"
+    assert second.code == 0
+    assert open_refusals_now(config) == 1, "a held folder must stay counted"
     assert len(alerts) == 1, f"the same refusal alerted again: {alerts}"
 
-    flip_one_byte(targets(folder)["custom-title"])
+    flip_one_byte(targets(folder)["sub-agent"])
     third = run_cli(["repair", "--quiet"])
-    assert third.code == 1
+    assert third.code == 0
     assert len(alerts) == 2, f"a NEW problem on the same folder did not re-alert: {alerts}"
 
     refusals = [r for r in repair_records(config) if r.get("status") == "repair-refused"]
@@ -215,7 +258,9 @@ def test_a_refusal_is_never_counted_as_an_unrecoverable_session(
     config, folder = rich_folder(ccw_env, tmp_path)
     monkeypatch.setattr(notify, "alert", silent)
     monkeypatch.setattr(notify, "speak", silent)
+    change_source(ccw_env, "tool-result")
     flip_one_byte(targets(folder)["tool-result"])
-    assert run_cli(["repair", "--quiet"]).code == 1
+    assert run_cli(["repair", "--quiet"]).code == 0
+    assert open_refusals_now(config) == 1
     assert reconcile.known_unrecoverable_uuids(config) == frozenset()
     assert reconcile.find_unrecoverable(config, since=None) == ()

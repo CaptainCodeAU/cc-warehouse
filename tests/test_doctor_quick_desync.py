@@ -344,10 +344,14 @@ def test_repair_acts_on_a_hash_only_corruption(
     monkeypatch.setattr(notify, "speak", silent)
     result = run_cli(["repair"])
 
+    # Since the A82 send-back (item 5) repair answers a hash-only change by
+    # restoring the file from its intact ~/.claude source, which it can only do
+    # after its full check saw the hashes differ: detection, proved by the fix.
     assert renders == [], "repair rendered over a change ccw cannot explain"
-    assert result.code != 0
-    assert folder.name in result.out + result.err
-    assert "does not match its hash" in result.err
+    assert result.code == 0, result.err
+    assert targets(folder)["tool-result"].read_bytes() == b"line one\nline two\n"
+    log = (_config.root / "logs" / "capture.jsonl").read_text("utf-8")
+    assert "restored from ~/.claude" in log
 
 
 def test_repair_is_quiet_about_a_healthy_rich_folder(

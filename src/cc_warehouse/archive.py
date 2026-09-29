@@ -651,7 +651,11 @@ def companion_records(session_dir: Path, name: str) -> list[dict[str, object]]:
 
 def _companion_files(session_dir: Path, name: str) -> list[tuple[str, Path]]:
     """(POSIX relative name, path) for every file under one companion directory:
-    the ONE listing `companion_records` and `_companion_problems` both read (R9)."""
+    the ONE listing `companion_records` and `_companion_problems` both read (R9).
+
+    A temp-shaped name (`store.is_temp_name`, a copy still in flight or one a
+    killed process left) is never listed, so no manifest ever records one
+    (W-20260929-A82; `stray_temp_files` reports them instead)."""
     root = session_dir / name
     if not root.is_dir():
         return []
@@ -660,8 +664,19 @@ def _companion_files(session_dir: Path, name: str) -> list[tuple[str, Path]]:
         relative = path.relative_to(root)
         if any(part in sidecars.IGNORED for part in relative.parts) or not path.is_file():
             continue
+        if store.is_temp_name(path.name):
+            continue
         out.append((relative.as_posix(), path))
     return out
+
+
+def stray_temp_files(session_dir: Path) -> list[Path]:
+    """Every temp-shaped file anywhere in a session folder (W-20260929-A82): a
+    write in flight, or the debris of a killed one. Reported by `ccw repair`,
+    never recorded in a manifest and never deleted (R4)."""
+    if not session_dir.is_dir():
+        return []
+    return sorted(p for p in session_dir.rglob("*") if store.is_temp_name(p.name) and p.is_file())
 
 
 def _grew(size: int, recorded: object) -> bool:
@@ -690,7 +705,11 @@ def _old_records(recorded: object, key: str) -> dict[str, dict[str, object]] | N
     for raw in cast(list[object], recorded):
         if isinstance(raw, dict):
             rec = cast(dict[str, object], raw)
-            out[str(rec.get(key, ""))] = rec
+            name = str(rec.get(key, ""))
+            # A temp name an older render recorded is dropped, never kept: the
+            # copy it belonged to has since been renamed into place (A82 item 1).
+            if not store.is_temp_name(Path(name).name):
+                out[name] = rec
     return out
 
 
@@ -1446,15 +1465,159 @@ def write_session_folder(
     )
 
 
+class ManifestUnreadable(Exception):
+    """A folder's existing manifest cannot be read, so no render may replace it
+    (W-20260929-A82 item 3). Replacing it would take every record from disk and
+    adopt whatever changed; a human restores or removes it first."""
+
+
 def _previous_manifest(directory: Path) -> dict[str, object]:
     """The folder's manifest as it stands before this render, or `{}` when there
-    is none or it cannot be read (then every record is taken from disk, as
-    before W-20260929-A82)."""
-    try:
-        loaded = cast(object, json.loads((directory / _MANIFEST).read_text(encoding="utf-8")))
-    except (OSError, ValueError):
+    is none. An EXISTING manifest that cannot be read, or is not a JSON object,
+    raises `ManifestUnreadable`: rendering over it would record every file as it
+    now is, which is exactly the damage adoption the kept-record rule exists to
+    stop (tests/test_repair_sendback.py::test_an_unreadable_manifest_is_not_replaced_by_build)."""
+    path = directory / _MANIFEST
+    if not path.exists():
         return {}
-    return cast(dict[str, object], loaded) if isinstance(loaded, dict) else {}
+    try:
+        loaded = cast(object, json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        raise ManifestUnreadable(f"{path}: unreadable manifest, not replaced: {exc}") from exc
+    if not isinstance(loaded, dict):
+        raise ManifestUnreadable(f"{path}: manifest is not a JSON object, not replaced")
+    return cast(dict[str, object], loaded)
+
+
+DISPLACED_DIR = "displaced"
+
+
+class _SourceIndex:
+    """This session's source files in ~/.claude, looked up BY CONTENT
+    (W-20260929-A82 item 5). R1: the sha256 decides which source is the right
+    one; no name or size ever does. Built lazily, hashed once per file, and
+    only ever asked by `ccw repair` for a folder it would otherwise refuse, so
+    a healthy run hashes nothing here."""
+
+    def __init__(self, claude_home: Path, session_uuid: str) -> None:
+        self.claude_home = claude_home
+        self.session_uuid = session_uuid
+        self._by_hash: dict[str, Path] | None = None
+
+    def _files(self) -> list[Path]:
+        out: list[Path] = []
+        projects = self.claude_home / "projects"
+        try:
+            project_dirs = [d for d in projects.iterdir() if d.is_dir()]
+        except OSError:
+            project_dirs = []
+        for project in project_dirs:
+            beside = project / self.session_uuid
+            for name in (SUBAGENTS_DIR, TOOL_RESULTS_DIR, WORKFLOWS_DIR):
+                root = beside / name
+                if root.is_dir():
+                    out.extend(q for q in root.rglob("*") if q.is_file())
+        history = external.file_history_dir(self.claude_home, self.session_uuid)
+        if history is not None:
+            out.extend(q for q in history.rglob("*") if q.is_file())
+        out.extend(external.todo_files(self.claude_home, self.session_uuid))
+        return out
+
+    def find(self, sha256: str, *, paste_name: str | None = None) -> Path | None:
+        """A source file whose bytes hash to `sha256`, or None. A paste is looked
+        up by its own content-addressed name in paste-cache/, then hash-checked."""
+        if paste_name is not None:
+            candidate = self.claude_home / PASTE_CACHE_DIR / Path(paste_name).name
+            try:
+                return candidate if store.sha256_hex(candidate.read_bytes()) == sha256 else None
+            except OSError:
+                return None
+        if self._by_hash is None:
+            self._by_hash = {}
+            for path in self._files():
+                try:
+                    self._by_hash.setdefault(store.sha256_hex(path.read_bytes()), path)
+                except OSError:
+                    continue
+        return self._by_hash.get(sha256)
+
+
+def copies_match_sources(session_dir: Path, claude_home: Path, session_uuid: str) -> bool:
+    """Every copied companion file and sub-agent in the folder equals a source
+    file in ~/.claude byte for byte (W-20260929-A82 item 3). Used ONLY when the
+    folder has no manifest: then there is no record to keep, and this is the
+    one other witness that the copies are what ccw copied. A folder with no
+    copies vouches for itself; a copy with no matching source does not."""
+    index = _SourceIndex(claude_home, session_uuid)
+    for name in COMPANION_MANIFEST_KEYS:
+        for relative, path in _companion_files(session_dir, name):
+            digest = store.sha256_hex(path.read_bytes())
+            paste = relative if name == PASTES_DIR else None
+            if index.find(digest, paste_name=paste) is None:
+                return False
+    for _agent_id, path in _subagent_files(session_dir):
+        if index.find(store.sha256_hex(path.read_bytes())) is None:
+            return False
+    return True
+
+
+def restore_from_sources(
+    archive_root: Path, session_dir: Path, claude_home: Path, session_uuid: str
+) -> list[str]:
+    """Put back, byte for byte, every copied companion file or sub-agent whose
+    bytes no longer match the manifest's record, when a source file in
+    ~/.claude hashes to exactly that record (W-20260929-A82 item 5; ruling:
+    Gavin). A RESTORE, never an accept: the record decides what is right, the
+    sha256 decides which source is it (R1), and with no matching source the
+    file is left alone. The changed bytes are set aside first under
+    `<archive_root>/_not-sessions/displaced/<label>/<folder>/`, so nothing is
+    destroyed (R4). A vanished sub-agent is not restored here (its folder name
+    comes from its payload); a storing sweep re-copies it from its source.
+    Returns the restored names, relative to the session folder."""
+    try:
+        manifest = _previous_manifest(session_dir)
+    except ManifestUnreadable:
+        return []
+    index = _SourceIndex(claude_home, session_uuid)
+    restored: list[str] = []
+    wanted: list[tuple[str, Path, str, str | None]] = []
+    for name, key in COMPANION_MANIFEST_KEYS.items():
+        old = _old_records(manifest.get(key), "name") or {}
+        for relative, rec in old.items():
+            sha = rec.get("sha256")
+            if isinstance(sha, str) and sha:
+                paste = relative if name == PASTES_DIR else None
+                wanted.append((f"{name}/{relative}", session_dir / name / relative, sha, paste))
+    live_agents = dict(_subagent_files(session_dir))
+    for agent_id, rec in (_old_records(manifest.get("subagents"), "agent_id") or {}).items():
+        sha = rec.get("sha256")
+        path = live_agents.get(agent_id)
+        if isinstance(sha, str) and sha and path is not None:
+            wanted.append((path.relative_to(session_dir).as_posix(), path, sha, None))
+    for relative, target, sha, paste in wanted:
+        try:
+            current = target.read_bytes() if target.is_file() else None
+        except OSError:
+            continue
+        if current is not None and store.sha256_hex(current) == sha:
+            continue
+        source = index.find(sha, paste_name=paste)
+        if source is None:
+            continue
+        data = source.read_bytes()
+        if store.sha256_hex(data) != sha:
+            continue  # the source changed between the lookup and the read
+        if current is not None:
+            aside = (
+                archive_root / NOT_SESSIONS_LABEL / DISPLACED_DIR / session_dir.parent.name
+                / session_dir.name / f"{relative}.{store.sha256_hex(current)[:12]}"
+            )
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            store.write_if_absent(aside, current)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        store.atomic_write(target, data)
+        restored.append(relative)
+    return restored
 
 
 def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> bytes:
