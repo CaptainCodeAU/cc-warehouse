@@ -108,6 +108,13 @@ different mechanics (difference stated inline) | `DROP` not carried (reason inli
   never-raise-into-the-harness posture; fast exit with elapsed-ms reporting; detached
   render). **CHANGE the mechanics per FINDINGS:** hash-first identity, atomic store
   write, catalog row in a transaction, layout keyed by project ID (DESIGN section 4).
+  **AMENDED 2026-09-29 (W-20260929-A59, principal ruling "copy, then render"):** with
+  an archive configured, the hook spawns the detached companions child, which spawns
+  the detached render child when its copying ends; the hook spawns the render itself
+  only when the companions child cannot be started, or at once when no archive is
+  configured. The render child's pattern (section 5) is unchanged. This clarifies the
+  KEEP above rather than reversing it: the render is still detached and still fires
+  once per fresh capture. See DESIGN section 15, 2026-09-29.
 
 ## 3. Naming and project resolution
 
