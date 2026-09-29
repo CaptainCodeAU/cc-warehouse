@@ -1382,7 +1382,9 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
         # root is refused here, before anything is written, and reported through
         # the same error path as any other render failure.
         if config.archive_root is not None:
-            archive.require_root(config.archive_root, config.archive_timezone, warehouse_root=config.root)
+            archive.require_root(
+                config.archive_root, config.archive_timezone, warehouse_root=config.root
+            )
         data = archive.read_payload(
             config,
             label=head.label,
@@ -2006,7 +2008,9 @@ def _run_repair(rest: Sequence[str]) -> int:
     # refused before any work, named on stderr and logged like any repair failure.
     if config.archive_root is not None:
         try:
-            archive.require_root(config.archive_root, config.archive_timezone, warehouse_root=config.root)
+            archive.require_root(
+                config.archive_root, config.archive_timezone, warehouse_root=config.root
+            )
         except archive.ArchiveRootRefused as exc:
             _log_repair_outcome(config, "error", None, str(exc))
             print(f"repair: {exc}", file=sys.stderr)

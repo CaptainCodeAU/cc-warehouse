@@ -72,7 +72,9 @@ def test_a_build_never_deletes_an_archive_that_sits_inside_projections(
 
 
 @pytest.mark.parametrize(
-    "where", ["root", "inside", "contains"], ids=["same", "archive-inside-root", "root-inside-archive"]
+    "where",
+    ["root", "inside", "contains"],
+    ids=["same", "archive-inside-root", "root-inside-archive"],
 )
 def test_every_overlap_is_refused_by_the_writer_gate(
     ccw_env: dict[str, str], tmp_path: Path, where: str
