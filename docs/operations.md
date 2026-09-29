@@ -127,6 +127,41 @@ SessionEnd/SessionStart wiring for THIS repo's own hooks lives in the plugin's o
 externally-owned script) happens to be wired instead. Checking only one of these two
 files gives an incomplete picture either way.
 
+### Picking up a change to the plugin's hooks
+
+The hooks run from a CACHED COPY, not from this checkout:
+`~/.claude/plugins/installed_plugins.json` points `cc-capture@cc-warehouse` at
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<gitsha>/`, built from a clone of the GitHub
+remote (the marketplace source in `~/.claude/plugins/known_marketplaces.json`). The version
+string IS the commit hash. So neither a local commit nor `uv_tool_reinstall_current_project`
+changes what runs; and `claude plugin update` reports "already at the latest version",
+truthfully and uselessly, until the commit is on GitHub (harness/HANDOFFS.md records the
+first time that caught a session). In order, from any directory:
+
+1. Merge to `master` and push it to GitHub.
+2. Refresh the marketplace clone:
+   ```
+   claude plugin marketplace update cc-warehouse
+   ```
+3. Update the plugin. Read what it shows before accepting; do not add `-y`, which accepts
+   whatever install command the marketplace declares (docs/agent-setup-contract.md, step 3):
+   ```
+   claude plugin update cc-capture@cc-warehouse
+   ```
+4. Verify by what EXECUTES, not by what was pushed: the registry must name the new hash, and
+   the cached file must carry the change. For the 2026-09-29 background check, for example:
+   ```
+   grep -c '"async": true' ~/.claude/plugins/cache/cc-warehouse/cc-capture/*/hooks/hooks.json
+   ```
+   The newest `<gitsha>` directory must print 1 (an older one printing 0 is the control).
+5. Start a NEW session. A session resolves its plugin path at start, so sessions already
+   running keep the old hooks until they end.
+
+`ccw` itself is a separate frozen install (CLAUDE.md, "`ccw` IS INSTALLED AS A FROZEN
+SNAPSHOT"). A change under `src/` needs that reinstall; a change under `plugins/` needs the
+steps above; a change to both needs both, and ccw-hook.py's "DEPLOY-ORDER SAFETY" note says
+which goes first.
+
 No crontab entries exist for this user (`crontab -l` -> "no crontab").
 
 ## The two consumers of `ccw doctor`
@@ -163,7 +198,25 @@ periods anywhere, only the live/current state.
 SessionStart too, but only via the `cc-capture@cc-warehouse` plugin's own hook wiring, and
 its trigger is `ccw doctor`'s EXIT CODE specifically (not the raw `Uncaptured: N` figure,
 which sits at 200-350 permanently on this machine by design and is explicitly
-non-blocking). It escalates on a CONSECUTIVE-FAILURE STREAK across session starts and logs
+non-blocking). **Since 2026-09-29 (W-20260929-A93, rulings: Gavin) it escalates on how LONG
+capture has been continuously broken, not on a count of session starts, and it runs in the
+background.** The first failed check stamps `broken_since` in
+`~/.claude/logs/ccw-freshness-state.json`; the first healthy check clears it. Broken under 30
+minutes: logged as `info` and handed to the session only. 30 minutes: a desktop
+notification (`warn`). 2 hours: desktop plus the spoken alert (`alert`). A doctor that could
+not be asked (timeout, crash) runs the same clock with "could not check capture" wording. The
+clock is wall time and includes sleep. A state file that exists but cannot be read, or cannot
+be written, warns at once rather than restarting the clock. `hooks.json` marks the entry
+`"async": true`, so a session start never waits on doctor; Claude Code then drops the hook's
+plain stdout and delivers its JSON `additionalContext` to the MODEL on the next turn, never to
+the screen, and enforces no timeout (code.claude.com/docs/en/hooks, checked against the
+installed 2.1.284 binary). So the desktop and voice channels are the only ones that reach a
+human, and the script bounds itself (`_DOCTOR_TIMEOUT`, 45 s). A kernel `flock` on
+`~/.claude/logs/ccw-freshness.lock`, which the doctor child inherits, means panes starting
+together run ONE doctor; the others log `reused` and hand on the last verdict. A lock held more
+than 5 minutes is a hung check and is reported as an unanswered one, timed from when it
+began. The scheduled-job check runs only in the lock holder. Pinned by
+`tests/test_cc_capture_freshness_timing.py`. It logs
 every check (both pass and warn) as a durable JSON line in `~/.claude/logs/ccw-hook.log`
 (`source: "ccw-freshness-check"`) - unlike `ccw-watch`, this one keeps real history, since
 it's an append-only log rather than an overwritten snapshot. Its message text names the

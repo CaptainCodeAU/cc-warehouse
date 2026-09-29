@@ -30,10 +30,26 @@ on a machine where nothing is actually wrong: the opposite of "escalating,
 clearing only by fixing". So the alarm is driven by `ccw doctor`'s own
 PASS/FAIL verdict (its exit code - the same signal the external `ccw-watch`
 tool already relies on, per tests/test_doctor_external_contract.py) and by
-how many CONSECUTIVE session-starts in a row that verdict has been broken, a
-small count persisted in a state file next to the hook log. The raw
-uncaptured figure still rides along in the message as context; it just does
-not decide whether to speak at all.
+how LONG that verdict has been broken, a "broken since" time persisted in a
+state file next to the hook log. The raw uncaptured figure still rides along
+in the message as context; it just does not decide whether to speak at all.
+
+TIME, NOT COUNT, AND IN THE BACKGROUND (rulings, Gavin, 2026-09-29, open item
+W-20260929-A93). This used to escalate on how many CONSECUTIVE session-starts
+had seen a broken verdict. That counted how busy the operator was, not how
+long capture had been down: at 01:45:19 and 01:45:24 two sessions started
+five seconds apart, each ran its own doctor against the share, and one bad
+moment became a WARNING. Now the first failed check stamps `broken_since`,
+every later failed check measures from it, and the first healthy check
+clears it. The hook also runs with `"async": true` in hooks.json, so a
+session start never waits on doctor, and a kernel `flock` makes several
+panes starting together run ONE doctor; the others reuse its last verdict.
+What async changes (Claude Code's own docs, code.claude.com/docs/en/hooks,
+and the installed 2.1.284 binary, checked 2026-09-29): plain stdout of an
+async hook is DROPPED, only a JSON `hookSpecificOutput.additionalContext`
+reaches the model, on its next turn, never the screen; and Claude Code does
+not enforce the hook's `timeout`. So this script prints JSON, bounds itself,
+and anything a human must hear goes through report()'s desktop and voice.
 
 R9 (one implementation): the health verdict and the uncaptured figure both
 come straight from `ccw doctor` - this script recomputes neither.
@@ -77,8 +93,14 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:  # POSIX only. Without it the check still runs, just unlocked.
+    import fcntl
+except ImportError:  # Windows never runs this plugin; kept importable anyway
+    fcntl = None  # type: ignore[assignment]
+
 LOG = Path.home() / ".claude" / "logs" / "ccw-hook.log"
 STATE_PATH = Path.home() / ".claude" / "logs" / "ccw-freshness-state.json"
+LOCK_PATH = Path.home() / ".claude" / "logs" / "ccw-freshness.lock"
 VOICE_URL = "http://localhost:8888/notify"
 VOICE_ID = "fTtv3eikoepIosk8dTZ5"
 
@@ -88,13 +110,28 @@ VOICE_ID = "fTtv3eikoepIosk8dTZ5"
 # alarm.
 _UNCAPTURED = re.compile(r"Uncaptured:\s*(\d+)\s*session")
 
-# Tiers on the STREAK of consecutive broken doctor verdicts, not on the raw
-# gap figure (see module docstring). 1 is "just happened, might self-heal by
-# the next sweep"; a handful in a row means several session-starts have gone
-# by broken; five or more matches the scale ticket 24's own incident reached
-# (ten days of silence) before anyone noticed.
-_WARN_AT = 2
-_ALERT_AT = 5
+# Tiers on how LONG capture has been continuously broken, not on the raw gap
+# figure (see module docstring) and no longer on a count of session starts.
+# Picked 2026-09-29 against the real log: across 1,293 checks, two session
+# starts sit a median 2.9 minutes apart, and five span a median 40 minutes
+# (p75 92). So the old WARN at 2 starts fired about 3 minutes into a problem
+# and ALERT at 5 about 40 minutes in, and a burst of panes compressed both.
+# 30 minutes outlasts every transient doctor already knows how to excuse (the
+# 120 s capture grace, the 300 s per-step pipeline ceiling), so a desktop
+# alert means the problem survived all of them. 2 hours sits just past the
+# p75 span of five starts, so the spoken ALERT lands no later than it did on
+# an ordinary day, while a burst of panes can no longer bring it forward.
+# The clock is wall time and includes sleep: a failure seen before the lid
+# closed and again after it opened has persisted, it is not a blip.
+_WARN_AFTER_S = 30 * 60
+_ALERT_AFTER_S = 2 * 60 * 60
+
+# A check holding the lock longer than this is hung, not slow: a normal one
+# is bounded by _DOCTOR_TIMEOUT plus the launchctl calls, under a minute. A
+# pane that finds the lock held this long stops quietly reusing the last
+# verdict and reports an unanswered check, timed from when the hung one
+# began, so a doctor stuck on the share can never keep the alarm quiet.
+_HUNG_AFTER_S = 5 * 60
 
 # How long to let `ccw doctor` think before giving up on it. Doctor has to
 # walk ~/.claude/projects to count uncaptured sessions, so its cost tracks the
@@ -103,9 +140,10 @@ _ALERT_AT = 5
 # over the previous 15s budget TWICE at 12:55 local, minutes after ccw-sweep
 # wrote 486 archive folders and left the page cache cold, while capture itself
 # was perfectly healthy (a session had been archived 24ms earlier). 45s is
-# roughly 16x the warm figure and still well inside what a SessionStart hook
-# can afford to block for. See the timeout handling in main(): going over this
-# budget is now a streak, not an alarm.
+# roughly 16x the warm figure. See the timeout handling in main(): going over
+# this budget starts the broken clock, it does not raise an alarm on its own.
+# Since the hook became async (2026-09-29) this is the ONLY bound on a doctor
+# run, because Claude Code does not enforce `timeout` on an async hook.
 _DOCTOR_TIMEOUT = 45
 
 # Per `launchctl print` call in broken_jobs(). Measured 2026-09-07: all three
@@ -117,11 +155,13 @@ _DOCTOR_TIMEOUT = 45
 # the comment below).
 _JOB_TIMEOUT = 2
 
-# THE INVARIANT BOTH NUMBERS ABOVE LIVE UNDER: Claude Code kills this whole
-# process at the `timeout` declared for SessionStart in this plugin's own
-# hooks.json, so _DOCTOR_TIMEOUT + 3 * _JOB_TIMEOUT must stay strictly under
-# it, or the hard kill lands before the graceful except branch below and skips
-# the "unreachable" log line, the streak write and broken_jobs() - the exact
+# THE INVARIANT BOTH NUMBERS ABOVE LIVE UNDER: when this hook runs in the
+# foreground (a Claude Code that predates or ignores `"async": true`), Claude
+# Code kills the whole process at the `timeout` declared for SessionStart in
+# this plugin's own hooks.json, so _DOCTOR_TIMEOUT + 3 * _JOB_TIMEOUT must
+# stay strictly under it, or the hard kill lands before the graceful except
+# branch below and skips the "unreachable" log line, the state write and
+# broken_jobs() - the exact
 # silent-early-exit shape the timeout fix exists to close. The two files
 # cannot see each other, so the relationship is pinned by
 # tests/test_cc_capture_freshness.py's
@@ -150,18 +190,19 @@ _LAST_EXIT = re.compile(r"last exit code = (-?\d+)")
 # WARN/ALERT tiers below -- the actual escalation mechanism ticket 24.7 was
 # built for -- only ever reached a human as SessionStart stdout: pull-based,
 # not push-based, which is why the 2026-09-09 incident needed a peer session
-# to notice and relay it by hand. Desktop fires from WARN onward (streak 2+,
-# _tier() 1); voice waits for ALERT (streak 5+, _tier() 2, the scale ticket
-# 24's own incident reached) so an ordinary run of multi-session work --
-# where two session starts can be minutes apart -- does not get talked over
-# by every WARN. Deliberately excluded: the unlabelled tier-0 first miss
-# (streak 1) is logged as its own "info" status in main() rather than
+# to notice and relay it by hand. Desktop fires from WARN onward (broken 30
+# minutes, _tier() 1); voice waits for ALERT (broken 2 hours, _tier() 2) so a
+# problem that is still resolving does not get talked over. Since the hook
+# became async (2026-09-29) these two channels are the ONLY ones that reach
+# the human at all: the session's copy goes to the model, not the screen.
+# Deliberately excluded: the unlabelled tier-0 first half hour is logged as
+# its own "info" status in main() rather than
 # collapsed into "warn" -- raising a desktop toast on the very first failed
 # check, every time, would be the same "chronic figure trains you to ignore
 # banners" trap ticket 24.7 exists to avoid, just moved one tier earlier.
 # "error" (ccw not installed, a broken scheduled job) keeps speaking
 # immediately, same as before this ticket -- there is no chronic, expected
-# case for it the way the doctor-streak has one, so waiting for a streak
+# case for it the way the doctor verdict has one, so waiting on a clock
 # would just delay a real one-shot problem.
 _DESKTOP_STATUSES = frozenset({"warn", "alert", "error"})
 _SPEAKING_STATUSES = frozenset({"alert", "error"})
@@ -274,42 +315,131 @@ def extract_uncaptured(doctor_output: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _now() -> datetime:
+    """The one clock this script reads, so tests can move it."""
+    return datetime.now(timezone.utc)
+
+
+def _parse_ts(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _load_state(path: Path) -> tuple[dict[str, object], bool]:
+    """(state, lost). `lost` is True when the file EXISTS but cannot be read
+    as a JSON object: the broken period's start time is gone, and the caller
+    must fail toward alerting rather than restart the clock (edge case 2). A
+    MISSING file is not lost: it is the first check on this machine."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}, False
+    except OSError:
+        return {}, True
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}, True
+    return (data, False) if isinstance(data, dict) else ({}, True)
+
+
 def _read_state(path: Path) -> dict[str, object]:
     """The full state dict, or {} if missing/corrupt/unreadable - a corrupt
-    state file must never crash the check (same posture as read_streak)."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    state file must never crash the check."""
+    return _load_state(path)[0]
 
 
-def _write_state(path: Path, updates: dict[str, object]) -> None:
+def _write_state(path: Path, updates: dict[str, object], drop: tuple[str, ...] = ()) -> bool:
     """Merge `updates` into whatever state already exists and write the whole
     thing back, tmp-then-replace so a crash mid-write cannot corrupt the file
     for the next session-start. READ-modify-write, not a blind overwrite: the
-    streak and the backlog-growth snapshot share this one file, and a naive
-    overwrite would let writing one erase the other."""
+    broken clock and the backlog-growth snapshot share this one file, and a
+    naive overwrite would let writing one erase the other. Returns False when
+    the write did not land, because a clock that cannot be saved restarts on
+    every check and would never escalate: the caller treats that as an alarm.
+    Only the lock holder writes (R14); a pane that finds the lock held never
+    calls this."""
     try:
         state = _read_state(path)
         state.update(updates)
+        for key in drop:
+            state.pop(key, None)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state), encoding="utf-8")
         tmp.replace(path)
     except OSError:
+        return False
+    return True
+
+
+def carried_broken_since(state: dict[str, object]) -> datetime | None:
+    """When the current broken period began, as far as the state file can
+    say, or None when the last recorded check was healthy (or there is none).
+
+    Three sources, in order:
+    - `broken_since`, stamped by the first failed check of this period;
+    - a check that STARTED and never recorded a verdict (killed mid-doctor,
+      or its doctor hung past its holder's life): it got no answer, so the
+      period began when it started;
+    - a state file from before 2026-09-29, which kept a count. A count of 1 or
+      more means the previous check failed, and `last_checked_at` is when that
+      check ran, so the period began no later than that. Read once: the first
+      new-style write drops the count."""
+    since = _parse_ts(state.get("broken_since"))
+    if since is not None:
+        return since
+    started = _parse_ts(state.get("check_started_at"))
+    verdict_at = _parse_ts(state.get("last_verdict_at"))
+    if started is not None and (verdict_at is None or verdict_at < started):
+        return started
+    count = state.get("consecutive_broken")
+    if "broken_since" not in state and isinstance(count, int) and count >= 1:
+        return _parse_ts(state.get("last_checked_at"))
+    return None
+
+
+def _try_lock(path: Path, now: datetime) -> tuple[int | None, bool]:
+    """(fd, contended). Take the check lock without waiting.
+
+    A kernel `flock`, never a pid file: it is released when the last process
+    holding the open file exits, however it exits, so a dead holder can never
+    leave it stuck (edge case 4, the W-20260929-A84 class of trusting a pid
+    forever). The fd is passed to the doctor child, so a doctor that outlives
+    a killed hook keeps the lock and no second doctor starts beside it (edge
+    case 3). The file's mtime records when the holder started, for panes that
+    find it held; the pid written into it is for a human reading it, and
+    nothing here trusts it.
+
+    Any failure to lock that is NOT "someone else holds it" returns
+    (None, False): run the check unlocked rather than skip it."""
+    if fcntl is None:
+        return None, False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return None, False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None, True
+    except OSError:
+        os.close(fd)
+        return None, False
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()} {now.isoformat(timespec='seconds')}\n".encode("utf-8"))
+        os.utime(str(path), (now.timestamp(), now.timestamp()))
+    except OSError:
         pass
-
-
-def read_streak(path: Path) -> int:
-    """Consecutive broken doctor verdicts so far, or 0 if unknown, missing, or
-    unreadable - a corrupt state file must never crash the check."""
-    streak = _read_state(path).get("consecutive_broken", 0)
-    return streak if isinstance(streak, int) and streak >= 0 else 0
-
-
-def write_streak(path: Path, streak: int) -> None:
-    _write_state(path, {"consecutive_broken": streak})
+    return fd, False
 
 
 def read_backlog_snapshot(path: Path) -> tuple[int | None, str | None]:
@@ -412,7 +542,7 @@ def broken_jobs() -> list[tuple[str, int]]:
 
 def job_health_message(broken: list[tuple[str, int]]) -> str | None:
     """The line to print/report for broken scheduled jobs, or None if none are
-    broken. Unlike the doctor-streak message, this never needs a streak of its
+    broken. Unlike the doctor-verdict message, this never needs a clock of its
     own: a nonzero exit code is ALWAYS a real problem (there is no chronic,
     expected-nonzero case the way the raw uncaptured count has one), so firing
     plainly every session-start until it is fixed IS the correct escalating-
@@ -423,64 +553,138 @@ def job_health_message(broken: list[tuple[str, int]]) -> str | None:
     return f"cc-warehouse: scheduled job failing: {named}. Check its log under ~/.claude/logs/."
 
 
-def _tier(streak: int) -> int:
-    """Which escalation tier a streak falls in: 0 mild, 1 WARNING, 2 ALERT.
-    One definition, shared by every kind of trouble this script reports, so
-    the boundaries can never drift apart per-case (caught in review
-    2026-09-07, when the unreachable-doctor wording arrived with its own
-    copy-pasted ladder over the same two constants)."""
-    if streak < _WARN_AT:
+def _tier(broken_for_s: float) -> int:
+    """Which escalation tier a broken period falls in: 0 mild, 1 WARNING, 2
+    ALERT. One definition, shared by every kind of trouble this script
+    reports, so the boundaries can never drift apart per-case (caught in
+    review 2026-09-07, when the unreachable-doctor wording arrived with its
+    own copy-pasted ladder over the same two constants)."""
+    if broken_for_s < _WARN_AFTER_S:
         return 0
-    if streak < _ALERT_AT:
+    if broken_for_s < _ALERT_AFTER_S:
         return 1
     return 2
 
 
+def _duration(seconds: float) -> str:
+    """Short human wording for a broken period: "under a minute", "47 min",
+    "3 h 5 min"."""
+    minutes = int(max(0.0, seconds) // 60)
+    if minutes < 1:
+        return "under a minute"
+    if minutes < 120:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60} min"
+
+
 def freshness_message(
-    streak: int, uncaptured: int | None, unreachable: str | None = None
+    broken_for_s: float | None,
+    uncaptured: int | None,
+    unreachable: str | None = None,
+    floor: int = 0,
 ) -> str | None:
     """The escalating line to print, or None to stay quiet.
 
-    Streak 0 (doctor healthy) stays silent no matter how large the chronic
-    backlog is: this signal clears the moment the real problem is fixed, not
-    merely once it has been seen (ticket 24.7).
+    `broken_for_s` None (doctor healthy) stays silent no matter how large the
+    chronic backlog is: this signal clears the moment the real problem is
+    fixed, not merely once it has been seen (ticket 24.7). Otherwise it is how
+    long capture has been continuously broken, and picks the tier. `floor`
+    raises the tier when the clock itself cannot be trusted (a lost or
+    unwritable state file), never lowers it.
 
     `unreachable` names why `ccw doctor` could not be ASKED at all - a
-    timeout, an OSError, any SubprocessError. It changes the WORDING only,
-    never the tiering. A probe that got no answer produced no verdict, so it
-    must not be reported as "capture failed": on the 2026-09-07 incident that
-    made this parameter exist, capture was working perfectly and had archived
-    a session 24ms earlier, while doctor merely lost a race against a sweep
-    that had just written 486 archive folders. It DOES share the same streak,
-    because a doctor nobody can reach for five session-starts running is a
-    real problem, and the branch this replaced could never say so - it never
-    touched the counter, so it shouted one flat line forever and never
-    escalated (operator-approved fix, 2026-09-07).
+    timeout, an OSError, any SubprocessError, a hung check. It changes the
+    WORDING only, never the tiering. A probe that got no answer produced no
+    verdict, so it must not be reported as "capture failed": on the
+    2026-09-07 incident that made this parameter exist, capture was working
+    perfectly and had archived a session 24ms earlier, while doctor merely
+    lost a race against a sweep that had just written 486 archive folders. It
+    DOES run the same clock, because a doctor nobody can reach for hours is a
+    real problem (operator-approved fix, 2026-09-07).
 
     The uncaptured figure is deliberately left out of the unreachable wording:
     doctor never printed the line, so it is always "count unknown" there, and
     a phrase that can only ever say "unknown" is noise on an alert."""
-    if streak <= 0:
+    if broken_for_s is None:
         return None
-    tier = _tier(streak)
+    tier = max(_tier(broken_for_s), floor)
+    lasted = _duration(broken_for_s)
     if unreachable is not None:
         subject = f"could not check capture ({unreachable})"
         return (
             f"cc-warehouse: {subject}. Capture may well be fine; the check got "
             f"no answer. Run `ccw doctor`.",
-            f"cc-warehouse: WARNING - {subject}, {streak} session-starts in a "
-            f"row. Run `ccw doctor`.",
-            f"cc-warehouse: ALERT - {subject}, {streak} session-starts in a row. "
-            f"`ccw doctor` has not answered once. Run it by hand now.",
+            f"cc-warehouse: WARNING - {subject}, no answer for {lasted}. "
+            f"Run `ccw doctor`.",
+            f"cc-warehouse: ALERT - {subject}, no answer for {lasted}. "
+            f"Run `ccw doctor` by hand now.",
         )[tier]
     detail = f"{uncaptured} uncaptured" if uncaptured is not None else "count unknown"
     return (
-        f"cc-warehouse: capture check failed ({detail}). Run `ccw doctor`.",
-        f"cc-warehouse: WARNING - capture check has failed {streak} times in a row "
+        f"cc-warehouse: capture check failed ({detail}), first seen {lasted} ago. "
+        f"Run `ccw doctor`.",
+        f"cc-warehouse: WARNING - capture check has been failing for {lasted} "
         f"({detail}). Run `ccw doctor`.",
-        f"cc-warehouse: ALERT - capture has been broken for {streak} session-starts in a "
-        f"row ({detail}). Run `ccw doctor` now.",
+        f"cc-warehouse: ALERT - capture has been broken for {lasted} "
+        f"({detail}). Run `ccw doctor` now.",
     )[tier]
+
+
+def _emit(lines: list[str]) -> None:
+    """Hand the session its lines the one way an async hook can: a JSON
+    `additionalContext`, which Claude Code delivers to the MODEL on its next
+    turn and never shows on screen (code.claude.com/docs/en/hooks, "Async
+    hooks"). Plain stdout from an async hook is dropped. A foreground run
+    (an older Claude Code) reads the same JSON. Nothing is printed when all
+    is well, so a healthy check adds nothing to the session."""
+    if not lines:
+        return
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": "\n".join(lines),
+                }
+            }
+        )
+    )
+
+
+def _reuse(now: datetime) -> int:
+    """Another pane holds the lock, so its doctor is running now. Reuse the
+    last recorded verdict and write nothing (only the holder writes, R14).
+    One exception: a lock held past _HUNG_AFTER_S means that check is hung,
+    and quietly reusing an old verdict would hide it, so this reports an
+    unanswered check timed from when the hung one began."""
+    state = _read_state(STATE_PATH)
+    try:
+        held_since = datetime.fromtimestamp(LOCK_PATH.stat().st_mtime, timezone.utc)
+    except OSError:
+        held_since = now
+    held_for = (now - held_since).total_seconds()
+    if held_for > _HUNG_AFTER_S:
+        carried = carried_broken_since(state)
+        since = min(carried, held_since) if carried is not None else held_since
+        broken_for = max(0.0, (now - since).total_seconds())
+        message = freshness_message(
+            broken_for,
+            None,
+            unreachable=f"a check started {_duration(held_for)} ago has not answered",
+        )
+        report(("info", "warn", "alert")[_tier(broken_for)], message or "")
+        _emit([message] if message else [])
+        return 0
+    last = state.get("last_verdict")
+    report(
+        "reused",
+        f"another session's check started {int(max(0.0, held_for))}s ago; "
+        f"last verdict {last} at {state.get('last_verdict_at')}",
+    )
+    message = state.get("last_message")
+    if last != "ok" and isinstance(message, str) and message:
+        _emit([message])
+    return 0
 
 
 def main() -> int:
@@ -493,19 +697,38 @@ def main() -> int:
         report("error", "ccw is not installed; freshness check skipped")
         return 0
 
+    started = _now()
+    lock_fd, contended = _try_lock(LOCK_PATH, started)
+    if contended:
+        return _reuse(started)
+    try:
+        return _check(executable, started, lock_fd)
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+
+
+def _check(executable: str, started: datetime, lock_fd: int | None) -> int:
+    prev, lost = _load_state(STATE_PATH)
+    carried = carried_broken_since(prev)
+    # A readable file whose start time is garbled has lost the clock too.
+    if prev.get("broken_since") is not None and _parse_ts(prev.get("broken_since")) is None:
+        lost = True
+    saved = _write_state(STATE_PATH, {"check_started_at": started.isoformat()})
+
     # A doctor that could not be ASKED and a doctor that answered FAIL are
     # different facts, but they share one property: neither is evidence that
-    # capture is healthy. So both fall through to the same streak below.
+    # capture is healthy. So both run the same broken clock below.
     # They used to not: the except branch spoke immediately (before ticket 42
     # item #1, "error" was the only status report() ever said out loud) and
-    # then `return 0`-ed, which never touched the streak counter AND skipped
+    # then `return 0`-ed, which never touched the counter AND skipped
     # broken_jobs() entirely. One slow moment therefore shouted a raw Python
     # traceback, while a permanently unreachable doctor could never escalate
     # past that same flat line. Fixed 2026-09-07 after both halves fired for
     # real. "unreachable" itself still stays off _DESKTOP_STATUSES/
     # _SPEAKING_STATUSES on purpose: it means the check got no answer, not
     # that capture failed (see freshness_message's own docstring), so it logs
-    # durably and lets the streak below carry the actual escalation.
+    # durably and lets the clock below carry the actual escalation.
     result: subprocess.CompletedProcess[str] | None = None
     unreachable: str | None = None
     try:
@@ -515,6 +738,9 @@ def main() -> int:
             text=True,
             timeout=_DOCTOR_TIMEOUT,
             check=False,
+            # The doctor child holds the lock too, so if this hook dies first
+            # a still-running doctor keeps later panes from starting another.
+            pass_fds=(lock_fd,) if lock_fd is not None else (),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         unreachable = type(exc).__name__
@@ -527,48 +753,72 @@ def main() -> int:
         )
 
     uncaptured = extract_uncaptured(result.stdout) if result is not None else None
-    now = datetime.now(timezone.utc)
+    now = _now()
     prev_count, prev_at = read_backlog_snapshot(STATE_PATH)
     rate = backlog_growth(prev_count, prev_at, uncaptured, now) if uncaptured is not None else None
+    lines: list[str] = []
 
     if result is not None and result.returncode == 0:
-        write_streak(STATE_PATH, 0)
+        _write_state(
+            STATE_PATH,
+            {
+                "broken_since": None,
+                "last_verdict": "ok",
+                "last_verdict_at": now.isoformat(),
+                "last_message": None,
+            },
+            drop=("consecutive_broken",),
+        )
         report("ok", f"uncaptured={uncaptured}")
     else:
-        streak = read_streak(STATE_PATH) + 1
-        write_streak(STATE_PATH, streak)
-        message = freshness_message(streak, uncaptured, unreachable)
-        if message is not None:
-            message += growth_context(rate)
-            # Ticket 42 item #1: the report STATUS must track _tier(), not just
-            # "below/at _ALERT_AT" - streak 1 is tier 0, the unlabelled first
-            # miss, and must stay as quiet on the new desktop channel as it
-            # already was on voice. Collapsing tier 0 into "warn" here (the
-            # pre-ticket-42 shape) would have raised a desktop notification on
-            # the very first failed check, every time - the same "chronic
-            # figure trains you to ignore banners" trap ticket 24.7 exists to
-            # avoid, just moved a tier earlier. "info" is a new log status,
-            # deliberately outside _DESKTOP_STATUSES/_SPEAKING_STATUSES; no
-            # test or external consumer keys on the old "warn"-at-tier-0 value
-            # (checked: ccw-watch and this plugin's docs key on `ccw doctor`'s
-            # own exit code, never on this file's log status strings).
-            report(("info", "warn", "alert")[_tier(streak)], message)
-            print(message)
+        since = carried if carried is not None else started
+        broken_for = max(0.0, (now - since).total_seconds())
+        saved = (
+            _write_state(
+                STATE_PATH,
+                {
+                    "broken_since": since.isoformat(),
+                    "last_verdict": "unreachable" if unreachable else "fail",
+                    "last_verdict_at": now.isoformat(),
+                },
+                drop=("consecutive_broken",),
+            )
+            and saved
+        )
+        # Edge case 2: a clock that was lost, or cannot be saved, would
+        # restart at zero on every check and never escalate. Fail toward
+        # alerting: at least a WARNING, and say why.
+        floor = 1 if (lost or not saved) else 0
+        message = freshness_message(broken_for, uncaptured, unreachable, floor=floor)
+        message = message or ""
+        if floor:
+            message += " (The freshness state file could not be read or written, so how long is unknown.)"
+        message += growth_context(rate)
+        _write_state(STATE_PATH, {"last_message": message})
+        # Ticket 42 item #1: the report STATUS tracks the tier. Tier 0, the
+        # first half hour, is "info": logged and handed to the session, never
+        # a desktop toast, or a blip would train the reader to ignore banners
+        # (the ticket 24.7 lesson). No external consumer keys on these log
+        # status strings (checked: ccw-watch and this plugin's docs key on
+        # `ccw doctor`'s own exit code).
+        report(("info", "warn", "alert")[max(_tier(broken_for), floor)], message)
+        lines.append(message)
 
     write_backlog_snapshot(STATE_PATH, uncaptured, now.isoformat())
 
-    # Independent of the doctor-streak signal above (see job_health_message's
-    # own docstring for why): `ccw doctor` does not check these jobs at all,
-    # so this is the only place that would ever have caught the real archive-
-    # job incident this exists to close. Best-effort, guarded the same way as
-    # everything above: must never block or fail session start.
+    # Independent of the broken clock above (see job_health_message's own
+    # docstring for why): `ccw doctor` does not check these jobs at all, so
+    # this is the only place that would ever have caught the real archive-
+    # job incident this exists to close. Only the lock holder asks, so a
+    # burst of panes speaks a broken job once, not once per pane.
     try:
         job_message = job_health_message(broken_jobs())
-    except Exception:  # noqa: BLE001 - see main()'s own top-level guard below
+    except Exception:  # noqa: BLE001 - see the top-level guard below
         job_message = None
     if job_message is not None:
         report("error", job_message)
-        print(job_message)
+        lines.append(job_message)
+    _emit(lines)
     return 0
 
 

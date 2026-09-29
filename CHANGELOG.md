@@ -22,6 +22,29 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**The SessionStart freshness check runs in the background, runs `ccw doctor` once for many
+panes, and escalates on how long capture has been broken (2026-09-29, W-20260929-A93;
+rulings: Gavin).** It used to block every session start for as long as doctor took (8 to 24 s
+on the share, budget 45 s) and to count broken session starts: two sessions started five
+seconds apart at 01:45:19 and 01:45:24 each ran their own doctor and turned one bad moment
+into a WARNING. Now `plugins/cc-capture/hooks/hooks.json` marks the entry `"async": true`.
+Claude Code's docs and the installed 2.1.284 binary agree on what that means: plain stdout is
+dropped, a JSON `additionalContext` reaches the model on its next turn and never the screen,
+and `timeout` is not enforced. So the hook prints that JSON, bounds itself with its own 45 s
+doctor timeout, and reaches the human only through its existing desktop and voice alerts. The
+first failed check stamps `broken_since`; a desktop alert comes at 30 minutes, the spoken one at
+2 hours, and the first healthy check clears it. The thresholds come from the real log: across
+1,293 checks five session starts span a median 40 minutes (p75 92), so ALERT lands no later
+than it did on an ordinary day and a burst of panes can no longer bring it forward. A kernel
+`flock` on `~/.claude/logs/ccw-freshness.lock`, inherited by the doctor child, makes concurrent
+starts run one doctor and outlives a killed hook, so a doctor hung on the share cannot pile up
+copies; a lock held over 5 minutes is reported as an unanswered check. No pid is trusted, so a
+dead holder frees the lock. A corrupt or unwritable state file warns at once instead of
+restarting the clock; an old count-style state file carries its broken period over. The check
+of the three launchd jobs runs only in the lock holder. Only the SessionStart entry changed;
+SessionEnd capture stays in the foreground. It reaches this machine only after a push and a
+plugin update (docs/operations.md, "Picking up a change to the plugin's hooks").
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because
