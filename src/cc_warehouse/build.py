@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from cc_warehouse import catalog, render, store
+from cc_warehouse import catalog, parallel, render, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -698,40 +698,37 @@ def _build_heads(
 
     `archive.read_payload`'s refusal to serve a hash the archive does not hold
     stays exactly as it was, as the backstop for that sub-second gap (R5/F7).
+
+    THE CURRENCY CHECKS RUN IN A BOUNDED POOL, one chunk at a time (ticket 46,
+    W-20260929-A91). On the network share each check is several files at 50 ms
+    apiece, and 30k of them took over two hours one at a time. A chunk of
+    `parallel.READ_CHUNK` heads is checked concurrently, then acted on in order,
+    here, on this thread, exactly as before: the supersede re-check still comes
+    first, a check that raised is re-raised by `.get()` inside the same `try` and
+    becomes that head's "error" (R10), and every write stays serial. A check is
+    therefore at most one chunk old when it is acted on, never hours
+    (tests/test_parallel_reads.py::test_the_build_checks_at_most_one_chunk_ahead_of_acting).
+    Heads are distinct sessions with distinct folders, so acting on one cannot
+    change another's answer.
     """
     heads = _heads(conn, include_hidden)
     outcomes: list[ItemOutcome] = []
     expected: set[Path] = set()
-    for head in heads:
-        directory = projection_dir(
-            projections, head.label, head.first_ts, head.slug, head.short
-        )
-        expected.add(directory)
-        try:
-            newer = _superseded_by(conn, head)
-            if newer is not None:
-                outcomes.append(
-                    ItemOutcome(
-                        head.short, SUPERSEDED,
-                        f"superseded during this run by {newer[:12]}",
-                    )
-                )
-                continue
-            if not rebuild and _head_is_current(config, head, directory, options):
-                outcomes.append(ItemOutcome(head.short, UNCHANGED, ""))
-                continue
-            data = _read(config, head)
-            if config.keep_projections:
-                write_projection(directory, data, options, force=rebuild)
-            # `ccw build` has to keep meaning something once the old tree is
-            # retired: it is the verb that rebuilds after a render change,
-            # so it rebuilds whichever tree still exists (slice 19j).
-            _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
-            outcomes.append(ItemOutcome(head.short, "built", ""))
-        except Exception as exc:  # report and continue past a bad item (R10)
-            outcomes.append(
-                ItemOutcome(head.short, "error", f"{type(exc).__name__}: {exc}")
+    for chunk in parallel.chunks(heads):
+        directories = [
+            projection_dir(projections, head.label, head.first_ts, head.slug, head.short)
+            for head in chunk
+        ]
+        checks: list[parallel.Read[bool]] = (
+            [parallel.Read(False)] * len(chunk)
+            if rebuild
+            else parallel.map_reads(
+                lambda pair: _head_is_current(config, pair[0], pair[1], options),
+                list(zip(chunk, directories, strict=True)),
             )
+        )
+        for head, directory, check in zip(chunk, directories, checks, strict=True):
+            _build_head(config, conn, head, directory, check, options, outcomes, expected, rebuild)
     # Prune retired dirs ONLY on a fully-successful build. If any head errored
     # the new tree is incomplete, so keeping the last-good projections is the
     # conservative branch (F7/F9); the next clean build reconciles.
@@ -751,3 +748,42 @@ def _build_heads(
             )
         _prune(projections, expected)
     return BatchReport(tuple(outcomes))
+
+
+def _build_head(
+    config: Config,
+    conn: sqlite3.Connection,
+    head: _Head,
+    directory: Path,
+    current: "parallel.Read[bool]",
+    options: render.RenderOptions,
+    outcomes: list[ItemOutcome],
+    expected: set[Path],
+    rebuild: bool,
+) -> None:
+    """Act on one head, on the calling thread: the loop body `_build_heads` has
+    always had, with `_head_is_current`'s answer handed in from the pool."""
+    expected.add(directory)
+    try:
+        newer = _superseded_by(conn, head)
+        if newer is not None:
+            outcomes.append(
+                ItemOutcome(
+                    head.short, SUPERSEDED,
+                    f"superseded during this run by {newer[:12]}",
+                )
+            )
+            return
+        if not rebuild and current.get():
+            outcomes.append(ItemOutcome(head.short, UNCHANGED, ""))
+            return
+        data = _read(config, head)
+        if config.keep_projections:
+            write_projection(directory, data, options, force=rebuild)
+        # `ccw build` has to keep meaning something once the old tree is
+        # retired: it is the verb that rebuilds after a render change,
+        # so it rebuilds whichever tree still exists (slice 19j).
+        _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
+        outcomes.append(ItemOutcome(head.short, "built", ""))
+    except Exception as exc:  # report and continue past a bad item (R10)
+        outcomes.append(ItemOutcome(head.short, "error", f"{type(exc).__name__}: {exc}"))

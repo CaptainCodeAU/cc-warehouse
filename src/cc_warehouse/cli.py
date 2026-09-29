@@ -31,6 +31,7 @@ from cc_warehouse import (
     import_tree,
     migrate,
     notify,
+    parallel,
     reconcile,
     registry,
     reindex,
@@ -2214,14 +2215,21 @@ def _archive_verify(target: Path, zone: str) -> int:
         return 2
     folders = 0
     problems = 0
-    for folder in archive.walk_folders(target):
-        folders += 1
-        for problem in archive.verify_folder(folder, zone):
-            problems += 1
-            print(
-                f"archive: {folder.parent.name}/{folder.name}: {problem.problem}",
-                file=sys.stderr,
-            )
+    # Checked in a bounded pool, one chunk at a time so problems still print
+    # as the walk goes (ticket 46, W-20260929-A91: 3h10m one folder at a time
+    # on the network share). A folder whose read raised is one named problem,
+    # and the rest are still checked (R10); before the pool it ended the run.
+    for chunk in parallel.chunks(list(archive.walk_folders(target))):
+        checked = parallel.map_reads(lambda folder: archive.verify_folder(folder, zone), chunk)
+        for folder, read in zip(chunk, checked, strict=True):
+            folders += 1
+            if read.error is not None:
+                found = [f"could not be verified: {type(read.error).__name__}: {read.error}"]
+            else:
+                found = [problem.problem for problem in read.get()]
+            for problem in found:
+                problems += 1
+                print(f"archive: {folder.parent.name}/{folder.name}: {problem}", file=sys.stderr)
     if not folders:
         print(f"Error: no session folders under {target}", file=sys.stderr)
         return 2

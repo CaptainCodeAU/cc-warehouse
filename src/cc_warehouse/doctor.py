@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import archive, build, parser, reconcile, status, store, sweep
+from cc_warehouse import archive, build, parallel, parser, reconcile, status, store, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
@@ -554,14 +554,20 @@ def _desync_scan(
     if config.archive_root is None or not config.archive_root.is_dir():
         return [], []
     index = _catalog_index(config, _DESYNC_SAMPLE)
+    # A bounded pool (ticket 46, W-20260929-A91): the full check reads every
+    # recorded file, and 25 folders one at a time over the network share is
+    # minutes. Answers come back in sample order, and a verify that raised
+    # re-raises here in that order, as the serial scan did.
+    checked = parallel.map_reads(
+        lambda item: archive.verify_folder(
+            item.folder, config.archive_timezone, known=item.known if quick else None
+        ),
+        index.recent,
+    )
     broken = [
         (item.folder, problems)
-        for item in index.recent
-        if (
-            problems := archive.verify_folder(
-                item.folder, config.archive_timezone, known=item.known if quick else None
-            )
-        )
+        for item, read in zip(index.recent, checked, strict=True)
+        if (problems := read.get())
     ]
     return list(index.recent), broken
 

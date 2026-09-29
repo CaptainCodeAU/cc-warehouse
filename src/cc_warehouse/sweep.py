@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import capture, catalog, notify, parser, registry, store
+from cc_warehouse import capture, catalog, notify, parallel, parser, registry, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -547,6 +547,117 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Read-ahead for the network share (ticket 46, W-20260929-A91)
+# ---------------------------------------------------------------------------
+#
+# Each writer this module calls reads its target back before deciding what to
+# do (`write_subagent`'s replace-if-larger compare, `write_if_absent`,
+# `write_if_changed`). On the share every one of those reads is a 50 ms round
+# trip, one at a time. These warmers make the SAME reads a chunk ahead, in
+# `parallel.read_ahead`'s bounded pool, so the writer's own read finds the file
+# in the SMB client's cache (measured: about 0 ms for a file read seconds ago).
+#
+# ADVISORY ONLY, and that is what makes them safe. They write nothing, decide
+# nothing, and their answers are thrown away. Where they need a uuid they take
+# it from the source path, which F4 forbids as IDENTITY: here a wrong guess
+# only means the writer's read is a cold one, exactly as before. A warmer that
+# raises or misses costs the old time, never a different outcome
+# (tests/test_parallel_reads.py::test_a_warm_up_that_raises_changes_nothing).
+
+
+def _read_quietly(path: Path) -> None:
+    try:
+        path.read_bytes()
+    except OSError:
+        pass
+
+
+def _warm_label(config: Config, session_uuid: str | None, project_dir: Path) -> str:
+    """The label the serial pass will look up, asked on THIS thread's own
+    read-only catalog connection: a connection is never shared across threads."""
+    label = registry.derive_label(str(project_dir))
+    try:
+        conn = sqlite3.connect(f"file:{config.root / 'catalog.sqlite'}?mode=ro", uri=True)
+        try:
+            row = cast(
+                "tuple[object, ...] | None",
+                conn.execute(
+                    "SELECT p.label FROM session s JOIN project p ON p.id = s.project_id"
+                    " WHERE s.session_uuid = ? LIMIT 1",
+                    (session_uuid,),
+                ).fetchone(),
+            )
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return label
+    return str(row[0]) if row else label
+
+
+def _warm_subagent(config: Config, path: Path) -> None:
+    """Read what `_archive_subagent` is about to read back from the archive:
+    the parent's label listing, then every file in this agent's own folder."""
+    from cc_warehouse import archive
+
+    if config.archive_root is None:
+        return
+    parent_uuid = next(a for a in path.parents if a.name == archive.SUBAGENTS_DIR).parent.name
+    label = _warm_label(config, parent_uuid, _project_dir_of_subagent(path))
+    folder = archive.session_folder(
+        config.archive_root, label, parent_uuid, config.archive_timezone
+    )
+    if folder is None or not (folder / archive.SUBAGENTS_DIR).is_dir():
+        return
+    suffix = f"_{path.stem.removeprefix(_AGENT_PREFIX)}"
+    for child in (folder / archive.SUBAGENTS_DIR).iterdir():
+        if child.is_dir() and child.name.endswith(suffix):
+            for item in child.iterdir():
+                if item.is_file():
+                    _read_quietly(item)
+
+
+def _warm_sidecars(config: Config, path: Path) -> None:
+    """Read the archive copies `_archive_sidecars` is about to compare against:
+    one per source file in each companion dir, in file-history and in todos,
+    plus the custom title and the notice."""
+    from cc_warehouse import archive, external, sidecars
+
+    if config.archive_root is None or not config.archive_tool_results:
+        return
+    uuid = path.name.split(".", 1)[0]
+    label = _warm_label(config, uuid, path.parent)
+    folder = archive.session_folder(config.archive_root, label, uuid, config.archive_timezone)
+    if folder is None:
+        return
+    home = external.home_for_transcript(path)
+    sources = [
+        (name, path.parent / uuid / name)
+        for name in sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
+    ]
+    if config.archive_file_history:
+        sources.append((external.FILE_HISTORY_DIR, home / external.FILE_HISTORY_DIR / uuid))
+        sources.extend((external.TODOS_DIR, todo) for todo in external.todo_files(home, uuid))
+    for name, source in sources:
+        if name == external.TODOS_DIR:
+            _read_quietly(folder / name / source.name)
+        elif source.is_dir():
+            for item in source.rglob("*"):
+                if item.is_file():
+                    _read_quietly(folder / name / item.relative_to(source))
+    _read_quietly(folder / archive.CUSTOM_TITLE_FILE)
+    _read_quietly(folder / archive.SIDECAR_NOTICE)
+
+
+def _warm_history(folder: Path | None, names: "list[str]") -> None:
+    """Read the archive copies `_process_history` is about to compare against:
+    a session's `prompts.jsonl`, or its gathered `pastes/` files."""
+    if folder is None:
+        return
+    for name in names:
+        _read_quietly(folder / name)
+
+
 def _session_keyed_ids(walk_root: Path) -> frozenset[str]:
     """Session ids that the SESSION-KEYED stores hold, read once per sweep.
 
@@ -816,7 +927,10 @@ def _process_history(
         archive.write_history_snapshot(config.archive_root, data)
         outcomes.append(ItemOutcome("history.jsonl", "archived-history-snapshot", str(target)))
 
-    for uuid, lines in archive.split_history_by_session(data).items():
+    prompts = list(archive.split_history_by_session(data).items())
+    for uuid, lines in parallel.read_ahead(
+        prompts, lambda item: _warm_history(known.get(item[0]), [archive.PROMPTS_FILE])
+    ):
         folder = known.get(uuid)
         if folder is None:
             continue
@@ -828,7 +942,13 @@ def _process_history(
         if changed:
             outcomes.append(ItemOutcome(uuid, "archived-prompts", str(folder)))
 
-    for uuid, hashes in archive.paste_hashes_by_session(data).items():
+    pastes = list(archive.paste_hashes_by_session(data).items())
+    for uuid, hashes in parallel.read_ahead(
+        pastes,
+        lambda item: _warm_history(
+            known.get(item[0]), [f"{archive.PASTES_DIR}/{h}.txt" for h in sorted(item[1])]
+        ),
+    ):
         folder = known.get(uuid)
         if folder is None:
             continue
@@ -1131,7 +1251,10 @@ def sweep(
                 deferred.append(path)
                 continue
             outcomes.append(_capture_item(config, path))
-        for path in deferred:
+        # The read-backs below are warmed one chunk ahead in a bounded pool
+        # (`_warm_subagent`, `_warm_sidecars`, ticket 46); the writers
+        # themselves run here, serially, unchanged.
+        for path in parallel.read_ahead(deferred, lambda p: _warm_subagent(config, p)):
             handled = _archive_subagent(config, path)
             outcomes.append(handled if handled is not None else _capture_item(config, path))
         # PASS THREE (ticket 38), over EVERY session path the walk yielded,
@@ -1143,10 +1266,12 @@ def sweep(
         # folder and the folder has to exist first (ticket 21.4's lesson).
         names_by_dir: dict[Path, frozenset[str]] = {}
         keyed = _session_keyed_ids(walk_root)
+        candidates: list[Path] = []
         for path in wanted:
             names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
-            if not _sidecar_candidate(path, names, keyed):
-                continue
+            if _sidecar_candidate(path, names, keyed):
+                candidates.append(path)
+        for path in parallel.read_ahead(candidates, lambda p: _warm_sidecars(config, p)):
             handled = _archive_sidecars(config, path)
             if handled is not None:
                 outcomes.append(handled)
