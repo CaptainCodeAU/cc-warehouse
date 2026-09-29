@@ -14,6 +14,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from cc_warehouse.config import Config, WebhookSink
 
@@ -63,9 +64,15 @@ def append_log(config: Config, record: Mapping[str, object]) -> None:
     partial write never silently drops the tail). The sink is best-effort per DESIGN
     section 12: an unwritable logs/ or a write error (OSError) is swallowed rather than
     raised into capture, at the cost of that one log line."""
+    append_log_under(config.root, record)
+
+
+def append_log_under(root: Path, record: Mapping[str, object]) -> None:
+    """`append_log` for a caller that has the warehouse root but no Config
+    (`archive.migrate`, W-20260929-A82). The one implementation of the append."""
     line = (json.dumps(record) + "\n").encode()
     try:
-        log_dir = config.root / "logs"
+        log_dir = root / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         fd = os.open(log_dir / "capture.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:

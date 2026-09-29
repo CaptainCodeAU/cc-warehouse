@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import build, catalog, sidecars, store, sweep
+from cc_warehouse import build, catalog, parallel, sidecars, store, sweep
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -296,8 +296,13 @@ def sidecar_gap(config: Config, source: Path | None = None) -> SidecarGap:
 
     notices = 0
     first: str | None = None
-    for folder in archive.walk_folders(config.archive_root):
-        body = archive.read_sidecar_notice(folder)
+    # Read in a bounded pool (ticket 46, W-20260929-A91), answers in walk order,
+    # so `first` is the same folder the serial walk named.
+    folders = list(archive.walk_folders(config.archive_root))
+    for folder, read in zip(
+        folders, parallel.map_reads(archive.read_sidecar_notice, folders), strict=True
+    ):
+        body = read.get()
         if body is None:
             continue
         named = [
@@ -373,11 +378,9 @@ def paste_gap(config: Config) -> PasteGap:
     sessions_total = 0
     with_prompts = 0
     with_pastes = 0
-    for folder in archive.walk_folders(config.archive_root):
-        try:
-            body = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
+    folders = list(archive.walk_folders(config.archive_root))
+    for read in parallel.map_reads(_read_manifest, folders):
+        body = read.get()
         if not isinstance(body, dict):
             continue
         sessions_total += 1
@@ -389,6 +392,16 @@ def paste_gap(config: Config) -> PasteGap:
         if isinstance(pastes, list) and pastes:
             with_pastes += 1
     return PasteGap(with_prompts, sessions_total, with_pastes, config.archive_root)
+
+
+def _read_manifest(folder: Path) -> object:
+    """One folder's parsed `manifest.json`, or None on any doubt (missing,
+    unreadable, not JSON). `paste_gap` maps it over the archive in a bounded
+    pool (ticket 46)."""
+    try:
+        return json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def paste_line(gap: PasteGap) -> str:

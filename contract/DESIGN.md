@@ -453,6 +453,15 @@ is logged, never raised (capture must survive notification infrastructure).
 - Locks only where two writers are possible and identity-idempotence is not enough
   (`sweep`, `migrate`, `build --rebuild`): `locks/<op>` via `O_EXCL`, stale after a
   recorded PID dies.
+  AMENDED 2026-09-29 (W-20260929-A84, principal ruling "OS-released lock"): `locks/<op>`
+  is now a kernel `flock` on that file, held for the operation's life and released by
+  the OS the moment the holder dies, however it dies; the file is unlinked while still
+  held and exists only while held. No PID is trusted and no age limit applies, so a long
+  sweep is never mistaken for a dead one and a reused PID never keeps a dead lock alive.
+  The PID mechanism survives only as a labelled fallback where `fcntl` cannot import.
+  Every "O_EXCL lock" in sections 1, 13 and 14 (R2, R14) now reads as this lock; the
+  create/remove carve-out in R2 covers it unchanged. Locks stay on the local warehouse
+  disk, never the share. See section 15, 2026-09-29.
 
 ## 14. Enforceable design rules (reviewers reject code against these by number)
 
@@ -2330,3 +2339,18 @@ runs under the 12:30 sweep's lock, so a same-size change would never alarm) and 
 lock itself trustable after its holder died (W-20260929-A84); both are being fixed
 (only files written after the lock was taken are excused; an OS-released lock). The
 ticket 34 principle stands for everything not listed here.
+
+**2026-09-29, W-20260929-A84 and the combined merge integrate-0929: an OS-released lock,
+and four branches landed together.** A wide review found the PID-trusting lock could
+keep a dead lock alive when its PID was reused, silencing doctor's and repair's alarms
+and blocking the sweep; the first fix the principal chose (valid under about 9 hours
+and still a ccw process) could free the lock of a sweep still running. He re-ruled for
+a lock the operating system releases on death (section 13, AMENDED note). The same day
+four branches merged together after a combined trial merge with five tested joins:
+fix-doctor-quick (no writer adopts an unexplained change; repair holds, restores from
+~/.claude by hash, and reports through one repair-summary line), fix-startup-check (the
+SessionStart check runs in the background and escalates on time, with unanswered checks
+never counted), fix-os-locks (this lock, and doctor's `locks` line), fix-parallel-reads
+(read-only share checks in a bounded pool). Every principal ruling behind them is
+recorded on its open item. Deploy hazard, accepted: old and new code do not see each
+other's locks, so a reinstall happens only while `ccw doctor` reports no lock held.

@@ -1,0 +1,143 @@
+"""Read-only questions about the archive, asked through a bounded thread pool.
+
+Ticket 46 option A step 1 (open item W-20260929-A91; ruling: Gavin, 2026-09-29).
+With the archive on SMB over Wi-Fi the cost is paid PER FILE OPENED, not per byte:
+one small file takes 50 to 64 ms cold, one at a time, and the daily sweep spent
+4h30m waiting on the share with 16 minutes of CPU. Reads that overlap cost far
+less each (21 / 11 / 7 ms per file at 8 / 16 / 32 threads, measured on the share).
+
+READS ONLY, and that is the whole contract of this module. Nothing here writes,
+and nothing that calls it hands a writer to a worker: every write stays on the
+main thread, in the order it always had, through the same writers
+(tests/test_parallel_reads.py::test_no_write_happens_off_the_main_thread).
+Nor is the SQLite catalog connection ever shared with a worker.
+
+`map_reads` answers a question per item and hands the answers back in item
+order. A worker that raises becomes that item's `Read.error`, re-raised by
+`Read.get()` where the serial code would have met it, so a batch reports the
+item and carries on exactly as before (R10).
+
+NOT THE SWEEP. A read-ahead for the sweep's writers was built, measured and
+dropped (conductor ruling, 2026-09-29): it saved nothing, because the sweep's
+per-item cost is finding the folder, a scan of the whole label directory, not
+the reads (W-20260929-A115; ticket 46's measurements).
+
+`workers <= 1` runs everything inline on the calling thread and starts no pool,
+which is both the serial baseline the tests compare against and the reason the
+single-session hook path can never start one.
+"""
+
+import threading
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import cast
+
+# Threads per pool. Measured on the share over Wi-Fi, 2026-09-29, on real heads
+# (harness/tickets/46-network-share-running-cost.md): at normal priority 16
+# beat or matched 32 for the build check and the full verify, and 32 won only
+# the small-file coverage read; under the scheduled jobs' IO throttle 32 was
+# about 20% faster than 16. 16 is the smaller load on the share for most of
+# the gain. Read at call time, so a test can set it to 1 for the serial baseline.
+READ_WORKERS = 16
+
+# Items checked ahead of where the serial loop acts. The build acts on a head
+# at most this many heads after it was checked, so a check is seconds old, not
+# hours (ticket 46; ideas-sweep-software "Idea 3").
+READ_CHUNK = 64
+
+
+@dataclass(frozen=True)
+class Read[R]:
+    """One item's answer: its value, or the exception its read raised."""
+
+    value: R | None = None
+    error: Exception | None = None
+
+    def get(self) -> R:
+        """The value, or the worker's exception raised here, on the caller's
+        thread, where the serial code would have met it."""
+        if self.error is not None:
+            raise self.error
+        return cast(R, self.value)
+
+
+# Payload bytes the pool may hold at once when the caller says what an item
+# weighs (the full verify, which reads and parses whole JSONLs). Measured
+# 2026-09-29 on the share: the 114 MB session alone peaks the process at 1.7 GB,
+# and the 8 largest heads checked 16 at a time reached 2.4 GB. Nothing bounded
+# that as sessions grow; with the cap the peak stays near this many payload
+# bytes times the parse overhead. An item heavier than the cap runs alone.
+READ_BUDGET_BYTES = 256 * 1024 * 1024
+
+
+class _Budget:
+    """Weighed bytes in flight across the pool's workers, never above `total`."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.free = total
+        self.ready = threading.Condition()
+
+    def take(self, amount: int) -> int:
+        amount = max(0, min(amount, self.total))
+        with self.ready:
+            self.ready.wait_for(lambda: self.free >= amount)
+            self.free -= amount
+        return amount
+
+    def give(self, amount: int) -> None:
+        with self.ready:
+            self.free += amount
+            self.ready.notify_all()
+
+
+def _answer[T, R](fn: Callable[[T], R], item: T) -> Read[R]:
+    try:
+        return Read(fn(item))
+    except Exception as exc:  # noqa: BLE001 - R10: the item's failure, handed back
+        return Read(error=exc)
+
+
+def map_reads[T, R](
+    fn: Callable[[T], R],
+    items: Sequence[T],
+    *,
+    workers: int | None = None,
+    weigh: Callable[[T], int] | None = None,
+) -> list[Read[R]]:
+    """`fn` over every item, at most `workers` at once, answers in item order.
+
+    BYTES IN FLIGHT: each worker holds one item's reads at a time, so without
+    `weigh` the peak is `workers` times the largest file one call reads. With
+    `weigh` (an item's size in bytes, asked on the worker), an item also waits
+    until its weight fits in `READ_BUDGET_BYTES`
+    (tests/test_parallel_reads.py::test_weighed_reads_never_exceed_the_byte_budget).
+    A `weigh` that raises is that item's error, the same as `fn` raising.
+    """
+    count = READ_WORKERS if workers is None else workers
+    if count <= 1 or len(items) <= 1:
+        return [_answer(fn, item) for item in items]
+    budget = _Budget(READ_BUDGET_BYTES) if weigh is not None else None
+
+    def one(item: T) -> Read[R]:
+        if budget is None or weigh is None:
+            return _answer(fn, item)
+        try:
+            held = budget.take(weigh(item))
+        except Exception as exc:  # noqa: BLE001 - R10: the item's failure, handed back
+            return Read(error=exc)
+        try:
+            return _answer(fn, item)
+        finally:
+            budget.give(held)
+
+    with ThreadPoolExecutor(max_workers=min(count, len(items))) as pool:
+        return list(pool.map(one, items))
+
+
+def chunks[T](items: Sequence[T], size: int | None = None) -> Iterator[Sequence[T]]:
+    """`items` in consecutive slices of `size` (default `READ_CHUNK`)."""
+    step = max(1, READ_CHUNK if size is None else size)
+    for start in range(0, len(items), step):
+        yield items[start : start + step]

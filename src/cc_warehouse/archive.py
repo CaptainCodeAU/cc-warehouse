@@ -106,6 +106,9 @@ class MigrationReport:
     # because F6 says the reason is never allowed to go silent.
     refused_equal_size: list[str] = field(default_factory=list[str])
     failed: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    # W-20260929-A82: folders skipped because their manifest is unreadable. Held
+    # for `ccw repair`, never counted as failed, so the weekly job stays green.
+    held: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
 
     def summary(self) -> str:
         if self.lock_held:
@@ -118,6 +121,7 @@ class MigrationReport:
             f" {len(self.refused_smaller)} refused as smaller,"
             f" {len(self.refused_equal_size)} refused as equal-size mismatch,"
             f" {len(self.failed)} failed"
+            + (f", {len(self.held)} held for repair" if self.held else "")
         )
 
 
@@ -651,7 +655,11 @@ def companion_records(session_dir: Path, name: str) -> list[dict[str, object]]:
 
 def _companion_files(session_dir: Path, name: str) -> list[tuple[str, Path]]:
     """(POSIX relative name, path) for every file under one companion directory:
-    the ONE listing `companion_records` and `_companion_problems` both read (R9)."""
+    the ONE listing `companion_records` and `_companion_problems` both read (R9).
+
+    A temp-shaped name (`store.is_temp_name`, a copy still in flight or one a
+    killed process left) is never listed, so no manifest ever records one
+    (W-20260929-A82; `stray_temp_files` reports them instead)."""
     root = session_dir / name
     if not root.is_dir():
         return []
@@ -660,8 +668,116 @@ def _companion_files(session_dir: Path, name: str) -> list[tuple[str, Path]]:
         relative = path.relative_to(root)
         if any(part in sidecars.IGNORED for part in relative.parts) or not path.is_file():
             continue
+        if store.is_temp_name(path.name):
+            continue
         out.append((relative.as_posix(), path))
     return out
+
+
+def stray_temp_files(session_dir: Path) -> list[Path]:
+    """Every temp-shaped file anywhere in a session folder (W-20260929-A82): a
+    write in flight, or the debris of a killed one. Reported by `ccw repair`,
+    never recorded in a manifest and never deleted (R4)."""
+    if not session_dir.is_dir():
+        return []
+    return sorted(p for p in session_dir.rglob("*") if store.is_temp_name(p.name) and p.is_file())
+
+
+def _appended(data: bytes, record: dict[str, object]) -> bool:
+    """A sub-agent GREW the way a live resume grows it: the new bytes are the
+    recorded bytes plus more (W-20260929-A76, A82; ruling: Gavin, 2026-09-29).
+    R1: the sha256 of the first <recorded bytes> bytes must equal the record's
+    sha256, so the hash decides; size only picks which bytes to hash and says
+    the file is longer. A larger file that is not an append is a change ccw did
+    not make (tests/test_a82_held_growth_displaced.py)."""
+    size = record.get("bytes")
+    sha = record.get("sha256")
+    if not isinstance(size, int) or isinstance(size, bool) or not isinstance(sha, str):
+        return False
+    # R1 as amended: an ordering ("is it longer"), never equality by size.
+    if len(data) <= size:
+        return False
+    return store.sha256_hex(data[:size]) == sha
+
+
+def _changed(previous: dict[str, object], live: dict[str, object]) -> bool:
+    """The file's bytes differ from what the previous record hashed. A record
+    with no hash cannot be compared and counts as unchanged (take the live one)."""
+    return bool(previous.get("sha256")) and previous.get("sha256") != live["sha256"]
+
+
+def _old_records(recorded: object, key: str) -> dict[str, dict[str, object]] | None:
+    """A manifest's previous records for one list key, by `key` field, or None
+    when there is no list (a manifest that predates the feature)."""
+    if not isinstance(recorded, list):
+        return None
+    out: dict[str, dict[str, object]] = {}
+    for raw in cast(list[object], recorded):
+        if isinstance(raw, dict):
+            rec = cast(dict[str, object], raw)
+            name = str(rec.get(key, ""))
+            # A temp name an older render recorded is dropped, never kept: the
+            # copy it belonged to has since been renamed into place (A82 item 1).
+            if not store.is_temp_name(Path(name).name):
+                out[name] = rec
+    return out
+
+
+def kept_subagent_records(session_dir: Path, recorded: object) -> list[dict[str, object]]:
+    """The sub-agent records a manifest should carry, given what it carried
+    before (W-20260929-A82, A88; ruling: Gavin, 2026-09-29, F3).
+
+    ONE RULE, read by the manifest writer AND by `folder_is_current`, so every
+    writer (`ccw build`, a storing sweep, `ccw archive --to`, `ccw repair`)
+    inherits it. A sub-agent whose bytes changed WITHOUT growing, or that
+    vanished, keeps its OLD record: ccw only ever replaces a sub-agent with a
+    larger one and never deletes one, so anything else is a change ccw did not
+    make, and re-recording it would erase the only evidence. A grown sub-agent
+    is adopted (a live resume). New sub-agents are added.
+    (tests/test_writers_keep_evidence.py)"""
+    old = _old_records(recorded, "agent_id")
+    if old is None:
+        return subagent_records(session_dir)
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for agent_id, jsonl in _subagent_files(session_dir):
+        data = jsonl.read_bytes()
+        rec: dict[str, object] = {
+            "agent_id": agent_id,
+            "sha256": store.sha256_hex(data),
+            "bytes": len(data),
+        }
+        seen.add(agent_id)
+        prev = old.get(agent_id)
+        if prev is not None and _changed(prev, rec) and not _appended(data, prev):
+            out.append(prev)
+        else:
+            out.append(rec)
+    out.extend(rec for agent_id, rec in old.items() if agent_id not in seen)
+    return out
+
+
+def kept_companion_records(
+    session_dir: Path, name: str, recorded: object
+) -> list[dict[str, object]]:
+    """The companion records a manifest should carry for one companion
+    directory, given what it carried before. Same rule and reason as
+    `kept_subagent_records`, stricter: every companion file is written with
+    `store.write_if_absent`, so ccw NEVER rewrites or deletes one, and a changed
+    or vanished file always keeps its OLD record. New files are added."""
+    live = companion_records(session_dir, name)
+    old = _old_records(recorded, "name")
+    if old is None:
+        return live
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for rec in live:
+        relative = str(rec["name"])
+        seen.add(relative)
+        prev = old.get(relative)
+        out.append(prev if prev is not None and _changed(prev, rec) else rec)
+    out.extend(rec for relative, rec in old.items() if relative not in seen)
+    return sorted(out, key=lambda record: str(record["name"]))
 
 
 def write_sidecar_notice(
@@ -1184,7 +1300,7 @@ def folder_is_current(
     # neither key, so this reads None against [] and returns False, which is the
     # right answer - they DO need the one rebuild that populates them.
     for name, key in COMPANION_MANIFEST_KEYS.items():
-        if manifest.get(key) != companion_records(directory, name):
+        if manifest.get(key) != kept_companion_records(directory, name, manifest.get(key)):
             return False
     # Ticket 39d: a `prompts.jsonl` written by the sweep's split pass AFTER
     # this folder was last rendered must force a rebuild, the same reasoning
@@ -1197,7 +1313,9 @@ def folder_is_current(
     # a later deletion of the copied file) would be undetectable.
     if manifest.get("custom_title") != custom_title_record(directory):
         return False
-    return manifest.get("subagents") == subagent_records(directory)
+    return manifest.get("subagents") == kept_subagent_records(
+        directory, manifest.get("subagents")
+    )
 
 
 def write_session_folder(
@@ -1328,14 +1446,17 @@ def write_session_folder(
     # traced heap on a 100 MB session, 78x the payload; the real 114 MB object
     # survived the 2026-08-02 migration on a machine that happened to have the
     # RAM. See build.iter_projection_files.
+    previous = _previous_manifest(directory)
     for name, payload in build.iter_projection_files(rendered, options):
         if name == _MANIFEST:
             # Written LAST (a pinned invariant since ticket 30, not incidental
             # ordering - see iter_projection_files), and always with the
             # sub-agent list, so a reader can tell "none" from "this manifest
             # predates the feature" (F6).
-            payload = _with_subagents(payload, subagent_records(directory))
-            payload = _with_companions(payload, directory)
+            payload = _with_subagents(
+                payload, kept_subagent_records(directory, previous.get("subagents"))
+            )
+            payload = _with_companions(payload, directory, previous)
             payload = _with_prompts(payload, directory)
             payload = _with_custom_title(payload, directory)
             if refused_smaller:
@@ -1354,6 +1475,195 @@ def write_session_folder(
         directory, jsonl, True, replaced,
         refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
     )
+
+
+class ManifestUnreadable(Exception):
+    """A folder's existing manifest cannot be read, so no render may replace it
+    (W-20260929-A82 item 3). Replacing it would take every record from disk and
+    adopt whatever changed; a human restores or removes it first. Every writer
+    that meets one HOLDS the folder (`record_hold`) instead of failing its run
+    (ruling: Gavin, 2026-09-29)."""
+
+    def __init__(self, directory: Path, message: str) -> None:
+        super().__init__(message)
+        self.directory = directory
+
+
+# A writer skipped a folder it must not render over (an unreadable manifest).
+# Opens a refusal in `reconcile.open_refusals`, so `ccw repair` re-checks the
+# folder every run, counts it and raises its one alert, in or out of its sample.
+WRITER_HELD = "writer-held"
+
+
+def record_hold(warehouse_root: Path, directory: Path, reason: str) -> None:
+    """Hand a folder a writer skipped to `ccw repair`'s refusal ledger
+    (W-20260929-A82; ruling: Gavin, "treat the folder as held"). Best-effort,
+    like every log sink (DESIGN 12)."""
+    from cc_warehouse import notify
+
+    notify.append_log_under(
+        warehouse_root,
+        {
+            "at": datetime.now(UTC).isoformat(),
+            "status": WRITER_HELD,
+            "session": None,
+            "project": None,
+            "message": f"held, not rendered: {reason}",
+            "elapsed_ms": None,
+            "session_uuid": directory.name.partition("_")[2],
+        },
+    )
+
+
+def _previous_manifest(directory: Path) -> dict[str, object]:
+    """The folder's manifest as it stands before this render, or `{}` when there
+    is none. An EXISTING manifest that cannot be read, or is not a JSON object,
+    raises `ManifestUnreadable`: rendering over it would record every file as it
+    now is, which is exactly the damage adoption the kept-record rule exists to
+    stop (tests/test_repair_sendback.py::test_an_unreadable_manifest_is_not_replaced_by_build)."""
+    path = directory / _MANIFEST
+    if not path.exists():
+        return {}
+    try:
+        loaded = cast(object, json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        raise ManifestUnreadable(
+            directory, f"{path}: unreadable manifest, not replaced: {exc}"
+        ) from exc
+    if not isinstance(loaded, dict):
+        raise ManifestUnreadable(directory, f"{path}: manifest is not a JSON object, not replaced")
+    return cast(dict[str, object], loaded)
+
+
+DISPLACED_DIR = "displaced"
+
+
+class _SourceIndex:
+    """This session's source files in ~/.claude, looked up BY CONTENT
+    (W-20260929-A82 item 5). R1: the sha256 decides which source is the right
+    one; no name or size ever does. Built lazily, hashed once per file, and
+    only ever asked by `ccw repair` for a folder it would otherwise refuse, so
+    a healthy run hashes nothing here."""
+
+    def __init__(self, claude_home: Path, session_uuid: str) -> None:
+        self.claude_home = claude_home
+        self.session_uuid = session_uuid
+        self._by_hash: dict[str, Path] | None = None
+
+    def _files(self) -> list[Path]:
+        out: list[Path] = []
+        projects = self.claude_home / "projects"
+        try:
+            project_dirs = [d for d in projects.iterdir() if d.is_dir()]
+        except OSError:
+            project_dirs = []
+        for project in project_dirs:
+            beside = project / self.session_uuid
+            for name in (SUBAGENTS_DIR, TOOL_RESULTS_DIR, WORKFLOWS_DIR):
+                root = beside / name
+                if root.is_dir():
+                    out.extend(q for q in root.rglob("*") if q.is_file())
+        history = external.file_history_dir(self.claude_home, self.session_uuid)
+        if history is not None:
+            out.extend(q for q in history.rglob("*") if q.is_file())
+        out.extend(external.todo_files(self.claude_home, self.session_uuid))
+        return out
+
+    def find(self, sha256: str, *, paste_name: str | None = None) -> Path | None:
+        """A source file whose bytes hash to `sha256`, or None. A paste is looked
+        up by its own content-addressed name in paste-cache/, then hash-checked."""
+        if paste_name is not None:
+            candidate = self.claude_home / PASTE_CACHE_DIR / Path(paste_name).name
+            try:
+                return candidate if store.sha256_hex(candidate.read_bytes()) == sha256 else None
+            except OSError:
+                return None
+        if self._by_hash is None:
+            self._by_hash = {}
+            for path in self._files():
+                try:
+                    self._by_hash.setdefault(store.sha256_hex(path.read_bytes()), path)
+                except OSError:
+                    continue
+        return self._by_hash.get(sha256)
+
+
+def copies_match_sources(session_dir: Path, claude_home: Path, session_uuid: str) -> bool:
+    """Every copied companion file and sub-agent in the folder equals a source
+    file in ~/.claude byte for byte (W-20260929-A82 item 3). Used ONLY when the
+    folder has no manifest: then there is no record to keep, and this is the
+    one other witness that the copies are what ccw copied. A folder with no
+    copies vouches for itself; a copy with no matching source does not."""
+    index = _SourceIndex(claude_home, session_uuid)
+    for name in COMPANION_MANIFEST_KEYS:
+        for relative, path in _companion_files(session_dir, name):
+            digest = store.sha256_hex(path.read_bytes())
+            paste = relative if name == PASTES_DIR else None
+            if index.find(digest, paste_name=paste) is None:
+                return False
+    for _agent_id, path in _subagent_files(session_dir):
+        if index.find(store.sha256_hex(path.read_bytes())) is None:
+            return False
+    return True
+
+
+def restore_from_sources(
+    archive_root: Path, session_dir: Path, claude_home: Path, session_uuid: str
+) -> list[str]:
+    """Put back, byte for byte, every copied companion file or sub-agent whose
+    bytes no longer match the manifest's record, when a source file in
+    ~/.claude hashes to exactly that record (W-20260929-A82 item 5; ruling:
+    Gavin). A RESTORE, never an accept: the record decides what is right, the
+    sha256 decides which source is it (R1), and with no matching source the
+    file is left alone. The changed bytes are set aside first under
+    `<archive_root>/_not-sessions/displaced/<label>/<folder>/`, so nothing is
+    destroyed (R4). A vanished sub-agent is not restored here (its folder name
+    comes from its payload); a storing sweep re-copies it from its source.
+    Returns the restored names, relative to the session folder."""
+    try:
+        manifest = _previous_manifest(session_dir)
+    except ManifestUnreadable:
+        return []
+    index = _SourceIndex(claude_home, session_uuid)
+    restored: list[str] = []
+    wanted: list[tuple[str, Path, str, str | None]] = []
+    for name, key in COMPANION_MANIFEST_KEYS.items():
+        old = _old_records(manifest.get(key), "name") or {}
+        for relative, rec in old.items():
+            sha = rec.get("sha256")
+            if isinstance(sha, str) and sha:
+                paste = relative if name == PASTES_DIR else None
+                wanted.append((f"{name}/{relative}", session_dir / name / relative, sha, paste))
+    live_agents = dict(_subagent_files(session_dir))
+    for agent_id, rec in (_old_records(manifest.get("subagents"), "agent_id") or {}).items():
+        sha = rec.get("sha256")
+        path = live_agents.get(agent_id)
+        if isinstance(sha, str) and sha and path is not None:
+            wanted.append((path.relative_to(session_dir).as_posix(), path, sha, None))
+    for relative, target, sha, paste in wanted:
+        try:
+            current = target.read_bytes() if target.is_file() else None
+        except OSError:
+            continue
+        if current is not None and store.sha256_hex(current) == sha:
+            continue
+        source = index.find(sha, paste_name=paste)
+        if source is None:
+            continue
+        data = source.read_bytes()
+        if store.sha256_hex(data) != sha:
+            continue  # the source changed between the lookup and the read
+        if current is not None:
+            aside = (
+                archive_root / NOT_SESSIONS_LABEL / DISPLACED_DIR / session_dir.parent.name
+                / session_dir.name / f"{relative}.{store.sha256_hex(current)[:12]}"
+            )
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            store.write_if_absent(aside, current)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        store.atomic_write(target, data)
+        restored.append(relative)
+    return restored
 
 
 def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> bytes:
@@ -1388,7 +1698,9 @@ def _with_custom_title(manifest_bytes: bytes, directory: Path) -> bytes:
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
-def _with_companions(manifest_bytes: bytes, directory: Path) -> bytes:
+def _with_companions(
+    manifest_bytes: bytes, directory: Path, previous: dict[str, object]
+) -> bytes:
     """Record this session's copied sidecar files in its manifest (ticket 38).
 
     Two NEW TOP-LEVEL KEYS per DESIGN 6, never an amendment to the `loss` block:
@@ -1401,10 +1713,13 @@ def _with_companions(manifest_bytes: bytes, directory: Path) -> bytes:
     like `subagents`, because the manifest describes what the folder holds. The
     render child and `build` both re-render manifests long after the copier has
     finished and can see no source directory at all.
+
+    A changed or vanished file keeps its PREVIOUS record (`kept_companion_records`,
+    W-20260929-A82), so no re-render can record damage as the new truth.
     """
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
     for name, key in COMPANION_MANIFEST_KEYS.items():
-        manifest[key] = companion_records(directory, name)
+        manifest[key] = kept_companion_records(directory, name, previous.get(key))
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
@@ -1547,6 +1862,10 @@ def _migrate_locked(
             result = write_session_folder(
                 archive_root, label, data, options, timezone, fallback_stem=stem, rebuild=rebuild
             )
+        except ManifestUnreadable as exc:
+            record_hold(warehouse_root, exc.directory, str(exc))
+            report.held.append((hash_, str(exc)))
+            continue
         except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
             report.failed.append((hash_, f"{type(exc).__name__}: {exc}"))
             continue
@@ -1739,6 +2058,13 @@ def read_projects(archive_root: Path) -> list[ProjectRecord]:
 class FolderProblem:
     directory: Path
     problem: str
+    # The file the problem is about, when it is one file that exists
+    # (W-20260929-A82): `doctor._written_after_manifest` reads it for the
+    # batch-lock pending rule, so no caller re-derives a path from the text.
+    path: Path | None = None
+    # A sub-agent that is its record's bytes plus more (`_appended`): explained
+    # by growth (A76), proved by the prefix hash, not by size.
+    grew: bool = False
 
 
 @dataclass(frozen=True)
@@ -1847,7 +2173,7 @@ def verify_folder(
                 same = matches(jsonl, recorded, known.sizes.get(recorded))
             if not same:
                 problems.append(
-                    FolderProblem(directory, "JSONL does not match manifest source_hash")
+                    FolderProblem(directory, "JSONL does not match manifest source_hash", jsonl)
                 )
         if manifest is not None:
             problems.extend(_subagent_problems(directory, manifest, matches))
@@ -1886,7 +2212,15 @@ def _subagent_problems(
         if agent_id not in live:
             out.append(FolderProblem(directory, f"sub-agent {agent_id} is missing"))
         elif want and not matches(live[agent_id], want, rec.get("bytes")):
-            out.append(FolderProblem(directory, f"sub-agent {agent_id} does not match its hash"))
+            path = live[agent_id]
+            out.append(
+                FolderProblem(
+                    directory,
+                    f"sub-agent {agent_id} does not match its hash",
+                    path,
+                    _appended(path.read_bytes(), rec),
+                )
+            )
     return out
 
 
@@ -1926,7 +2260,11 @@ def _companion_problems(
             if relative not in live:
                 out.append(FolderProblem(directory, f"{noun} {relative} is missing"))
             elif want and not matches(live[relative], want, rec.get("bytes")):
-                out.append(FolderProblem(directory, f"{noun} {relative} does not match its hash"))
+                out.append(
+                    FolderProblem(
+                        directory, f"{noun} {relative} does not match its hash", live[relative]
+                    )
+                )
     return out
 
 
@@ -1954,9 +2292,9 @@ def _single_file_problems(
     if recorded.get("present") and not matches(
         path, str(recorded.get("sha256")), recorded.get("bytes")
     ):
-        return [FolderProblem(directory, f"{filename} does not match its hash")]
+        return [FolderProblem(directory, f"{filename} does not match its hash", path)]
     if not recorded.get("present") and present:
-        return [FolderProblem(directory, f"{filename} exists but the manifest says none")]
+        return [FolderProblem(directory, f"{filename} exists but the manifest says none", path)]
     return []
 
 
@@ -1995,6 +2333,21 @@ def sole_jsonl(directory: Path) -> Path | None:
 def _sole_jsonl(directory: Path) -> Path | None:
     files = sorted(p for p in directory.glob(f"*{_JSONL_SUFFIX}") if p.is_file())
     return files[0] if files else None
+
+
+def payload_bytes(directory: Path) -> int:
+    """How many bytes the full `verify_folder` will read and parse for this
+    folder's JSONL, for the pool's byte budget (ticket 46). One listing and
+    one stat; 0 when there is no JSONL or it cannot be stat-ed, because the
+    verify itself then reports that folder, and a weight never decides
+    anything but when a read may start."""
+    jsonl = _sole_jsonl(directory)
+    if jsonl is None:
+        return 0
+    try:
+        return jsonl.stat().st_size
+    except OSError:
+        return 0
 
 
 def walk_folders(archive_root: Path) -> Iterator[Path]:

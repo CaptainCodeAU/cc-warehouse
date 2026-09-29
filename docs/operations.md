@@ -38,9 +38,12 @@ Notes:
   (see "What doctor's `desync` line checks" below); repair's scan of the same 25 folders
   still reads and hashes every recorded file. Measured 2026-09-29 on the share: 7 s with
   a warm cache; the same scan cold measured 16 to 44 s when doctor still ran it. launchd
-  sets no timeout on this job, so that fits its slot. What repair does with a hash
-  mismatch it finds (re-renders over it) is an open problem; see "What doctor's
-  `desync` line checks" below.
+  sets no timeout on this job, so that fits its slot. Since W-20260929-A82 it
+  re-renders only what ccw can explain, restores a changed copy from its original in
+  `~/.claude` when that original still matches, and otherwise holds the folder
+  untouched and counts it; see "What repair does with what it finds" below. **Its exit
+  code is 1 only when repair itself failed** (a render failed, a catalog row is
+  missing); a held folder exits 0 and is counted in a `repair-summary` line instead.
 - All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
   `--quiet` means **no stdout on success, failures still print**, so an empty log file is
   the expected healthy state, not evidence the job never ran. Check `launchctl list` for
@@ -127,7 +130,71 @@ SessionEnd/SessionStart wiring for THIS repo's own hooks lives in the plugin's o
 externally-owned script) happens to be wired instead. Checking only one of these two
 files gives an incomplete picture either way.
 
+### Picking up a change to the plugin's hooks
+
+The hooks run from a CACHED COPY, not from this checkout:
+`~/.claude/plugins/installed_plugins.json` points `cc-capture@cc-warehouse` at
+`~/.claude/plugins/cache/cc-warehouse/cc-capture/<gitsha>/`, built from a clone of the GitHub
+remote (the marketplace source in `~/.claude/plugins/known_marketplaces.json`). The version
+string IS the commit hash. So neither a local commit nor `uv_tool_reinstall_current_project`
+changes what runs; and `claude plugin update` reports "already at the latest version",
+truthfully and uselessly, until the commit is on GitHub (harness/HANDOFFS.md records the
+first time that caught a session). In order, from any directory:
+
+1. Merge to `master` and push it to GitHub.
+2. Refresh the marketplace clone:
+   ```
+   claude plugin marketplace update cc-warehouse
+   ```
+3. Update the plugin. Read what it shows before accepting; do not add `-y`, which accepts
+   whatever install command the marketplace declares (docs/agent-setup-contract.md, step 3):
+   ```
+   claude plugin update cc-capture@cc-warehouse
+   ```
+4. Verify by what EXECUTES, not by what was pushed: the registry must name the new hash, and
+   the cached file must carry the change. For the 2026-09-29 background check, for example:
+   ```
+   grep -c '"async": true' ~/.claude/plugins/cache/cc-warehouse/cc-capture/*/hooks/hooks.json
+   ```
+   The newest `<gitsha>` directory must print 1 (an older one printing 0 is the control).
+5. Start a NEW session. A session resolves its plugin path at start, so sessions already
+   running keep the old hooks until they end.
+
+`ccw` itself is a separate frozen install (CLAUDE.md, "`ccw` IS INSTALLED AS A FROZEN
+SNAPSHOT"). A change under `src/` needs that reinstall; a change under `plugins/` needs the
+steps above; a change to both needs both, and ccw-hook.py's "DEPLOY-ORDER SAFETY" note says
+which goes first.
+
 No crontab entries exist for this user (`crontab -l` -> "no crontab").
+
+### Batch locks, and reinstalling `ccw` across the lock change (W-20260929-A84)
+
+Every batch (`sweep`, `build`, `import`, `migrate`, `relocate`, the archive build) and every
+capture (`capture-<sha>`) takes a lock under `<root>/locks/`, which is on local disk. Since
+2026-09-29 the lock is a kernel `flock` held on that file for the job's whole life: the
+operating system drops it the moment the job ends, however it ends (finished, crashed,
+SIGKILL, a reboot). No PID is trusted and no age guessed, so a dead job's PID being reused by
+another process can no longer keep a lock "held" forever. The file exists only while it is
+held (release removes it while still holding it) and its mtime is the moment it was taken
+(`store.lock_acquired_at`). The PID written inside is for a human reading it; nothing parses
+it. Old-style files that nobody flocks, such as the leftover `capture-*` PID files from before
+this change, read as free and are simply taken by the next job; nobody needs to remove them.
+`ccw doctor` asks without taking, and prints a `locks` line naming every lock held right now
+(`none held` when idle).
+
+**The one deploy hazard.** A `ccw` from before this change writes PID files; a `ccw` from after
+takes flocks; the two do not see each other's locks. So reinstall the frozen `ccw` only while
+nothing holds a lock:
+
+1. From outside the repo, check the installed binary's view:
+   ```
+   env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/bin:/bin" ~/.local/bin/ccw doctor
+   ```
+   Before the reinstall that binary predates the `locks` line, so also check by eye that no
+   `ccw sweep`, `ccw build` or `ccw repair` process is running and that no launchd job is due
+   (see "Scheduled jobs" above).
+2. Reinstall from the repo root (CLAUDE.md, "`ccw` IS INSTALLED AS A FROZEN SNAPSHOT").
+3. Run the step 1 command again. It must now print `locks       none held`.
 
 ## The two consumers of `ccw doctor`
 
@@ -163,7 +230,37 @@ periods anywhere, only the live/current state.
 SessionStart too, but only via the `cc-capture@cc-warehouse` plugin's own hook wiring, and
 its trigger is `ccw doctor`'s EXIT CODE specifically (not the raw `Uncaptured: N` figure,
 which sits at 200-350 permanently on this machine by design and is explicitly
-non-blocking). It escalates on a CONSECUTIVE-FAILURE STREAK across session starts and logs
+non-blocking). **Since 2026-09-29 (W-20260929-A93, rulings: Gavin) it escalates on how LONG
+capture has been continuously broken, not on a count of session starts, and it runs in the
+background.** The first failing doctor verdict stamps `broken_since` in
+`~/.claude/logs/ccw-freshness-state.json`; the first healthy check clears it. Broken under 30
+minutes: logged as `info` and handed to the session only. 30 minutes: a desktop
+notification (`warn`). 2 hours: desktop plus the spoken alert (`alert`). Each tier raises its
+channel ONCE per outage (later checks log at the same status and tell the session only).
+An outage is only as long as its evidence: a failing check continues it only if the previous
+failing check is under an hour old, so a night or a weekend with no check between two blips
+is two outages, and a spoken alert always rests on three or more failing checks. A check that
+got NO answer (timeout, hang, or killed: `claude -p` kills async hooks at teardown) is logged
+as `unknown`, tells the session "could not check capture", and neither opens nor extends an
+outage; once unanswered checks have run unbroken for 2 hours (no real verdict between them, no
+gap over an hour) they raise ONE desktop-only notice, `unknown-notice`, never voice. A state file that exists but cannot be read, or cannot be written, warns at once
+rather than restarting the clock. Failing launchd jobs run the same clock from when the hook
+first saw them failing, with their own dedup per job. Archive folders `ccw repair` refuses to
+re-render run it from `oldest_refusal_at` in repair's latest `repair-summary` line in the
+warehouse's `logs/capture.jsonl` (the warehouse root is taken from doctor's own `config` line;
+CCW_ROOT, then `~/cc-warehouse-data`, only when doctor gave no answer) (a summary with 0 clears it; a reminder within 10 minutes of
+repair's own run waits one check, because repair alerts on a new refusal itself).
+(Sent back and changed the same day; see the CHANGELOG.) `hooks.json` marks the entry
+`"async": true`, so a session start never waits on doctor; Claude Code then drops the hook's
+plain stdout and delivers its JSON `additionalContext` to the MODEL on the next turn, never to
+the screen, and enforces no timeout (code.claude.com/docs/en/hooks, checked against the
+installed 2.1.284 binary). So the desktop and voice channels are the only ones that reach a
+human, and the script bounds itself (`_DOCTOR_TIMEOUT`, 45 s). A kernel `flock` on
+`~/.claude/logs/ccw-freshness.lock`, which the doctor child inherits, means panes starting
+together run ONE doctor; the others log `reused` and hand on the last lines. A lock held more
+than 5 minutes is a hung check: those panes log `unknown` and never alert. Only the lock holder
+raises anything, and only it checks the jobs and the refusals. Pinned by
+`tests/test_cc_capture_freshness_timing.py`. It logs
 every check (both pass and warn) as a durable JSON line in `~/.claude/logs/ccw-hook.log`
 (`source: "ccw-freshness-check"`) - unlike `ccw-watch`, this one keeps real history, since
 it's an append-only log rather than an overwritten snapshot. Its message text names the
@@ -192,14 +289,86 @@ sha256-hashed and the payload parsed) and weekly-or-by-hand in `ccw archive --ve
 so such a change is DETECTED within a day. A manifest record written before records
 carried `bytes` is hashed instead of skipped. Pinned by
 `tests/test_doctor_quick_desync.py`.
-**DETECTED IS NOT ALARMED, and this is open (found 2026-09-29, pre-existing).** When
-`ccw repair` finds a hash mismatch it does what it does for a missing render: it
-re-renders the folder, and the re-render records the CHANGED bytes' hashes in the
-manifest. Repair then logs "1 fixed", exits 0, and every later check (repair, doctor,
-`ccw archive --verify`) reads the folder as clean. Verified in a test sandbox for all
-five recorded kinds (payload, sub-agent, tool result, `prompts.jsonl`,
-`custom-title.json`). Before this change doctor at SessionStart would FAIL on such a
-folder until that day's repair ran; now nothing shows it except repair's own log line.
+**What repair does with what it finds, since 2026-09-29 (W-20260929-A82, A88; rulings:
+Gavin, F1, F2, F3, then the send-back the same day).** Until then every writer that
+re-renders a folder (`ccw build`, a sweep that stores anything, the weekly `ccw archive
+--to` job, `ccw repair`) rebuilt the manifest's records from the files on disk, so a
+changed file was recorded as the new truth and every later check read the folder as
+clean (verified in a test sandbox). Now:
+
+- **No writer adopts damage.** A copied companion file (tool results, workflows,
+  file-history, todos, pastes) that changed or vanished keeps its OLD record, because
+  ccw never rewrites or deletes one. A sub-agent keeps its old record when it changed
+  without growing or vanished; one that GREW is adopted (a live resume), and "grew"
+  means APPENDED: longer, AND the sha256 of its first <recorded bytes> bytes equals the
+  old record. A longer file that is not the old bytes plus more is held. **Not
+  covered:** `prompts.jsonl` and `custom-title.json`, which ccw itself rewrites; a
+  change to either is adopted by the next render, and repair re-renders it too.
+- **An unreadable `manifest.json` is never replaced, and the folder is HELD.**
+  `ccw build`, every sweep and the weekly `ccw archive --to` job skip that folder,
+  write a `writer-held` line to `logs/capture.jsonl` (build and the archive job also say
+  `N held for repair` in their summary; the sweep's own summary does not), and do NOT
+  fail their run for it. `ccw repair` then counts the folder in
+  `repair-summary` and raises its one alert, even when the folder is outside its
+  25-folder sample. It stays held until a human fixes or removes the manifest.
+- **Half-written temp files are never recorded.** A name shaped like ccw's own temp
+  file (`.<name>.<8 chars>.tmp`) is left out of every manifest and dropped from an old
+  one. Repair names any it finds on stderr and in a `repair-stray-temp` log line; it
+  never deletes one.
+- **Repair re-renders only what ccw explains:** a missing page (the render child died,
+  ticket 32); a missing `manifest.json` when every copied file still matches its
+  original in `~/.claude` byte for byte; a payload that hashes to the catalog head (a
+  re-capture); a grown sub-agent; a changed `prompts.jsonl` or `custom-title.json`.
+- **Anything else is first RESTORED when it can be:** if a file in `~/.claude` hashes
+  to exactly the manifest's record, repair copies it back byte for byte. The changed
+  copy is set aside first under `<archive>/_not-sessions/displaced/`, never destroyed.
+  Each distinct changed copy gets its own name there (`<file>.<first 12 of its
+  sha256>`); nothing in ccw ever deletes, rewrites or reports anything under
+  `displaced/`, and no check counts it as a stray. It is the human's to keep or clear.
+- **What cannot be restored is HELD:** the folder is left untouched, whole even when
+  pages are also missing. Repair prints `held, left untouched, ccw cannot explain:
+  ...` on stderr, writes an `error` log line, and raises ONE desktop and voice alert
+  per folder and problem set (the `repair-refused` log line is the dedup record).
+  Every run re-checks every held folder, even after newer sessions push it out of the
+  25-folder sample, and a held folder stays counted until it verifies clean.
+- **The count the start-up hook reads.** Every repair run appends one line to
+  `~/cc-warehouse-data/logs/capture.jsonl`: `"status": "repair-summary"` with
+  `open_refusals` (every held folder) and `oldest_refusal_at` (when the oldest was
+  first held). Exit 1 is kept for repair's own failures.
+- **While a batch is running** (a batch lock held), a mismatch on a file written AFTER
+  that lock was taken, and after its manifest, is the batch's own write: repair logs
+  one `pending` line and leaves it for the batch's build. Anything written before the
+  lock was taken is judged normally, so damage from the morning is still held at 15:30
+  even while the 12:30 sweep is running.
+
+**Clearing a held folder** (a human decision). Look first at the ORIGINAL in
+`~/.claude/projects/<project>/<session-id>/` (Claude Code keeps it for 1,825 days on this
+machine, verified 2026-09-29). Do NOT use the SanDisk copy; it is hands-off.
+
+1. **Restore the original.** If the original in `~/.claude` still has the right bytes,
+   repair already restored it; a folder that is still held means the original changed
+   or is gone. If you have the right bytes from elsewhere, put them back into the
+   archive folder at the same path; the next repair sees the folder verify clean and
+   closes the refusal.
+2. **Accept the new bytes** (only for a changed payload, `prompts.jsonl` or
+   `custom-title.json`). Re-render the folder by hand; `<short>` is in the repair log
+   line:
+
+   ```
+   ccw render --session s:<short>
+   ```
+
+   A companion file or sub-agent cannot be accepted this way: the rule above keeps its
+   old record on purpose. For those, restore is the only way to clear.
+
+Then run the job once so the summary line updates without waiting for 15:30:
+
+```
+launchctl kickstart gui/$(id -u)/com.captaincodeau.ccw-repair
+```
+
+Pinned by `tests/test_writers_keep_evidence.py`, `tests/test_repair_refuses_unexplained.py`
+and `tests/test_repair_sendback.py`.
 
 ## The `sidecars` line, and the alert that is not a banner (ticket 38, 2026-09-08)
 

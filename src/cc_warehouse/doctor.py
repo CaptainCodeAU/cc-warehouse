@@ -23,13 +23,14 @@ import json
 import re
 import shutil
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 import cc_warehouse
-from cc_warehouse import archive, build, parser, reconcile, registry, status, store, sweep
+from cc_warehouse import archive, build, parallel, parser, reconcile, registry, status, store, sweep
 from cc_warehouse.config import Config
 
 # How far behind the rest of the corpus a session may fall before it counts as
@@ -456,11 +457,15 @@ class _CatalogIndex:
     recent: tuple[_Recent, ...]
 
 
-def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
+def _catalog_index(
+    config: Config, limit: int, also: frozenset[str] = frozenset()
+) -> _CatalogIndex:
     """One read-only pass over the catalog: every archived uuid, the newest
     payload start, and the `limit` most recently STARTED heads with their
-    computed folder paths. No catalog, or an unreadable one, is an empty index,
-    never an exception and never a created file."""
+    computed folder paths, followed by the heads for any `also` session uuids
+    outside that window (W-20260929-A82: `ccw repair`'s open refusals). No
+    catalog, or an unreadable one, is an empty index, never an exception and
+    never a created file."""
     empty = _CatalogIndex(frozenset(), None, ())
     path = config.root / "catalog.sqlite"
     if not path.is_file() or config.archive_root is None:
@@ -493,6 +498,8 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
             )
         dated.sort(key=lambda row: row[0], reverse=True)
         sample = dated[:limit]
+        in_window = {row[4] for row in sample}
+        sample += [row for row in dated[limit:] if row[4] in also and row[4] not in in_window]
         sizes = _payload_sizes(conn, {row[4] for row in sample})
     except sqlite3.Error:
         return empty
@@ -544,7 +551,7 @@ def _payload_sizes(conn: sqlite3.Connection, uuids: set[str]) -> dict[str, dict[
 
 
 def _desync_scan(
-    config: Config, *, quick: bool
+    config: Config, *, quick: bool, also: frozenset[str] = frozenset()
 ) -> tuple[list[_Recent], list[tuple[Path, list[archive.FolderProblem]]]]:
     """The recency sample from the catalog, verified on disk (ticket 44b).
 
@@ -559,21 +566,28 @@ def _desync_scan(
     check for `ccw repair`. Same sample, same rules, one scan."""
     if config.archive_root is None or not config.archive_root.is_dir():
         return [], []
-    index = _catalog_index(config, _DESYNC_SAMPLE)
+    index = _catalog_index(config, _DESYNC_SAMPLE, also)
+    # A bounded pool (ticket 46, W-20260929-A91): the full check reads every
+    # recorded file, and 25 folders one at a time over the network share is
+    # minutes. Answers come back in sample order, and a verify that raised
+    # re-raises here in that order, as the serial scan did.
+    checked = parallel.map_reads(
+        lambda item: archive.verify_folder(
+            item.folder, config.archive_timezone, known=item.known if quick else None
+        ),
+        index.recent,
+        weigh=None if quick else (lambda item: archive.payload_bytes(item.folder)),
+    )
     broken = [
         (item.folder, problems)
-        for item in index.recent
-        if (
-            problems := archive.verify_folder(
-                item.folder, config.archive_timezone, known=item.known if quick else None
-            )
-        )
+        for item, read in zip(index.recent, checked, strict=True)
+        if (problems := read.get())
     ]
     return list(index.recent), broken
 
 
 def desync_detail(
-    config: Config,
+    config: Config, also: frozenset[str] = frozenset()
 ) -> tuple[list[Path], list[tuple[Path, list[archive.FolderProblem]]]]:
     """The most recent `_DESYNC_SAMPLE` archive folders, and which of them
     `archive.verify_folder` flags (ticket 31.5 / ticket 32). The one place the
@@ -592,9 +606,13 @@ def desync_detail(
     --verify` are where a same-size rewrite is detected
     (tests/test_doctor_quick_desync.py::
     test_a_same_size_change_passes_doctor_but_the_full_check_catches_it).
-    What repair then does with it (re-renders, which records the changed bytes)
-    is an open problem; docs/operations.md, "What doctor's `desync` line checks"."""
-    recent, broken = _desync_scan(config, quick=False)
+    What repair then does with it: docs/operations.md, "What repair does with
+    what it finds".
+
+    `also` adds the folders of those session uuids even outside the sample
+    (W-20260929-A82 item 6: repair's open refusals, re-checked every run until
+    they verify clean); they are appended after the sample."""
+    recent, broken = _desync_scan(config, quick=False, also=also)
     return [item.folder for item in recent], broken
 
 
@@ -923,50 +941,72 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str]:
     )
 
 
-def _batch_render_in_progress(root: Path) -> bool:
-    """True while `ccw sweep` or `ccw build` is actively running against this
-    warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
-    doctor read-only by construction. `build.build()` holds its lock for its
-    entire per-head loop (acquire before the loop, release in a `finally`
-    after), so this stays true for exactly as long as a sweep-triggered batch
-    is still rendering -- unlike a fixed timer, it cannot expire mid-batch."""
-    return any(store.lock_is_held(root, name) for name in _BATCH_LOCK_NAMES)
+def pending_under_lock(folder: Path, problem: archive.FolderProblem, since: float) -> bool:
+    """`_written_after_manifest` with the batch's start, public for `ccw repair`
+    (W-20260929-A82, F1): the one batch-lock pending rule doctor and repair both
+    apply (R9)."""
+    return _written_after_manifest(folder, problem, since)
 
 
-def _stale_manifest_file(folder: Path, problem: str) -> Path | None:
-    """The file a `_STALE_MANIFEST_SHAPES` problem is about, or None for any
-    other problem shape. Resolved the same way `archive.verify_folder` resolves
-    it (`archive.sole_jsonl` for the payload), never by a second rule."""
-    if problem == "JSONL does not match manifest source_hash":
-        return archive.sole_jsonl(folder)
-    if problem in (
-        f"{archive.PROMPTS_FILE} exists but the manifest says none",
-        f"{archive.PROMPTS_FILE} does not match its hash",
-    ):
-        return folder / archive.PROMPTS_FILE
-    return None
+def batch_started_at(root: Path) -> float | None:
+    """When the EARLIEST currently held batch lock was taken, or None when no
+    batch is running. A pure read (`store.lock_acquired_at`, fix-os-locks, over
+    `store.lock_is_held`), so doctor stays read-only by construction; `build.build()`
+    holds its lock for its whole per-head loop, so this cannot expire mid-batch
+    the way a fixed timer would (ticket 34).
+
+    W-20260929-A82 item 2: the START matters, not just "held". A file written before that moment
+    was not written by any running batch, so the lock never excuses it: a
+    15:30 repair inside a 12:30 sweep's lock must still refuse damage made at
+    11:00 (tests/test_repair_sendback.py::
+    test_damage_older_than_the_lock_is_refused_on_day_one)."""
+    starts = [
+        taken
+        for name in _BATCH_LOCK_NAMES
+        if (taken := store.lock_acquired_at(root, name)) is not None
+    ]
+    return min(starts) if starts else None
 
 
-def _written_after_manifest(folder: Path, problem: str) -> bool:
-    """True when `problem` names a file the batch rewrote after the folder's
-    manifest was last written (2026-09-29): `ccw sweep` replaces a payload with a
-    larger one and splits `prompts.jsonl` in its first pass, and only its own
-    later `build.build()` rewrites the manifest to match. Only consulted while a
-    batch lock is held. A file OLDER than its manifest is never excused: the
-    running batch did not write it."""
-    target = _stale_manifest_file(folder, problem)
+def _written_after_manifest(
+    folder: Path, problem: archive.FolderProblem, since: float | None = None
+) -> bool:
+    """True when `problem` names a file written after the folder's manifest was
+    last written (2026-09-29): `ccw sweep` replaces a payload with a larger one,
+    splits `prompts.jsonl`, grows a sub-agent or copies a renamed title in its
+    first pass, and only its own later `build.build()` rewrites the manifest to
+    match. Only consulted while a batch lock is held, by doctor and, since
+    W-20260929-A82 (ruling: Gavin, F1), by `ccw repair`. A file OLDER than its
+    manifest is never excused: the running batch did not write it.
+
+    The file is the one `archive.verify_folder` names on the problem
+    (`FolderProblem.path`), never re-derived from the message text. Every
+    file-level mismatch carries one, so the rule covers every shape; a missing
+    file carries none and is judged by the `missing ` rule instead.
+
+    `since` (the batch's start, `batch_started_at`) narrows it for the lock
+    case (W-20260929-A82 item 2): the file must ALSO be written at or after the
+    lock was taken, or the running batch did not write it. The lock file lives
+    on this machine's disk and the archive may sit on a share whose server sets
+    file times, so a clock gap between the two shifts the boundary by that gap
+    (ASSUMED seconds; a batch runs for hours)."""
+    target = problem.path
     if target is None:
         return False
     # R1 as amended: `verify_folder` already decided these bytes differ (by
     # sha256 on the full check, by a length that proves it on doctor's quick
     # check); mtime only orders "which was written later" for alarm timing.
     try:
-        return target.stat().st_mtime > (folder / "manifest.json").stat().st_mtime
+        written = target.stat().st_mtime
+        after_manifest = written > (folder / "manifest.json").stat().st_mtime
     except OSError:
         return False
+    return after_manifest and (since is None or written >= since)
 
 
-def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | None) -> bool:
+def _recaptured_after_manifest(
+    folder: Path, problem: archive.FolderProblem, payload_hash: str | None
+) -> bool:
     """A payload mismatch that is a re-capture still rendering (W-20260929-A62):
     the JSONL is newer than the manifest (`_written_after_manifest`) AND hashes
     to the catalog's current head. A re-capture writes the JSONL and then its
@@ -978,17 +1018,76 @@ def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | N
     one here was written by something else and is never excused
     (tests/test_doctor.py::
     test_a_newer_prompts_file_with_no_lock_fails_even_inside_the_grace)."""
-    if problem != "JSONL does not match manifest source_hash":
+    if problem.problem != _PAYLOAD_MISMATCH:
         return False
     if not _written_after_manifest(folder, problem):
         return False
+    return _payload_is_head(folder, payload_hash)
+
+
+_PAYLOAD_MISMATCH = "JSONL does not match manifest source_hash"
+
+
+def _payload_is_head(folder: Path, head_hash: str | None) -> bool:
+    """The folder's JSONL hashes to the catalog's current head: the bytes are the
+    ones ccw captured last (a re-capture writes the JSONL, then its row). R1: by
+    sha256, never by size. The one rule `_recaptured_after_manifest` (doctor's
+    pending) and `unexplained` (repair's refusal) both read (R9)."""
     target = archive.sole_jsonl(folder)
-    if target is None or payload_hash is None:
+    if target is None or head_hash is None:
         return False
     try:
-        return store.sha256_hex(target.read_bytes()) == payload_hash
+        return store.sha256_hex(target.read_bytes()) == head_hash
     except OSError:
         return False
+
+
+# ccw's own `write_if_changed` files (W-20260929-A82 item 4): ccw legitimately
+# rewrites both (an extraction fix, a rename during a resume), so a mismatch on
+# either is one ccw can explain, and the writers adopt it (the stated F3 limit).
+_REWRITABLE = (archive.PROMPTS_FILE, archive.CUSTOM_TITLE_FILE)
+_MISSING_MANIFEST = "missing manifest.json"
+
+
+def unexplained(
+    folder: Path,
+    problems: Sequence[archive.FolderProblem],
+    head_hash: str | None,
+    *,
+    copies_match_sources: bool,
+) -> list[archive.FolderProblem]:
+    """The problems ccw itself cannot explain, so `ccw repair` must not re-render
+    over them (W-20260929-A82; ruling: Gavin, 2026-09-29).
+
+    EXPLAINED, closed list:
+    - a missing generated PAGE (`missing `, the detached render child died,
+      ticket 32);
+    - a missing `manifest.json`, ONLY when `copies_match_sources` (every copied
+      companion file and sub-agent in the folder equals a source file in
+      ~/.claude byte for byte; `archive.copies_match_sources`). With no manifest
+      there is no record to keep, so a render would record whatever is on disk:
+      that back door stays shut unless the sources vouch for every file (item 3);
+    - a payload mismatch whose JSONL hashes to the catalog head (a re-capture);
+    - a sub-agent that GREW (`FolderProblem.grew`, a live resume; F3, A76);
+    - a `prompts.jsonl` or `custom-title.json` mismatch (`_REWRITABLE`, item 4).
+    Everything else is unexplained: a sub-agent that changed without growing, a
+    companion file that changed or vanished, a payload that matches no head, an
+    unreadable manifest, a wrong name. A re-render rewrites the manifest from the
+    files on disk, so rendering over any of these would erase the only evidence
+    (tests/test_repair_refuses_unexplained.py, tests/test_repair_sendback.py)."""
+    return [p for p in problems if not _explained(folder, p, head_hash, copies_match_sources)]
+
+
+def _explained(
+    folder: Path, p: archive.FolderProblem, head_hash: str | None, copies_match_sources: bool
+) -> bool:
+    if p.problem == _MISSING_MANIFEST:
+        return copies_match_sources
+    if p.problem.startswith("missing ") or p.grew:
+        return True
+    if p.path is not None and p.path.name in _REWRITABLE and p.path.parent == folder:
+        return True
+    return p.problem == _PAYLOAD_MISMATCH and _payload_is_head(folder, head_hash)
 
 
 # The capture.jsonl statuses that mark the hook's pipeline moving for one
@@ -1087,7 +1186,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     its problems is a missing-generated-file problem (`FolderProblem.problem`
     starting with "missing ", the one shape `archive.verify_folder` produces for
     a not-yet-rendered file -- see `GENERATED_NAMES`) AND either a sweep/build
-    batch is currently running (`_batch_render_in_progress`, covering the bulk
+    batch is currently running (`batch_started_at`, covering the bulk
     case for as long as it actually takes) or the folder was captured within
     `_PENDING_GRACE_SECONDS` of now (covering the live hook's own single-session
     detached render child, which holds no lock at all). Any OTHER problem shape
@@ -1133,7 +1232,8 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
         return len(folders), 0, 0, None
     # broken is non-empty only when the scan actually verified a configured
     # archive, so config.root is a real warehouse to check locks against.
-    batch_active = _batch_render_in_progress(config.root)
+    batch_since = batch_started_at(config.root)
+    batch_active = batch_since is not None
     now = datetime.now(UTC)
     problems: list[tuple[Path, list[archive.FolderProblem]]] = []
     pending_count = 0
@@ -1143,7 +1243,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     awaiting: dict[Path, bool] = {
         folder: all(
             p.problem.startswith("missing ")
-            or _recaptured_after_manifest(folder, p.problem, hashes.get(folder))
+            or _recaptured_after_manifest(folder, p, hashes.get(folder))
             for p in folder_problems
         )
         for folder, folder_problems in broken
@@ -1159,7 +1259,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     )
     for folder, folder_problems in broken:
         batch_queued = batch_active and all(
-            p.problem.startswith("missing ") or _written_after_manifest(folder, p.problem)
+            p.problem.startswith("missing ") or _written_after_manifest(folder, p, batch_since)
             for p in folder_problems
         )
         recapture_queued = awaiting[folder]
@@ -1442,6 +1542,21 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
                 if mode == "editable"
                 else ""
             ),
+            blocking=False,
+        )
+    )
+
+    # W-20260929-A84: which locks some process holds right now (kernel flocks,
+    # probed without taking them). Informational, never blocking. It exists
+    # so the deploy step "reinstall ccw only when no batch is running" can be
+    # checked by eye: a ccw from before A84 writes PID files and a ccw from
+    # after takes flocks, and the two do not see each other's locks.
+    held = store.held_lock_names(config.root)
+    checks.append(
+        Check(
+            "locks",
+            True,
+            f"held: {', '.join(held)} (a batch or capture is running)" if held else "none held",
             blocking=False,
         )
     )

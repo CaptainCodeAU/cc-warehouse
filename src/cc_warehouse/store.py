@@ -8,10 +8,16 @@ import os
 import re
 import stat
 import tempfile
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+try:  # POSIX. Without it, locks use the labelled PID FALLBACK below.
+    import fcntl
+except ImportError:  # pragma: no cover - not reached on macOS or Linux
+    fcntl = None
 
 # Address grammar (DESIGN section 1): objects/<hh>/<64-hex><ext>. Both address
 # parts are validated before any path is built from them (F4/F9); nothing
@@ -46,6 +52,20 @@ class VerifyResult:
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# The name `atomic_write`'s mkstemp gives its temp file: `.<name>.<8 chars>.tmp`,
+# 8 from tempfile's own alphabet. Owned here, beside the one writer that makes
+# such files, so nothing else re-derives the shape (R9).
+_TEMP_NAME = re.compile(r"^\..+\.[a-z0-9_]{8}\.tmp$")
+
+
+def is_temp_name(name: str) -> bool:
+    """True for a file name shaped like `atomic_write`'s own half-finished temp
+    file (W-20260929-A82). Such a file is never data: it is a write in flight,
+    or one a killed process left behind. Nothing records it; nothing deletes it
+    either (R4), it is only reported."""
+    return bool(_TEMP_NAME.match(name))
 
 
 def atomic_write(path: Path, data: bytes) -> None:
@@ -241,8 +261,8 @@ def _validate_lock_name(name: str) -> None:
 
 
 def _pid_is_alive(pid: int) -> bool:
-    """Conservative liveness probe for a recorded holder PID (callers pass only
-    validated positive PIDs): anything short of a definite ESRCH counts as alive."""
+    """PID FALLBACK ONLY (see `acquire_lock`). Conservative liveness probe for
+    a recorded holder PID: anything short of a definite ESRCH counts as alive."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -253,20 +273,15 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def _read_lock_holder(lock: Path) -> int | None:
-    """The PID recorded in a lock file, or None when the content records no
-    valid holder (empty, non-integer, non-ASCII, or non-positive).
-
-    Lock creation publishes the file with its PID content in one atomic step,
-    so a valid lock always parses; a file that does not parse was not created
-    by this module and holds nothing. It is takeover-eligible rather than a
-    permanently unbreakable lock (F2). OSError propagates to the caller.
-    """
+    """PID FALLBACK ONLY. The PID recorded in a lock file, or None when the
+    content records no valid holder (empty, non-integer, non-ASCII, or
+    non-positive). OSError propagates to the caller."""
     try:
         text = lock.read_text(encoding="ascii")
     except UnicodeDecodeError:
         return None
     try:
-        pid = int(text.strip())
+        pid = int(text.strip().split()[0]) if text.strip() else 0
     except ValueError:
         return None
     if pid <= 0:
@@ -274,20 +289,198 @@ def _read_lock_holder(lock: Path) -> int | None:
     return pid
 
 
-def acquire_lock(root: Path, name: str) -> bool:
-    """Take locks/<name> with O_EXCL semantics; the file holds the holder's ASCII PID.
+# Locks this process holds: lock path -> the open descriptor holding its
+# flock. The descriptor IS the lock: closing it (release, or the process
+# ending however it ends) is what frees it.
+_HELD: dict[str, int] = {}
 
-    Returns False while the recorded holder is alive; a lock whose recorded PID
-    is dead, or whose content records no valid holder, is stale and taken over
-    (DESIGN section 13). The lock file appears with its PID content in one
-    atomic step: the PID is written to a scratch file first and os.link
-    publishes it, failing when the lock already exists (O_EXCL semantics), so
-    no crash can leave a PID-less lock behind (F2). Takeover is
-    contention-losing (R14/F3): the stale file is renamed aside first, rename
-    fails for every contender but one once the source is gone, and only the
-    rename winner proceeds to re-contend the O_EXCL link.
+# How long an acquirer keeps retrying a would-block before reporting "held".
+# A `lock_is_held` probe takes LOCK_SH for an instant; an acquirer landing in
+# that instant must not tell a sweep that another sweep is running.
+_ACQUIRE_RETRY_S = 1.0
+_ACQUIRE_POLL_S = 0.02
+
+
+def _open_lock_file(path: Path) -> int:
+    """Open (creating if needed) a lock file for flocking. Its own function so
+    a test can hand back a descriptor for an already-unlinked inode."""
+    return os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+
+
+def _same_file(fd: int, path: Path) -> bool:
+    """True while `path` still names the inode `fd` has open."""
+    try:
+        on_disk = os.stat(path)
+    except FileNotFoundError:
+        return False
+    held = os.fstat(fd)
+    return (on_disk.st_dev, on_disk.st_ino) == (held.st_dev, held.st_ino)
+
+
+def acquire_lock(root: Path, name: str) -> bool:
+    """Take locks/<name>; False while another holder has it (R14).
+
+    A kernel `flock` (W-20260929-A84; ruling: Gavin, "OS-released lock"). The
+    descriptor stays open for the batch's life and the kernel drops the lock
+    when it closes, however the holder ends: a clean release, an exception,
+    SIGKILL, a crash. Nothing is recorded that can go stale, so no PID is
+    trusted, reuse of a dead holder's PID means nothing, and no age rule can
+    ever free a live holder's lock. What was here before (an O_EXCL file
+    holding a PID, trusted through `os.kill(pid, 0)`) remains below only as
+    the PID FALLBACK for a platform without `fcntl`.
+
+    The file exists only while held: release unlinks it while still holding
+    the flock, so an acquirer that wins a flock must check the path still
+    names the inode it opened, and start again if not. After winning, the
+    file gets this process's PID and the acquire time for a human to read
+    (nothing parses them), and its mtime is set to the acquire moment, which
+    `lock_acquired_at` reports.
+
+    A would-block is retried for up to _ACQUIRE_RETRY_S, because a
+    `lock_is_held` probe holds LOCK_SH for an instant.
     """
     _validate_lock_name(name)
+    if fcntl is None:
+        return _pid_acquire_lock(root, name)
+    lock = root / "locks" / name
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _ACQUIRE_RETRY_S
+    while True:
+        fd = _open_lock_file(lock)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_ACQUIRE_POLL_S)
+            continue
+        except OSError:
+            os.close(fd)
+            return False  # cannot lock at all: refuse conservatively (R5)
+        if not _same_file(fd, lock):
+            os.close(fd)  # won an inode a release already unlinked: go again
+            continue
+        now = time.time()
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()} {now:.3f}\n".encode("ascii"))
+        except OSError:
+            pass  # the flock is what counts; the text is for humans
+        try:
+            # Separately from the text: `lock_acquired_at` promises this
+            # mtime is the acquire moment, and a check that excuses files
+            # "written after the lock was taken" reads it. An old file's old
+            # mtime must never survive a failed write.
+            os.utime(lock, (now, now))
+        except OSError:
+            pass
+        _HELD[str(lock)] = fd
+        return True
+
+
+def release_lock(root: Path, name: str) -> None:
+    """Release locks/<name> if THIS process holds it; otherwise do nothing (F3:
+    only the acquire winner may release). The file is unlinked while the flock
+    is still held, then the descriptor is closed, so no other process can be
+    left holding a lock on a file the path no longer names without noticing
+    (see `acquire_lock`). Lock-file removal is on the sanctioned closed list
+    (DESIGN section 13, R4)."""
+    _validate_lock_name(name)
+    if fcntl is None:
+        _pid_release_lock(root, name)
+        return
+    lock = root / "locks" / name
+    fd = _HELD.pop(str(lock), None)
+    if fd is None:
+        return
+    try:
+        if _same_file(fd, lock):
+            lock.unlink(missing_ok=True)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def lock_is_held(root: Path, name: str) -> bool:
+    """True while some process holds locks/<name> (ticket 34).
+
+    Asks without taking and without creating: opens the file only if it
+    exists and tries LOCK_SH|LOCK_NB. Would-block means a holder has it; a
+    granted shared lock is dropped at once. So `ccw doctor` and `ccw repair`
+    can ask "is a batch running" without becoming a holder. A file nobody
+    flocks (an old PID file, whatever PID it names) reads as NOT held.
+    """
+    _validate_lock_name(name)
+    if fcntl is None:
+        return _pid_lock_is_held(root, name)
+    lock = root / "locks" / name
+    if str(lock) in _HELD:
+        return True
+    try:
+        fd = os.open(lock, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return False
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def lock_acquired_at(root: Path, name: str) -> float | None:
+    """When the CURRENT holder of locks/<name> took it (the file's st_mtime,
+    which `acquire_lock` sets to the acquire moment), or None when nobody
+    holds it. A file nobody holds says nothing about any batch, so its mtime
+    is never reported."""
+    if not lock_is_held(root, name):
+        return None
+    try:
+        return (root / "locks" / name).stat().st_mtime
+    except OSError:
+        return None
+
+
+def held_lock_names(root: Path) -> list[str]:
+    """Every lock name under locks/ that some process holds right now, sorted.
+    Read-only (probes only). For `ccw doctor`'s `locks` line, so "reinstall
+    when no batch is running" can be checked by eye."""
+    try:
+        entries = sorted(p.name for p in (root / "locks").iterdir())
+    except OSError:
+        return []
+    held: list[str] = []
+    for entry in entries:
+        if not _LOCK_NAME_RE.fullmatch(entry):
+            continue
+        if lock_is_held(root, entry):
+            held.append(entry)
+    return held
+
+
+# ---------------------------------------------------------------------------
+# PID FALLBACK. Used ONLY where `fcntl` cannot be imported (not macOS, not
+# Linux). It is the pre-A84 mechanism, unchanged: an O_EXCL file holding a PID,
+# trusted through `os.kill(pid, 0)`, with the known weakness that a reused PID
+# reads as a live holder. Kept so the package still locks on such a platform
+# rather than not locking at all (ruling 2026-09-29, option (a)).
+# ---------------------------------------------------------------------------
+
+
+def _pid_acquire_lock(root: Path, name: str) -> bool:
+    """PID FALLBACK. Take locks/<name> with O_EXCL semantics; the file holds
+    the holder's ASCII PID. A lock whose recorded PID is dead, or whose
+    content records no valid holder, is stale and taken over (DESIGN section
+    13). Takeover is contention-losing (R14/F3): the stale file is renamed
+    aside first, rename fails for every contender but one once the source is
+    gone, and only the rename winner proceeds to re-contend the O_EXCL link."""
     lock = root / "locks" / name
     lock.parent.mkdir(parents=True, exist_ok=True)
     pid = os.getpid()
@@ -304,21 +497,17 @@ def acquire_lock(root: Path, name: str) -> bool:
             try:
                 holder = _read_lock_holder(lock)
             except FileNotFoundError:
-                continue  # released or taken over since the link attempt; re-contend
+                continue
             except OSError:
-                return False  # unreadable: conservatively treat as held (R5)
+                return False
             if holder is not None and _pid_is_alive(holder):
                 return False
-            # Stale (dead PID) or invalid (no recorded holder): rename it aside
-            # so exactly one contender proceeds past this point.
             try:
                 os.rename(lock, aside)
             except FileNotFoundError:
-                continue  # another contender won the rename; re-contend
+                continue
             except OSError:
                 return False
-            # Re-check what we actually renamed: if a fresh lock replaced the
-            # stale one after our read, restore it and lose (R5).
             try:
                 fresh_holder = _read_lock_holder(aside)
             except OSError:
@@ -331,20 +520,14 @@ def acquire_lock(root: Path, name: str) -> bool:
                 aside.unlink(missing_ok=True)
                 return False
             aside.unlink(missing_ok=True)
-        return False  # retry budget exhausted under contention: refuse (R5)
+        return False
     finally:
         scratch.unlink(missing_ok=True)
 
 
-def release_lock(root: Path, name: str) -> None:
-    """Remove locks/<name> when this process is the recorded holder.
-
-    Lock-file removal is on the sanctioned closed list (DESIGN section 13, R4).
-    Releasing a lock that is already gone is a no-op; a lock recording a
-    different holder, or unreadable content, is left in place (F3: only the
-    acquire winner may release, and errors keep the lock, R5).
-    """
-    _validate_lock_name(name)
+def _pid_release_lock(root: Path, name: str) -> None:
+    """PID FALLBACK. Remove locks/<name> when this process is the recorded
+    holder; anything else is left in place (F3, R5)."""
     lock = root / "locks" / name
     try:
         holder = _read_lock_holder(lock)
@@ -355,22 +538,11 @@ def release_lock(root: Path, name: str) -> None:
     lock.unlink(missing_ok=True)
 
 
-def lock_is_held(root: Path, name: str) -> bool:
-    """True while `locks/<name>` names a live process (ticket 34).
-
-    A pure read, unlike `acquire_lock`: never links, renames, or removes
-    anything, so it is safe for a read-only caller (`ccw doctor`'s desync
-    check) to ask "is a batch actively running right now" without racing an
-    actual acquirer for the lock. A stale lock (dead PID, or content that does
-    not parse) reads as NOT held, matching `acquire_lock`'s own definition of
-    stale-and-takeover-eligible -- this function tells the truth about the
-    SAME lock file `acquire_lock` would decide the same way about, it just
-    never takes any action on what it finds.
-    """
-    _validate_lock_name(name)
+def _pid_lock_is_held(root: Path, name: str) -> bool:
+    """PID FALLBACK. True while locks/<name> names a live process."""
     lock = root / "locks" / name
     try:
         holder = _read_lock_holder(lock)
-    except (FileNotFoundError, OSError):
+    except OSError:
         return False
     return holder is not None and _pid_is_alive(holder)

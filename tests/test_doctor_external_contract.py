@@ -154,3 +154,20 @@ def test_an_unarchived_sibling_adds_no_line_to_ccw_watchs_FAIL_list(
     result = run_ccw(["doctor"], ccw_env)
     assert result.code == 0, result.out
     assert _grep_fail_lines(result.out) == []
+
+
+def test_the_freshness_hook_reads_the_root_from_real_doctor_output(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The freshness hook (this repo's own consumer, since 2026-09-29) takes
+    the warehouse root from doctor's `config` line to find `ccw repair`'s
+    summary, instead of re-reading config.toml by hand. Proved here against
+    real doctor output, including a root with a space in it."""
+    from conftest import load_hook_module
+
+    ccw_env["CCW_ROOT"] = str(tmp_path / "ware house")
+    configure(ccw_env, tmp_path / "archive")
+    install_hook(ccw_env)
+    result = run_ccw(["doctor"], ccw_env)
+    hook = load_hook_module("ccw_freshness_check", "ccw-freshness-check.py")
+    assert hook.extract_root(result.out) == warehouse_root(ccw_env), result.out

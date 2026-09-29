@@ -188,11 +188,13 @@ def test_verify_walk_reports_corruption(tmp_path: Path) -> None:
 
 
 def test_lock_is_exclusive_while_holder_lives(tmp_path: Path) -> None:
-    """R14: locks/<op> with O_EXCL semantics; a second taker is refused."""
+    """R14: one holder of locks/<op> at a time; a second taker is refused.
+    The file names the holder's PID for a human (first token); since A84
+    nothing trusts it, the kernel flock is the lock."""
     assert store.acquire_lock(tmp_path, "sweep") is True
     lock_file = tmp_path / "locks" / "sweep"
     assert lock_file.exists()
-    assert lock_file.read_text().strip() == str(os.getpid())
+    assert lock_file.read_text().split()[0] == str(os.getpid())
     assert store.acquire_lock(tmp_path, "sweep") is False
     store.release_lock(tmp_path, "sweep")
     assert not lock_file.exists()
@@ -200,14 +202,17 @@ def test_lock_is_exclusive_while_holder_lives(tmp_path: Path) -> None:
 
 
 def test_stale_lock_from_dead_pid_is_taken_over(tmp_path: Path) -> None:
-    """DESIGN section 13: a lock whose recorded PID is dead is stale."""
+    """DESIGN section 13: a lock whose recorded PID is dead is stale. Since
+    A84 any file nobody flocks is free, whatever PID it names
+    (tests/test_os_locks.py covers the live-PID case)."""
     from conftest import DEAD_PID
 
     lock_file = tmp_path / "locks" / "sweep"
     lock_file.parent.mkdir(parents=True)
     lock_file.write_text(str(DEAD_PID))
     assert store.acquire_lock(tmp_path, "sweep") is True
-    assert lock_file.read_text().strip() == str(os.getpid())
+    assert lock_file.read_text().split()[0] == str(os.getpid())
+    store.release_lock(tmp_path, "sweep")
 
 
 def test_concurrent_puts_of_same_payload_never_tear(tmp_path: Path) -> None:
