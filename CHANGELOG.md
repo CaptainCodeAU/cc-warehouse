@@ -22,6 +22,31 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
+full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
+48 s on the real machine, over the SessionStart freshness hook's 45 s, because
+`archive.verify_folder` read and sha256-hashed every file in its 25 sampled folders (118 MB
+in 557 opens over SMB on Wi-Fi) and parsed each payload. `verify_folder` now has two depths
+over ONE set of rules (R9): with `known=` (a new `archive.KnownPayload` built from the
+catalog row: `hidden`, `first_ts`, `session_uuid`, and `size_bytes` for every version of
+the session) it compares each recorded file's length by `stat` and opens only
+`manifest.json`; without it, it is the full check, unchanged. The two differ in one place,
+the matcher (`_size_matches` against `_hash_matches`). A record with no `bytes` (older
+manifests) is hashed, never skipped. Doctor's `_desync` uses the quick depth; `desync_detail`,
+which `ccw repair` reads, keeps the full one. A re-capture still surfaces: its new JSONL is
+longer than the payload the stale manifest names, and the pending rules (ticket 34, a60d50d,
+A62's hash clause and pipeline clock) judge it as before. The desync line now ends `(quick
+check: present and right size; ccw repair checks hashes)`; the exit code and the
+`Uncaptured: <N> session` prefix are unchanged. `_prompts_problems` and
+`_custom_title_problems` merged into `_single_file_problems`, and the sub-agent and
+companion file listings are each shared by the record writer and the verifier. The F1
+fence (`tests/test_fences.py::test_no_size_or_mtime_EQUALITY_anywhere`) gains a one-entry,
+function-named exemption for `archive._size_matches`, which screens and never decides
+identity; any other size or mtime equality still fails it. Accepted trade-off: a same-size
+rewrite passes doctor and is caught by the next daily repair. Measured on the real machine:
+`ccw doctor` 7.1 to 9.7 s over five runs against 14.0 to 44.9 s for the installed 0.1.4,
+interleaved. Tests: `tests/test_doctor_quick_desync.py`.
+
 **`ccw doctor` no longer FAILs a resumed session while its re-capture is still
 rendering (2026-09-29, W-20260929-A62).** Since 78daa4f the hook's render waits for the
 companions copy, so a re-capture leaves the folder's new JSONL newer than its old manifest

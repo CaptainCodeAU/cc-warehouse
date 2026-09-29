@@ -33,6 +33,12 @@ Notes:
   share the sweep is expected to take 2 to 2.5 hours (ticket 44, accepted and to be
   measured). Moving the repair job past the sweep's real end is a plist edit outside this
   repo; MOVED to 15:30 on 2026-09-29 with the operator's word (dated `.bak` beside the plist).
+- **`ccw-repair` is the only DAILY sha256 integrity check, since 2026-09-29
+  (W-20260929-A74).** `ccw doctor` at SessionStart now checks presence and size only
+  (see "What doctor's `desync` line checks" below); repair's scan of the same 25 folders
+  still reads and hashes every recorded file. Measured 2026-09-29 on the share: 7 s with
+  a warm cache, 17 to 44 s cold (the figures doctor used to pay). launchd sets no timeout
+  on this job, so that fits its slot.
 - All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
   `--quiet` means **no stdout on success, failures still print**, so an empty log file is
   the expected healthy state, not evidence the job never ran. Check `launchctl list` for
@@ -164,6 +170,26 @@ can read as if THAT number is the problem even when the real failing check is so
 else entirely (e.g. desync) - a real weakness in the message clarity, not the detection
 logic, confirmed during a 2026-09-01 investigation (ticket 34's own account has the
 detail).
+
+**What doctor's `desync` line checks at SessionStart, since 2026-09-29 (W-20260929-A74;
+ruling: Gavin, option 1).** It is a QUICK check over the 25 most recently started
+archive folders: every file each folder's manifest lists (the payload, sub-agents,
+tool results, file-history, pastes, `prompts.jsonl`, `custom-title.json`) must be
+PRESENT and the RIGHT SIZE, compared by `stat` against sizes already recorded (each
+manifest record's `bytes`, and the catalog's `size_bytes` for the payload). It opens
+`manifest.json` and nothing else, hashes nothing and parses no JSONL; the hidden flag
+and the folder name come from the catalog row. The line says so: `(quick check:
+present and right size; ccw repair checks hashes)`. Why: the full sha256 check over
+those 25 folders read 118 MB in 557 opens over the network share and took 17 to 44 s,
+against the freshness hook's 45 s, and a timeout counts as a failure. Measured after
+the change on the same machine: whole `ccw doctor` 7 to 10 s (was 14 to 45 s), the
+desync step alone 3.5 s cold and 0.2 s warm.
+**What it cannot see, accepted:** a file whose bytes changed but whose length did
+not. The FULL check still runs daily in `ccw repair` (same 25 folders, every file
+sha256-hashed and the payload parsed) and weekly-or-by-hand in `ccw archive --verify`,
+so such a change is caught within a day. A manifest record written before records
+carried `bytes` is hashed instead of skipped. Pinned by
+`tests/test_doctor_quick_desync.py`.
 
 ## The `sidecars` line, and the alert that is not a banner (ticket 38, 2026-09-08)
 
