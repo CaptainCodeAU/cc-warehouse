@@ -776,3 +776,47 @@ def load_hook_module(name: str, filename: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+# ---------------------------------------------------------------------------
+# Batch locks held by ANOTHER process (W-20260929-A84). Since locks became
+# kernel flocks, writing a live PID into locks/<name> no longer means "held":
+# only a process actually holding the flock does. Tests that need a held lock
+# use this one helper, so every such test holds it the real way.
+# ---------------------------------------------------------------------------
+
+_HOLDER_SCRIPT = """
+import sys, time
+from pathlib import Path
+from cc_warehouse import store
+ok = store.acquire_lock(Path(sys.argv[1]), sys.argv[2])
+print("held" if ok else "refused", flush=True)
+sys.stdin.read()
+"""
+
+
+@contextlib.contextmanager
+def lock_held_elsewhere(root: Path, name: str) -> Generator[subprocess.Popen[str]]:
+    """Hold locks/<name> under `root` in a separate Python process for the
+    duration of the block. The process holds it until its stdin closes (a
+    clean exit on leaving the block), or until a test kills it."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _HOLDER_SCRIPT, str(root), name],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        line = proc.stdout.readline().strip()
+        assert line == "held", f"holder process could not take {name}: {line!r}"
+        yield proc
+    finally:
+        if proc.poll() is None:
+            assert proc.stdin is not None
+            proc.stdin.close()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)

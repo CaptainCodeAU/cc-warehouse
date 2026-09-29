@@ -10,12 +10,12 @@ CONFIRMED reviewer cluster so it stays fixed:
 """
 
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 from conftest import (
     basic_session,
+    lock_held_elsewhere,
     run_ccw,
     session_count,
     tree_snapshot,
@@ -84,11 +84,8 @@ def test_migrate_refuses_when_migrate_lock_is_held(
     with a non-zero exit, imports nothing, and writes no manifest (two concurrent runs
     cannot race the shared manifest)."""
     root = _archive(tmp_path)
-    locks = warehouse_root(ccw_env) / "locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    (locks / "migrate").write_text(str(os.getpid()))  # this live test process holds it
-
-    result = run_ccw(["migrate", str(root)], ccw_env)
+    with lock_held_elsewhere(warehouse_root(ccw_env), "migrate"):
+        result = run_ccw(["migrate", str(root)], ccw_env)
 
     assert result.code != 0, result.out
     assert session_count(ccw_env) == 0

@@ -167,6 +167,35 @@ which goes first.
 
 No crontab entries exist for this user (`crontab -l` -> "no crontab").
 
+### Batch locks, and reinstalling `ccw` across the lock change (W-20260929-A84)
+
+Every batch (`sweep`, `build`, `import`, `migrate`, `relocate`, the archive build) and every
+capture (`capture-<sha>`) takes a lock under `<root>/locks/`, which is on local disk. Since
+2026-09-29 the lock is a kernel `flock` held on that file for the job's whole life: the
+operating system drops it the moment the job ends, however it ends (finished, crashed,
+SIGKILL, a reboot). No PID is trusted and no age guessed, so a dead job's PID being reused by
+another process can no longer keep a lock "held" forever. The file exists only while it is
+held (release removes it while still holding it) and its mtime is the moment it was taken
+(`store.lock_acquired_at`). The PID written inside is for a human reading it; nothing parses
+it. Old-style files that nobody flocks, such as the leftover `capture-*` PID files from before
+this change, read as free and are simply taken by the next job; nobody needs to remove them.
+`ccw doctor` asks without taking, and prints a `locks` line naming every lock held right now
+(`none held` when idle).
+
+**The one deploy hazard.** A `ccw` from before this change writes PID files; a `ccw` from after
+takes flocks; the two do not see each other's locks. So reinstall the frozen `ccw` only while
+nothing holds a lock:
+
+1. From outside the repo, check the installed binary's view:
+   ```
+   env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/bin:/bin" ~/.local/bin/ccw doctor
+   ```
+   Before the reinstall that binary predates the `locks` line, so also check by eye that no
+   `ccw sweep`, `ccw build` or `ccw repair` process is running and that no launchd job is due
+   (see "Scheduled jobs" above).
+2. Reinstall from the repo root (CLAUDE.md, "`ccw` IS INSTALLED AS A FROZEN SNAPSHOT").
+3. Run the step 1 command again. It must now print `locks       none held`.
+
 ## The two consumers of `ccw doctor`
 
 `ccw doctor`'s TEXT OUTPUT and EXIT CODE are a public compatibility surface: two

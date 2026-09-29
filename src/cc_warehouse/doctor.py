@@ -812,7 +812,7 @@ def pending_under_lock(folder: Path, problem: archive.FolderProblem, since: floa
 
 def batch_started_at(root: Path) -> float | None:
     """When the EARLIEST currently held batch lock was taken, or None when no
-    batch is running. A pure read (`store.lock_taken_at` over
+    batch is running. A pure read (`store.lock_acquired_at`, fix-os-locks, over
     `store.lock_is_held`), so doctor stays read-only by construction; `build.build()`
     holds its lock for its whole per-head loop, so this cannot expire mid-batch
     the way a fixed timer would (ticket 34).
@@ -825,7 +825,7 @@ def batch_started_at(root: Path) -> float | None:
     starts = [
         taken
         for name in _BATCH_LOCK_NAMES
-        if (taken := store.lock_taken_at(root, name)) is not None
+        if (taken := store.lock_acquired_at(root, name)) is not None
     ]
     return min(starts) if starts else None
 
@@ -1397,6 +1397,21 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
                 if mode == "editable"
                 else ""
             ),
+            blocking=False,
+        )
+    )
+
+    # W-20260929-A84: which locks some process holds right now (kernel flocks,
+    # probed without taking them). Informational, never blocking. It exists
+    # so the deploy step "reinstall ccw only when no batch is running" can be
+    # checked by eye: a ccw from before A84 writes PID files and a ccw from
+    # after takes flocks, and the two do not see each other's locks.
+    held = store.held_lock_names(config.root)
+    checks.append(
+        Check(
+            "locks",
+            True,
+            f"held: {', '.join(held)} (a batch or capture is running)" if held else "none held",
             blocking=False,
         )
     )
