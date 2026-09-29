@@ -111,6 +111,54 @@ real-verb matrix of the four writers against four kinds of damage, every compani
 at unit level, the prompts/custom-title limit, A76, and the lock rule) and
 `tests/test_repair_refuses_unexplained.py`, every render real.
 
+**The background freshness check was sent back and fixed the same day (2026-09-29,
+W-20260929-A93; ruling: Gavin, "send back, keep the background hook").** A review proved four
+defects in a sandbox, and each now has a test that fails on 9383200. (1) A check that never
+answered started the outage clock: `claude -p` kills async hooks at teardown (177 of 420
+recent sessions were headless), and a killed check 2.5 h old turned the next single blip into
+a spoken ALERT. Now only a real broken verdict from doctor opens or extends an outage; an
+unanswered check logs `unknown` and tells the session, and counts for nothing. (2) A gap
+counted as broken: a Friday blip and a Monday blip read as one 64 h outage. Now a failing
+check continues an outage only if the previous failing check is under an hour old (about the
+p90 gap between session starts), so a spoken alert always rests on three or more failing
+checks. (3) A hung check made every pane alert (three panes, three desktop and three spoken
+alerts). Now each tier alerts once per outage, recorded in the state file, and only the lock
+holder raises anything. (4) A failing launchd job spoke at every session start. Now each job
+runs the same clock from when the hook first saw it failing, with its own dedup; a job
+launchctl cannot answer about keeps its period. Also new, by the interface agreed with the
+repair side: archive folders `ccw repair` refuses to re-render are read from repair's latest
+`repair-summary` line and run the same clock from `oldest_refusal_at`; a reminder within 10
+minutes of repair's own run waits one check. The 30 minute and 2 hour thresholds are
+unchanged. Two follow-up rulings the same day: unanswered checks that run unbroken for 2 hours
+raise ONE desktop-only notice (never voice, never an outage), so a doctor that never answers is
+not silent forever; and the hook takes the warehouse root from doctor's own `config` line
+(pinned against real doctor output in `tests/test_doctor_external_contract.py`) instead of
+re-reading config.toml, falling back to CCW_ROOT and then the default only when doctor gave no
+answer.
+
+**The SessionStart freshness check runs in the background, runs `ccw doctor` once for many
+panes, and escalates on how long capture has been broken (2026-09-29, W-20260929-A93;
+rulings: Gavin).** It used to block every session start for as long as doctor took (8 to 24 s
+on the share, budget 45 s) and to count broken session starts: two sessions started five
+seconds apart at 01:45:19 and 01:45:24 each ran their own doctor and turned one bad moment
+into a WARNING. Now `plugins/cc-capture/hooks/hooks.json` marks the entry `"async": true`.
+Claude Code's docs and the installed 2.1.284 binary agree on what that means: plain stdout is
+dropped, a JSON `additionalContext` reaches the model on its next turn and never the screen,
+and `timeout` is not enforced. So the hook prints that JSON, bounds itself with its own 45 s
+doctor timeout, and reaches the human only through its existing desktop and voice alerts. The
+first failed check stamps `broken_since`; a desktop alert comes at 30 minutes, the spoken one at
+2 hours, and the first healthy check clears it. The thresholds come from the real log: across
+1,293 checks five session starts span a median 40 minutes (p75 92), so ALERT lands no later
+than it did on an ordinary day and a burst of panes can no longer bring it forward. A kernel
+`flock` on `~/.claude/logs/ccw-freshness.lock`, inherited by the doctor child, makes concurrent
+starts run one doctor and outlives a killed hook, so a doctor hung on the share cannot pile up
+copies; a lock held over 5 minutes is reported as an unanswered check. No pid is trusted, so a
+dead holder frees the lock. A corrupt or unwritable state file warns at once instead of
+restarting the clock; an old count-style state file carries its broken period over. The check
+of the three launchd jobs runs only in the lock holder. Only the SessionStart entry changed;
+SessionEnd capture stays in the foreground. It reaches this machine only after a push and a
+plugin update (docs/operations.md, "Picking up a change to the plugin's hooks").
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because
