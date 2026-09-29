@@ -124,6 +124,12 @@ VOICE_ID = "fTtv3eikoepIosk8dTZ5"
 # alarm.
 _UNCAPTURED = re.compile(r"Uncaptured:\s*(\d+)\s*session")
 
+# doctor's `config` line, f"root={config.root} archive_root={config.archive_root}"
+# (src/cc_warehouse/doctor.py). The one source for the warehouse root here
+# (ruling 2026-09-29: never re-read config.toml by hand, R9). Lazy up to the
+# fixed " archive_root=" that always follows, so a root with a space survives.
+_CONFIG_ROOT = re.compile(r"^\s*\S+\s+config\s+root=(.+?) archive_root=", re.M)
+
 # Tiers on how LONG capture has been continuously broken, not on the raw gap
 # figure (see module docstring) and no longer on a count of session starts.
 # Picked 2026-09-29 against the real log: across 1,293 checks, two session
@@ -164,6 +170,15 @@ _HUNG_AFTER_S = 5 * 60
 # speak twice about one run, so it waits for the next check. Deferred, never
 # dropped: the tier is not recorded as alerted until it actually alerts.
 _REPAIR_QUIET_S = 10 * 60
+
+# Unanswered checks never open an outage (above), but a doctor that NEVER
+# answers must not be silent forever either. Ruling 2026-09-29 (Gavin, option
+# ii): once unanswered checks have run unbroken this long, with no real
+# verdict between them and no gap over _CONTINUITY_S, raise ONE desktop-only
+# notice. Never voice, never a capture-broken outage; any real verdict resets
+# it. SessionEnd capture still reports its own failures loudly, which is why
+# desktop is enough here.
+_UNKNOWN_NOTICE_S = 2 * 60 * 60
 
 # How long to let `ccw doctor` think before giving up on it. Doctor has to
 # walk ~/.claude/projects to count uncaptured sessions, so its cost tracks the
@@ -236,7 +251,7 @@ _LAST_EXIT = re.compile(r"last exit code = (-?\d+)")
 # immediately, same as before this ticket -- there is no chronic, expected
 # case for it the way the doctor verdict has one, so waiting on a clock
 # would just delay a real one-shot problem.
-_DESKTOP_STATUSES = frozenset({"warn", "alert", "error"})
+_DESKTOP_STATUSES = frozenset({"warn", "alert", "error", "unknown-notice"})
 _SPEAKING_STATUSES = frozenset({"alert", "error"})
 
 
@@ -600,26 +615,25 @@ def job_message(label: str, code: int, broken_for_s: float) -> str:
     )[_tier(broken_for_s)]
 
 
-def _warehouse_root() -> Path:
-    """Where `ccw` keeps its logs: CCW_ROOT, else `root` in ccw's
-    config.toml, else the documented default. A hand port of the resolution
-    order in src/cc_warehouse/config.py (env beats file beats default); this
-    script must not import cc_warehouse (see the module docstring). The file
-    is read with tomllib, which exists from Python 3.11; on an older python3
-    the file is skipped and the default applies."""
+def extract_root(doctor_output: str) -> Path | None:
+    """The warehouse root from `ccw doctor`'s own `config` line, or None when
+    doctor printed none (it never answered, or crashed first)."""
+    match = _CONFIG_ROOT.search(doctor_output)
+    return Path(match.group(1)) if match else None
+
+
+def _warehouse_root(doctor_output: str | None) -> Path:
+    """Where `ccw` keeps its logs. Doctor's own answer first: it resolved the
+    root with ccw's real config code, so this script does not port that code
+    (ruling 2026-09-29; it used to read config.toml with tomllib, which
+    silently skipped the file on a python3 older than 3.11). Only when doctor
+    gave no answer: CCW_ROOT, then the documented default."""
+    found = extract_root(doctor_output) if doctor_output else None
+    if found is not None:
+        return found
     env = os.environ.get("CCW_ROOT")
     if env:
         return Path(env).expanduser()
-    config_home = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    try:
-        import tomllib  # type: ignore[import-not-found]
-
-        with open(Path(config_home) / "cc-warehouse" / "config.toml", "rb") as handle:
-            root = tomllib.load(handle).get("root")
-        if isinstance(root, str) and root:
-            return Path(root).expanduser()
-    except Exception:  # noqa: BLE001 - no file, old python, bad toml: default
-        pass
     return Path.home() / "cc-warehouse-data"
 
 
@@ -841,7 +855,6 @@ def _check(executable: str, started: datetime, lock_fd: int | None) -> int:
 
     if unreachable is not None:
         lines.append(unknown_message(unreachable))
-        updates["last_unknown_at"] = now.isoformat()
     elif result is not None and result.returncode == 0:
         updates.update(
             {"broken_since": None, "last_fail_at": None, "alerted_tier": 0,
@@ -876,8 +889,9 @@ def _check(executable: str, started: datetime, lock_fd: int | None) -> int:
         _raise(tier, message, notify)
         lines.append(message)
 
+    lines += _unknown_notice(prev, now, unreachable is not None, updates)
     lines += _job_lines(prev, now, updates)
-    lines += _refusal_lines(prev, now, updates)
+    lines += _refusal_lines(prev, now, updates, result.stdout if result is not None else None)
     updates["last_lines"] = lines
     _write_state(STATE_PATH, updates, drop=("consecutive_broken",))
     write_backlog_snapshot(STATE_PATH, uncaptured, now.isoformat())
@@ -916,12 +930,42 @@ def _job_lines(prev: dict[str, object], now: datetime, updates: dict[str, object
     return lines
 
 
-def _refusal_lines(prev: dict[str, object], now: datetime, updates: dict[str, object]) -> list[str]:
+def _unknown_notice(
+    prev: dict[str, object], now: datetime, unanswered: bool, updates: dict[str, object]
+) -> list[str]:
+    """The one desktop-only notice for a long run of unanswered checks (see
+    _UNKNOWN_NOTICE_S). A real verdict, or a gap over _CONTINUITY_S between
+    unanswered checks, restarts the run; the notice fires once per run."""
+    if not unanswered:
+        updates.update({"unknown_since": None, "last_unknown_at": None, "unknown_noticed": False})
+        return []
+    since = _parse_ts(prev.get("unknown_since"))
+    last = _parse_ts(prev.get("last_unknown_at"))
+    noticed = prev.get("unknown_noticed") is True
+    if since is None or last is None or (now - last).total_seconds() > _CONTINUITY_S:
+        since, noticed = now, False
+    updates.update({"unknown_since": since.isoformat(), "last_unknown_at": now.isoformat()})
+    lasted = (now - since).total_seconds()
+    if lasted < _UNKNOWN_NOTICE_S or noticed:
+        updates["unknown_noticed"] = noticed
+        return []
+    message = (
+        f"cc-warehouse: could not check capture for {_duration(lasted)}; `ccw doctor` "
+        f"has not answered once in that time. Run it by hand."
+    )
+    report("unknown-notice", message)
+    updates["unknown_noticed"] = True
+    return [message]
+
+
+def _refusal_lines(
+    prev: dict[str, object], now: datetime, updates: dict[str, object], doctor_output: str | None
+) -> list[str]:
     """Open refusals from `ccw repair`'s latest summary, on the same clock
     from `oldest_refusal_at`, with their own dedup. A summary with 0 clears;
     no summary says nothing; a reminder within _REPAIR_QUIET_S of repair's
     own run waits for the next check (repair alerted on that run itself)."""
-    summary = latest_repair_summary(_warehouse_root() / "logs" / "capture.jsonl")
+    summary = latest_repair_summary(_warehouse_root(doctor_output) / "logs" / "capture.jsonl")
     if summary is None:
         return []
     count = summary.get("open_refusals")

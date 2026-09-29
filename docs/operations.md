@@ -210,11 +210,13 @@ failing check is under an hour old, so a night or a weekend with no check betwee
 is two outages, and a spoken alert always rests on three or more failing checks. A check that
 got NO answer (timeout, hang, or killed: `claude -p` kills async hooks at teardown) is logged
 as `unknown`, tells the session "could not check capture", and neither opens nor extends an
-outage. A state file that exists but cannot be read, or cannot be written, warns at once
+outage; once unanswered checks have run unbroken for 2 hours (no real verdict between them, no
+gap over an hour) they raise ONE desktop-only notice, `unknown-notice`, never voice. A state file that exists but cannot be read, or cannot be written, warns at once
 rather than restarting the clock. Failing launchd jobs run the same clock from when the hook
 first saw them failing, with their own dedup per job. Archive folders `ccw repair` refuses to
 re-render run it from `oldest_refusal_at` in repair's latest `repair-summary` line in the
-warehouse's `logs/capture.jsonl` (a summary with 0 clears it; a reminder within 10 minutes of
+warehouse's `logs/capture.jsonl` (the warehouse root is taken from doctor's own `config` line;
+CCW_ROOT, then `~/cc-warehouse-data`, only when doctor gave no answer) (a summary with 0 clears it; a reminder within 10 minutes of
 repair's own run waits one check, because repair alerts on a new refusal itself).
 (Sent back and changed the same day; see the CHANGELOG.) `hooks.json` marks the entry
 `"async": true`, so a session start never waits on doctor; Claude Code then drops the hook's

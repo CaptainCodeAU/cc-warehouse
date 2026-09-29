@@ -40,7 +40,12 @@ launchctl cannot answer about keeps its period. Also new, by the interface agree
 repair side: archive folders `ccw repair` refuses to re-render are read from repair's latest
 `repair-summary` line and run the same clock from `oldest_refusal_at`; a reminder within 10
 minutes of repair's own run waits one check. The 30 minute and 2 hour thresholds are
-unchanged.
+unchanged. Two follow-up rulings the same day: unanswered checks that run unbroken for 2 hours
+raise ONE desktop-only notice (never voice, never an outage), so a doctor that never answers is
+not silent forever; and the hook takes the warehouse root from doctor's own `config` line
+(pinned against real doctor output in `tests/test_doctor_external_contract.py`) instead of
+re-reading config.toml, falling back to CCW_ROOT and then the default only when doctor gave no
+answer.
 
 **The SessionStart freshness check runs in the background, runs `ccw doctor` once for many
 panes, and escalates on how long capture has been broken (2026-09-29, W-20260929-A93;

@@ -274,16 +274,22 @@ def test_unanswered_checks_never_alarm_on_their_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Fix 1, the other half: a doctor that never answers for hours is
-    logged as unknown each time and tells the model, but raises nothing."""
+    logged as unknown each time and tells the model. It never speaks, and
+    its only desktop channel is the one 2-hour notice (ruling 2026-09-29,
+    tested below); it never raises a capture-broken alert."""
     freshness = _freshness()
     timeout = subprocess.TimeoutExpired(cmd=["/fake/bin/ccw", "doctor"], timeout=45)
+    desktops = 0
     for minutes in (0, 40, 80, 130, 300):
         run = _drive(
             freshness, tmp_path, monkeypatch, capsys, timeout, T0 + timedelta(minutes=minutes)
         )
-        assert run.desktop == [] and run.spoken == []
+        assert run.spoken == []
+        desktops += len(run.desktop)
+        assert all("WARNING" not in argv[-1] and "ALERT" not in argv[-1] for argv in run.desktop)
         context = json.loads(run.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "could not check capture" in context
+    assert desktops == 1
 
 
 def test_an_unanswered_check_does_not_extend_an_outage(
@@ -932,3 +938,172 @@ def test_a_reminder_right_after_repairs_own_alert_waits(
     assert soon.desktop == [] and soon.spoken == []
     later = _at(tmp_path, monkeypatch, capsys, 11)
     assert len(later.desktop) == 1 and len(later.spoken) == 1
+
+
+# ---------------------------------------------------------------------------
+# Rulings 2026-09-29 on the send-back report (Gavin via the conductor):
+# (a) option ii: unanswered checks that run unbroken for 2 h, with no real
+#     verdict between them, raise ONE desktop-only notice, deduplicated, never
+#     voice and never a capture-broken outage;
+# (c) the warehouse root comes from `ccw doctor`'s own `config` line, not from
+#     reading config.toml by hand; CCW_ROOT then the default only when doctor
+#     gave no answer.
+# ---------------------------------------------------------------------------
+
+_TIMEOUT = subprocess.TimeoutExpired(cmd=["/fake/bin/ccw", "doctor"], timeout=45)
+
+
+def _unknown_at(
+    freshness: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], minutes: float,
+) -> Run:
+    at = T0 + timedelta(minutes=minutes)
+    return _drive(freshness, tmp_path, monkeypatch, capsys, _TIMEOUT, at)
+
+
+def _broken_since_now(freshness: ModuleType, tmp_path: Path, at: datetime) -> datetime | None:
+    return freshness.carried_broken_since(freshness._read_state(tmp_path / "state.json"), at)
+
+
+def test_two_hours_of_unanswered_checks_raise_one_desktop_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freshness = _freshness()
+    runs = [_unknown_at(freshness, tmp_path, monkeypatch, capsys, m) for m in range(0, 241, 30)]
+    assert [len(r.desktop) for r in runs] == [0, 0, 0, 0, 1, 0, 0, 0, 0]
+    assert all(r.spoken == [] for r in runs)
+    assert "could not check capture for" in runs[4].desktop[0][-1]
+    # It never opens a capture-broken outage.
+    assert _broken_since_now(freshness, tmp_path, T0 + timedelta(minutes=240)) is None
+
+
+def test_a_real_verdict_between_unanswered_checks_restarts_that_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freshness = _freshness()
+    for m in (0, 45, 90):
+        _unknown_at(freshness, tmp_path, monkeypatch, capsys, m)
+    _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(0), T0 + timedelta(minutes=100))
+    runs = [_unknown_at(freshness, tmp_path, monkeypatch, capsys, m) for m in (110, 150, 200)]
+    assert all(r.desktop == [] for r in runs)
+
+
+def test_a_failing_verdict_also_restarts_the_unanswered_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freshness = _freshness()
+    for m in (0, 45, 90):
+        _unknown_at(freshness, tmp_path, monkeypatch, capsys, m)
+    _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(1), T0 + timedelta(minutes=100))
+    run = _unknown_at(freshness, tmp_path, monkeypatch, capsys, 130)
+    assert run.desktop == []
+
+
+def test_a_gap_between_unanswered_checks_restarts_that_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The 1 h continuity window applies here too: two unanswered checks
+    hours apart with nothing between are not two hours of evidence."""
+    freshness = _freshness()
+    _unknown_at(freshness, tmp_path, monkeypatch, capsys, 0)
+    _unknown_at(freshness, tmp_path, monkeypatch, capsys, 50)
+    run = _unknown_at(freshness, tmp_path, monkeypatch, capsys, 200)
+    assert run.desktop == []
+
+
+def test_the_unanswered_notice_comes_back_after_a_real_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freshness = _freshness()
+    first = [_unknown_at(freshness, tmp_path, monkeypatch, capsys, m) for m in range(0, 181, 30)]
+    assert sum(len(r.desktop) for r in first) == 1
+    _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(0), T0 + timedelta(minutes=190))
+    second = [_unknown_at(freshness, tmp_path, monkeypatch, capsys, m) for m in range(200, 381, 30)]
+    assert sum(len(r.desktop) for r in second) == 1
+
+
+# The `config` line as the installed `ccw doctor` printed it on the operator's
+# machine, 2026-09-29, with the home directory replaced by a placeholder (this
+# repo is public). Source of the format: doctor.py's
+# f"root={config.root} archive_root={config.archive_root}".
+_REAL_CONFIG_LINE = (
+    "  ok  config      root=/home/alice/cc-warehouse-data "
+    "archive_root=/Volumes/share/cc-warehouse-archive zone=Australia/Melbourne "
+    "keep_objects=False keep_projections=False"
+)
+
+
+def test_the_root_is_read_from_doctors_config_line() -> None:
+    report = (
+        f"  ok  hook        found\n{_REAL_CONFIG_LINE}\n"
+        "  ok  uncaptured  Uncaptured: 3 session(s)\n"
+    )
+    assert _freshness().extract_root(report) == Path("/home/alice/cc-warehouse-data")
+
+
+def test_a_root_with_a_space_survives() -> None:
+    line = _REAL_CONFIG_LINE.replace("/home/alice/cc-warehouse-data", "/home/alice/My Data")
+    assert _freshness().extract_root(line) == Path("/home/alice/My Data")
+
+
+def test_no_config_line_is_none() -> None:
+    assert _freshness().extract_root("  ok  uncaptured  Uncaptured: 3 session(s)\n") is None
+
+
+def test_repair_summary_is_read_from_the_root_doctor_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A custom root must win over the default: the summary under the
+    default says nothing is refused, the one under doctor's root says 4."""
+    freshness = _freshness()
+    _summary(tmp_path, T0 - timedelta(minutes=5), 0, None)  # the default root
+    custom = tmp_path / "custom root"
+    log = custom / "logs" / "capture.jsonl"
+    log.parent.mkdir(parents=True)
+    line = dict(_SUMMARY_FIXTURE)
+    line.update({"at": (T0 - timedelta(minutes=5)).isoformat(), "open_refusals": 4,
+                 "oldest_refusal_at": (T0 - timedelta(minutes=5)).isoformat()})
+    log.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    config_line = _REAL_CONFIG_LINE.replace("/home/alice/cc-warehouse-data", str(custom))
+    doctor = subprocess.CompletedProcess(
+        ["/fake/bin/ccw", "doctor"], 0, f"{config_line}\n  ok  x  Uncaptured: 1 session(s)\n", ""
+    )
+    run = _drive(freshness, tmp_path, monkeypatch, capsys, doctor, T0)
+    assert "4 archive folder(s)" in run.stdout
+
+
+def test_without_a_doctor_answer_ccw_root_is_the_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freshness = _freshness()
+    root = tmp_path / "env-root"
+    log = root / "logs" / "capture.jsonl"
+    log.parent.mkdir(parents=True)
+    line = dict(_SUMMARY_FIXTURE)
+    line.update({"at": (T0 - timedelta(minutes=5)).isoformat(), "open_refusals": 7,
+                 "oldest_refusal_at": (T0 - timedelta(minutes=5)).isoformat()})
+    log.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    monkeypatch.setenv("CCW_ROOT", str(root))
+    run = _drive(freshness, tmp_path, monkeypatch, capsys, _TIMEOUT, T0)
+    assert "7 archive folder(s)" in run.stdout
+
+
+def test_config_toml_is_no_longer_read_by_hand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ruling (c): one source for the root (R9). A config.toml naming another
+    root must not be consulted by the hook itself."""
+    freshness = _freshness()
+    other = tmp_path / "toml-root"
+    log = other / "logs" / "capture.jsonl"
+    log.parent.mkdir(parents=True)
+    line = dict(_SUMMARY_FIXTURE)
+    line.update({"open_refusals": 9})
+    log.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    cfg = tmp_path / "scratch-home" / ".config" / "cc-warehouse" / "config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(f'root = "{other}"\n', encoding="utf-8")
+    run = _drive(freshness, tmp_path, monkeypatch, capsys, _TIMEOUT, T0)
+    assert "9 archive folder(s)" not in run.stdout
+    source = (HOOKS_DIR / "ccw-freshness-check.py").read_text(encoding="utf-8")
+    assert "import tomllib" not in source
