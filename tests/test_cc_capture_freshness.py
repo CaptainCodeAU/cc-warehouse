@@ -46,6 +46,8 @@ def scratch_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     2026-09-29 left a lock file in the real `~/.claude/logs` because one
     helper had not yet been taught LOCK_PATH."""
     monkeypatch.setenv("HOME", str(tmp_path / "scratch-home"))
+    monkeypatch.delenv("CCW_ROOT", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
 
 def test_the_hook_never_points_at_the_real_home(tmp_path: Path) -> None:
@@ -167,37 +169,36 @@ def test_missing_exit_line_is_none() -> None:
     assert _freshness().extract_last_exit("\tstate = not running\n") is None
 
 
-def test_no_broken_jobs_is_a_silent_empty_message() -> None:
-    assert _freshness().job_health_message([]) is None
-
-
-def test_one_broken_job_is_named_with_its_exit_code() -> None:
-    message = _freshness().job_health_message(
-        [("com.captaincodeau.ccw-archive", 1)]
-    )
-    assert message is not None
+def test_a_broken_job_is_named_with_its_exit_code_and_duration() -> None:
+    message = _freshness().job_message("com.captaincodeau.ccw-archive", 1, _WARN)
     assert "ccw-archive" in message
-    assert "1" in message
+    assert "exit 1" in message
+    assert "31 min" in message
+    assert "WARNING" in message
 
 
-def test_multiple_broken_jobs_are_all_named() -> None:
-    message = _freshness().job_health_message(
-        [("com.captaincodeau.ccw-archive", 1), ("com.captaincodeau.ccw-sweep", 2)]
-    )
-    assert message is not None
-    assert "ccw-archive" in message
-    assert "ccw-sweep" in message
+def test_job_messages_escalate_on_the_same_tiers() -> None:
+    freshness = _freshness()
+    mild = freshness.job_message("com.captaincodeau.ccw-sweep", 2, _MILD)
+    alert = freshness.job_message("com.captaincodeau.ccw-sweep", 2, _ALERT)
+    assert "WARNING" not in mild and "ALERT" not in mild
+    assert "ALERT" in alert
 
 
 def _since(state_path: Path) -> datetime | None:
-    return _freshness().carried_broken_since(_freshness()._read_state(state_path))
+    freshness = _freshness()
+    at = datetime(2026, 9, 29, 2, 0, tzinfo=UTC)
+    return freshness.carried_broken_since(freshness._read_state(state_path), at)
 
 
 def test_broken_since_is_carried_and_cleared(tmp_path: Path) -> None:
     freshness = _freshness()
     state_path = tmp_path / "ccw-freshness-state.json"
     assert _since(state_path) is None
-    freshness._write_state(state_path, {"broken_since": "2026-09-29T01:45:19+00:00"})
+    freshness._write_state(
+        state_path,
+        {"broken_since": "2026-09-29T01:45:19+00:00", "last_fail_at": "2026-09-29T01:50:00+00:00"},
+    )
     assert _since(state_path) == datetime(2026, 9, 29, 1, 45, 19, tzinfo=UTC)
     freshness._write_state(
         state_path, {"broken_since": None, "last_verdict_at": "2026-09-29T02:00:00+00:00"}
@@ -222,8 +223,11 @@ def test_writing_the_clock_does_not_erase_other_state_fields(tmp_path: Path) -> 
     freshness = _freshness()
     state_path = tmp_path / "ccw-freshness-state.json"
     freshness.write_backlog_snapshot(state_path, 42, "2026-08-24T00:00:00+00:00")
-    freshness._write_state(state_path, {"broken_since": "2026-08-24T01:00:00+00:00"})
-    assert _since(state_path) == datetime(2026, 8, 24, 1, 0, tzinfo=UTC)
+    freshness._write_state(
+        state_path,
+        {"broken_since": "2026-09-29T01:00:00+00:00", "last_fail_at": "2026-09-29T01:30:00+00:00"},
+    )
+    assert _since(state_path) == datetime(2026, 9, 29, 1, 0, tzinfo=UTC)
     assert freshness.read_backlog_snapshot(state_path) == (42, "2026-08-24T00:00:00+00:00")
 
 
@@ -365,8 +369,7 @@ def test_an_unreachable_doctor_does_not_claim_capture_is_broken() -> None:
     """The wording must say the check could not get an answer, NOT that
     capture failed - on the real incident capture was working perfectly and
     had just archived a session in 24ms."""
-    message = _freshness().freshness_message(_MILD, None, unreachable="TimeoutExpired")
-    assert message is not None
+    message = _freshness().unknown_message("TimeoutExpired")
     assert "could not" in message.lower()
 
 
@@ -376,42 +379,24 @@ def test_unreachable_and_failed_verdict_read_differently() -> None:
     tell them apart afterwards."""
     freshness = _freshness()
     failed = freshness.freshness_message(_WARN, 5)
-    unreachable = freshness.freshness_message(_WARN, 5, unreachable="TimeoutExpired")
     assert failed is not None
-    assert unreachable is not None
-    assert failed != unreachable
+    assert failed != freshness.unknown_message("TimeoutExpired")
 
 
-def test_an_unreachable_doctor_still_escalates_on_the_clock() -> None:
-    """The half of the defect that was NOT about noise: because the timeout
-    branch never touched the counter, a doctor that timed out every single
-    session-start would have shouted the same flat line forever and never
-    reached ALERT. It now runs the same broken clock."""
-    freshness = _freshness()
-    mild = freshness.freshness_message(_MILD, None, unreachable="TimeoutExpired")
-    warn = freshness.freshness_message(_WARN, None, unreachable="TimeoutExpired")
-    alert = freshness.freshness_message(_ALERT, None, unreachable="TimeoutExpired")
-    assert mild and warn and alert
-    assert "WARNING" not in mild
-    assert "ALERT" not in mild
-    assert "WARNING" in warn
-    assert "ALERT" not in warn
-    assert "ALERT" in alert
-
-
-def test_a_healthy_doctor_stays_silent_even_with_an_unreachable_argument() -> None:
-    """No broken period is silent on every axis this function has - the
-    property the whole signal rests on (it clears when fixed, not when
-    seen)."""
-    assert _freshness().freshness_message(None, 298, unreachable="TimeoutExpired") is None
+def test_an_unreachable_doctor_never_escalates() -> None:
+    """Sent back 2026-09-29 (ruling: Gavin): only a real broken verdict runs
+    the outage clock. An unanswered check is unknown, so its line carries no
+    tier at all. This reverses the 2026-09-07 "unreachable shares the
+    streak" rule, whose cost the review proved: a killed headless check
+    backdated the next blip into a spoken ALERT."""
+    message = _freshness().unknown_message("TimeoutExpired")
+    assert "WARNING" not in message and "ALERT" not in message
 
 
 def test_the_named_cause_rides_along_in_the_message() -> None:
     """Whoever reads the banner needs to know WHY there was no answer -
     a timeout and a missing binary are not the same problem."""
-    message = _freshness().freshness_message(_MILD, None, unreachable="TimeoutExpired")
-    assert message is not None
-    assert "TimeoutExpired" in message
+    assert "TimeoutExpired" in _freshness().unknown_message("TimeoutExpired")
 
 
 # ---------------------------------------------------------------------------
@@ -509,24 +494,31 @@ def test_a_single_timeout_raises_no_desktop_notification_either(
 
 def _seed_broken(tmp_path: Path, seconds_ago: float) -> None:
     """A state file saying capture has been broken for `seconds_ago`."""
-    since = datetime.now(UTC) - timedelta(seconds=seconds_ago)
-    _freshness()._write_state(tmp_path / "state.json", {"broken_since": since.isoformat()})
+    now = datetime.now(UTC)
+    since = now - timedelta(seconds=seconds_ago)
+    _freshness()._write_state(
+        tmp_path / "state.json",
+        {
+            "broken_since": since.isoformat(),
+            "last_fail_at": (now - timedelta(seconds=60)).isoformat(),
+        },
+    )
 
 
 def _broken_since(tmp_path: Path) -> datetime | None:
     freshness = _freshness()
-    return freshness.carried_broken_since(freshness._read_state(tmp_path / "state.json"))
+    return freshness.carried_broken_since(
+        freshness._read_state(tmp_path / "state.json"), datetime.now(UTC)
+    )
 
 
-def test_a_timeout_starts_the_broken_clock(
+def test_a_timeout_does_not_start_the_broken_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The half of the defect that was not about noise: the old branch never
-    wrote the counter, so a permanently unreachable doctor could never reach
-    WARNING, let alone ALERT."""
+    """Sent back 2026-09-29: an unanswered check is unknown, not broken."""
     freshness = _freshness()
     _drive_main(freshness, tmp_path, monkeypatch, _timed_out())
-    assert _broken_since(tmp_path) is not None
+    assert _broken_since(tmp_path) is None
 
 
 def test_a_timeout_still_checks_the_scheduled_jobs(

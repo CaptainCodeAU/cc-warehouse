@@ -200,22 +200,32 @@ its trigger is `ccw doctor`'s EXIT CODE specifically (not the raw `Uncaptured: N
 which sits at 200-350 permanently on this machine by design and is explicitly
 non-blocking). **Since 2026-09-29 (W-20260929-A93, rulings: Gavin) it escalates on how LONG
 capture has been continuously broken, not on a count of session starts, and it runs in the
-background.** The first failed check stamps `broken_since` in
+background.** The first failing doctor verdict stamps `broken_since` in
 `~/.claude/logs/ccw-freshness-state.json`; the first healthy check clears it. Broken under 30
 minutes: logged as `info` and handed to the session only. 30 minutes: a desktop
-notification (`warn`). 2 hours: desktop plus the spoken alert (`alert`). A doctor that could
-not be asked (timeout, crash) runs the same clock with "could not check capture" wording. The
-clock is wall time and includes sleep. A state file that exists but cannot be read, or cannot
-be written, warns at once rather than restarting the clock. `hooks.json` marks the entry
+notification (`warn`). 2 hours: desktop plus the spoken alert (`alert`). Each tier raises its
+channel ONCE per outage (later checks log at the same status and tell the session only).
+An outage is only as long as its evidence: a failing check continues it only if the previous
+failing check is under an hour old, so a night or a weekend with no check between two blips
+is two outages, and a spoken alert always rests on three or more failing checks. A check that
+got NO answer (timeout, hang, or killed: `claude -p` kills async hooks at teardown) is logged
+as `unknown`, tells the session "could not check capture", and neither opens nor extends an
+outage. A state file that exists but cannot be read, or cannot be written, warns at once
+rather than restarting the clock. Failing launchd jobs run the same clock from when the hook
+first saw them failing, with their own dedup per job. Archive folders `ccw repair` refuses to
+re-render run it from `oldest_refusal_at` in repair's latest `repair-summary` line in the
+warehouse's `logs/capture.jsonl` (a summary with 0 clears it; a reminder within 10 minutes of
+repair's own run waits one check, because repair alerts on a new refusal itself).
+(Sent back and changed the same day; see the CHANGELOG.) `hooks.json` marks the entry
 `"async": true`, so a session start never waits on doctor; Claude Code then drops the hook's
 plain stdout and delivers its JSON `additionalContext` to the MODEL on the next turn, never to
 the screen, and enforces no timeout (code.claude.com/docs/en/hooks, checked against the
 installed 2.1.284 binary). So the desktop and voice channels are the only ones that reach a
 human, and the script bounds itself (`_DOCTOR_TIMEOUT`, 45 s). A kernel `flock` on
 `~/.claude/logs/ccw-freshness.lock`, which the doctor child inherits, means panes starting
-together run ONE doctor; the others log `reused` and hand on the last verdict. A lock held more
-than 5 minutes is a hung check and is reported as an unanswered one, timed from when it
-began. The scheduled-job check runs only in the lock holder. Pinned by
+together run ONE doctor; the others log `reused` and hand on the last lines. A lock held more
+than 5 minutes is a hung check: those panes log `unknown` and never alert. Only the lock holder
+raises anything, and only it checks the jobs and the refusals. Pinned by
 `tests/test_cc_capture_freshness_timing.py`. It logs
 every check (both pass and warn) as a durable JSON line in `~/.claude/logs/ccw-hook.log`
 (`source: "ccw-freshness-check"`) - unlike `ccw-watch`, this one keeps real history, since

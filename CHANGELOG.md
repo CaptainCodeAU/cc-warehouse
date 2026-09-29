@@ -22,6 +22,26 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**The background freshness check was sent back and fixed the same day (2026-09-29,
+W-20260929-A93; ruling: Gavin, "send back, keep the background hook").** A review proved four
+defects in a sandbox, and each now has a test that fails on 9383200. (1) A check that never
+answered started the outage clock: `claude -p` kills async hooks at teardown (177 of 420
+recent sessions were headless), and a killed check 2.5 h old turned the next single blip into
+a spoken ALERT. Now only a real broken verdict from doctor opens or extends an outage; an
+unanswered check logs `unknown` and tells the session, and counts for nothing. (2) A gap
+counted as broken: a Friday blip and a Monday blip read as one 64 h outage. Now a failing
+check continues an outage only if the previous failing check is under an hour old (about the
+p90 gap between session starts), so a spoken alert always rests on three or more failing
+checks. (3) A hung check made every pane alert (three panes, three desktop and three spoken
+alerts). Now each tier alerts once per outage, recorded in the state file, and only the lock
+holder raises anything. (4) A failing launchd job spoke at every session start. Now each job
+runs the same clock from when the hook first saw it failing, with its own dedup; a job
+launchctl cannot answer about keeps its period. Also new, by the interface agreed with the
+repair side: archive folders `ccw repair` refuses to re-render are read from repair's latest
+`repair-summary` line and run the same clock from `oldest_refusal_at`; a reminder within 10
+minutes of repair's own run waits one check. The 30 minute and 2 hour thresholds are
+unchanged.
+
 **The SessionStart freshness check runs in the background, runs `ccw doctor` once for many
 panes, and escalates on how long capture has been broken (2026-09-29, W-20260929-A93;
 rulings: Gavin).** It used to block every session start for as long as doctor took (8 to 24 s
