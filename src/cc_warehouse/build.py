@@ -484,6 +484,7 @@ def _mirror(
             data,
             options,
             config.archive_timezone,
+            warehouse_root=config.root,
             fallback_stem=f"session-{short}",
             rebuild=rebuild,
         )

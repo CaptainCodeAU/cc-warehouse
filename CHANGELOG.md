@@ -22,6 +22,26 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**The archive ends on a session's newest payload whatever order captures land in
+(2026-09-29, W-20260929-A104; ruling: Gavin, option C).** The capture lock is per payload
+HASH, so two captures of one session with different payloads ran at once, and the older one
+could decide "no file yet" and write after the newer one finished; the sweep's pre-filter then
+skipped the newer source forever and, with the vault retired, the build could not read it.
+Reproduced deterministically (the older write paused while the newer capture runs in a second
+thread). PREVENT: new `archive.session_lock` holds `locks/archive-<session_uuid>` in the
+WAREHOUSE root (local disk) around the replace-if-larger decision and write in both JSONL
+writers, `write_source` and `write_session_folder`, which gain a `warehouse_root` keyword;
+every caller in `src/` passes it (fenced by a test), and a writer called without one, as the
+folder-writer tests do, takes no lock. The lock is the flock from `store.acquire_lock`,
+taken only inside the two writers because a flock is not re-entrant; a holder that does not
+finish within 30 s makes the waiting writer raise, and its caller's own error path reports
+it. REPAIR: for sessions whose catalog holds two or more versions (185 of 31,161 on
+2026-09-29), the sweep compares the head's archive JSONL with the source that hashes to the
+head and, when the archive copy is SHORTER, re-applies `write_source` (larger wins, same
+lock); the new `repaired-archive-jsonl` outcome joins the actions that trigger the
+post-sweep build. A missing JSONL or folder is left alone: whether a deleted folder
+self-heals is ticket 45's open ruling.
+
 **`ccw doctor` reports a SessionEnd hook that started and never finished (2026-09-29,
 W-20260929-A105; ruling: Gavin, "fix all five").** A hook killed mid-capture leaves a
 `started` line in `ccw-hook.log` with nothing after it, a half-written `.tmp` in the archive

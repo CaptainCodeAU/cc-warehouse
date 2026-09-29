@@ -24,8 +24,11 @@ permanently.
 """
 
 import json
+import re
 import sqlite3
-from collections.abc import Callable, Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -929,12 +932,63 @@ def read_payload(
     return store.get(config.root, sha256)
 
 
+# How long a writer waits for another writer of the SAME session to finish its
+# JSONL decision and write (W-20260929-A104). The held section is one compare
+# and at most one file write, seconds on the share for the largest sessions.
+_SESSION_LOCK_WAIT_S = 30.0
+_SESSION_LOCK_POLL_S = 0.05
+_PLAIN_STEM = re.compile(r"[A-Za-z0-9-]+")
+
+
+@contextmanager
+def session_lock(warehouse_root: Path | None, stem: str) -> Generator[None]:
+    """Hold `locks/archive-<stem>` in the WAREHOUSE root (local disk, never the
+    share) around one session's JSONL replace-if-larger decision and write
+    (W-20260929-A104; ruling: Gavin, option C).
+
+    The capture lock is per payload HASH, so two captures of one session with
+    different payloads ran at once, and both could decide "no file / mine is
+    larger" before either wrote: the older payload could land last. With every
+    JSONL writer (`write_source`, `write_session_folder`) deciding under this
+    one per-session lock, the larger payload always wins whatever order they
+    arrive in (tests/test_capture_session_race.py::
+    test_two_captures_of_one_session_end_on_the_newer_payload).
+
+    `store.acquire_lock` is a flock, which is per descriptor and so NOT
+    re-entrant: it is taken here, inside the two writers, and nowhere around
+    them. `warehouse_root` None (a caller with no warehouse, such as a test of the
+    folder writer alone) takes no lock; every caller in `src/` passes it, which
+    tests/test_capture_session_race.py::test_every_product_caller_passes_the_warehouse_root
+    fences. A payload uuid that is not a plain token
+    is locked by its hash. Waits up to `_SESSION_LOCK_WAIT_S`, then raises
+    TimeoutError, the conservative branch (R5): the caller's own error path
+    reports it and nothing is written.
+    """
+    if warehouse_root is None:
+        yield
+        return
+    token = stem if _PLAIN_STEM.fullmatch(stem) else store.sha256_hex(stem.encode())[:32]
+    name = f"archive-{token}"
+    deadline = time.monotonic() + _SESSION_LOCK_WAIT_S
+    while not store.acquire_lock(warehouse_root, name):
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"archive session lock {name} still held after {_SESSION_LOCK_WAIT_S:.0f} s"
+            )
+        time.sleep(_SESSION_LOCK_POLL_S)
+    try:
+        yield
+    finally:
+        store.release_lock(warehouse_root, name)
+
+
 def write_source(
     archive_root: Path,
     label: str,
     data: bytes,
     timezone: str,
     *,
+    warehouse_root: Path | None = None,
     fallback_stem: str = "session",
 ) -> Path:
     """Write ONLY the session's JSONL into its archive folder, and nothing else.
@@ -956,10 +1010,18 @@ def write_source(
         fallback_stem=fallback_stem,
     )
     directory.mkdir(parents=True, exist_ok=True)
-    jsonl = directory / f"{meta.session_uuid or fallback_stem}{_JSONL_SUFFIX}"
+    stem = meta.session_uuid or fallback_stem
+    jsonl = directory / f"{stem}{_JSONL_SUFFIX}"
+    with session_lock(warehouse_root, stem):
+        _replace_if_larger(jsonl, data)
+    return jsonl
+
+
+def _replace_if_larger(jsonl: Path, data: bytes) -> None:
+    """`write_source`'s JSONL rule, run under `session_lock`."""
     if not jsonl.exists():
         store.atomic_write(jsonl, data)
-        return jsonl
+        return
     # The LARGER-wins half of write_session_folder's rule: size answers "which
     # of two payloads known to differ is larger", never "are these the same
     # bytes" (R1 as amended 2026-08-02). An equal-or-smaller offer is left
@@ -974,7 +1036,6 @@ def write_source(
     # one's).
     if len(data) > jsonl.stat().st_size:
         store.atomic_write(jsonl, data)
-    return jsonl
 
 
 def write_not_a_session(archive_root: Path, data: bytes, *, stem: str) -> Path:
@@ -1325,6 +1386,7 @@ def write_session_folder(
     options: render.RenderOptions,
     timezone: str,
     *,
+    warehouse_root: Path | None = None,
     fallback_stem: str = "session",
     rebuild: bool = False,
 ) -> FolderResult:
@@ -1390,27 +1452,29 @@ def write_session_folder(
     replaced = False
     refused_smaller = False
     refused_equal_size = False
-    if jsonl.exists():
-        existing_bytes = jsonl.read_bytes()
-        if len(data) > len(existing_bytes):
+    # The decision and the write happen under the per-session lock (A104).
+    with session_lock(warehouse_root, stem):
+        if jsonl.exists():
+            existing_bytes = jsonl.read_bytes()
+            if len(data) > len(existing_bytes):
+                store.atomic_write(jsonl, data)
+                replaced = True
+            elif len(data) < len(existing_bytes):
+                # The conservative branch (R5/F7): keep what is there, and say so.
+                refused_smaller = True
+            elif data != existing_bytes:
+                # F1: equal SIZE must never stand in for equal CONTENT - only the
+                # smaller/larger ordering is licensed to read size as an answer at
+                # all. A genuine content difference at equal size gets the same
+                # conservative branch as "smaller" (R5): the offered bytes cannot
+                # be shown to be an improvement, so they are declined, not guessed
+                # at (ticket 30's flagged equal-size case, mechanism 2's twin).
+                refused_equal_size = True
+            # else: identical size AND identical bytes -- the true idempotent
+            # no-op. Rewriting them would churn a mtime a backup tool reads, for
+            # nothing.
+        else:
             store.atomic_write(jsonl, data)
-            replaced = True
-        elif len(data) < len(existing_bytes):
-            # The conservative branch (R5/F7): keep what is there, and say so.
-            refused_smaller = True
-        elif data != existing_bytes:
-            # F1: equal SIZE must never stand in for equal CONTENT - only the
-            # smaller/larger ordering is licensed to read size as an answer at
-            # all. A genuine content difference at equal size gets the same
-            # conservative branch as "smaller" (R5): the offered bytes cannot
-            # be shown to be an improvement, so they are declined, not guessed
-            # at (ticket 30's flagged equal-size case, mechanism 2's twin).
-            refused_equal_size = True
-        # else: identical size AND identical bytes -- the true idempotent
-        # no-op. Rewriting them would churn a mtime a backup tool reads, for
-        # nothing.
-    else:
-        store.atomic_write(jsonl, data)
     refused = refused_smaller or refused_equal_size
 
     # On a refusal the folder renders from the payload ON DISK, not from the one
@@ -1860,7 +1924,14 @@ def _migrate_locked(
             continue
         try:
             result = write_session_folder(
-                archive_root, label, data, options, timezone, fallback_stem=stem, rebuild=rebuild
+                archive_root,
+                label,
+                data,
+                options,
+                timezone,
+                warehouse_root=warehouse_root,
+                fallback_stem=stem,
+                rebuild=rebuild,
             )
         except ManifestUnreadable as exc:
             record_hold(warehouse_root, exc.directory, str(exc))

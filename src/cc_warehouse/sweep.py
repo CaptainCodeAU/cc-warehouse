@@ -112,6 +112,70 @@ def _cataloged_hashes(root: Path) -> frozenset[str]:
     return frozenset(cast(str, row[0]) for row in rows)
 
 
+def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None]]:
+    """head hash -> (session_uuid, label, first_ts) for every session whose catalog
+    holds TWO OR MORE versions (W-20260929-A104; ruling: Gavin, option C).
+
+    Only those can have lost a same-session capture race, so only those are worth
+    one stat on the share per sweep (185 of 31,161 sessions on 2026-09-29).
+    Ranked by the one head rule (`build._HEAD_RANK_CTE`, R9).
+    """
+    from cc_warehouse import build
+
+    conn = catalog.open_catalog(root)
+    try:
+        rows = cast(
+            list[tuple[str, str, str, str | None]],
+            conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT hash, session_uuid, label, first_ts FROM ranked WHERE rn = 1"
+                " AND session_uuid IN (SELECT session_uuid FROM session"
+                " WHERE session_uuid IS NOT NULL GROUP BY session_uuid HAVING COUNT(*) >= 2)"
+            ).fetchall(),
+        )
+    finally:
+        conn.close()
+    return {row[0]: (row[1], row[2], row[3]) for row in rows}
+
+
+def _repair_head_jsonl(
+    config: Config, path: Path, head: tuple[str, str, str | None]
+) -> ItemOutcome | None:
+    """Put a multi-version session's head payload back when its archive JSONL is
+    SHORTER than the source that hashes to that head (W-20260929-A104).
+
+    A capture race could leave the older payload in the archive; the pre-filter
+    then skips the source forever because its hash is cataloged, and with the
+    vault retired nothing else can put the head back. This re-applies
+    `archive.write_source`, which decides replace-if-larger under the same
+    per-session lock every writer takes. Size answers "which of two payloads
+    known to differ is larger" (R1 as amended), never sameness. A MISSING JSONL
+    or folder is left alone: whether a deleted folder should self-heal from its
+    source is an open ruling (ticket 45), not this repair's to decide.
+    """
+    from cc_warehouse import archive, build
+
+    if config.archive_root is None:
+        return None
+    session_uuid, label, first_ts = head
+    jsonl = (
+        build.archive_dir(
+            config.archive_root, label, first_ts, session_uuid, config.archive_timezone
+        )
+        / f"{session_uuid}.jsonl"
+    )
+    try:
+        data = path.read_bytes()
+        if not jsonl.is_file() or jsonl.stat().st_size >= len(data):
+            return None
+        archive.write_source(
+            config.archive_root, label, data, config.archive_timezone, warehouse_root=config.root
+        )
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return ItemOutcome(path.name, "error", f"repair: {type(exc).__name__}: {exc}")
+    return ItemOutcome(path.name, REPAIRED_JSONL, str(jsonl))
+
+
 def _orphan_object_paths(root: Path, cataloged: frozenset[str]) -> list[Path]:
     """Store objects whose content hash is not yet cataloged (DESIGN section 13).
 
@@ -290,12 +354,17 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
 # cycle, the same-run manifest-staleness window this set exists to close
 # - and nothing currently fences that omission, so a new action name added
 # below this comment without also being added to the set is easy to miss.
+# The outcome of `_repair_head_jsonl` (W-20260929-A104). Public: listed below.
+REPAIRED_JSONL = "repaired-archive-jsonl"
+
 SIDECAR_ARCHIVED_ACTIONS = frozenset({
     "archived-sidecars",
     "archived-stranded-sidecars",
     "archived-stranded-file-history",
     "archived-prompts",
     "archived-pastes",
+    # W-20260929-A104: a head's JSONL put back; its folder may need re-rendering.
+    REPAIRED_JSONL,
 })
 
 
@@ -1111,6 +1180,7 @@ def sweep(
             walk_root, skip_agents=not config.archive_subagents, limit=limit
         )
         already_known = _cataloged_hashes(config.root)
+        repair_heads = _multi_version_heads(config.root) if config.archive_root else {}
         # TWO PASSES, and the order is load-bearing. A sub-agent nests inside
         # its parent's folder, so the parent has to exist first; a single pass in
         # filename order files most sub-agents as orphans purely because they
@@ -1126,6 +1196,10 @@ def sweep(
                 outcomes.append(ItemOutcome(path.name, "skipped_unchanged", ""))
                 skipped += 1
                 skip_elapsed_ms += _elapsed_ms(start)
+                if digest in repair_heads:
+                    repaired = _repair_head_jsonl(config, path, repair_heads[digest])
+                    if repaired is not None:
+                        outcomes.append(repaired)
                 continue
             if _is_subagent_file(path):
                 deferred.append(path)

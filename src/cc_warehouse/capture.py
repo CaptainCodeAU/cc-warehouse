@@ -342,7 +342,9 @@ def _archive_source(
             "SELECT label FROM project WHERE id = ?", (project_id,)
         ).fetchone()
         label = str(row[0]) if row else "_unlabeled"
-        archive.write_source(config.archive_root, label, data, config.archive_timezone)
+        archive.write_source(
+            config.archive_root, label, data, config.archive_timezone, warehouse_root=config.root
+        )
     except Exception:
         if not config.keep_objects:
             raise

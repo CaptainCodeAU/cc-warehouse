@@ -1324,6 +1324,7 @@ def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> N
         data,
         build.render_options(config),
         config.archive_timezone,
+        warehouse_root=config.root,
         fallback_stem=f"session-{short}",
     )
 
