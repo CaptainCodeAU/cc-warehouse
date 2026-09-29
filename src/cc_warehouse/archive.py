@@ -1801,8 +1801,8 @@ def verify_folder(
     test_doctor_desync_opens_only_manifests_and_hashes_nothing_when_healthy).
     Measured 2026-09-29 on the network share: the full check over doctor's 25
     folders read 118 MB in 557 opens and took 17 to 44 s against a 45 s hook
-    budget. What the quick check cannot see, a same-size rewrite, the daily
-    repair and the weekly verify still do.
+    budget. What the quick check cannot see, a same-size rewrite, the full
+    check still detects (daily repair, weekly verify).
     """
     problems: list[FolderProblem] = []
     jsonl = _sole_jsonl(directory)

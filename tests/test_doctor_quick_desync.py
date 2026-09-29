@@ -129,8 +129,11 @@ def rich_folder(env: dict[str, str], tmp_path: Path) -> tuple[Config, Path]:
 
 
 def targets(folder: Path) -> dict[str, Path]:
+    # The product's own locator: a bare `*.jsonl` glob also matches prompts.jsonl.
+    payload = archive.sole_jsonl(folder)
+    assert payload is not None and payload.name != archive.PROMPTS_FILE, payload
     return {
-        "payload": next(folder.glob("*.jsonl")),
+        "payload": payload,
         "sub-agent": next((folder / "subagents").glob("*/*.jsonl")),
         "tool-result": folder / "tool-results" / TOOL_RESULT,
         "prompts": folder / archive.PROMPTS_FILE,
@@ -141,11 +144,17 @@ def targets(folder: Path) -> dict[str, Path]:
 KINDS = ("payload", "sub-agent", "tool-result", "prompts", "custom-title")
 
 
+# One word of CONTENT in each kind of file. Flipping a byte in a JSON key instead
+# (say "user" -> "usEr") can make the payload parse as hidden, and the full check
+# then skips it; that would be a test of the hidden rule, not of the hash.
+CONTENT_WORDS = (b"flux", b"reviewer", b"line", b"hello", b"quick")
+
+
 def flip_one_byte(path: Path) -> None:
     """A same-size change: the length is untouched, the content is not."""
     data = bytearray(path.read_bytes())
-    index = data.index(b"e")
-    data[index] = ord("E")
+    index = next(data.find(word) for word in CONTENT_WORDS if data.find(word) >= 0)
+    data[index] = ord(chr(data[index]).upper())
     path.write_bytes(bytes(data))
 
 
@@ -393,7 +402,8 @@ def test_a_payload_the_catalog_has_no_size_for_is_hashed_not_skipped(tmp_path: P
     folder = archive.write_session_folder(
         tmp_path, "widget", basic_session(session_id=UUID_A), RenderOptions(), ZONE
     ).directory
-    payload = next(folder.glob("*.jsonl"))
+    payload = archive.sole_jsonl(folder)
+    assert payload is not None
     meta = parser.parse_session(payload.read_bytes())
     known = archive.KnownPayload(meta.session_uuid, meta.first_ts, meta.hidden, {})
     assert archive.verify_folder(folder, ZONE, known=known) == []

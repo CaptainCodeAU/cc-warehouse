@@ -583,9 +583,11 @@ def desync_detail(
     THE FULL CHECK, DELIBERATELY (W-20260929-A74): every recorded file is read
     and sha256-hashed. Doctor's own summary runs the quick check over the same
     sample, so this (the daily `ccw repair`) and the weekly `ccw archive
-    --verify` are where a same-size rewrite is caught
+    --verify` are where a same-size rewrite is detected
     (tests/test_doctor_quick_desync.py::
-    test_a_same_size_change_passes_doctor_but_the_full_check_catches_it)."""
+    test_a_same_size_change_passes_doctor_but_the_full_check_catches_it).
+    What repair then does with it (re-renders, which records the changed bytes)
+    is an open problem; docs/operations.md, "What doctor's `desync` line checks"."""
     recent, broken = _desync_scan(config, quick=False)
     return [item.folder for item in recent], broken
 

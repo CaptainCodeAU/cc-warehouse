@@ -43,7 +43,10 @@ companion file listings are each shared by the record writer and the verifier. T
 fence (`tests/test_fences.py::test_no_size_or_mtime_EQUALITY_anywhere`) gains a one-entry,
 function-named exemption for `archive._size_matches`, which screens and never decides
 identity; any other size or mtime equality still fails it. Accepted trade-off: a same-size
-rewrite passes doctor and is caught by the next daily repair. Measured on the real machine:
+rewrite passes doctor and is detected by the next daily repair. OPEN, pre-existing and now
+load-bearing: repair then re-renders the folder, which records the changed bytes' hashes in
+the manifest, logs "fixed" and exits 0, so the change stops being visible to every check
+(docs/operations.md). Measured on the real machine:
 `ccw doctor` 7.1 to 9.7 s over five runs against 14.0 to 44.9 s for the installed 0.1.4,
 interleaved. Tests: `tests/test_doctor_quick_desync.py`.
 
