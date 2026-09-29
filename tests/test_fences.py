@@ -26,7 +26,8 @@ LOCK_DELETE_SANCTIONED: dict[str, set[str]] = {
 }
 
 # The ONE function allowed to compare a file's size for equality (W-20260929-A74;
-# ruling: Gavin, 2026-09-29, option 1). It is `ccw doctor`'s quick integrity
+# ruling: Gavin, 2026-09-29, option 1; fence exemption approved as option A, same
+# day, recorded in DESIGN 15). It is `ccw doctor`'s quick integrity
 # screen, and it never decides identity: a size DIFFERENCE is reported as a
 # mismatch (sound, different lengths are different bytes), an equal size only
 # means "not checked further here", and the full sha256 check in `ccw repair`

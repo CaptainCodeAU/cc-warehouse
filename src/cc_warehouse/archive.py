@@ -664,6 +664,91 @@ def _companion_files(session_dir: Path, name: str) -> list[tuple[str, Path]]:
     return out
 
 
+def _grew(size: int, recorded: object) -> bool:
+    """A sub-agent file is LONGER than the size its manifest recorded. R1 as
+    amended: size answers "which of two payloads known to differ is larger",
+    and replace-if-larger is exactly the rule `write_subagent` itself applies,
+    so a larger sub-agent is one ccw could have written and a same-size or
+    smaller one is not (W-20260929-A76, A82)."""
+    if not isinstance(recorded, int) or isinstance(recorded, bool):
+        return False
+    return size > recorded
+
+
+def _changed(previous: dict[str, object], live: dict[str, object]) -> bool:
+    """The file's bytes differ from what the previous record hashed. A record
+    with no hash cannot be compared and counts as unchanged (take the live one)."""
+    return bool(previous.get("sha256")) and previous.get("sha256") != live["sha256"]
+
+
+def _old_records(recorded: object, key: str) -> dict[str, dict[str, object]] | None:
+    """A manifest's previous records for one list key, by `key` field, or None
+    when there is no list (a manifest that predates the feature)."""
+    if not isinstance(recorded, list):
+        return None
+    out: dict[str, dict[str, object]] = {}
+    for raw in cast(list[object], recorded):
+        if isinstance(raw, dict):
+            rec = cast(dict[str, object], raw)
+            out[str(rec.get(key, ""))] = rec
+    return out
+
+
+def kept_subagent_records(session_dir: Path, recorded: object) -> list[dict[str, object]]:
+    """The sub-agent records a manifest should carry, given what it carried
+    before (W-20260929-A82, A88; ruling: Gavin, 2026-09-29, F3).
+
+    ONE RULE, read by the manifest writer AND by `folder_is_current`, so every
+    writer (`ccw build`, a storing sweep, `ccw archive --to`, `ccw repair`)
+    inherits it. A sub-agent whose bytes changed WITHOUT growing, or that
+    vanished, keeps its OLD record: ccw only ever replaces a sub-agent with a
+    larger one and never deletes one, so anything else is a change ccw did not
+    make, and re-recording it would erase the only evidence. A grown sub-agent
+    is adopted (a live resume). New sub-agents are added.
+    (tests/test_writers_keep_evidence.py)"""
+    live = subagent_records(session_dir)
+    old = _old_records(recorded, "agent_id")
+    if old is None:
+        return live
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for rec in live:
+        agent_id = str(rec["agent_id"])
+        seen.add(agent_id)
+        prev = old.get(agent_id)
+        if prev is not None and _changed(prev, rec) and not _grew(
+            cast(int, rec["bytes"]), prev.get("bytes")
+        ):
+            out.append(prev)
+        else:
+            out.append(rec)
+    out.extend(rec for agent_id, rec in old.items() if agent_id not in seen)
+    return out
+
+
+def kept_companion_records(
+    session_dir: Path, name: str, recorded: object
+) -> list[dict[str, object]]:
+    """The companion records a manifest should carry for one companion
+    directory, given what it carried before. Same rule and reason as
+    `kept_subagent_records`, stricter: every companion file is written with
+    `store.write_if_absent`, so ccw NEVER rewrites or deletes one, and a changed
+    or vanished file always keeps its OLD record. New files are added."""
+    live = companion_records(session_dir, name)
+    old = _old_records(recorded, "name")
+    if old is None:
+        return live
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for rec in live:
+        relative = str(rec["name"])
+        seen.add(relative)
+        prev = old.get(relative)
+        out.append(prev if prev is not None and _changed(prev, rec) else rec)
+    out.extend(rec for relative, rec in old.items() if relative not in seen)
+    return sorted(out, key=lambda record: str(record["name"]))
+
+
 def write_sidecar_notice(
     session_dir: Path, scan: sidecars.SidecarScan, refused: Sequence[str]
 ) -> bool:
@@ -1184,7 +1269,7 @@ def folder_is_current(
     # neither key, so this reads None against [] and returns False, which is the
     # right answer - they DO need the one rebuild that populates them.
     for name, key in COMPANION_MANIFEST_KEYS.items():
-        if manifest.get(key) != companion_records(directory, name):
+        if manifest.get(key) != kept_companion_records(directory, name, manifest.get(key)):
             return False
     # Ticket 39d: a `prompts.jsonl` written by the sweep's split pass AFTER
     # this folder was last rendered must force a rebuild, the same reasoning
@@ -1197,7 +1282,9 @@ def folder_is_current(
     # a later deletion of the copied file) would be undetectable.
     if manifest.get("custom_title") != custom_title_record(directory):
         return False
-    return manifest.get("subagents") == subagent_records(directory)
+    return manifest.get("subagents") == kept_subagent_records(
+        directory, manifest.get("subagents")
+    )
 
 
 def write_session_folder(
@@ -1328,14 +1415,17 @@ def write_session_folder(
     # traced heap on a 100 MB session, 78x the payload; the real 114 MB object
     # survived the 2026-08-02 migration on a machine that happened to have the
     # RAM. See build.iter_projection_files.
+    previous = _previous_manifest(directory)
     for name, payload in build.iter_projection_files(rendered, options):
         if name == _MANIFEST:
             # Written LAST (a pinned invariant since ticket 30, not incidental
             # ordering - see iter_projection_files), and always with the
             # sub-agent list, so a reader can tell "none" from "this manifest
             # predates the feature" (F6).
-            payload = _with_subagents(payload, subagent_records(directory))
-            payload = _with_companions(payload, directory)
+            payload = _with_subagents(
+                payload, kept_subagent_records(directory, previous.get("subagents"))
+            )
+            payload = _with_companions(payload, directory, previous)
             payload = _with_prompts(payload, directory)
             payload = _with_custom_title(payload, directory)
             if refused_smaller:
@@ -1354,6 +1444,17 @@ def write_session_folder(
         directory, jsonl, True, replaced,
         refused_smaller=refused_smaller, refused_equal_size=refused_equal_size,
     )
+
+
+def _previous_manifest(directory: Path) -> dict[str, object]:
+    """The folder's manifest as it stands before this render, or `{}` when there
+    is none or it cannot be read (then every record is taken from disk, as
+    before W-20260929-A82)."""
+    try:
+        loaded = cast(object, json.loads((directory / _MANIFEST).read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
+    return cast(dict[str, object], loaded) if isinstance(loaded, dict) else {}
 
 
 def _with_subagents(manifest_bytes: bytes, records: list[dict[str, object]]) -> bytes:
@@ -1388,7 +1489,9 @@ def _with_custom_title(manifest_bytes: bytes, directory: Path) -> bytes:
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
-def _with_companions(manifest_bytes: bytes, directory: Path) -> bytes:
+def _with_companions(
+    manifest_bytes: bytes, directory: Path, previous: dict[str, object]
+) -> bytes:
     """Record this session's copied sidecar files in its manifest (ticket 38).
 
     Two NEW TOP-LEVEL KEYS per DESIGN 6, never an amendment to the `loss` block:
@@ -1401,10 +1504,13 @@ def _with_companions(manifest_bytes: bytes, directory: Path) -> bytes:
     like `subagents`, because the manifest describes what the folder holds. The
     render child and `build` both re-render manifests long after the copier has
     finished and can see no source directory at all.
+
+    A changed or vanished file keeps its PREVIOUS record (`kept_companion_records`,
+    W-20260929-A82), so no re-render can record damage as the new truth.
     """
     manifest = cast(dict[str, object], json.loads(manifest_bytes.decode("utf-8")))
     for name, key in COMPANION_MANIFEST_KEYS.items():
-        manifest[key] = companion_records(directory, name)
+        manifest[key] = kept_companion_records(directory, name, previous.get(key))
     return json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8") + b"\n"
 
 
@@ -1739,6 +1845,12 @@ def read_projects(archive_root: Path) -> list[ProjectRecord]:
 class FolderProblem:
     directory: Path
     problem: str
+    # The file the problem is about, when it is one file that exists
+    # (W-20260929-A82): `doctor._written_after_manifest` reads it for the
+    # batch-lock pending rule, so no caller re-derives a path from the text.
+    path: Path | None = None
+    # A sub-agent that is longer than its record: explained by growth (A76).
+    grew: bool = False
 
 
 @dataclass(frozen=True)
@@ -1847,7 +1959,7 @@ def verify_folder(
                 same = matches(jsonl, recorded, known.sizes.get(recorded))
             if not same:
                 problems.append(
-                    FolderProblem(directory, "JSONL does not match manifest source_hash")
+                    FolderProblem(directory, "JSONL does not match manifest source_hash", jsonl)
                 )
         if manifest is not None:
             problems.extend(_subagent_problems(directory, manifest, matches))
@@ -1886,7 +1998,15 @@ def _subagent_problems(
         if agent_id not in live:
             out.append(FolderProblem(directory, f"sub-agent {agent_id} is missing"))
         elif want and not matches(live[agent_id], want, rec.get("bytes")):
-            out.append(FolderProblem(directory, f"sub-agent {agent_id} does not match its hash"))
+            path = live[agent_id]
+            out.append(
+                FolderProblem(
+                    directory,
+                    f"sub-agent {agent_id} does not match its hash",
+                    path,
+                    _grew(path.stat().st_size, rec.get("bytes")),
+                )
+            )
     return out
 
 
@@ -1926,7 +2046,11 @@ def _companion_problems(
             if relative not in live:
                 out.append(FolderProblem(directory, f"{noun} {relative} is missing"))
             elif want and not matches(live[relative], want, rec.get("bytes")):
-                out.append(FolderProblem(directory, f"{noun} {relative} does not match its hash"))
+                out.append(
+                    FolderProblem(
+                        directory, f"{noun} {relative} does not match its hash", live[relative]
+                    )
+                )
     return out
 
 
@@ -1954,9 +2078,9 @@ def _single_file_problems(
     if recorded.get("present") and not matches(
         path, str(recorded.get("sha256")), recorded.get("bytes")
     ):
-        return [FolderProblem(directory, f"{filename} does not match its hash")]
+        return [FolderProblem(directory, f"{filename} does not match its hash", path)]
     if not recorded.get("present") and present:
-        return [FolderProblem(directory, f"{filename} exists but the manifest says none")]
+        return [FolderProblem(directory, f"{filename} exists but the manifest says none", path)]
     return []
 
 

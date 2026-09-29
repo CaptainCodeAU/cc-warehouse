@@ -39,7 +39,7 @@ from typing import cast
 
 import pytest
 
-from cc_warehouse import archive, doctor, parser, store
+from cc_warehouse import archive, doctor, notify, parser, store
 from cc_warehouse.config import Config
 from conftest import (
     basic_session,
@@ -62,6 +62,10 @@ TOOL_RESULT = "toolu_01stdout.txt"
 AGENT_ID = "agent-sub1"
 TITLE = b'{"customTitle":"quick check"}\n'
 PROMPTS = b'{"display":"hello","sessionId":"' + UUID_A.encode() + b'"}\n'
+
+
+def silent(*_args: object) -> None:
+    """Stands in for a desktop or voice sink the test does not observe."""
 
 
 def configure(env: dict[str, str], archive_root: Path) -> None:
@@ -323,8 +327,10 @@ def test_a_same_size_change_passes_doctor_but_the_full_check_catches_it(
 def test_repair_acts_on_a_hash_only_corruption(
     ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The render repair would run is replaced by a recorded failure, so the test
-    pins DETECTION: repair names the folder and exits non-zero."""
+    """Pins DETECTION: repair names the folder and exits non-zero. Since
+    W-20260929-A82 repair no longer re-renders over a change ccw cannot explain,
+    so detection shows as a refusal, never as a render call
+    (tests/test_repair_refuses_unexplained.py pins the refusal itself)."""
     _config, folder = rich_folder(ccw_env, tmp_path)
     flip_one_byte(targets(folder)["tool-result"])
     renders: list[list[str]] = []
@@ -334,11 +340,14 @@ def test_repair_acts_on_a_hash_only_corruption(
         return subprocess.CompletedProcess(args, 1, "", "render refused (test)")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(notify, "alert", silent)
+    monkeypatch.setattr(notify, "speak", silent)
     result = run_cli(["repair"])
 
-    assert len(renders) == 1, f"repair did not act on a hash-only corruption: {result.out!r}"
+    assert renders == [], "repair rendered over a change ccw cannot explain"
     assert result.code != 0
     assert folder.name in result.out + result.err
+    assert "does not match its hash" in result.err
 
 
 def test_repair_is_quiet_about_a_healthy_rich_folder(

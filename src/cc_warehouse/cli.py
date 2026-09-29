@@ -1957,6 +1957,48 @@ def _retract_unrecoverable(config: Config, findings: Sequence[reconcile.Finding]
             continue
 
 
+def _announce_refusals(config: Config, refusals: Sequence[tuple[str, str, str]]) -> None:
+    """(session_uuid, folder name, message) for each folder repair left untouched
+    this run (W-20260929-A82). One `repair-refused` record per folder whose
+    (session_uuid, message) is NEW, plus ONE combined desktop+voice alert for the
+    new ones. A folder already announced with the same problems stays silent, so
+    a daily job never nags (the ticket 24.7 trap); `_log_repair_outcome` still
+    records every run. Same shape and best-effort contract (DESIGN 12) as
+    `_announce_unrecoverable`."""
+    known = reconcile.known_refusals(config)
+    new = [r for r in refusals if (r[0], r[2]) not in known]
+    if not new:
+        return
+    now_iso = datetime.now(UTC).isoformat()
+    for session_uuid, _name, message in new:
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": now_iso,
+                    "status": reconcile.REPAIR_REFUSED,
+                    "session": None,
+                    "project": None,
+                    "message": message,
+                    "elapsed_ms": None,
+                    "session_uuid": session_uuid,
+                },
+            )
+        except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+            continue
+    first = new[0]
+    plural = "s" if len(new) != 1 else ""
+    sentence = (
+        f"cc-warehouse: repair left {len(new)} archive folder{plural} untouched because a"
+        f" file changed and ccw cannot explain it. First: {first[1]}."
+    )
+    try:
+        notify.alert(config, "cc-warehouse", sentence)
+        notify.speak(config, sentence)
+    except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
+        return
+
+
 def _run_repair(rest: Sequence[str]) -> int:
     """`ccw repair`: re-render any of the same recent archive folders `ccw doctor`'s
     desync check flags (ticket 32 -- a real 2026-08-23 incident: the hook's detached
@@ -1998,7 +2040,22 @@ def _run_repair(rest: Sequence[str]) -> int:
 
     W-20260929-A61: the same pass then RETRACTS any already-recorded session the
     empty-session ruling now calls empty (`_retract_unrecoverable`), sharing one
-    history.jsonl read with the new-loss check and raising no alert."""
+    history.jsonl read with the new-loss check and raising no alert.
+
+    W-20260929-A82 (ruling: Gavin, 2026-09-29): repair re-renders ONLY what ccw
+    itself explains (`doctor.unexplained`: a missing generated file, or a payload
+    that hashes to the catalog head). A re-render rewrites the manifest from the
+    files on disk, so rendering over any other mismatch recorded the changed bytes
+    as the new truth, logged "fixed", and left every later check clean. Such a
+    folder is now left untouched, reported still broken (exit 1 on EVERY run
+    until a human fixes it; ruling F2 (a)), and announced once per distinct
+    problem set (`_announce_refusals`). While a batch lock is held, a mismatch
+    on a file newer than its manifest is the batch's own write and is PENDING
+    instead (ruling F1, doctor's a60d50d rule, `doctor.pending_under_lock`): no
+    render, no refusal, no alert, one `pending` log line, exit 0. A folder with
+    BOTH missing pages and an unexplained mismatch is left untouched whole: its
+    pages stay missing so the change stays visible
+    (tests/test_repair_refuses_unexplained.py)."""
     quiet = "--quiet" in rest
     config = _load(rest)
     # Ticket 44a: repair re-renders INTO the archive, so an unproven root is
@@ -2033,10 +2090,14 @@ def _run_repair(rest: Sequence[str]) -> int:
                 print(f"repair: {len(retracted)} unrecoverable session(s) retracted as empty")
         return 0
     conn = catalog.open_catalog(config.root)
+    refusals: list[tuple[str, str, str]] = []
+    # F1 (ruling: Gavin, 2026-09-29): doctor's a60d50d rule, read once per run.
+    batch = doctor.batch_render_in_progress(config.root)
+    pending = 0
     try:
         fixed = 0
         still_broken: list[str] = []
-        for folder, _problems in broken:
+        for folder, problems in broken:
             session_uuid = folder.name.partition("_")[2]
             row = conn.execute(
                 "SELECT short FROM session WHERE session_uuid = ? "
@@ -2049,6 +2110,30 @@ def _run_repair(rest: Sequence[str]) -> int:
                 _log_repair_outcome(config, "error", None, message)
                 continue
             short = cast(str, row[0])
+            head = conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT hash FROM ranked WHERE rn = 1 AND session_uuid = ?",
+                (session_uuid,),
+            ).fetchone()
+            head_hash = cast(str, head[0]) if head is not None else None
+            refused = doctor.unexplained(folder, problems, head_hash)
+            waiting = [p for p in refused if batch and doctor.pending_under_lock(folder, p)]
+            if waiting and len(waiting) == len(refused):
+                # The running batch wrote these after the manifest; its own build
+                # re-renders them. No render, no refusal, no alert, exit 0.
+                detail = "; ".join(sorted({p.problem for p in waiting}))
+                _log_repair_outcome(
+                    config, "pending", short, f"pending, a batch is running: {detail}"
+                )
+                pending += 1
+                continue
+            if refused := [p for p in refused if p not in waiting]:
+                detail = "; ".join(sorted({p.problem for p in refused}))
+                message = f"left untouched, ccw cannot explain: {detail}"
+                still_broken.append(f"{folder.name}: still broken, {message}")
+                _log_repair_outcome(config, "error", short, f"still broken, {message}")
+                refusals.append((session_uuid, folder.name, f"repair: {message}"))
+                continue
             # See the docstring above: this is an unattended, scheduled render, never
             # a human ending a real session, so the open-folder reveal is forced off
             # for this child regardless of what config.toml says.
@@ -2075,16 +2160,18 @@ def _run_repair(rest: Sequence[str]) -> int:
             _log_repair_outcome(config, "ok", short, "fixed")
     finally:
         conn.close()
+    _announce_refusals(config, refusals)
     if not quiet:
         if reconcile_new:
             print(f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)")
         if retracted:
             print(f"repair: {len(retracted)} unrecoverable session(s) retracted as empty")
         total_problems = sum(len(p) for _, p in broken)
+        pending_note = f", {pending} pending behind a running batch" if pending else ""
         print(
             f"repair: {total_problems} problem(s) in {len(broken)} folder(s) of the "
             f"{len(folders)} most recently captured: {fixed} fixed, "
-            f"{len(still_broken)} still broken"
+            f"{len(still_broken)} still broken{pending_note}"
         )
     for line in still_broken:
         print(f"  {line}", file=sys.stderr)

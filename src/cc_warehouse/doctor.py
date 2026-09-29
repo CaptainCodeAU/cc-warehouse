@@ -23,6 +23,7 @@ import json
 import re
 import shutil
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -792,6 +793,17 @@ def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, st
     )
 
 
+def pending_under_lock(folder: Path, problem: archive.FolderProblem) -> bool:
+    """`_written_after_manifest`, public for `ccw repair` (W-20260929-A82, F1): the
+    one batch-lock pending rule doctor and repair both apply (R9)."""
+    return _written_after_manifest(folder, problem)
+
+
+def batch_render_in_progress(root: Path) -> bool:
+    """`_batch_render_in_progress`, public for `ccw repair` (W-20260929-A82, F1)."""
+    return _batch_render_in_progress(root)
+
+
 def _batch_render_in_progress(root: Path) -> bool:
     """True while `ccw sweep` or `ccw build` is actively running against this
     warehouse (ticket 34). A pure read (`store.lock_is_held`), so this keeps
@@ -802,28 +814,20 @@ def _batch_render_in_progress(root: Path) -> bool:
     return any(store.lock_is_held(root, name) for name in _BATCH_LOCK_NAMES)
 
 
-def _stale_manifest_file(folder: Path, problem: str) -> Path | None:
-    """The file a `_STALE_MANIFEST_SHAPES` problem is about, or None for any
-    other problem shape. Resolved the same way `archive.verify_folder` resolves
-    it (`archive.sole_jsonl` for the payload), never by a second rule."""
-    if problem == "JSONL does not match manifest source_hash":
-        return archive.sole_jsonl(folder)
-    if problem in (
-        f"{archive.PROMPTS_FILE} exists but the manifest says none",
-        f"{archive.PROMPTS_FILE} does not match its hash",
-    ):
-        return folder / archive.PROMPTS_FILE
-    return None
+def _written_after_manifest(folder: Path, problem: archive.FolderProblem) -> bool:
+    """True when `problem` names a file written after the folder's manifest was
+    last written (2026-09-29): `ccw sweep` replaces a payload with a larger one,
+    splits `prompts.jsonl`, grows a sub-agent or copies a renamed title in its
+    first pass, and only its own later `build.build()` rewrites the manifest to
+    match. Only consulted while a batch lock is held, by doctor and, since
+    W-20260929-A82 (ruling: Gavin, F1), by `ccw repair`. A file OLDER than its
+    manifest is never excused: the running batch did not write it.
 
-
-def _written_after_manifest(folder: Path, problem: str) -> bool:
-    """True when `problem` names a file the batch rewrote after the folder's
-    manifest was last written (2026-09-29): `ccw sweep` replaces a payload with a
-    larger one and splits `prompts.jsonl` in its first pass, and only its own
-    later `build.build()` rewrites the manifest to match. Only consulted while a
-    batch lock is held. A file OLDER than its manifest is never excused: the
-    running batch did not write it."""
-    target = _stale_manifest_file(folder, problem)
+    The file is the one `archive.verify_folder` names on the problem
+    (`FolderProblem.path`), never re-derived from the message text. Every
+    file-level mismatch carries one, so the rule covers every shape; a missing
+    file carries none and is judged by the `missing ` rule instead."""
+    target = problem.path
     if target is None:
         return False
     # R1 as amended: `verify_folder` already decided these bytes differ (by
@@ -835,7 +839,9 @@ def _written_after_manifest(folder: Path, problem: str) -> bool:
         return False
 
 
-def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | None) -> bool:
+def _recaptured_after_manifest(
+    folder: Path, problem: archive.FolderProblem, payload_hash: str | None
+) -> bool:
     """A payload mismatch that is a re-capture still rendering (W-20260929-A62):
     the JSONL is newer than the manifest (`_written_after_manifest`) AND hashes
     to the catalog's current head. A re-capture writes the JSONL and then its
@@ -847,17 +853,55 @@ def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | N
     one here was written by something else and is never excused
     (tests/test_doctor.py::
     test_a_newer_prompts_file_with_no_lock_fails_even_inside_the_grace)."""
-    if problem != "JSONL does not match manifest source_hash":
+    if problem.problem != _PAYLOAD_MISMATCH:
         return False
     if not _written_after_manifest(folder, problem):
         return False
+    return _payload_is_head(folder, payload_hash)
+
+
+_PAYLOAD_MISMATCH = "JSONL does not match manifest source_hash"
+
+
+def _payload_is_head(folder: Path, head_hash: str | None) -> bool:
+    """The folder's JSONL hashes to the catalog's current head: the bytes are the
+    ones ccw captured last (a re-capture writes the JSONL, then its row). R1: by
+    sha256, never by size. The one rule `_recaptured_after_manifest` (doctor's
+    pending) and `unexplained` (repair's refusal) both read (R9)."""
     target = archive.sole_jsonl(folder)
-    if target is None or payload_hash is None:
+    if target is None or head_hash is None:
         return False
     try:
-        return store.sha256_hex(target.read_bytes()) == payload_hash
+        return store.sha256_hex(target.read_bytes()) == head_hash
     except OSError:
         return False
+
+
+def unexplained(
+    folder: Path, problems: Sequence[archive.FolderProblem], head_hash: str | None
+) -> list[archive.FolderProblem]:
+    """The problems ccw itself cannot explain, so `ccw repair` must not re-render
+    over them (W-20260929-A82; ruling: Gavin, 2026-09-29).
+
+    EXPLAINED, closed list: a missing generated file (`missing `, the detached
+    render child died, ticket 32), a payload mismatch whose JSONL hashes to
+    the catalog head (a re-capture whose render never landed), and a sub-agent
+    that GREW (`FolderProblem.grew`, a live resume; ruling: Gavin, F3, closing
+    W-20260929-A76). Everything else, a sub-agent that changed without growing,
+    a companion, `prompts.jsonl` or `custom-title.json` that no longer matches,
+    a payload that matches no head, an unreadable manifest, a wrong name, is
+    unexplained. A re-render rewrites the manifest from the files on
+    disk, so rendering over any of these would record the changed bytes as the
+    new truth and erase the only evidence (tests/test_repair_refuses_unexplained.py)."""
+    return [
+        p
+        for p in problems
+        if not (
+            p.problem.startswith("missing ")
+            or p.grew
+            or (p.problem == _PAYLOAD_MISMATCH and _payload_is_head(folder, head_hash))
+        )
+    ]
 
 
 # The capture.jsonl statuses that mark the hook's pipeline moving for one
@@ -1012,7 +1056,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     awaiting: dict[Path, bool] = {
         folder: all(
             p.problem.startswith("missing ")
-            or _recaptured_after_manifest(folder, p.problem, hashes.get(folder))
+            or _recaptured_after_manifest(folder, p, hashes.get(folder))
             for p in folder_problems
         )
         for folder, folder_problems in broken
@@ -1028,7 +1072,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     )
     for folder, folder_problems in broken:
         batch_queued = batch_active and all(
-            p.problem.startswith("missing ") or _written_after_manifest(folder, p.problem)
+            p.problem.startswith("missing ") or _written_after_manifest(folder, p)
             for p in folder_problems
         )
         recapture_queued = awaiting[folder]

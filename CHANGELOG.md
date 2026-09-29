@@ -22,6 +22,25 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw repair` no longer re-renders over a change it cannot explain (2026-09-29,
+W-20260929-A82; ruling: Gavin).** Repair re-rendered every folder its full check flagged,
+and a re-render rewrites the manifest from the files on disk, so a file whose bytes
+changed for a reason ccw cannot explain was recorded as the new truth. Repair logged "1
+fixed", exited 0, and every later check read the folder as clean, which erased the only
+evidence now that doctor's desync check is quick (W-20260929-A74). Repair now re-renders
+only what `doctor.unexplained` calls explained: a missing generated file, or a payload
+mismatch whose JSONL hashes to the catalog head (a re-capture). Anything else leaves the
+folder untouched, whole even when pages are also missing. It is reported `still broken`
+with exit 1 and an `error` record every run, and announced once by one desktop and voice
+alert with a `repair-refused` line in `logs/capture.jsonl`. That line is keyed on
+(session_uuid, message), so the same problems never re-alert and a new problem does; its
+message starts `repair: `, so the reconciliation ledger never reads it as a capture error.
+`doctor._payload_is_head` is now the one "hashes to the catalog head" rule that doctor's
+re-capture pending and repair's refusal both read. Known limit, open as W-20260929-A76: a
+sub-agent that grew during a live resume, when its render never landed, is refused
+(sub-agents have no catalog row to explain the new bytes). Tests:
+`tests/test_repair_refuses_unexplained.py`, every render real.
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because
@@ -43,10 +62,9 @@ companion file listings are each shared by the record writer and the verifier. T
 fence (`tests/test_fences.py::test_no_size_or_mtime_EQUALITY_anywhere`) gains a one-entry,
 function-named exemption for `archive._size_matches`, which screens and never decides
 identity; any other size or mtime equality still fails it. Accepted trade-off: a same-size
-rewrite passes doctor and is detected by the next daily repair. OPEN, pre-existing and now
-load-bearing: repair then re-renders the folder, which records the changed bytes' hashes in
-the manifest, logs "fixed" and exits 0, so the change stops being visible to every check
-(docs/operations.md). Measured on the real machine:
+rewrite passes doctor and is detected by the next daily repair. Repair then used to
+re-render over it and erase the evidence; fixed by the W-20260929-A82 entry above.
+Measured on the real machine:
 `ccw doctor` 7.1 to 9.7 s over five runs against 14.0 to 44.9 s for the installed 0.1.4,
 interleaved. Tests: `tests/test_doctor_quick_desync.py`.
 

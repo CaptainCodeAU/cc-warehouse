@@ -365,6 +365,11 @@ def find_unrecoverable(
 # uuid with no unrecoverable record before it changes nothing.
 UNRECOVERABLE = "unrecoverable"
 RETRACTED = "unrecoverable-retracted"
+# W-20260929-A82: `ccw repair` left a folder untouched because a file changed in a
+# way ccw cannot explain. The dedup record for its alert, keyed on (session_uuid,
+# message); its message starts "repair: ", so `_candidates` never reads it as a
+# capture error (_EXCLUDED_PREFIXES).
+REPAIR_REFUSED = "repair-refused"
 
 
 def _on_record(records: list[dict[str, object]]) -> dict[str, str | None]:
@@ -426,6 +431,23 @@ def known_unrecoverable_uuids(config: Config) -> frozenset[str]:
     and not since retracted. Reads capture.jsonl only -- see
     `known_unrecoverable_count`'s docstring for why this must stay cheap."""
     return frozenset(_on_record(_iter_records(config)))
+
+
+def known_refusals(config: Config) -> frozenset[tuple[str, str]]:
+    """Every (session_uuid, message) `ccw repair` has already alerted on as a
+    refusal (W-20260929-A82). THE DEDUP IS THE LOG COMPARE, the same principle
+    `cli._announce_unrecoverable` states: the same folder with the same problems
+    stays silent on every later run, and a different problem set on it re-fires.
+    Reads capture.jsonl only."""
+    out: set[tuple[str, str]] = set()
+    for record in _iter_records(config):
+        if record.get("status") != REPAIR_REFUSED:
+            continue
+        session_uuid = record.get("session_uuid")
+        message = record.get("message")
+        if isinstance(session_uuid, str) and isinstance(message, str):
+            out.add((session_uuid, message))
+    return frozenset(out)
 
 
 def known_unrecoverable_count(config: Config) -> tuple[int, str | None]:

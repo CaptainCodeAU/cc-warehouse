@@ -38,9 +38,9 @@ Notes:
   (see "What doctor's `desync` line checks" below); repair's scan of the same 25 folders
   still reads and hashes every recorded file. Measured 2026-09-29 on the share: 7 s with
   a warm cache; the same scan cold measured 16 to 44 s when doctor still ran it. launchd
-  sets no timeout on this job, so that fits its slot. What repair does with a hash
-  mismatch it finds (re-renders over it) is an open problem; see "What doctor's
-  `desync` line checks" below.
+  sets no timeout on this job, so that fits its slot. Since W-20260929-A82 it
+  re-renders only what ccw can explain and leaves any other changed file untouched,
+  exiting 1; see "What repair does with what it finds" below.
 - All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
   `--quiet` means **no stdout on success, failures still print**, so an empty log file is
   the expected healthy state, not evidence the job never ran. Check `launchctl list` for
@@ -192,14 +192,28 @@ sha256-hashed and the payload parsed) and weekly-or-by-hand in `ccw archive --ve
 so such a change is DETECTED within a day. A manifest record written before records
 carried `bytes` is hashed instead of skipped. Pinned by
 `tests/test_doctor_quick_desync.py`.
-**DETECTED IS NOT ALARMED, and this is open (found 2026-09-29, pre-existing).** When
-`ccw repair` finds a hash mismatch it does what it does for a missing render: it
-re-renders the folder, and the re-render records the CHANGED bytes' hashes in the
-manifest. Repair then logs "1 fixed", exits 0, and every later check (repair, doctor,
-`ccw archive --verify`) reads the folder as clean. Verified in a test sandbox for all
-five recorded kinds (payload, sub-agent, tool result, `prompts.jsonl`,
-`custom-title.json`). Before this change doctor at SessionStart would FAIL on such a
-folder until that day's repair ran; now nothing shows it except repair's own log line.
+**What repair does with what it finds, since 2026-09-29 (W-20260929-A82; ruling:
+Gavin).** Until then repair re-rendered every flagged folder, and a re-render rewrites
+the manifest from the files on disk, so a changed file was recorded as the new truth:
+repair logged "1 fixed", exited 0, and every later check read the folder as clean
+(verified in a test sandbox for all five recorded kinds). Now repair re-renders ONLY
+what ccw itself explains:
+- a missing generated file (the render child died, ticket 32), and
+- a payload mismatch whose JSONL hashes to the catalog head (a re-capture whose render
+  never landed).
+
+Anything else (a sub-agent, tool result, file-history or paste file, `prompts.jsonl` or
+`custom-title.json` that no longer matches, a payload that matches no catalog head) is
+LEFT UNTOUCHED: repair prints `still broken, left untouched, ccw cannot explain: ...` on
+stderr, writes an `error` record to `logs/capture.jsonl` every run, and exits 1, so
+`launchctl list` shows a non-zero last exit. A folder with BOTH missing pages and an
+unexplained change is left untouched whole; its pages stay missing so the change stays
+visible. It also raises ONE desktop and voice alert, recorded as a `repair-refused` line
+in `logs/capture.jsonl` keyed on the session and its exact problem list: the same folder
+with the same problems never alerts again, and a new problem on it alerts once more.
+Clearing one is a human decision: restore the file from the backup, or re-render by hand
+(`ccw render --session s:<short>`) to accept the new bytes. Pinned by
+`tests/test_repair_refuses_unexplained.py`.
 
 ## The `sidecars` line, and the alert that is not a banner (ticket 38, 2026-09-08)
 
