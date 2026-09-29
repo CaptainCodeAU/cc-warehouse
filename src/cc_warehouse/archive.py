@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import cast
 
 from cc_warehouse import __version__, build, catalog, external, parser, render, sidecars, store
-from cc_warehouse.config import Config
+from cc_warehouse.config import Config, layout_problem
 from cc_warehouse.parser import parse_session
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -2030,8 +2030,13 @@ class ArchiveRootRefused(Exception):
     """
 
 
-def root_problem(archive_root: Path, zone: str) -> str | None:
+def root_problem(archive_root: Path, zone: str, *, warehouse_root: Path | None) -> str | None:
     """Why `archive_root` is not a proven archive root for `zone`, or None.
+
+    `warehouse_root` is REQUIRED so no caller can skip the layout check by
+    omission (W-20260929-A101): an archive that overlaps the warehouse root is
+    refused first, whatever its marker says (`config.layout_problem`). Only
+    `init_root`, which has no warehouse in hand, passes None.
 
     THE FAILURE THIS CLOSES (DESIGN 15, 2026-09-28). With the archive on a
     network share, an unmounted share can leave an empty directory where the
@@ -2054,6 +2059,8 @@ def root_problem(archive_root: Path, zone: str) -> str | None:
     Shared by `require_root` (writers) and doctor's `archive root` line (R9):
     the refusal and the diagnosis are one sentence from one function.
     """
+    if warehouse_root is not None and (overlap := layout_problem(archive_root, warehouse_root)):
+        return overlap
     marker = archive_root / ROOT_MARKER
     try:
         if not archive_root.is_dir():
@@ -2089,7 +2096,7 @@ def root_problem(archive_root: Path, zone: str) -> str | None:
     return None
 
 
-def require_root(archive_root: Path, zone: str) -> Path:
+def require_root(archive_root: Path, zone: str, *, warehouse_root: Path | None) -> Path:
     """Return `archive_root` when its marker names `zone`, else raise
     `ArchiveRootRefused` (ticket 44a).
 
@@ -2100,7 +2107,7 @@ def require_root(archive_root: Path, zone: str) -> Path:
     at every `mkdir` site, so a refusal happens before the first write rather
     than partway through a batch (R10, R14). Read-only verbs never call it.
     """
-    problem = root_problem(archive_root, zone)
+    problem = root_problem(archive_root, zone, warehouse_root=warehouse_root)
     if problem is not None:
         raise ArchiveRootRefused(f"archive root refused: {problem}")
     return archive_root
@@ -2124,13 +2131,13 @@ def init_root(archive_root: Path, zone: str) -> bool:
     conjuring it into existence would recreate the exact fork the marker exists
     to prevent.
     """
-    if root_problem(archive_root, zone) is None:
+    if root_problem(archive_root, zone, warehouse_root=None) is None:
         return False
     marker = archive_root / ROOT_MARKER
     if archive_root.is_dir():
         if marker.exists() or marker.is_symlink():
             raise ArchiveRootRefused(
-                f"archive root refused: {root_problem(archive_root, zone)};"
+                f"archive root refused: {root_problem(archive_root, zone, warehouse_root=None)};"
                 " --init never replaces an existing marker"
             )
     elif archive_root.exists():
@@ -2172,7 +2179,7 @@ def root_refusal(config: Config) -> BatchReport | None:
     if config.archive_root is None:
         return None
     try:
-        require_root(config.archive_root, config.archive_timezone)
+        require_root(config.archive_root, config.archive_timezone, warehouse_root=config.root)
     except ArchiveRootRefused as exc:
         return BatchReport((ItemOutcome(str(config.archive_root), "error", str(exc)),))
     return None

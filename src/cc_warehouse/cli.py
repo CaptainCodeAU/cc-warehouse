@@ -46,6 +46,7 @@ from cc_warehouse.config import (
     WORD_KEYS,
     Config,
     cap_problem,
+    layout_problem,
     load_config,
     word_problem,
 )
@@ -1381,7 +1382,7 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
         # root is refused here, before anything is written, and reported through
         # the same error path as any other render failure.
         if config.archive_root is not None:
-            archive.require_root(config.archive_root, config.archive_timezone)
+            archive.require_root(config.archive_root, config.archive_timezone, warehouse_root=config.root)
         data = archive.read_payload(
             config,
             label=head.label,
@@ -2005,7 +2006,7 @@ def _run_repair(rest: Sequence[str]) -> int:
     # refused before any work, named on stderr and logged like any repair failure.
     if config.archive_root is not None:
         try:
-            archive.require_root(config.archive_root, config.archive_timezone)
+            archive.require_root(config.archive_root, config.archive_timezone, warehouse_root=config.root)
         except archive.ArchiveRootRefused as exc:
             _log_repair_outcome(config, "error", None, str(exc))
             print(f"repair: {exc}", file=sys.stderr)
@@ -2147,14 +2148,13 @@ def _run_archive(args: Sequence[str]) -> int:
             return 2
         return _archive_verify(target, zone)
 
-    # The one target that would make this destructive: writing the new tree on
-    # top of the vault it reads from. Refused before any work, never attempted
-    # and reported afterwards (R5: the conservative branch is the default).
-    if target.resolve() == config.root.resolve():
-        print(
-            f"Error: --to must not be the warehouse itself ({config.root})",
-            file=sys.stderr,
-        )
+    # The targets that would make this destructive: the warehouse itself (the
+    # new tree on top of the vault it reads from), anywhere inside it (where
+    # `ccw build` prunes), or a directory that contains it (W-20260929-A101).
+    # Refused before any work, never attempted and reported afterwards (R5).
+    overlap = layout_problem(target, config.root)
+    if overlap is not None:
+        print(f"Error: --to must not overlap the warehouse itself: {overlap}", file=sys.stderr)
         return 2
 
     if "--init" in args:
@@ -2167,7 +2167,7 @@ def _run_archive(args: Sequence[str]) -> int:
         print(f"archive: {target} {verb} as the archive root for {zone}")
         return 0
     try:
-        archive.require_root(target, zone)
+        archive.require_root(target, zone, warehouse_root=config.root)
     except archive.ArchiveRootRefused as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

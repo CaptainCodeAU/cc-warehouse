@@ -145,14 +145,14 @@ def test_the_marker_name_is_a_reserved_label() -> None:
 def test_require_root_passes_on_a_matching_marker(tmp_path: Path) -> None:
     root = tmp_path / "archive"
     good_marker(root)
-    assert archive.require_root(root, ZONE) == root
+    assert archive.require_root(root, ZONE, warehouse_root=None) == root
 
 
 def test_require_root_refuses_a_missing_marker_and_names_it(tmp_path: Path) -> None:
     root = tmp_path / "archive"
     stale_tree(root)
     with pytest.raises(archive.ArchiveRootRefused) as caught:
-        archive.require_root(root, ZONE)
+        archive.require_root(root, ZONE, warehouse_root=None)
     message = str(caught.value)
     assert str(root) in message
     assert "--init" in message
@@ -164,7 +164,7 @@ def test_require_root_refuses_a_different_zone(tmp_path: Path) -> None:
     root = tmp_path / "archive"
     good_marker(root, zone=OTHER_ZONE)
     with pytest.raises(archive.ArchiveRootRefused) as caught:
-        archive.require_root(root, ZONE)
+        archive.require_root(root, ZONE, warehouse_root=None)
     assert OTHER_ZONE in str(caught.value)
     assert ZONE in str(caught.value)
 
@@ -186,7 +186,7 @@ def test_require_root_refuses_a_malformed_marker_and_names_the_file(
     root = tmp_path / "archive"
     path = raw_marker(root, payload)
     with pytest.raises(archive.ArchiveRootRefused) as caught:
-        archive.require_root(root, ZONE)
+        archive.require_root(root, ZONE, warehouse_root=None)
     assert str(path) in str(caught.value)
 
 
@@ -195,7 +195,7 @@ def test_require_root_refuses_a_marker_with_no_zone(tmp_path: Path) -> None:
     root = tmp_path / "archive"
     raw_marker(root, {"cc_warehouse": "archive_root", "created": "2026-09-28T00:00:00Z"})
     with pytest.raises(archive.ArchiveRootRefused):
-        archive.require_root(root, ZONE)
+        archive.require_root(root, ZONE, warehouse_root=None)
 
 
 def test_require_root_refuses_an_absent_path_and_creates_nothing(tmp_path: Path) -> None:
@@ -203,7 +203,7 @@ def test_require_root_refuses_an_absent_path_and_creates_nothing(tmp_path: Path)
     mounted). The refusal must not bring the directory into being."""
     root = tmp_path / "mnt" / "archive"
     with pytest.raises(archive.ArchiveRootRefused) as caught:
-        archive.require_root(root, ZONE)
+        archive.require_root(root, ZONE, warehouse_root=None)
     assert str(root) in str(caught.value)
     assert not (tmp_path / "mnt").exists()
 
@@ -212,9 +212,9 @@ def test_the_created_field_is_informational_and_never_compared(tmp_path: Path) -
     root = tmp_path / "archive"
     for created in ("1999-01-01T00:00:00Z", "not a date at all", ""):
         good_marker(root, created=created)
-        assert archive.require_root(root, ZONE) == root
+        assert archive.require_root(root, ZONE, warehouse_root=None) == root
     raw_marker(root, {"cc_warehouse": "archive_root", "archive_timezone": ZONE})
-    assert archive.require_root(root, ZONE) == root
+    assert archive.require_root(root, ZONE, warehouse_root=None) == root
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +279,7 @@ def test_init_creates_the_marker_with_the_pinned_zone(
     assert marker["cc_warehouse"] == "archive_root"
     assert marker["archive_timezone"] == ZONE
     assert isinstance(marker["created"], str) and marker["created"]
-    assert archive.require_root(target, ZONE) == target
+    assert archive.require_root(target, ZONE, warehouse_root=None) == target
 
 
 def test_init_honours_the_zone_flag(ccw_env: dict[str, str], tmp_path: Path) -> None:

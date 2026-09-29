@@ -137,8 +137,22 @@ def projection_dir(
 # `_archive-root.json` (ticket 44a) is a FILE, and every walker already skips
 # non-directories, but a walker that skipped it only for being a file would read
 # a directory of that name as a project label. The reserved set holds on its own.
+#
+# `projections`, `objects` and `logs` (W-20260929-A101) name the warehouse's own
+# directories. An archive may no longer overlap the warehouse (config
+# `layout_problem`), and these stay reserved anyway so that no project label can
+# ever coincide with the one directory `ccw build` prunes.
 RESERVED_LABELS = frozenset(
-    {"locks", "catalog.sqlite", "_orphaned-subagents", "_not-sessions", "_archive-root.json"}
+    {
+        "locks",
+        "catalog.sqlite",
+        "_orphaned-subagents",
+        "_not-sessions",
+        "_archive-root.json",
+        "projections",
+        "objects",
+        "logs",
+    }
 )
 
 _UNDATED = "undated"

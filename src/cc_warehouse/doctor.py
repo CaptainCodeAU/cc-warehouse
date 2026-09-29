@@ -1119,7 +1119,7 @@ def _archive_root_check(config: Config) -> tuple[bool, str]:
     """
     if config.archive_root is None:
         return True, "no archive configured"
-    problem = archive.root_problem(config.archive_root, config.archive_timezone)
+    problem = archive.root_problem(config.archive_root, config.archive_timezone, warehouse_root=config.root)
     if problem is not None:
         return False, problem
     marker = config.archive_root / archive.ROOT_MARKER

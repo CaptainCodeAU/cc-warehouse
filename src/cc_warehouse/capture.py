@@ -329,7 +329,7 @@ def _archive_source(
     from cc_warehouse import archive
 
     try:
-        archive.require_root(config.archive_root, config.archive_timezone)
+        archive.require_root(config.archive_root, config.archive_timezone, warehouse_root=config.root)
     except archive.ArchiveRootRefused as exc:
         if not config.keep_objects:
             raise
@@ -427,7 +427,7 @@ def archive_companions(
     if config.archive_root is not None:
         from cc_warehouse import archive
 
-        if archive.root_problem(config.archive_root, config.archive_timezone) is not None:
+        if archive.root_problem(config.archive_root, config.archive_timezone, warehouse_root=config.root) is not None:
             return
     _archive_subagents_of(config, conn, project_id, transcript_path, session_uuid)
     refused: tuple[str, ...] = ()
@@ -601,7 +601,7 @@ def _archive_custom_title_of(
     from cc_warehouse import archive
 
     try:
-        if archive.root_problem(config.archive_root, config.archive_timezone) is not None:
+        if archive.root_problem(config.archive_root, config.archive_timezone, warehouse_root=config.root) is not None:
             return
         directory = sidecars.locate(transcript_path, session_uuid)
         if directory is None:

@@ -396,6 +396,35 @@ def _chrome(
     return value
 
 
+def layout_problem(archive_root: Path, warehouse_root: Path) -> str | None:
+    """Why `archive_root` may not be used beside `warehouse_root`, or None
+    (W-20260929-A101).
+
+    The two must not contain each other in EITHER direction. `ccw build`
+    deletes whatever it did not expect under `<root>/projections/` (R4 allows it
+    there and nowhere else), so an archive at or inside the warehouse root can
+    have archived sessions deleted; and a warehouse inside the archive is walked
+    as if its directories were project labels. Paths are compared resolved, so a
+    symlink or a `..` cannot hide the overlap. Never raises: a path that cannot
+    be resolved is compared as written.
+    """
+    def resolved(path: Path) -> Path:
+        try:
+            return path.expanduser().resolve()
+        except (OSError, RuntimeError):
+            return path.expanduser().absolute()
+
+    archive_at, warehouse_at = resolved(archive_root), resolved(warehouse_root)
+    if archive_at.is_relative_to(warehouse_at) or warehouse_at.is_relative_to(archive_at):
+        return (
+            f"archive_root {archive_root} overlaps the warehouse root {warehouse_root};"
+            " they must not contain each other (ccw build prunes under the warehouse"
+            " root's projections/, so archived sessions there can be deleted). Move"
+            " archive_root outside the warehouse root"
+        )
+    return None
+
+
 def _keep_objects(merged: Mapping[str, object], problems: list[str]) -> bool:
     """Whether the content-addressed vault is still written (slice 19m).
 
@@ -558,6 +587,13 @@ def load_config(
         if isinstance(relocate.get("roots"), list)
     )
     inbox_raw = _str_or_none(imp.get("inbox"))
+    archive_raw = _str_or_none(merged.get("archive_root"))
+    archive_root = Path(archive_raw).expanduser() if archive_raw else None
+    # Recorded here so relocate (which refuses on any config error) and anyone
+    # reading config_errors sees it; every writer refuses it through
+    # archive.root_problem, which calls the same function (R9).
+    if archive_root is not None and (overlap := layout_problem(archive_root, root)):
+        problems.append(overlap)
 
     return Config(
         root=root,
@@ -566,11 +602,7 @@ def load_config(
         # default kept (R5): a bad zone in a config file must never be able to
         # stop a capture from storing a session.
         archive_timezone=_archive_timezone(merged, problems),
-        archive_root=(
-            Path(_str_or_none(merged.get("archive_root")) or "").expanduser()
-            if _str_or_none(merged.get("archive_root"))
-            else None
-        ),
+        archive_root=archive_root,
         keep_projections=_keep_projections(merged, problems),
         keep_objects=_keep_objects(merged, problems),
         archive_subagents=_bool(merged.get("archive_subagents"), True),

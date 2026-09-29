@@ -22,6 +22,22 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**An `archive_root` that overlaps the warehouse root is refused (2026-09-29,
+W-20260929-A101; ruling: Gavin, "fix all five").** `ccw build` deletes whatever it did not
+expect under `<root>/projections/`, so an archive at or inside the warehouse root could have
+archived sessions deleted; reproduced in a sandbox (an archive at `<root>/projections/archive`
+lost a session to one build). New `config.layout_problem(archive_root, warehouse_root)`
+refuses the two containing each other in either direction, compared resolved so a symlink or
+`..` cannot hide it. It is recorded in `config_errors`, and `archive.root_problem` and
+`require_root` now take a REQUIRED `warehouse_root` keyword and refuse the layout first, so
+every writer (hook, sweep, build, render --session, repair, import, `ccw archive --to`) and
+doctor's `archive root` line say the same sentence; a caller cannot skip it by omission
+(pyright names any that try). `ccw archive --to` refuses any overlapping target, not only the
+warehouse itself. `projections`, `objects` and `logs` join `build.RESERVED_LABELS`, so a
+project with one of those names is filed as `_projections` and so on (no real label uses them,
+checked 2026-09-29). An existing install with an overlapping layout sees every writer refuse
+and doctor FAIL with the move-it sentence; with the vault on, sessions still land in the vault.
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because
