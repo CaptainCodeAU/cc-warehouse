@@ -141,6 +141,22 @@ def _rows(lines: bytes) -> list[dict[str, object]]:
     return out
 
 
+class HistoryOnce:
+    """`history.jsonl` read at most once, and only on first demand, so one `ccw
+    repair` can hand the same read to `find_unrecoverable` and `find_retractable`."""
+
+    def __init__(self, home: Path) -> None:
+        self.home = home
+        self._read = False
+        self._history: _History | None = None
+
+    def get(self) -> _History | None:
+        if not self._read:
+            self._history = _read_history(self.home)
+            self._read = True
+        return self._history
+
+
 def _said_nothing(history: _History | None, home: Path, finding: "Finding") -> bool:
     """Whether the session a finding names provably said nothing (the ruling above).
     False whenever the evidence is missing or doubtful."""
@@ -276,6 +292,7 @@ def find_unrecoverable(
     home: Path | None = None,
     source: Path | None = None,
     now: datetime | None = None,
+    history: HistoryOnce | None = None,
 ) -> tuple[Finding, ...]:
     """The expensive cross-check: which candidate error records name a session
     missing from ALL THREE of the source tree, the archive, and the catalog, oldest
@@ -291,7 +308,8 @@ def find_unrecoverable(
     A session that misses all three but provably SAID NOTHING (`_said_nothing`, the
     2026-09-29 ruling above `Finding`) is dropped too: no transcript was ever
     written, so nothing was lost. `history.jsonl` is read at most once per call,
-    and only when some candidate has already missed all three instruments.
+    and only when some candidate has already missed all three instruments; a
+    caller passing its own `history` shares that one read with other checks.
 
     `since=None` (the default) checks the WHOLE log; pass an explicit cutoff (e.g.
     `datetime.now(UTC) - DEFAULT_WINDOW`) to look only at recent activity. The
@@ -317,9 +335,9 @@ def find_unrecoverable(
         path.name[: -len(".jsonl")] for path in session_paths if path.name.endswith(".jsonl")
     }
     archived = archived_session_uuids(config.archive_root)
-    history_home = home if home is not None else Path.home()
-    history: _History | None = None
-    history_read = False
+    reader = (
+        history if history is not None else HistoryOnce(home if home is not None else Path.home())
+    )
     findings: list[Finding] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -330,49 +348,100 @@ def find_unrecoverable(
         if _catalog_has_session(config.root, candidate.session_uuid):
             continue
         seen.add(candidate.session_uuid)
-        if not history_read:
-            history = _read_history(history_home)
-            history_read = True
-        if _said_nothing(history, history_home, candidate):
+        if _said_nothing(reader.get(), reader.home, candidate):
             continue
         findings.append(candidate)
     return tuple(sorted(findings, key=lambda f: f.at))
 
 
-def known_unrecoverable_uuids(config: Config) -> frozenset[str]:
-    """Every session uuid `ccw repair` has already announced as unrecoverable (a
-    `status: "unrecoverable"` dedup record it wrote after confirming via
-    `find_unrecoverable`). Reads capture.jsonl only -- see `known_unrecoverable_count`'s
-    docstring for why this must stay cheap."""
-    return frozenset(
-        cast(str, record["session_uuid"])
-        for record in _iter_records(config)
-        if record.get("status") == "unrecoverable" and isinstance(record.get("session_uuid"), str)
+# RETRACTION (W-20260929-A61; ruling: Gavin, 2026-09-29, option b). The empty-
+# session ruling above stops NEW announcements, but a session `ccw repair` had
+# already announced stays in the append-only ledger. Repair therefore appends one
+# `unrecoverable-retracted` record per recorded uuid `_said_nothing` now calls
+# empty, and the cheap readers below subtract it. No ledger line is ever rewritten.
+# The LATEST unrecoverable-or-retracted record for a uuid decides its state, in
+# file order (the log is append-only, so file order is write order): a uuid
+# announced again after a retraction is back on record, and a retraction naming a
+# uuid with no unrecoverable record before it changes nothing.
+UNRECOVERABLE = "unrecoverable"
+RETRACTED = "unrecoverable-retracted"
+
+
+def _on_record(records: list[dict[str, object]]) -> dict[str, str | None]:
+    """Each uuid currently on record as unrecoverable, mapped to the newest `at`
+    of its unrecoverable records since its last retraction."""
+    state: dict[str, str | None] = {}
+    for record in records:
+        status = record.get("status")
+        session_uuid = record.get("session_uuid")
+        if not isinstance(session_uuid, str):
+            continue
+        if status == RETRACTED:
+            state.pop(session_uuid, None)
+        elif status == UNRECOVERABLE:
+            at = record.get("at")
+            latest = state.get(session_uuid)
+            if isinstance(at, str) and (latest is None or at > latest):
+                latest = at
+            state[session_uuid] = latest
+    return state
+
+
+def find_retractable(
+    config: Config,
+    *,
+    home: Path | None = None,
+    now: datetime | None = None,
+    history: HistoryOnce | None = None,
+) -> tuple[Finding, ...]:
+    """Recorded-unrecoverable sessions that `_said_nothing` now calls empty, oldest
+    first. Read-only: `cli._run_repair` writes the retraction records.
+
+    Each is judged on its EARLIEST resolvable error record, the strictest `at` for
+    the zero-rows arm's history-coverage guard. A recorded uuid with no such error
+    record cannot be judged and stays on record (R5). `history.jsonl` is read only
+    when at least one uuid is still on record, and at most once (shared through
+    `history`)."""
+    records = _iter_records(config)
+    on_record = _on_record(records)
+    if not on_record:
+        return ()
+    now = now if now is not None else datetime.now(UTC)
+    earliest: dict[str, Finding] = {}
+    for candidate in _candidates(records, since=None, now=now):
+        if candidate.session_uuid in on_record and candidate.session_uuid not in earliest:
+            earliest[candidate.session_uuid] = candidate
+    if not earliest:
+        return ()
+    reader = (
+        history if history is not None else HistoryOnce(home if home is not None else Path.home())
     )
+    retractable = [f for f in earliest.values() if _said_nothing(reader.get(), reader.home, f)]
+    return tuple(sorted(retractable, key=lambda f: f.at))
+
+
+def known_unrecoverable_uuids(config: Config) -> frozenset[str]:
+    """Every session uuid `ccw repair` has announced as unrecoverable (a `status:
+    "unrecoverable"` dedup record it wrote after confirming via `find_unrecoverable`)
+    and not since retracted. Reads capture.jsonl only -- see
+    `known_unrecoverable_count`'s docstring for why this must stay cheap."""
+    return frozenset(_on_record(_iter_records(config)))
 
 
 def known_unrecoverable_count(config: Config) -> tuple[int, str | None]:
     """Cheap, log-only: how many sessions `ccw repair` has ALREADY confirmed
-    unrecoverable, and the most recent one's timestamp.
+    unrecoverable and not retracted, and the most recent such record's timestamp.
 
-    Reads capture.jsonl only -- no source/archive/catalog walk -- so `ccw doctor` can
-    call this on every SessionStart hot path. `ccw doctor` runs there
-    (ccw-freshness-check.py), and a real SessionStart timeout already happened once on
-    this project (ticket 41 Finding 1, an unrelated cause); this module does not hand
-    doctor a second way to reproduce that symptom.
+    Reads capture.jsonl only -- no source/archive/catalog walk, no history.jsonl --
+    so `ccw doctor` can call this on every SessionStart hot path. `ccw doctor` runs
+    there (ccw-freshness-check.py), and a real SessionStart timeout already happened
+    once on this project (ticket 41 Finding 1, an unrelated cause); this module does
+    not hand doctor a second way to reproduce that symptom
+    (tests/test_reconcile.py::test_the_cheap_count_never_reads_history).
 
     On a machine where `ccw repair` has never run its reconciliation pass, this reads
     (0, None), which means "not yet checked", not "no losses" -- the same distinction
     `doctor._last_capture` draws between "never fired" and "fired, but not recently"."""
-    latest: str | None = None
-    uuids: set[str] = set()
-    for record in _iter_records(config):
-        if record.get("status") != "unrecoverable":
-            continue
-        session_uuid = record.get("session_uuid")
-        at = record.get("at")
-        if isinstance(session_uuid, str):
-            uuids.add(session_uuid)
-        if isinstance(at, str) and (latest is None or at > latest):
-            latest = at
-    return len(uuids), latest
+    on_record = _on_record(_iter_records(config))
+    stamps = [at for at in on_record.values() if at is not None]
+    return len(on_record), max(stamps) if stamps else None
