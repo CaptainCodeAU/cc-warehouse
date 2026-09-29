@@ -22,6 +22,34 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**A82 send-back: six holes in the evidence rules closed (2026-09-29, W-20260929-A82;
+ruling: Gavin, "send back", after a five-reviewer sandbox review of 51523da).**
+(1) A temp-shaped name (`.<name>.<8 chars>.tmp`, `store.atomic_write`'s own mkstemp, now
+`store.is_temp_name`) is never recorded in a manifest, and one an older render recorded
+is dropped, not kept; repair reports stray temp files (`repair-stray-temp` log line) and
+never deletes them. Before, a render during a companion copy recorded the tmp and the
+keep-old rule kept it forever, through `--rebuild`.
+(2) The batch-lock excuse covers only files written AFTER the lock was taken
+(`store.lock_taken_at`, `doctor.batch_started_at`), for doctor and repair alike. Before, a
+15:30 repair inside the 12:30 sweep's lock called older damage "pending" every day.
+(3) A missing `manifest.json` counts as explained only when every copied file matches its
+original in `~/.claude` byte for byte (`archive.copies_match_sources`); an unreadable one
+is never replaced by any writer (`archive.ManifestUnreadable`).
+(4) Repair explains a changed `prompts.jsonl` or `custom-title.json` (ccw rewrites both),
+as the writers already did; a rename during a resume no longer raises a false refusal.
+(5) Repair restores a changed or deleted companion file or sub-agent byte for byte from
+`~/.claude` when a source file's sha256 equals the manifest's kept record
+(`archive.restore_from_sources`), after setting the changed copy aside under
+`_not-sessions/displaced/`; with no matching source the folder stays held.
+(6) `ccw repair` exits 1 only when repair itself failed. A held folder exits 0 and is
+counted in one `repair-summary` log line per run (`open_refusals`, `oldest_refusal_at`),
+which the start-up hook reads on its own time clock. Every open refusal is re-checked on
+every run, even outside the 25-folder sample, and closes (`repair-refusal-resolved`) only
+when its folder verifies clean. Changed tests, each for the ruling it follows: refusals
+now exit 0 and change the source so no restore applies; batch-lock tests write after the
+lock; the reconciliation ledger helper ignores the new per-run summary line. Tests:
+`tests/test_repair_sendback.py`.
+
 **No writer records a changed file as the new truth any more, and `ccw repair` stops
 re-rendering over a change it cannot explain (2026-09-29, W-20260929-A82 and A88; ruling:
 Gavin, F1, F2 (a), F3).** Verified in a sandbox with the real verbs: `ccw build`, a `ccw
@@ -46,9 +74,9 @@ replace-if-larger rule, which is the right outcome.
 (F2 (a)) `ccw repair` re-renders only what `doctor.unexplained` calls explained: a missing
 generated file, a payload mismatch whose JSONL hashes to the catalog head (a re-capture),
 or a sub-agent that grew. Anything else leaves the folder untouched, whole even when
-pages are also missing. It is reported `still broken`, writes an `error` record and exits
-1 on EVERY run until a human fixes it (the freshness hook shows that at each session
-start). One desktop and voice alert fires per folder and distinct problem set, recorded
+pages are also missing. It is reported `still broken` and writes an `error` record every
+run. (It exited 1 on every run here; SUPERSEDED the same day by the send-back entry
+above: a held folder exits 0 and is counted in a `repair-summary` line.) One desktop and voice alert fires per folder and distinct problem set, recorded
 as a `repair-refused` line in `logs/capture.jsonl` keyed on (session_uuid, message); its
 message starts `repair: `, so the reconciliation ledger never reads it as a capture error.
 (F1) While any batch lock is held, a mismatch on a file newer than its manifest is the
