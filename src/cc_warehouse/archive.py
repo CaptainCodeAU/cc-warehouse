@@ -106,6 +106,9 @@ class MigrationReport:
     # because F6 says the reason is never allowed to go silent.
     refused_equal_size: list[str] = field(default_factory=list[str])
     failed: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    # W-20260929-A82: folders skipped because their manifest is unreadable. Held
+    # for `ccw repair`, never counted as failed, so the weekly job stays green.
+    held: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
 
     def summary(self) -> str:
         if self.lock_held:
@@ -118,6 +121,7 @@ class MigrationReport:
             f" {len(self.refused_smaller)} refused as smaller,"
             f" {len(self.refused_equal_size)} refused as equal-size mismatch,"
             f" {len(self.failed)} failed"
+            + (f", {len(self.held)} held for repair" if self.held else "")
         )
 
 
@@ -679,15 +683,21 @@ def stray_temp_files(session_dir: Path) -> list[Path]:
     return sorted(p for p in session_dir.rglob("*") if store.is_temp_name(p.name) and p.is_file())
 
 
-def _grew(size: int, recorded: object) -> bool:
-    """A sub-agent file is LONGER than the size its manifest recorded. R1 as
-    amended: size answers "which of two payloads known to differ is larger",
-    and replace-if-larger is exactly the rule `write_subagent` itself applies,
-    so a larger sub-agent is one ccw could have written and a same-size or
-    smaller one is not (W-20260929-A76, A82)."""
-    if not isinstance(recorded, int) or isinstance(recorded, bool):
+def _appended(data: bytes, record: dict[str, object]) -> bool:
+    """A sub-agent GREW the way a live resume grows it: the new bytes are the
+    recorded bytes plus more (W-20260929-A76, A82; ruling: Gavin, 2026-09-29).
+    R1: the sha256 of the first <recorded bytes> bytes must equal the record's
+    sha256, so the hash decides; size only picks which bytes to hash and says
+    the file is longer. A larger file that is not an append is a change ccw did
+    not make (tests/test_a82_held_growth_displaced.py)."""
+    size = record.get("bytes")
+    sha = record.get("sha256")
+    if not isinstance(size, int) or isinstance(size, bool) or not isinstance(sha, str):
         return False
-    return size > recorded
+    # R1 as amended: an ordering ("is it longer"), never equality by size.
+    if len(data) <= size:
+        return False
+    return store.sha256_hex(data[:size]) == sha
 
 
 def _changed(previous: dict[str, object], live: dict[str, object]) -> bool:
@@ -725,19 +735,21 @@ def kept_subagent_records(session_dir: Path, recorded: object) -> list[dict[str,
     make, and re-recording it would erase the only evidence. A grown sub-agent
     is adopted (a live resume). New sub-agents are added.
     (tests/test_writers_keep_evidence.py)"""
-    live = subagent_records(session_dir)
     old = _old_records(recorded, "agent_id")
     if old is None:
-        return live
+        return subagent_records(session_dir)
     out: list[dict[str, object]] = []
     seen: set[str] = set()
-    for rec in live:
-        agent_id = str(rec["agent_id"])
+    for agent_id, jsonl in _subagent_files(session_dir):
+        data = jsonl.read_bytes()
+        rec: dict[str, object] = {
+            "agent_id": agent_id,
+            "sha256": store.sha256_hex(data),
+            "bytes": len(data),
+        }
         seen.add(agent_id)
         prev = old.get(agent_id)
-        if prev is not None and _changed(prev, rec) and not _grew(
-            cast(int, rec["bytes"]), prev.get("bytes")
-        ):
+        if prev is not None and _changed(prev, rec) and not _appended(data, prev):
             out.append(prev)
         else:
             out.append(rec)
@@ -1468,7 +1480,39 @@ def write_session_folder(
 class ManifestUnreadable(Exception):
     """A folder's existing manifest cannot be read, so no render may replace it
     (W-20260929-A82 item 3). Replacing it would take every record from disk and
-    adopt whatever changed; a human restores or removes it first."""
+    adopt whatever changed; a human restores or removes it first. Every writer
+    that meets one HOLDS the folder (`record_hold`) instead of failing its run
+    (ruling: Gavin, 2026-09-29)."""
+
+    def __init__(self, directory: Path, message: str) -> None:
+        super().__init__(message)
+        self.directory = directory
+
+
+# A writer skipped a folder it must not render over (an unreadable manifest).
+# Opens a refusal in `reconcile.open_refusals`, so `ccw repair` re-checks the
+# folder every run, counts it and raises its one alert, in or out of its sample.
+WRITER_HELD = "writer-held"
+
+
+def record_hold(warehouse_root: Path, directory: Path, reason: str) -> None:
+    """Hand a folder a writer skipped to `ccw repair`'s refusal ledger
+    (W-20260929-A82; ruling: Gavin, "treat the folder as held"). Best-effort,
+    like every log sink (DESIGN 12)."""
+    from cc_warehouse import notify
+
+    notify.append_log_under(
+        warehouse_root,
+        {
+            "at": datetime.now(UTC).isoformat(),
+            "status": WRITER_HELD,
+            "session": None,
+            "project": None,
+            "message": f"held, not rendered: {reason}",
+            "elapsed_ms": None,
+            "session_uuid": directory.name.partition("_")[2],
+        },
+    )
 
 
 def _previous_manifest(directory: Path) -> dict[str, object]:
@@ -1483,9 +1527,11 @@ def _previous_manifest(directory: Path) -> dict[str, object]:
     try:
         loaded = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError) as exc:
-        raise ManifestUnreadable(f"{path}: unreadable manifest, not replaced: {exc}") from exc
+        raise ManifestUnreadable(
+            directory, f"{path}: unreadable manifest, not replaced: {exc}"
+        ) from exc
     if not isinstance(loaded, dict):
-        raise ManifestUnreadable(f"{path}: manifest is not a JSON object, not replaced")
+        raise ManifestUnreadable(directory, f"{path}: manifest is not a JSON object, not replaced")
     return cast(dict[str, object], loaded)
 
 
@@ -1816,6 +1862,10 @@ def _migrate_locked(
             result = write_session_folder(
                 archive_root, label, data, options, timezone, fallback_stem=stem, rebuild=rebuild
             )
+        except ManifestUnreadable as exc:
+            record_hold(warehouse_root, exc.directory, str(exc))
+            report.held.append((hash_, str(exc)))
+            continue
         except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
             report.failed.append((hash_, f"{type(exc).__name__}: {exc}"))
             continue
@@ -2012,7 +2062,8 @@ class FolderProblem:
     # (W-20260929-A82): `doctor._written_after_manifest` reads it for the
     # batch-lock pending rule, so no caller re-derives a path from the text.
     path: Path | None = None
-    # A sub-agent that is longer than its record: explained by growth (A76).
+    # A sub-agent that is its record's bytes plus more (`_appended`): explained
+    # by growth (A76), proved by the prefix hash, not by size.
     grew: bool = False
 
 
@@ -2167,7 +2218,7 @@ def _subagent_problems(
                     directory,
                     f"sub-agent {agent_id} does not match its hash",
                     path,
-                    _grew(path.stat().st_size, rec.get("bytes")),
+                    _appended(path.read_bytes(), rec),
                 )
             )
     return out

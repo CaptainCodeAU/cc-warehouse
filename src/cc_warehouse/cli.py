@@ -1234,6 +1234,13 @@ def _run_build(args: Sequence[str]) -> int:
     superseded = sum(1 for outcome in report.outcomes if outcome.action == build.SUPERSEDED)
     if superseded:
         summary += f", {superseded} superseded during this run"
+    # W-20260929-A82: a folder with an unreadable manifest is held for repair,
+    # named here and on stderr, never a failure of this run.
+    held = [outcome for outcome in report.outcomes if outcome.action == build.HELD]
+    if held:
+        summary += f", {len(held)} held for repair"
+        for outcome in held:
+            print(f"build held: {outcome.item}: {outcome.detail}", file=sys.stderr)
     _log_run_summary(config, "build", "error" if failures else "ok", summary)
     print(f"build: {summary}")
     return 1 if failures else 0

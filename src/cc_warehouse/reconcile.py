@@ -461,6 +461,13 @@ def open_refusals(config: Config) -> dict[str, OpenRefusal]:
             continue
         if status == REPAIR_REFUSAL_RESOLVED:
             state.pop(session_uuid, None)
+        elif status == archive.WRITER_HELD:
+            # A writer skipped the folder (unreadable manifest): open it for
+            # repair to re-check and alert on, keeping the first sighting.
+            at = record.get("at")
+            prev = state.get(session_uuid)
+            if prev is None and isinstance(at, str):
+                state[session_uuid] = OpenRefusal(at, frozenset[str]())
         elif status == REPAIR_REFUSED:
             at = record.get("at")
             message = record.get("message")

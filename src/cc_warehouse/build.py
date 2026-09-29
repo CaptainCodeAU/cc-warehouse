@@ -424,8 +424,11 @@ def _mirror(
     options: render.RenderOptions,
     *,
     rebuild: bool = False,
-) -> None:
+) -> str | None:
     """Refresh this session's archive folder, when an archive is configured.
+    Returns the reason when the folder is HELD instead (an unreadable manifest,
+    W-20260929-A82): skipped, handed to `ccw repair`'s ledger, and not an error,
+    so neither this build nor the sweep that ran it fails for that alone.
 
     Imported lazily because archive.py imports build.py: the archive layer sits
     ABOVE this one and a module-level import would be a cycle.
@@ -457,18 +460,23 @@ def _mirror(
     same thing in both trees.
     """
     if config.archive_root is None:
-        return
+        return None
     from cc_warehouse import archive
 
-    archive.write_session_folder(
-        config.archive_root,
-        label,
-        data,
-        options,
-        config.archive_timezone,
-        fallback_stem=f"session-{short}",
-        rebuild=rebuild,
-    )
+    try:
+        archive.write_session_folder(
+            config.archive_root,
+            label,
+            data,
+            options,
+            config.archive_timezone,
+            fallback_stem=f"session-{short}",
+            rebuild=rebuild,
+        )
+    except archive.ManifestUnreadable as exc:
+        archive.record_hold(config.root, exc.directory, str(exc))
+        return str(exc)
+    return None
 
 
 def _prune(projections: Path, expected: set[Path]) -> None:
@@ -532,6 +540,12 @@ UNCHANGED = "unchanged"
 # the hook render child's to render now and the next build's to confirm. Public:
 # the CLI end report keys on it, same shape as UNCHANGED above.
 SUPERSEDED = "superseded"
+
+# A head whose archive folder has an unreadable manifest (W-20260929-A82; ruling:
+# Gavin, "treat the folder as held"). A NON-failure for this run: the folder is
+# skipped, handed to `ccw repair`'s refusal ledger (`archive.record_hold`), and
+# counted and alerted there, so the build and the sweep that ran it stay green.
+HELD = "held"
 
 
 def _superseded_by(conn: sqlite3.Connection, head: _Head) -> str | None:
@@ -726,7 +740,10 @@ def _build_heads(
             # `ccw build` has to keep meaning something once the old tree is
             # retired: it is the verb that rebuilds after a render change,
             # so it rebuilds whichever tree still exists (slice 19j).
-            _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
+            held = _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
+            if held is not None:
+                outcomes.append(ItemOutcome(head.short, HELD, held))
+                continue
             outcomes.append(ItemOutcome(head.short, "built", ""))
         except Exception as exc:  # report and continue past a bad item (R10)
             outcomes.append(
