@@ -1084,6 +1084,29 @@ def _log_companions(
         return
 
 
+def _log_render_done(config: Config, short: str, elapsed_ms: int | None) -> None:
+    """One `render-done` capture.jsonl record when a session render finishes
+    (W-20260929-A62; ruling: Gavin, 2026-09-29, option 2). The end of the
+    pipeline the hook's `ok` line and `_log_companions`'s pair begin:
+    `doctor._pipeline_in_flight` reads a re-capture as still rendering until this
+    line lands. Same six-field schema and best-effort contract as
+    `_log_companions`, and `append_log` only, so no webhook or voice fires."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "render-done",
+                "session": short,
+                "project": None,
+                "message": "render: rendered",
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+    except Exception:
+        return
+
+
 def _run_companions(args: Sequence[str]) -> int:
     """`ccw companions --session s:<key> --transcript PATH`: the detached
     companions child (ticket 37 Part B), spawned by `_spawn_companions` only
@@ -1330,8 +1353,12 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
     As the hook's detached child this is the last surviving signal on failure (DESIGN
     section 4): a render error emits a best-effort error notification (never raising)
     and exits non-zero, and a successful render honors the open-folder opt-in. A
-    superseded/hidden no-op is not a failure, so it stays silent."""
+    superseded/hidden no-op is not a failure, so it stays silent.
+
+    A successful render appends a `render-done` line (`_log_render_done`,
+    W-20260929-A62), the signal `ccw doctor` waits for on a re-capture."""
     short = session_key[2:] if session_key.startswith("s:") else session_key
+    start = time.monotonic()
     config = _load(rest)
     conn = catalog.open_catalog(config.root)
     try:
@@ -1372,6 +1399,7 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
         except Exception:
             pass
         return 1
+    _log_render_done(config, head.short, max(0, int((time.monotonic() - start) * 1000)))
     if config.open_folder:
         try:
             # NOT `directory`, which is the PROJECTIONS dir: with

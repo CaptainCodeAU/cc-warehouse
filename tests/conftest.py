@@ -703,6 +703,17 @@ def settle_companions(env: Mapping[str, str], expected: int = 1, timeout: float 
     before it ever reaches `archive_companions`, so it spawns none and does not
     count.
     """
+    settle_log_status(env, "companions-done", expected, timeout)
+
+
+def settle_log_status(
+    env: Mapping[str, str], status: str, expected: int = 1, timeout: float = 30.0
+) -> None:
+    """Wait until `logs/capture.jsonl` holds at least `expected` lines with this
+    `status`. The one waiting loop behind `settle_companions`, and the way to wait
+    for the detached render child's own terminal line, `render-done`
+    (W-20260929-A62), which lands after `companions-done` since "copy, then
+    render"."""
     log = warehouse_root(env) / "logs" / "capture.jsonl"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -715,14 +726,14 @@ def settle_companions(env: Mapping[str, str], expected: int = 1, timeout: float 
                     continue
                 if isinstance(record, dict):
                     typed = cast(dict[str, object], record)
-                    if typed.get("status") == "companions-done":
+                    if typed.get("status") == status:
                         done += 1
             if done >= expected:
                 return
         time.sleep(0.05)
     raise AssertionError(
-        f"companions children did not settle within {timeout}s under {log}"
-        f" (wanted at least {expected} 'companions-done' line(s))"
+        f"detached children did not settle within {timeout}s under {log}"
+        f" (wanted at least {expected} {status!r} line(s))"
     )
 
 

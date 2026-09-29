@@ -27,6 +27,7 @@ plus output is not evidence that nothing happened (2026-08-01).
 
 import json
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -772,7 +773,7 @@ def test_a_tampered_folder_is_never_pending_even_inside_the_grace_window(
     assert first is not None and folder.name in first
 
 
-def _recapture(env: dict[str, str], config: Config, session_uuid: str) -> None:
+def _recapture(env: dict[str, str], config: Config, session_uuid: str) -> str:
     """A resumed session's re-capture, the way `ccw hook` does it: the transcript
     grows, `capture_transcript` writes the new JSONL into the folder and a new
     catalog row, and the render that rewrites the manifest has not run yet."""
@@ -785,6 +786,7 @@ def _recapture(env: dict[str, str], config: Config, session_uuid: str) -> None:
         config, path, session_id=session_uuid, cwd=None, defer_companions=True
     )
     assert result.action == "stored", result
+    return result.short
 
 
 def test_a_recapture_inside_the_grace_window_is_pending_with_no_lock(
@@ -856,6 +858,254 @@ def test_a_file_older_than_its_manifest_is_never_pending_inside_the_grace_window
     assert pending == 0, "a mismatch older than its manifest was excused by the grace"
     assert problems >= 1
     assert first is not None and folder.name in first
+
+
+# ---------------------------------------------------------------------------
+# W-20260929-A62 rework (ruling: Gavin, 2026-09-29, option 2: "hash check plus the
+# clock starts when the save finishes")
+# ---------------------------------------------------------------------------
+#
+# The hook's pipeline already writes its progress into logs/capture.jsonl: the
+# hook's own `ok`/"captured" line, then the companions child's `companions-started`
+# and `companions-done`. The render child now adds `render-done`. A hash-matching
+# re-capture reads as pending while its pipeline is still moving, with the last
+# progress line under `_COMPANIONS_GRACE_SECONDS` old, instead of a fixed 120 s
+# from `captured_at`. Log times are compared only with `now`, never with mtimes.
+
+
+def _append_aged(env: dict[str, str], write: Callable[[], None], *, seconds_ago: int) -> None:
+    """Run a REAL capture.jsonl writer, then move the line it wrote into the past."""
+    write()
+    path = warehouse_root(env) / "logs" / "capture.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[-1])
+    record["at"] = (datetime.now(UTC) - timedelta(seconds=seconds_ago)).isoformat()
+    lines[-1] = json.dumps(record)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _hook_line(config: Config, short: str) -> Callable[[], None]:
+    from cc_warehouse import notify
+
+    return lambda: notify.report(
+        config, notify.NotifyEvent("ok", short, None, "captured", 12)
+    )
+
+
+def _companions_line(config: Config, short: str, status: str) -> Callable[[], None]:
+    from cc_warehouse import cli
+
+    message = "started" if status == "companions-started" else "archived"
+    return lambda: cli._log_companions(config, status, short, message, None)  # pyright: ignore[reportPrivateUsage]
+
+
+def _render_done_line(config: Config, short: str) -> Callable[[], None]:
+    from cc_warehouse import cli
+
+    return lambda: cli._log_render_done(config, short, 900)  # pyright: ignore[reportPrivateUsage]
+
+
+def _recapture_scene(
+    env: dict[str, str], tmp_path: Path, *, captured_ago: int
+) -> tuple[Config, Path, str]:
+    archive_root = tmp_path / "archive"
+    configure(env, archive_root)
+    install_hook(env)  # so only the desync check under test can fail report.ok
+    write_transcript(env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    config = Config(root=warehouse_root(env), archive_root=archive_root, archive_timezone=ZONE)
+    short = _recapture(env, config, UUID_A)
+    _age_capture(env, UUID_A, seconds_ago=captured_ago)
+    return config, folder, short
+
+
+def test_the_render_child_logs_render_done(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    """Part 4: the clock's end signal comes from the real render verb, in the same
+    six-field shape as the companions pair."""
+    from conftest import run_cli
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    short = _recapture(ccw_env, config, UUID_A)
+
+    result = run_cli(["render", "--session", f"s:{short}"])
+
+    assert result.code == 0, result.err
+    lines = (warehouse_root(ccw_env) / "logs" / "capture.jsonl").read_text(encoding="utf-8")
+    done = [r for r in map(json.loads, lines.splitlines()) if r.get("status") == "render-done"]
+    assert len(done) == 1, done
+    assert set(done[0]) == {"at", "status", "session", "project", "message", "elapsed_ms"}
+    assert done[0]["session"] == short
+    assert str(done[0]["message"]).startswith("render: ")
+
+
+def test_a_recapture_still_rendering_past_120s_is_pending(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The slow-share case: captured 200 s ago, the copy finished 150 s ago, the
+    render has not reported yet. Past the old 120 s grace, inside the ceiling."""
+    config, _folder, short = _recapture_scene(ccw_env, tmp_path, captured_ago=200)
+    _append_aged(ccw_env, _hook_line(config, short), seconds_ago=200)
+    _append_aged(ccw_env, _companions_line(config, short, "companions-started"), seconds_ago=199)
+    _append_aged(ccw_env, _companions_line(config, short, "companions-done"), seconds_ago=150)
+
+    checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+
+    assert checked == 1
+    assert problems == 0, "a render still inside its pipeline window tripped the alarm"
+    assert pending == 1
+    assert doctor.diagnose(config).ok
+
+
+def test_a_recapture_past_the_ceiling_with_no_render_done_fails(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """A dead render child: the last progress line is older than the ceiling."""
+    config, folder, short = _recapture_scene(ccw_env, tmp_path, captured_ago=500)
+    _append_aged(ccw_env, _hook_line(config, short), seconds_ago=500)
+    _append_aged(ccw_env, _companions_line(config, short, "companions-started"), seconds_ago=499)
+    ceiling = doctor._COMPANIONS_GRACE_SECONDS  # pyright: ignore[reportPrivateUsage]
+    _append_aged(
+        ccw_env, _companions_line(config, short, "companions-done"), seconds_ago=ceiling + 30
+    )
+
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+
+    assert checked == 1
+    assert pending == 0, "a pipeline silent past its ceiling was still excused"
+    assert problems == 1
+    assert first is not None and folder.name in first
+
+
+def test_a_mismatch_after_render_done_fails_at_once(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The render reported done and the folder still disagrees: nothing is still
+    coming, so even a capture 30 s old is a real problem."""
+    config, folder, short = _recapture_scene(ccw_env, tmp_path, captured_ago=30)
+    _append_aged(ccw_env, _hook_line(config, short), seconds_ago=30)
+    _append_aged(ccw_env, _companions_line(config, short, "companions-started"), seconds_ago=29)
+    _append_aged(ccw_env, _companions_line(config, short, "companions-done"), seconds_ago=20)
+    _append_aged(ccw_env, _render_done_line(config, short), seconds_ago=10)
+
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+
+    assert checked == 1
+    assert pending == 0, "a mismatch that outlived its own render was excused"
+    assert problems == 1
+    assert first is not None and folder.name in first
+
+
+def test_a_tampered_recapture_inside_the_pipeline_window_fails(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Part 1 kept: a live pipeline excuses only the bytes the catalog recorded."""
+    config, folder, short = _recapture_scene(ccw_env, tmp_path, captured_ago=30)
+    _append_aged(ccw_env, _hook_line(config, short), seconds_ago=30)
+    _append_aged(ccw_env, _companions_line(config, short, "companions-started"), seconds_ago=29)
+    _tamper(folder)
+
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+
+    assert checked == 1
+    assert pending == 0, "a JSONL the catalog never recorded was excused"
+    assert problems == 1
+    assert first is not None and folder.name in first
+
+
+def test_a_newer_prompts_file_with_no_lock_fails_even_inside_the_grace(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Part 2: the only writer of prompts.jsonl is sweep, under the sweep lock, so
+    with no lock a newer prompts.jsonl was written by something else."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _age_capture(ccw_env, UUID_A, seconds_ago=30)
+    (folder / archive.PROMPTS_FILE).write_bytes(b'{"display":"hi"}\n')
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(folder / "manifest.json", (old, old))
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+
+    assert checked == 1
+    assert pending == 0, "a newer prompts.jsonl was excused with no lock held"
+    assert problems == 1
+    assert first is not None and folder.name in first
+
+
+@pytest.mark.parametrize("lock", ["import", "migrate", "relocate", "archive"])
+def test_every_batch_writer_lock_excuses_its_own_writes(
+    ccw_env: dict[str, str], tmp_path: Path, lock: str
+) -> None:
+    """Part 3: import, migrate, relocate and `archive --to` also write a JSONL and
+    then its manifest under their own lock, so doctor treats them as a batch."""
+    from cc_warehouse import store
+
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
+    _sweep_rewrites_after_manifest(folder)
+    root = warehouse_root(ccw_env)
+    config = Config(root=root, archive_root=archive_root, archive_timezone=ZONE)
+
+    assert store.acquire_lock(root, lock)
+    try:
+        _checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        store.release_lock(root, lock)
+
+    assert problems == 0, f"a live {lock} batch's own writes tripped the alarm"
+    assert pending == 2
+
+
+def test_doctor_knows_every_batch_lock_the_code_takes() -> None:
+    """The pin `_BATCH_LOCK_NAMES`'s comment promised and that did not exist:
+    every `store.acquire_lock(<root>, <module constant>)` call site in src,
+    resolved to the constant's value, must be in doctor's list. The one call
+    site with a computed name is capture's per-hash lock, named here so a new
+    computed lock cannot slip past unseen."""
+    import ast
+
+    src = Path(doctor.__file__).parent
+    batch: set[str] = set()
+    computed: set[str] = set()
+    for path in sorted(src.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        constants = {
+            target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "acquire_lock"
+                and len(node.args) == 2
+            ):
+                name = node.args[1]
+                if isinstance(name, ast.Name) and name.id in constants:
+                    batch.add(constants[name.id])
+                else:
+                    computed.add(path.name)
+    assert computed == {"capture.py"}, computed
+    assert batch == {"sweep", "build", "import", "migrate", "relocate", "archive"}, batch
+    assert set(doctor._BATCH_LOCK_NAMES) == batch  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_registered_hook_whose_script_is_gone_is_not_reported_ok(

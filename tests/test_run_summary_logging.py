@@ -26,6 +26,7 @@ from conftest import (
     run_ccw,
     run_cli,
     settle_companions,
+    settle_log_status,
     settle_render,
     warehouse_root,
     write_transcript,
@@ -205,6 +206,8 @@ def test_archive_writes_no_capture_jsonl_record_of_any_kind(
     # taking the baseline -- it writes "companions-done" to this same log on its
     # own schedule, and that is not archive's doing.
     settle_companions(ccw_env)
+    # ...and the render child it spawns, which logs "render-done" (W-20260929-A62).
+    settle_log_status(ccw_env, "render-done")
     before = len(_log_records(ccw_env))
 
     result = run_ccw(["archive", "--to", str(archive_root)], ccw_env)

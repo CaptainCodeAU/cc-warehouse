@@ -48,15 +48,19 @@ _OVERDUE_SECONDS = 24 * 60 * 60
 # exactly as long as the batch actually takes rather than guessing a number.
 _PENDING_GRACE_SECONDS = 120
 
-# The lock names `sweep.py` (`_SWEEP_LOCK`) and `build.py` (`_BUILD_LOCK`)
-# acquire for their entire run. Repeated here as literals rather than
-# importing those private module constants across a peer boundary: the
-# shared truth this module actually depends on is store.py's lock file
-# FORMAT (`lock_is_held`), not sweep/build's own private naming choice, and a
-# renamed lock constant over there would need a matching rename here either
-# way. A test pins both names against their source of truth so this cannot
-# drift silently.
-_BATCH_LOCK_NAMES = ("sweep", "build")
+# The lock names every batch writer acquires for its entire run: `sweep.py`
+# (`_SWEEP_LOCK`), `build.py` (`_BUILD_LOCK`) and, since W-20260929-A62,
+# `import_tree.py` (`_IMPORT_LOCK`), `migrate.py` (`_MIGRATE_LOCK`),
+# `relocate.py` (`RELOCATE_LOCK`) and `archive.py` (`ARCHIVE_LOCK`), each of
+# which also writes a JSONL before its manifest. Repeated here as literals
+# rather than importing private module constants across a peer boundary: the
+# shared truth this module actually depends on is store.py's lock file FORMAT
+# (`lock_is_held`), not each writer's own naming choice. This comment used to
+# say a test pinned the names and none did (found 2026-09-29); now
+# tests/test_doctor.py::test_doctor_knows_every_batch_lock_the_code_takes
+# resolves every `store.acquire_lock` call site in src and fails on a name
+# missing here.
+_BATCH_LOCK_NAMES = ("sweep", "build", "import", "migrate", "relocate", "archive")
 
 # A hook that mentions either console script is ours; the plugin wrapper and a
 # settings.json entry both end up as a command string containing one of these.
@@ -409,6 +413,7 @@ class _Recent:
     folder: Path
     captured_at: str | None
     payload_hash: str | None = None
+    short: str | None = None
 
 
 @dataclass(frozen=True)
@@ -488,6 +493,7 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
             ),
             captured_at,
             payload_hash,
+            short,
         )
         for _moment_, short, label, first_ts, session_uuid, captured_at, payload_hash in dated[
             :limit
@@ -777,14 +783,21 @@ def _written_after_manifest(folder: Path, problem: str) -> bool:
 
 
 def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | None) -> bool:
-    """`_written_after_manifest`, and for the payload also proof that the newer
-    JSONL IS the catalog's current head (W-20260929-A62): a re-capture writes the
-    JSONL and then its catalog row, so the two agree; a file altered by anything
-    else matches no row. R1: that equality is decided by sha256, never by size."""
+    """A payload mismatch that is a re-capture still rendering (W-20260929-A62):
+    the JSONL is newer than the manifest (`_written_after_manifest`) AND hashes
+    to the catalog's current head. A re-capture writes the JSONL and then its
+    catalog row, so the two agree; a file altered by anything else matches no
+    row. R1: that equality is decided by sha256, never by size.
+
+    Only the payload shape. With no lock held nothing in ccw writes
+    `prompts.jsonl` (its one writer is sweep, under the sweep lock), so a newer
+    one here was written by something else and is never excused
+    (tests/test_doctor.py::
+    test_a_newer_prompts_file_with_no_lock_fails_even_inside_the_grace)."""
+    if problem != "JSONL does not match manifest source_hash":
+        return False
     if not _written_after_manifest(folder, problem):
         return False
-    if problem != "JSONL does not match manifest source_hash":
-        return True
     target = archive.sole_jsonl(folder)
     if target is None or payload_hash is None:
         return False
@@ -792,6 +805,70 @@ def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | N
         return store.sha256_hex(target.read_bytes()) == payload_hash
     except OSError:
         return False
+
+
+# The capture.jsonl statuses that mark the hook's pipeline moving for one
+# session (W-20260929-A62): the hook's own `ok` line with message "captured"
+# (`cli._report_capture`), then the companions child's pair (`cli._log_companions`).
+# `render-done` (`cli._log_render_done`) is the end. Keyed by the `session` short.
+_PIPELINE_PROGRESS = frozenset({"companions-started", "companions-done"})
+_PIPELINE_DONE = "render-done"
+
+
+def _pipeline_in_flight(config: Config, shorts: set[str], now: datetime) -> dict[str, bool]:
+    """For each short that has pipeline lines in logs/capture.jsonl: whether its
+    render is still coming. True while the LATEST of its lines (file order, the
+    log is append-only) is a progress line under `_COMPANIONS_GRACE_SECONDS` old;
+    False once `render-done` is the latest line, or the pipeline has been silent
+    past that ceiling (a dead helper). A short with no lines is absent, and the
+    caller falls back to the `captured_at` grace.
+
+    The ceiling runs from the latest progress line, so the copy gets the same
+    300 s the companions stall check allows it, and the render gets 300 s from
+    the copy's end. Log times are compared only with `now`, never with file
+    mtimes: the share's clock and this machine's can differ.
+
+    SessionStart cost: called only when a sampled folder is awaiting a render
+    with no batch lock held, so a healthy run never reads the log here. When it
+    does, lines are prefiltered by substring before JSON parsing and only the
+    last `_COMPANIONS_WINDOW` counts, the same window `_companions_stalled` uses."""
+    if not shorts:
+        return {}
+    try:
+        text = (config.root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    cutoff = now - _COMPANIONS_WINDOW
+    latest: dict[str, tuple[bool, datetime]] = {}
+    for line in text.splitlines():
+        if not any(short in line for short in shorts):
+            continue
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        session = record.get("session")
+        status_value = record.get("status")
+        if not isinstance(session, str) or session not in shorts:
+            continue
+        if status_value == _PIPELINE_DONE:
+            progress = False
+        elif status_value in _PIPELINE_PROGRESS or (
+            status_value == "ok" and record.get("message") == "captured"
+        ):
+            progress = True
+        else:
+            continue
+        at = record.get("at")
+        moment = _moment(at) if isinstance(at, str) else None
+        if moment is None or moment < cutoff:
+            continue
+        latest[session] = (progress, moment)
+    ceiling = timedelta(seconds=_COMPANIONS_GRACE_SECONDS)
+    return {
+        short: progress and (now - moment) <= ceiling
+        for short, (progress, moment) in latest.items()
+    }
 
 
 def _desync(config: Config) -> tuple[int, int, int, str | None]:
@@ -838,19 +915,23 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     by something else DURING a batch reads as pending until the lock is
     released, then fails.
 
-    WIDENED AGAIN 2026-09-29 (W-20260929-A62; ruling: Gavin, option B), for a
-    resumed session's re-capture with NO lock held: since 78daa4f the hook's
-    render waits for the companions copy, so the new JSONL sits newer than the
-    old manifest for the copy-plus-render time. Inside `_PENDING_GRACE_SECONDS`
-    of the catalog's `captured_at`, a folder whose every problem is a missing
-    file or a newer-than-manifest file reads as pending, and a newer JSONL must
-    ALSO hash to the catalog's current head (`_recaptured_after_manifest`). That
-    last clause is what keeps a freshly captured folder whose JSONL was altered
-    red (tests/test_doctor.py::
-    test_a_tampered_folder_is_never_pending_even_inside_the_grace_window): the
-    re-capture writes its catalog row after the JSONL, so the two agree, and an
-    altered file matches no row. Outside the grace, or any other shape, it
-    stays a problem (test_a_recapture_outside_the_grace_window_still_fails).
+    WIDENED AGAIN 2026-09-29 (W-20260929-A62; ruling: Gavin, option 2, "hash
+    check plus the clock starts when the save finishes"), for the hook's own
+    pipeline with NO lock held. Since 78daa4f the hook's render waits for the
+    companions copy, so a re-capture's new JSONL sits newer than the old manifest
+    for the copy-plus-render time. A folder whose every problem is a missing
+    file or a re-captured payload (`_recaptured_after_manifest`: newer than the
+    manifest AND hashing to the catalog's current head) reads as pending while
+    its pipeline is still moving (`_pipeline_in_flight`: no `render-done` yet,
+    last progress line under `_COMPANIONS_GRACE_SECONDS` old). With no pipeline
+    lines at all for the session, the `captured_at` grace above still decides.
+    The hash clause is what keeps a freshly captured folder whose JSONL was
+    altered red (tests/test_doctor.py::
+    test_a_tampered_folder_is_never_pending_even_inside_the_grace_window,
+    test_a_tampered_recapture_inside_the_pipeline_window_fails); a mismatch that
+    outlives its own `render-done`, or a pipeline silent past the ceiling, is a
+    problem (test_a_mismatch_after_render_done_fails_at_once,
+    test_a_recapture_past_the_ceiling_with_no_render_done_fails).
     """
     recent, broken = _desync_scan(config)
     folders = [item.folder for item in recent]
@@ -864,16 +945,30 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     pending_count = 0
     captured = {item.folder: item.captured_at for item in recent}
     hashes = {item.folder: item.payload_hash for item in recent}
+    shorts = {item.folder: item.short for item in recent}
+    awaiting: dict[Path, bool] = {
+        folder: all(
+            p.problem.startswith("missing ")
+            or _recaptured_after_manifest(folder, p.problem, hashes.get(folder))
+            for p in folder_problems
+        )
+        for folder, folder_problems in broken
+    }
+    in_flight = (
+        {}
+        if batch_active
+        else _pipeline_in_flight(
+            config,
+            {s for f, s in shorts.items() if s is not None and awaiting.get(f)},
+            now,
+        )
+    )
     for folder, folder_problems in broken:
         batch_queued = batch_active and all(
             p.problem.startswith("missing ") or _written_after_manifest(folder, p.problem)
             for p in folder_problems
         )
-        recapture_queued = all(
-            p.problem.startswith("missing ")
-            or _recaptured_after_manifest(folder, p.problem, hashes.get(folder))
-            for p in folder_problems
-        )
+        recapture_queued = awaiting[folder]
         # TICKET 44c: the grace is measured from CAPTURE time (the catalog's
         # wall-clock `captured_at`), not from the session's own start time in
         # the folder name. A 2020 session swept a minute ago is exactly the
@@ -884,7 +979,10 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
         within_grace = moment is not None and (now - moment) <= timedelta(
             seconds=_PENDING_GRACE_SECONDS
         )
-        if batch_queued or (recapture_queued and within_grace):
+        short = shorts.get(folder)
+        pipeline = in_flight.get(short) if short is not None else None
+        still_coming = within_grace if pipeline is None else pipeline
+        if batch_queued or (recapture_queued and still_coming):
             # Counted the same unit as `problem_count` below (individual
             # FolderProblem entries, e.g. up to one per GENERATED_NAMES file),
             # not folders -- so "N problem(s)" and "M pending render(s)" stay

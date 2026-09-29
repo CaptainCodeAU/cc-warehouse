@@ -25,15 +25,21 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 **`ccw doctor` no longer FAILs a resumed session while its re-capture is still
 rendering (2026-09-29, W-20260929-A62).** Since 78daa4f the hook's render waits for the
 companions copy, so a re-capture leaves the folder's new JSONL newer than its old manifest
-for the copy-plus-render time, with no batch lock held, and the ticket 34 grace only
-excused missing files. Ruling (Gavin, 2026-09-29, option B): inside
-`_PENDING_GRACE_SECONDS` of the catalog's `captured_at`, a folder whose every problem is a
-missing file or a file newer than its manifest reads as pending. One clause beyond the
-ruling's wording: a newer JSONL must also hash to the catalog's current head. Without it
-the rule also excused a freshly captured folder whose JSONL was altered, and three
-existing ticket 34 tests went red. A re-capture writes its catalog row after the JSONL,
-so the two agree; an altered file matches no row. Outside the grace, a file older than its
-manifest, or any other shape, is still a FAIL, and the batch-lock rule is unchanged.
+for the copy-plus-render time, with no batch lock held. Ruling (Gavin, 2026-09-29, option
+2, "hash check plus the clock starts when the save finishes"), four parts. (1) A payload
+mismatch is excusable only when the JSONL is newer than the manifest AND hashes to the
+catalog's current head, so an altered file on a fresh folder stays red. (2) With no lock,
+a newer `prompts.jsonl` is never excused: its only writer is `ccw sweep`, under the sweep
+lock. (3) doctor's batch-lock check now knows `import`, `migrate`, `relocate` and
+`archive` as well as `sweep` and `build`; the test the code comment promised had never
+existed and now enumerates every `store.acquire_lock` call site. (4) The render child
+appends a `render-done` line to `logs/capture.jsonl`, and a waiting folder reads as
+pending while its session's latest pipeline line (the hook's `ok`, `companions-started`,
+`companions-done`) has no later `render-done` and is under `_COMPANIONS_GRACE_SECONDS`
+(300 s) old. It fails at once after `render-done`, and 300 s after a silent helper's last
+line. With no pipeline lines the `captured_at` + 120 s grace still decides. The log is read
+only when a sampled folder is waiting with no lock: 1.1 ms for one folder, 7.3 ms for 25,
+on a copy of the real 3,092-line log.
 
 **`ccw repair` retracts the empty sessions it had already announced as unrecoverable
 (2026-09-29, W-20260929-A61).** The empty-session ruling (A60, below) stopped new
