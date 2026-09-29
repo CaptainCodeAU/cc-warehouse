@@ -180,6 +180,31 @@ imported. Tests hold a lock the real way through one shared helper,
 reinstall `ccw` only while no lock is held, because old and new builds do not see each
 other's locks.
 
+**The read-only share checks run in a bounded thread pool (2026-09-29, W-20260929-A91,
+ticket 46 option A step 1; ruling: Gavin).** On SMB over Wi-Fi the archive costs about
+50 ms per file opened, one at a time. New leaf module `parallel.py`: `map_reads` (answers
+in item order; a worker's exception is handed back and re-raised where the serial code
+met it, so it stays that item's failure, R10). `READ_WORKERS = 16` and `READ_CHUNK = 64`
+are named constants; one worker starts no pool, so the single-session hook path never
+does. In the pool: `build`'s per-head `_head_is_current`, one chunk at a time with the
+A58 supersede re-check still first and serial; `doctor._desync_scan` (both `ccw repair`'s
+full check and doctor's quick one); the coverage pass (`sidecar_gap`, `paste_gap`); and
+`ccw archive --verify`, where a folder whose read raises is now one named problem
+("could not be verified: ...") instead of the end of the run. The sweep itself is
+unchanged. Every write stays on the main thread in the old order through the old
+writers, and the SQLite catalog connection is never shared with a worker. The full verify is weighed by payload size against `READ_BUDGET_BYTES`
+(256 MiB): the 8 largest heads checked 16 at a time peaked at 2.4 GB uncapped and 1.98 GB
+capped (1.7 GB serial, the 114 MB session alone). Measured on the real share, read-only,
+per item, serial against 16 workers: build check 245 to 592 ms against 46 to 86 ms at
+normal priority and 5.2 s against 0.97 to 1.27 s under `taskpolicy -d throttle`; coverage
+74 against 13.5 ms (throttled 594 against 257 to 297 ms); full verify 339 against 169 ms
+(throttled 1,635 against 360 ms). NOT A GAIN, stated plainly: the sweep's read-ahead
+measured no speed-up (sub-agents 3.9 s against 4.3 s per item, sidecars 4.2 s against
+4.7 s) and was dropped before merge (conductor ruling, option A), because the cost is finding the folder, a scan of the whole label directory per
+item (median 2.0 s cold), which parallel reads do not remove (W-20260929-A115). Under
+the scheduled jobs' IO throttle a pooled build is still hours, so no scheduled-job
+speed-up is claimed from the normal-priority numbers.
+
 **`ccw doctor`'s desync check is a quick presence-and-size check; `ccw repair` keeps the
 full hash (2026-09-29, W-20260929-A74; ruling: Gavin, option 1).** Doctor took 47 s and
 48 s on the real machine, over the SessionStart freshness hook's 45 s, because

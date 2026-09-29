@@ -2335,6 +2335,21 @@ def _sole_jsonl(directory: Path) -> Path | None:
     return files[0] if files else None
 
 
+def payload_bytes(directory: Path) -> int:
+    """How many bytes the full `verify_folder` will read and parse for this
+    folder's JSONL, for the pool's byte budget (ticket 46). One listing and
+    one stat; 0 when there is no JSONL or it cannot be stat-ed, because the
+    verify itself then reports that folder, and a weight never decides
+    anything but when a read may start."""
+    jsonl = _sole_jsonl(directory)
+    if jsonl is None:
+        return 0
+    try:
+        return jsonl.stat().st_size
+    except OSError:
+        return 0
+
+
 def walk_folders(archive_root: Path) -> Iterator[Path]:
     """Every session folder in the archive, in sorted order.
 
