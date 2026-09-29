@@ -166,6 +166,8 @@ def _repair_head_jsonl(
     )
     try:
         data = path.read_bytes()
+        # R1 as amended: size orders two payloads known to differ (this source
+        # hashes to the head); it never decides that two payloads are the same.
         if not jsonl.is_file() or jsonl.stat().st_size >= len(data):
             return None
         archive.write_source(

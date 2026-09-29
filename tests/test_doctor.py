@@ -1105,7 +1105,9 @@ def test_doctor_knows_every_batch_lock_the_code_takes() -> None:
                     batch.add(constants[name.id])
                 else:
                     computed.add(path.name)
-    assert computed == {"capture.py"}, computed
+    # archive.py: `session_lock`'s per-session `archive-<uuid>` lock
+    # (W-20260929-A104), held for one JSONL decision, never a batch.
+    assert computed == {"capture.py", "archive.py"}, computed
     assert batch == {"sweep", "build", "import", "migrate", "relocate", "archive"}, batch
     assert set(doctor._BATCH_LOCK_NAMES) == batch  # pyright: ignore[reportPrivateUsage]
 
