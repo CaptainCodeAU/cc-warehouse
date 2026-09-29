@@ -109,3 +109,7 @@ saving is measured against a real baseline rather than an estimate.
     the serial build check alone extrapolates to about 44 h for 30k heads and the
     pooled one to 8 to 11 h: the throttle, not the thread count, decides the
     scheduled job's time.
+  - Outcome, 2026-09-29: the sweep read-ahead warmers were dropped from the branch
+    before merge (conductor ruling, option A); the pool stays for the build check,
+    coverage, the desync scan and `ccw archive --verify`. The sweep's per-item cost is
+    W-20260929-A115's to fix.

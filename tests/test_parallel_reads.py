@@ -7,8 +7,6 @@ CPU. Reads that overlap cost far less per file (21 / 11 / 7 ms at 8 / 16 / 32
 threads, measured). So the READ-ONLY questions go through a bounded pool:
 
 - the build's per-head "is this folder current" check (results used directly);
-- the sweep's per-item read-backs (a read-ahead that warms the share's client
-  cache just before the unchanged serial writers re-read the same files);
 - the coverage pass, the full desync verify `ccw repair` uses, and `ccw archive
   --verify`.
 
@@ -19,7 +17,7 @@ The oracles, one group each:
 1. The parallel run's outcomes and every byte it writes equal the serial run's.
 2. The pool is bounded: never more than `READ_WORKERS` reads at once.
 3. A read that raises in a worker becomes that item's failure (R10), never an
-   aborted batch; a warm-up that raises changes nothing at all.
+   aborted batch.
 4. No write happens off the main thread.
 5. The build checks at most one chunk ahead of where it acts, so the
    check-then-act window stays short (and the A58 re-check still runs first).
@@ -29,7 +27,7 @@ The oracles, one group each:
 import json
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
@@ -244,29 +242,6 @@ def test_the_pooled_run_matches_the_serial_run_exactly(
         assert pooled[key] == serial[key], key
 
 
-def test_a_warm_up_that_raises_changes_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The sweep's read-ahead is an optimisation and nothing else: when every
-    warm-up raises, the serial writers meet the same world and do the same thing."""
-    _serial(monkeypatch)
-    serial = _scenario(_sandbox(tmp_path / "s", monkeypatch, live_like=True), tmp_path / "s")
-    _pooled(monkeypatch)
-    raised: list[str] = []
-
-    def broken(*_args: object) -> None:
-        raised.append(threading.current_thread().name)
-        raise OSError("the share went away")
-
-    for name in ("_warm_subagent", "_warm_sidecars", "_warm_history"):
-        monkeypatch.setattr(sweep, name, broken)
-    pooled = _scenario(_sandbox(tmp_path / "p", monkeypatch, live_like=True), tmp_path / "p")
-
-    assert raised, "control: no warm-up ran, so nothing was tested"
-    for key in serial:
-        assert pooled[key] == serial[key], key
-
-
 # ---------------------------------------------------------------------------
 # 2. Bounded
 # ---------------------------------------------------------------------------
@@ -324,23 +299,6 @@ def test_build_currency_checks_run_in_a_bounded_pool(
     assert gauge.off_main == gauge.calls
 
 
-def test_sweep_read_ahead_runs_in_a_bounded_pool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = _built(tmp_path, monkeypatch)
-    _pooled(monkeypatch, workers=2, chunk=8)
-    gauges = {name: _Gauge() for name in ("_warm_subagent", "_warm_sidecars", "_warm_history")}
-    for name, gauge in gauges.items():
-        monkeypatch.setattr(sweep, name, gauge.wrap(getattr(sweep, name)))
-
-    sweep.sweep(config, _claude(config) / "projects")
-
-    for name, gauge in gauges.items():
-        assert gauge.calls >= 2, (name, gauge.calls)
-        assert gauge.peak == 2, (name, gauge.peak)
-        assert gauge.off_main == gauge.calls, name
-
-
 def test_desync_verify_and_coverage_read_in_a_bounded_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -376,39 +334,6 @@ def test_archive_verify_reads_in_a_bounded_pool(
     assert result.code == 0, result.err
     assert f"{len(UUIDS)} folders checked, 0 problems" in result.out
     assert 2 <= gauge.peak <= 3, gauge.peak
-
-
-def test_the_read_ahead_covers_every_read_back_the_writers_make(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Pins what the warm-up is FOR: on a steady-state sweep, every archive file
-    a serial writer reads back was already read by a worker, so on the share it
-    comes out of the client cache. A warm-up that warms nothing passes every
-    other test here; it fails this one."""
-    config = _built(tmp_path, monkeypatch)
-    assert config.archive_root is not None
-    _pooled(monkeypatch, workers=4, chunk=8)
-    archive_root = str(config.archive_root)
-    lock = threading.Lock()
-    warmed: set[str] = set()
-    cold: list[str] = []
-    real = Path.read_bytes
-
-    def recording(self: Path) -> bytes:
-        name = str(self)
-        if name.startswith(archive_root):
-            with lock:
-                if threading.current_thread() is not threading.main_thread():
-                    warmed.add(name)
-                elif name not in warmed:
-                    cold.append(name)
-        return real(self)
-
-    monkeypatch.setattr(Path, "read_bytes", recording)
-    sweep.sweep(config, _claude(config) / "projects")
-
-    assert len(warmed) >= 8, f"control: only {len(warmed)} files were warmed"
-    assert cold == []
 
 
 # ---------------------------------------------------------------------------
@@ -599,33 +524,7 @@ def test_one_worker_means_no_thread_at_all(monkeypatch: pytest.MonkeyPatch) -> N
         return n
 
     assert [r.get() for r in parallel.map_reads(fn, [1, 2, 3], workers=1)] == [1, 2, 3]
-    warmed: list[int] = []
-    assert list(parallel.read_ahead([1, 2, 3], warmed.append, workers=1)) == [1, 2, 3]
-    assert pools == [] and seen == [True, True, True] and warmed == []
-
-
-def test_read_ahead_yields_every_item_in_order_after_warming_its_chunk() -> None:
-    lock = threading.Lock()
-    log: list[str] = []
-
-    def warm(n: int) -> None:
-        with lock:
-            log.append(f"w{n}")
-
-    def consume(count: int) -> Iterator[int]:
-        for n in parallel.read_ahead(list(range(count)), warm, chunk=2, workers=2):
-            log.append(f"y{n}")
-            yield n
-
-    assert list(consume(6)) == [0, 1, 2, 3, 4, 5]
-    for n in range(6):
-        assert log.index(f"w{n}") < log.index(f"y{n}")
-    # Chunk 2 is warmed only after chunk 1 has been consumed.
-    assert log.index("w2") > log.index("y1")
-    # A chunk of one is yielded unwarmed: warming it inline only doubles the read.
-    log.clear()
-    assert list(consume(3)) == [0, 1, 2]
-    assert "w2" not in log and "y2" in log
+    assert pools == [] and seen == [True, True, True]
 
 
 def test_weighed_reads_never_exceed_the_byte_budget(monkeypatch: pytest.MonkeyPatch) -> None:

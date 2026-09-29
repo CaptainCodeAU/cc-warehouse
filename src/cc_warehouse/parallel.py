@@ -12,17 +12,15 @@ main thread, in the order it always had, through the same writers
 (tests/test_parallel_reads.py::test_no_write_happens_off_the_main_thread).
 Nor is the SQLite catalog connection ever shared with a worker.
 
-Two shapes, because the callers need two things:
+`map_reads` answers a question per item and hands the answers back in item
+order. A worker that raises becomes that item's `Read.error`, re-raised by
+`Read.get()` where the serial code would have met it, so a batch reports the
+item and carries on exactly as before (R10).
 
-- `map_reads` answers a question per item and hands the answers back in item
-  order. A worker that raises becomes that item's `Read.error`, re-raised by
-  `Read.get()` where the serial code would have met it, so a batch reports the
-  item and carries on exactly as before (R10).
-- `read_ahead` answers nothing. It reads the files a serial writer is about to
-  re-read, one chunk ahead, so the writer's own compare finds them in the SMB
-  client's cache (measured: a just-read file re-reads in about 0 ms and the
-  cache fades within 20 to 60 s). Correctness never depends on it: a warm-up
-  that raises or misses a file only costs the time it was meant to save.
+NOT THE SWEEP. A read-ahead for the sweep's writers was built, measured and
+dropped (conductor ruling, 2026-09-29): it saved nothing, because the sweep's
+per-item cost is finding the folder, a scan of the whole label directory, not
+the reads (W-20260929-A115; ticket 46's measurements).
 
 `workers <= 1` runs everything inline on the calling thread and starts no pool,
 which is both the serial baseline the tests compare against and the reason the
@@ -45,8 +43,7 @@ READ_WORKERS = 16
 
 # Items checked ahead of where the serial loop acts. The build acts on a head
 # at most this many heads after it was checked, so a check is seconds old, not
-# hours (ticket 46; ideas-sweep-software "Idea 3"). Also the read-ahead span,
-# kept well inside the 20 s the SMB client cache was measured to hold a file.
+# hours (ticket 46; ideas-sweep-software "Idea 3").
 READ_CHUNK = 64
 
 
@@ -144,27 +141,3 @@ def chunks[T](items: Sequence[T], size: int | None = None) -> Iterator[Sequence[
     step = max(1, READ_CHUNK if size is None else size)
     for start in range(0, len(items), step):
         yield items[start : start + step]
-
-
-def read_ahead[T](
-    items: Sequence[T],
-    warm: Callable[[T], object],
-    *,
-    chunk: int | None = None,
-    workers: int | None = None,
-) -> Iterator[T]:
-    """Yield `items` in order; just before each chunk, run `warm` over it in the pool.
-
-    `warm`'s answers and exceptions are both discarded: it exists to have READ
-    something, and the serial loop that consumes this iterator does the real
-    work unchanged. With one worker, or a chunk of one item, nothing is warmed:
-    warming inline, one file at a time, would only double the reads.
-    """
-    count = READ_WORKERS if workers is None else workers
-    if count <= 1:
-        yield from items
-        return
-    for part in chunks(items, chunk):
-        if len(part) > 1:
-            map_reads(warm, part, workers=count)
-        yield from part
