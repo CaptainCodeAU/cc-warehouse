@@ -22,6 +22,24 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**A82, three more rulings (2026-09-29, W-20260929-A82; Gavin).** (1) An unreadable
+`manifest.json` HOLDS its folder instead of failing the run: `ccw build`, every sweep and
+the weekly `ccw archive --to` skip it (`build.HELD` outcome, `MigrationReport.held`), log a
+`writer-held` line (`archive.record_hold`), and exit 0 for that reason alone; build and
+the archive job also say `N held for repair` (the sweep's own summary does not). A `writer-held` line opens a refusal in `reconcile.open_refusals`, so
+`ccw repair` re-checks the folder every run, counts it in `repair-summary` and raises its
+one alert, in or out of its sample. (2) "The sub-agent grew" now means it was APPENDED
+to: `archive._appended` needs the file longer AND the sha256 of its first <recorded
+bytes> bytes equal to the kept record, wherever growth is explained (the manifest writer
+and `folder_is_current` via `kept_subagent_records`, and `FolderProblem.grew`, which
+repair reads). A longer file that is not the old bytes plus more is held. (3) Copies set
+aside under `_not-sessions/displaced/` are pinned untouchable: `ccw build --rebuild`, a
+storing sweep, `ccw archive --to` (with and without `--rebuild`), `ccw archive --verify`,
+`ccw repair` and `ccw doctor` leave every byte and mtime there as it was and report
+nothing about it, and a second restore of different bytes adds a second copy without
+touching the first. `notify.append_log_under` added so a writer with only the warehouse
+root (migrate) can log. Tests: `tests/test_a82_held_growth_displaced.py`.
+
 **A82 send-back: six holes in the evidence rules closed (2026-09-29, W-20260929-A82;
 ruling: Gavin, "send back", after a five-reviewer sandbox review of 51523da).**
 (1) A temp-shaped name (`.<name>.<8 chars>.tmp`, `store.atomic_write`'s own mkstemp, now

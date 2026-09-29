@@ -205,11 +205,18 @@ clean (verified in a test sandbox). Now:
 - **No writer adopts damage.** A copied companion file (tool results, workflows,
   file-history, todos, pastes) that changed or vanished keeps its OLD record, because
   ccw never rewrites or deletes one. A sub-agent keeps its old record when it changed
-  without growing or vanished; one that GREW is adopted (a live resume). **Not
+  without growing or vanished; one that GREW is adopted (a live resume), and "grew"
+  means APPENDED: longer, AND the sha256 of its first <recorded bytes> bytes equals the
+  old record. A longer file that is not the old bytes plus more is held. **Not
   covered:** `prompts.jsonl` and `custom-title.json`, which ccw itself rewrites; a
   change to either is adopted by the next render, and repair re-renders it too.
-- **An unreadable `manifest.json` is never replaced.** `ccw build` and every other
-  writer refuse that folder and say so; it stays flagged until a human acts.
+- **An unreadable `manifest.json` is never replaced, and the folder is HELD.**
+  `ccw build`, every sweep and the weekly `ccw archive --to` job skip that folder,
+  write a `writer-held` line to `logs/capture.jsonl` (build and the archive job also say
+  `N held for repair` in their summary; the sweep's own summary does not), and do NOT
+  fail their run for it. `ccw repair` then counts the folder in
+  `repair-summary` and raises its one alert, even when the folder is outside its
+  25-folder sample. It stays held until a human fixes or removes the manifest.
 - **Half-written temp files are never recorded.** A name shaped like ccw's own temp
   file (`.<name>.<8 chars>.tmp`) is left out of every manifest and dropped from an old
   one. Repair names any it finds on stderr and in a `repair-stray-temp` log line; it
@@ -221,6 +228,9 @@ clean (verified in a test sandbox). Now:
 - **Anything else is first RESTORED when it can be:** if a file in `~/.claude` hashes
   to exactly the manifest's record, repair copies it back byte for byte. The changed
   copy is set aside first under `<archive>/_not-sessions/displaced/`, never destroyed.
+  Each distinct changed copy gets its own name there (`<file>.<first 12 of its
+  sha256>`); nothing in ccw ever deletes, rewrites or reports anything under
+  `displaced/`, and no check counts it as a stray. It is the human's to keep or clear.
 - **What cannot be restored is HELD:** the folder is left untouched, whole even when
   pages are also missing. Repair prints `held, left untouched, ccw cannot explain:
   ...` on stderr, writes an `error` log line, and raises ONE desktop and voice alert
