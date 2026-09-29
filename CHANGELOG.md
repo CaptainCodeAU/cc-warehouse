@@ -60,6 +60,28 @@ leaves its session to the next `ccw repair` or `ccw build`. The
 `custom-title.json` fix below stays in place. Pinned by
 `tests/test_render_after_companions.py`.
 
+**`ccw build` no longer acts on a head a hook capture superseded during its own
+run (2026-09-29, open item W-20260929-A58, ruling option A).** The build reads
+the heads once and then works through them, which on the network share takes
+over two hours; the SessionEnd hook does not take the build lock, so it can
+store a newer version of a session the loop has not reached yet. On 2026-09-28
+that turned session 5f32eac9e690 into a reported failure (its archive JSONL was
+now 086a07ffdb78's and the vault is retired). Reproduced by execution, with the
+race made deterministic in `tests/test_build_stale_heads.py`: with
+`keep_objects = true` the stale, smaller payload wrote a misleading
+`replace_refused` into the manifest, and with `keep_projections = true` the
+end-of-run prune deleted the new head's projection dir, including when the new
+version landed after the old head had already been built. Each head is now
+re-checked with `catalog.latest_version` (made public; the same ranking as
+`build._HEAD_RANK_CTE`) just before anything is done with it, and a superseded
+one gets the new non-failure action `superseded`; `ccw build` appends
+`, N superseded during this run` to its summary only when N is non-zero, so an
+ordinary run's line is unchanged. The prune now also keeps every head current
+at prune time, and prunes nothing when that read fails. A re-check that fails
+(catalog locked past its 5 s busy timeout) is one failed item, never an aborted
+batch (R10). `archive.read_payload`'s refusal is unchanged and remains the
+backstop for the sub-second gap between the re-check and the read.
+
 **`ccw doctor` no longer FAILs on a sweep's own not-yet-rendered writes
 (2026-09-29).** A hand-run `ccw sweep` against the network share held its build
 lock for over an hour between copying a larger payload and `prompts.jsonl` into

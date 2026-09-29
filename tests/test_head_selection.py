@@ -1,11 +1,11 @@
 """Oracle tests: which version of a session_uuid is the HEAD (ticket 29 mechanism 1).
 
 Contract: `harness/tickets/29-which-copy-is-the-current-one.md`. `catalog.add_session`
-points each new row's `supersedes` at whatever `_latest_version` currently returns, so a
+points each new row's `supersedes` at whatever `latest_version` currently returns, so a
 row is never itself superseded once inserted -- `build._heads`'s old predicate ("a row
 no other row supersedes") therefore picked the newest INSERT as head, regardless of
 whether that payload's own last_ts was actually the most recent. Fixed by ranking each
-session_uuid's rows by the SAME payload-internal recency `catalog._latest_version`
+session_uuid's rows by the SAME payload-internal recency `catalog.latest_version`
 already uses (R12: content time, never insertion order), not by chain position.
 
 These are ORACLE tests, not a private-function check: everything is proven through
