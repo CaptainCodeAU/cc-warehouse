@@ -74,3 +74,38 @@ saving is measured against a real baseline rather than an estimate.
     the SessionStart check reported capture broken 5 times in a row. Fixed in
     `a60d50d` (pending, not FAIL, under a live lock when the file is newer than
     its manifest); live once the frozen install is refreshed.
+- 2026-09-29 13:06 to 14:27, option A step 1 (thread pool, W-20260929-A91), branch
+  `fix-parallel-reads`. READ-ONLY harness calling the parallelised read functions on
+  the real share (catalog opened `?mode=ro`; no `ccw` verb run). Each configuration
+  drew its own random, disjoint sample of heads, so every run started cold. Wi-Fi was
+  noisy: the same configuration varied up to 2x between rounds, so ranges are given.
+  Per item, milliseconds:
+
+  | Check | Priority | Serial | 8 workers | 16 workers | 32 workers |
+  |---|---|---|---|---|---|
+  | build `_head_is_current` (150 heads per run, two rounds) | normal | 245, 592 | 89, 130 | 46, 86 | 87, 98 |
+  | same (24 then 64 heads) | `taskpolicy -d throttle` | 5,212 | | 972, 1,275 | 646, 1,031 |
+  | coverage (notice + manifest, 200 folders) | normal | 74 | 17 | 13.5 | 8.9 |
+  | same (40 then 120 folders) | throttled | 594 | | 257, 297 | 252, 248 |
+  | full `verify_folder` (60 folders) | normal | 339 | | 169 | 201 |
+  | same (16 folders) | throttled | 1,635 | | 360 | |
+  | sweep sub-agent read-back, warm then re-read (150) | normal | 3,914 | | 4,265 | 2,897 |
+  | sweep sidecar read-back, warm then re-read (100 of 1,681 candidates) | normal | 4,164 | | 4,724 | 4,082 |
+
+  - The sweep read-ahead does NOT pay. Split on 20 sub-agents: finding the parent
+    folder (`archive._parent_folder`, a full listing of the label dir plus a stat per
+    entry) took a median 2.0 s, max 16.2 s, cold; everything else, file reads included,
+    0.14 s. Filed as W-20260929-A115.
+  - SMB client cache, measured: a file read seconds ago re-reads in about 0 ms; after
+    20 s the median is 3.8 ms, after 60 s 20 ms (cold 15 to 50 ms). Listings behave
+    the same. Under throttle a 64-head warm repeat took 61 to 71 s against 66 to 82 s
+    cold: at that speed the chunk outlives the cache.
+  - Memory, full verify of the 8 largest heads (13 to 114 MB): serial peak 1.70 GB, 16
+    workers uncapped 2.45 GB, 16 workers with the 256 MiB byte cap 1.98 GB.
+  - Estimate, ASSUMED from the ratios above applied to the measured 4h30m run (a hand
+    run at normal priority): build ~2h20m to about 15 to 45 min; coverage ~20 min to
+    about 4 to 7 min; item loop unchanged at ~1h30m (the lookup cost above). Whole
+    sweep about 2 to 2.5 h at normal priority. Under the scheduled jobs' IO throttle
+    the serial build check alone extrapolates to about 44 h for 30k heads and the
+    pooled one to 8 to 11 h: the throttle, not the thread count, decides the
+    scheduled job's time.
