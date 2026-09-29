@@ -772,6 +772,92 @@ def test_a_tampered_folder_is_never_pending_even_inside_the_grace_window(
     assert first is not None and folder.name in first
 
 
+def _recapture(env: dict[str, str], config: Config, session_uuid: str) -> None:
+    """A resumed session's re-capture, the way `ccw hook` does it: the transcript
+    grows, `capture_transcript` writes the new JSONL into the folder and a new
+    catalog row, and the render that rewrites the manifest has not run yet."""
+    from cc_warehouse import capture
+
+    later = "2020-01-01T00:05:00.000Z"
+    resumed = jsonl(entry("user", "resumed", later, session_id=session_uuid))
+    path = write_transcript(env, stale_session(session_uuid) + resumed, session_id=session_uuid)
+    result = capture.capture_transcript(
+        config, path, session_id=session_uuid, cwd=None, defer_companions=True
+    )
+    assert result.action == "stored", result
+
+
+def test_a_recapture_inside_the_grace_window_is_pending_with_no_lock(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """W-20260929-A62 (ruling: Gavin, 2026-09-29, option B). Since 78daa4f the
+    hook's render waits for the companions copy, so a resumed session's
+    re-capture leaves its new JSONL newer than the old manifest for the
+    copy-plus-render time. The hook holds no batch lock, so only the
+    capture-time grace can excuse it."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    install_hook(ccw_env)  # so only the desync check under test can fail report.ok
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    _recapture(ccw_env, config, UUID_A)
+    shapes = {p.problem for p in archive.verify_folder(folder, ZONE)}
+    assert shapes == {"JSONL does not match manifest source_hash"}, shapes
+
+    checked, problems, pending, _first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1
+    assert problems == 0, "a re-capture still inside its grace window tripped the alarm"
+    assert pending == 1
+    assert doctor.diagnose(config).ok
+
+
+def test_a_recapture_outside_the_grace_window_still_fails(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The same folder, captured longer ago than the grace: a real problem."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    _recapture(ccw_env, config, UUID_A)
+    _age_capture(ccw_env, UUID_A, seconds_ago=doctor._PENDING_GRACE_SECONDS + 60)  # pyright: ignore[reportPrivateUsage]
+
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1
+    assert pending == 0
+    assert problems == 1, "a stale manifest outside the grace window was excused"
+    assert first is not None and folder.name in first
+
+
+def test_a_file_older_than_its_manifest_is_never_pending_inside_the_grace_window(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Tamper stays red: inside the grace, with no lock, a mismatched JSONL OLDER
+    than its manifest was not written by the capture that is still rendering."""
+    archive_root = tmp_path / "archive"
+    configure(ccw_env, archive_root)
+    write_transcript(ccw_env, stale_session(UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _age_capture(ccw_env, UUID_A, seconds_ago=30)
+    _tamper(folder)
+    jsonl_path = archive.sole_jsonl(folder)
+    assert jsonl_path is not None
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(jsonl_path, (old, old))
+
+    config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
+    checked, problems, pending, first = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    assert checked == 1
+    assert pending == 0, "a mismatch older than its manifest was excused by the grace"
+    assert problems >= 1
+    assert first is not None and folder.name in first
+
+
 def test_a_registered_hook_whose_script_is_gone_is_not_reported_ok(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:

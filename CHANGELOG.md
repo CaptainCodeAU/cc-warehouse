@@ -22,6 +22,19 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw doctor` no longer FAILs a resumed session while its re-capture is still
+rendering (2026-09-29, W-20260929-A62).** Since 78daa4f the hook's render waits for the
+companions copy, so a re-capture leaves the folder's new JSONL newer than its old manifest
+for the copy-plus-render time, with no batch lock held, and the ticket 34 grace only
+excused missing files. Ruling (Gavin, 2026-09-29, option B): inside
+`_PENDING_GRACE_SECONDS` of the catalog's `captured_at`, a folder whose every problem is a
+missing file or a file newer than its manifest reads as pending. One clause beyond the
+ruling's wording: a newer JSONL must also hash to the catalog's current head. Without it
+the rule also excused a freshly captured folder whose JSONL was altered, and three
+existing ticket 34 tests went red. A re-capture writes its catalog row after the JSONL,
+so the two agree; an altered file matches no row. Outside the grace, a file older than its
+manifest, or any other shape, is still a FAIL, and the batch-lock rule is unchanged.
+
 **`ccw repair` retracts the empty sessions it had already announced as unrecoverable
 (2026-09-29, W-20260929-A61).** The empty-session ruling (A60, below) stopped new
 announcements, but the 56 dedup records repair had already appended stayed in the

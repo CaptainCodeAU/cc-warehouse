@@ -408,6 +408,7 @@ class _Recent:
 
     folder: Path
     captured_at: str | None
+    payload_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -452,10 +453,10 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
         return empty
     try:
         rows = cast(
-            list[tuple[str, str, str | None, str, str | None]],
+            list[tuple[str, str, str | None, str, str | None, str]],
             conn.execute(
                 build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
-                + "SELECT short, label, first_ts, session_uuid, captured_at FROM ranked"
+                + "SELECT short, label, first_ts, session_uuid, captured_at, hash FROM ranked"
                 " WHERE rn = 1 AND session_uuid IS NOT NULL"
             ).fetchall(),
         )
@@ -464,16 +465,16 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
     finally:
         conn.close()
     archived: set[str] = set()
-    dated: list[tuple[datetime, str, str, str | None, str, str | None]] = []
+    dated: list[tuple[datetime, str, str, str | None, str, str | None, str]] = []
     newest: datetime | None = None
-    for short, label, first_ts, session_uuid, captured_at in rows:
+    for short, label, first_ts, session_uuid, captured_at, payload_hash in rows:
         archived.add(session_uuid)
         moment = _moment(first_ts)
         if moment is None:
             continue
         if newest is None or moment > newest:
             newest = moment
-        dated.append((moment, short, label, first_ts, session_uuid, captured_at))
+        dated.append((moment, short, label, first_ts, session_uuid, captured_at, payload_hash))
     dated.sort(key=lambda row: row[0], reverse=True)
     recent = tuple(
         _Recent(
@@ -486,8 +487,11 @@ def _catalog_index(config: Config, limit: int) -> _CatalogIndex:
                 fallback_stem=f"session-{short}",
             ),
             captured_at,
+            payload_hash,
         )
-        for _moment_, short, label, first_ts, session_uuid, captured_at in dated[:limit]
+        for _moment_, short, label, first_ts, session_uuid, captured_at, payload_hash in dated[
+            :limit
+        ]
     )
     return _CatalogIndex(frozenset(archived), newest, recent)
 
@@ -772,6 +776,24 @@ def _written_after_manifest(folder: Path, problem: str) -> bool:
         return False
 
 
+def _recaptured_after_manifest(folder: Path, problem: str, payload_hash: str | None) -> bool:
+    """`_written_after_manifest`, and for the payload also proof that the newer
+    JSONL IS the catalog's current head (W-20260929-A62): a re-capture writes the
+    JSONL and then its catalog row, so the two agree; a file altered by anything
+    else matches no row. R1: that equality is decided by sha256, never by size."""
+    if not _written_after_manifest(folder, problem):
+        return False
+    if problem != "JSONL does not match manifest source_hash":
+        return True
+    target = archive.sole_jsonl(folder)
+    if target is None or payload_hash is None:
+        return False
+    try:
+        return store.sha256_hex(target.read_bytes()) == payload_hash
+    except OSError:
+        return False
+
+
 def _desync(config: Config) -> tuple[int, int, int, str | None]:
     """Verify the most recently captured archive folders against their own manifests
     (ticket 31.5). Returns (checked, problems, pending, first problem description or
@@ -814,8 +836,21 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     and re-rendering the manifests, and doctor FAILed five session-starts in a
     row on folders that were only waiting. The cost, accepted: a file altered
     by something else DURING a batch reads as pending until the lock is
-    released, then fails. With no lock held the old narrow rule applies
-    unchanged, so the grace window never excuses a hash mismatch.
+    released, then fails.
+
+    WIDENED AGAIN 2026-09-29 (W-20260929-A62; ruling: Gavin, option B), for a
+    resumed session's re-capture with NO lock held: since 78daa4f the hook's
+    render waits for the companions copy, so the new JSONL sits newer than the
+    old manifest for the copy-plus-render time. Inside `_PENDING_GRACE_SECONDS`
+    of the catalog's `captured_at`, a folder whose every problem is a missing
+    file or a newer-than-manifest file reads as pending, and a newer JSONL must
+    ALSO hash to the catalog's current head (`_recaptured_after_manifest`). That
+    last clause is what keeps a freshly captured folder whose JSONL was altered
+    red (tests/test_doctor.py::
+    test_a_tampered_folder_is_never_pending_even_inside_the_grace_window): the
+    re-capture writes its catalog row after the JSONL, so the two agree, and an
+    altered file matches no row. Outside the grace, or any other shape, it
+    stays a problem (test_a_recapture_outside_the_grace_window_still_fails).
     """
     recent, broken = _desync_scan(config)
     folders = [item.folder for item in recent]
@@ -828,10 +863,15 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
     problems: list[tuple[Path, list[archive.FolderProblem]]] = []
     pending_count = 0
     captured = {item.folder: item.captured_at for item in recent}
+    hashes = {item.folder: item.payload_hash for item in recent}
     for folder, folder_problems in broken:
-        only_missing_files = all(p.problem.startswith("missing ") for p in folder_problems)
         batch_queued = batch_active and all(
             p.problem.startswith("missing ") or _written_after_manifest(folder, p.problem)
+            for p in folder_problems
+        )
+        recapture_queued = all(
+            p.problem.startswith("missing ")
+            or _recaptured_after_manifest(folder, p.problem, hashes.get(folder))
             for p in folder_problems
         )
         # TICKET 44c: the grace is measured from CAPTURE time (the catalog's
@@ -844,7 +884,7 @@ def _desync(config: Config) -> tuple[int, int, int, str | None]:
         within_grace = moment is not None and (now - moment) <= timedelta(
             seconds=_PENDING_GRACE_SECONDS
         )
-        if batch_queued or (only_missing_files and within_grace):
+        if batch_queued or (recapture_queued and within_grace):
             # Counted the same unit as `problem_count` below (individual
             # FolderProblem entries, e.g. up to one per GENERATED_NAMES file),
             # not folders -- so "N problem(s)" and "M pending render(s)" stay
