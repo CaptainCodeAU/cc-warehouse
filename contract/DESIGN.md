@@ -2268,3 +2268,21 @@ NOT A BACKUP STORY. The share is a single disk with server backups parked by the
 principal (Network_Plan, 2026-09-17), the SanDisk copy is not to be touched, and
 the old local tree stays frozen until he deletes it himself. Recorded so nobody
 later reads "the archive is on the server" as "the archive is backed up".
+
+**2026-09-29, W-20260929-A59: copy, then render.** The hook spawned the detached
+render child and the detached companions child at the same moment, and the render
+child's manifest lists the session folder's companion dirs as they stand when it
+runs. Live on 2026-09-28 (session 17756a71) the manifest recorded a `file_history`
+entry under the copier's own temporary name, and `ccw doctor` FAILed until the next
+build; the same race delivered `custom-title.json` after the manifest on another
+session. The principal chose, from three options, "copy, then render": with an
+archive configured the hook spawns only the companions child, and that child spawns
+the render child on every way out. Rejected: the render skipping our temporary
+files (hides one symptom, the manifest can still miss late files) and the companions
+child re-rendering afterwards (two renders can overwrite each other). SPEC 2.6
+carries the matching AMENDED note; the principal ruled it a clarification of that
+KEEP, not a reversal. Accepted costs: the render and its folder reveal land after
+the copy (up to about 42 s on the share, agent-reported), and a companions child
+killed outright leaves its session to the next `ccw build` or `ccw repair`. The
+longer window on a re-capture is W-20260929-A62 (doctor reads it as pending inside
+the grace, principal ruling option B, same day).
