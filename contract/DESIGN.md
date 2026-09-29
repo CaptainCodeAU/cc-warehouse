@@ -469,6 +469,15 @@ is logged, never raised (capture must survive notification infrastructure).
   `sessionId`, so that answer comes from the transcript sitting beside its directory,
   whose own identity is still decided from content. The directory NAME is a
   source-layout filter, never an identity (F4).
+  DOCTOR'S QUICK CHECK (added 2026-09-29, W-20260929-A74, principal ruling): `ccw
+  doctor`'s SessionStart desync screen may compare a file's size with the size its
+  manifest or catalog recorded, in exactly one named function (`archive._size_matches`,
+  pinned by the F1 fence's exemption list). A size DIFFERENCE is reported as a
+  mismatch, which is sound; an equal size only means "not checked further here". It
+  never answers "are these the same bytes": nothing captures, dedups, skips or
+  overwrites on it, and the full sha256 check in `ccw repair` and `ccw archive
+  --verify` still owns that question. Accepted cost: a same-size change is caught by
+  the daily repair, not at the next session start.
 - R2 `atomic_write` is the only write path for files; direct `write_text`/`open("w")`
   on final paths is a rejection (F2). Sanctioned exceptions, closed list: SQLite's own
   catalog writes, the O_APPEND audit log, O_EXCL lock create/remove (section 13).
@@ -2286,3 +2295,21 @@ the copy (up to about 42 s on the share, agent-reported), and a companions child
 killed outright leaves its session to the next `ccw build` or `ccw repair`. The
 longer window on a re-capture is W-20260929-A62 (doctor reads it as pending inside
 the grace, principal ruling option B, same day).
+
+**2026-09-29, W-20260929-A74: doctor's desync check becomes a quick presence-and-size
+screen; the hash check lives in `ccw repair`.** With the archive on the SMB share,
+`ccw doctor` took 15 to 52 s (measured) against the SessionStart hook's 45 s budget,
+and a timeout counts as "capture broken". Almost all of it was the 25-folder verify
+reading and hashing about 118 MB over Wi-Fi (agent-reported, the slow step verified
+at 16.4 s alone). The move to the share caused it, not a commit. The principal chose,
+from four options, a quick screen at SessionStart (presence and recorded size, no
+hashing, no parse; 7 to 15 s measured) with the full check kept in the daily `ccw
+repair` and the weekly `ccw archive --verify`. Rejected: a time-budgeted full check
+(coverage would depend on the network), showing yesterday's result (up to a day
+stale), raising the timeout (longer waits, still exceedable). R1 gained the matching
+note above; the principal approved the F1 fence's one-function exemption explicitly.
+FOUND ON THE WAY, pre-existing: `ccw repair` re-rendered a folder whose file changed at
+the same size, so the new manifest approved the damage (agent-reported). The principal
+ruled the same day that repair re-renders only mismatches ccw explains (missing
+generated files, or a payload hashing to the catalog head) and reports anything else
+as still broken with an alert; the quick check merged first, that fix next.
