@@ -128,3 +128,11 @@ saving is measured against a real baseline rather than an estimate.
     before merge (conductor ruling, option A); the pool stays for the build check,
     coverage, the desync scan and `ccw archive --verify`. The sweep's per-item cost is
     W-20260929-A115's to fix.
+  - MEASURED 2026-09-30, the first scheduled sweep after the IO throttle was removed
+    (LowPriorityIO and ProcessType dropped from the plists 2026-09-29): launchd started
+    it 12:30:06 AEST (`launchctl print`, pid 60309) and its run summary landed 15:15:24
+    AEST, so 2 h 45 min wall time, against the 2 to 2.5 h estimate above. Summary:
+    `sweep: 30244 items, 51 stored, 113 with sidecars, 8 failed`, exit 1; the 8 failures
+    are W-20260930-A59 (stream-json files in a project's memory/ folder cataloged with no
+    session uuid), not a cost finding. The sweep moved to 02:00 the same day (operator,
+    no scheduled wake), so later runs start at the first wake after 02:00.
