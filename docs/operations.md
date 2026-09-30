@@ -14,13 +14,27 @@ Four jobs, all under `~/Library/LaunchAgents/`, all currently loaded
 
 | Job | Schedule | Command | Log |
 |---|---|---|---|
-| `com.captaincodeau.ccw-sweep` | daily 12:30 | `ccw sweep --quiet` | `~/.claude/logs/ccw-sweep.log` |
+| `com.captaincodeau.ccw-sweep` | daily 02:00 (was 12:30 until 2026-09-30); no scheduled wake, so on a sleeping Mac it runs at the first wake after 02:00 | `ccw sweep --quiet` | `~/.claude/logs/ccw-sweep.log` |
 | `com.captaincodeau.ccw-repair` | daily 15:30 (was 12:45 until 2026-09-29, ticket 44) | `ccw repair --quiet` | `~/.claude/logs/ccw-repair.log` |
-| `com.captaincodeau.ccw-archive` | weekly, Sunday 03:00 | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/.claude/logs/ccw-archive.log` |
+| `com.captaincodeau.ccw-archive` | weekly, Sunday 05:00 (was 03:00 until 2026-09-30, moved clear of the 02:00 sweep) | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/.claude/logs/ccw-archive.log` |
 | `com.captaincodeau.ccstats-dashboard` | daily 13:00 | `.venv/bin/python3 tools/ccstats/refresh.py --quiet` | `~/.claude/logs/ccstats-dashboard.log` |
 
 Notes:
 
+- **Sweep moved to 02:00 and the archive to Sunday 05:00 on 2026-09-30**, operator's
+  choice, dated `.bak` beside each plist. The operator chose NO scheduled wake
+  (`pmset`), so `StartCalendarInterval` fires at the first wake after 02:00 when the
+  Mac was asleep; this Mac idle-sleeps after 1 minute (`pmset -g custom`, verified
+  2026-09-30), so the "02:00" sweep usually runs when the Mac is first opened. On a
+  Sunday both jobs are then overdue at the same wake and start together; the batch
+  locks refuse rather than wait, so one may exit without running (W-20260930-A29,
+  to be checked on the first Sunday).
+- **Never reload (`launchctl bootout`/`bootstrap`) a job while it is running**: it ends
+  the running process. The 2026-09-29 12:30 sweep logged items until 12:49 and never
+  wrote its `sweep:` summary line; all three plists were reloaded at 13:57 that day,
+  inside its expected 2 to 2.5 hour run. Inferred, not proven, because a killed sweep
+  leaves no trace (W-20260930-A28). Check `launchctl print gui/$(id -u)/<label>` shows
+  `state = not running` first.
 - **`ccw-repair` runs 15 minutes after `ccw-sweep` on purpose**, so the two never contend
   for the same catalog lock (`locks/sweep` and `locks/build` are separate locks, but
   running them back to back rather than concurrently was the simpler choice made when
@@ -73,8 +87,10 @@ Notes:
   repo, `~/.claude`, the archive or the warehouse data root. It passes no project
   include/exclude flags on purpose - `dashboard.py` reads the saved
   `dashboard-defaults.json` itself, so the scheduled page and a `/dashboard` page cannot
-  drift apart. Scheduled at 13:00, after `ccw-repair` (12:45), so a sweep's fresh captures
-  are already rendered before the stats scan reads them. **It is the only one of these jobs
+  drift apart. Scheduled at 13:00, originally so it followed the 12:30 sweep and the
+  12:45 `ccw-repair` and a sweep's fresh captures were already rendered before the stats
+  scan read them; repair moved to 15:30 on 2026-09-29 and the sweep to 02:00 on
+  2026-09-30, so today it follows the sweep only when the Mac woke before 13:00. **It is the only one of these jobs
   that announces itself**: every completion opens a macOS dialog box naming the program
   that ran and the full path of the page it wrote, because a `launchd` job leaves no trace
   on screen and this one's healthy log is deliberately empty, so the box is the only way to
@@ -338,8 +354,8 @@ clean (verified in a test sandbox). Now:
 - **While a batch is running** (a batch lock held), a mismatch on a file written AFTER
   that lock was taken, and after its manifest, is the batch's own write: repair logs
   one `pending` line and leaves it for the batch's build. Anything written before the
-  lock was taken is judged normally, so damage from the morning is still held at 15:30
-  even while the 12:30 sweep is running.
+  lock was taken is judged normally, so earlier damage is still held
+  even when repair runs while a sweep is going.
 
 **Clearing a held folder** (a human decision). Look first at the ORIGINAL in
 `~/.claude/projects/<project>/<session-id>/` (Claude Code keeps it for 1,825 days on this
