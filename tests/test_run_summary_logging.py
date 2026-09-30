@@ -58,6 +58,13 @@ def _log_records(env: dict[str, str]) -> list[dict[str, object]]:
     return [json.loads(line) for line in log_path.read_text().splitlines()]
 
 
+def start_pid(record: dict[str, object]) -> int:
+    """The pid a `sweep started (pid N)` line names; a positive integer or the test fails."""
+    text = str(record["message"]).removeprefix("sweep started (pid ").removesuffix(")")
+    assert text.isdigit() and int(text) > 0, record
+    return int(text)
+
+
 def _run_summaries(env: dict[str, str], verb: str) -> list[dict[str, object]]:
     return [
         r for r in _log_records(env) if str(r.get("message", "")).startswith(f"{verb}: ")
@@ -80,6 +87,40 @@ def test_sweep_writes_one_ok_run_summary(ccw_env: dict[str, str], tmp_path: Path
     assert len(summaries) == 1, summaries
     assert summaries[0]["status"] == "ok"
     assert "1 stored" in str(summaries[0]["message"])
+
+
+def test_sweep_writes_a_start_line_before_its_run_summary(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """W-20260930-A28: a sweep killed mid-run must leave a trace, so the start is
+    recorded before the work, and the summary still closes it afterwards. The
+    start line is NOT a run summary: its message has its own `sweep started`
+    prefix, so every `sweep: ` reader (one summary per invocation) is unchanged."""
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0
+
+    records = _log_records(ccw_env)
+    starts = [i for i, r in enumerate(records) if r.get("status") == "sweep-started"]
+    ends = [i for i, r in enumerate(records) if str(r.get("message", "")).startswith("sweep: ")]
+    assert len(starts) == 1, records
+    assert len(ends) == 1, records
+    assert starts[0] < ends[0], records
+    start = records[starts[0]]
+    assert start["message"] == f"sweep started (pid {start_pid(start)})"
+    assert start["session"] is None
+
+
+def test_a_sweep_dry_run_writes_no_start_line(ccw_env: dict[str, str], tmp_path: Path) -> None:
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+
+    assert run_ccw(["sweep", "--dry-run"], ccw_env).code == 0
+
+    assert [r for r in _log_records(ccw_env) if r.get("status") == "sweep-started"] == []
 
 
 def test_sweep_run_summary_is_written_even_when_quiet(

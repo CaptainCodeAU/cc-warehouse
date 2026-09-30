@@ -20,6 +20,7 @@ docstring says "creating if needed".
 """
 
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -891,6 +892,81 @@ def _last_sweep_completed(config: Config) -> datetime | None:
     return latest
 
 
+# W-20260930-A28: `cli._log_sweep_started` writes this just before `sweep.sweep`
+# takes its lock, so a start younger than this is not judged yet.
+_SWEEP_START_GRACE_SECONDS = 120
+_SWEEP_START_PID = re.compile(r"^sweep started \(pid (\d+)\)$")
+
+
+def _pid_alive(pid: int) -> bool:
+    """Conservative, like `store`'s own lock-holder probe: anything short of a
+    definite ESRCH counts as alive, so a doubtful answer never reports a death."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _sweep_unfinished(config: Config) -> tuple[bool, str]:
+    """A `ccw sweep` that wrote its start line and never its run summary (W-20260930-A28).
+
+    Pairs lines in FILE order (the log is append-only): a `sweep-started` record
+    opens an invocation and any later `sweep: ` run summary closes it, whether a
+    completed run, a failed one or a lock refusal. An open start older than
+    `_SWEEP_START_GRACE_SECONDS` is dead only when its recorded pid is gone AND no
+    process holds the sweep lock. The pid is the main witness because `sweep.sweep`
+    releases its lock before `cli._run_sweep` runs the sweep-triggered build and the
+    coverage scan, so a live sweep on the share spends a long tail with no sweep lock.
+
+    NEVER BLOCKING, the `companions` posture (ticket 38 ruling (e)): the next sweep
+    redoes the work, and `overdue` already fails when sessions stay uncaptured. This
+    line says WHY beside it. Every cannot-answer state reads as ok."""
+    try:
+        text = (config.root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return True, "no capture.jsonl on this machine yet"
+    open_start: tuple[datetime, int | None] | None = None
+    last_start: datetime | None = None
+    for line in text.splitlines():
+        if '"sweep' not in line:
+            continue
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        message = record.get("message")
+        if not isinstance(message, str):
+            continue
+        if record.get("status") == "sweep-started":
+            at = record.get("at")
+            moment = _moment(at if isinstance(at, str) else None)
+            if moment is None:
+                continue
+            pid = _SWEEP_START_PID.match(message)
+            open_start = (moment, int(pid.group(1)) if pid else None)
+            last_start = moment
+        elif message.startswith("sweep: "):
+            open_start = None
+    if last_start is None:
+        return True, "no sweep start recorded yet"
+    if open_start is None:
+        return True, f"last sweep started {last_start.isoformat()} and finished"
+    moment, pid = open_start
+    if (datetime.now(UTC) - moment).total_seconds() < _SWEEP_START_GRACE_SECONDS:
+        return True, f"a sweep started {moment.isoformat()}, moments ago"
+    if (pid is not None and _pid_alive(pid)) or store.lock_is_held(config.root, "sweep"):
+        return True, f"a sweep is running, started {moment.isoformat()}"
+    return (
+        False,
+        f"the last sweep started {moment.isoformat()} and never finished (no run summary,"
+        " process gone, sweep lock free: killed or crashed); the next ccw sweep redoes"
+        " its work",
+    )
+
+
 def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str, bool]:
     """SessionEnd hook runs that wrote `started` and never finished (W-20260929-A105).
 
@@ -1467,6 +1543,11 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             else f"{count} session(s) OVERDUE, oldest last active {oldest}",
         )
     )
+
+    # W-20260930-A28. Right after `overdue` because it is the usual WHY behind it:
+    # a sweep that died mid-run. Never blocking, `overdue` owns the FAIL.
+    sweep_ok, sweep_detail = _sweep_unfinished(config)
+    checks.append(Check("sweep", sweep_ok, sweep_detail, blocking=False))
 
     # Ticket 42 #6. Same never-blocking posture as sidecars/history/prompts/
     # companions/reconcile below: whether Claude Code even DISPATCHED to our

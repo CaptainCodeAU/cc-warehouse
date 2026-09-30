@@ -33,8 +33,11 @@ Notes:
   the running process. The 2026-09-29 12:30 sweep logged items until 12:49 and never
   wrote its `sweep:` summary line; all three plists were reloaded at 13:57 that day,
   inside its expected 2 to 2.5 hour run. Inferred, not proven, because a killed sweep
-  leaves no trace (W-20260930-A28). Check `launchctl print gui/$(id -u)/<label>` shows
-  `state = not running` first.
+  left no trace. Since W-20260930-A28 a sweep writes a `sweep started (pid N)` line to
+  `capture.jsonl` before it works, and `ccw doctor`'s never-blocking `sweep` line reports
+  a start with no run summary after it whose process is gone; this reaches the scheduled
+  job only after the next frozen reinstall. Check `launchctl print gui/$(id -u)/<label>`
+  shows `state = not running` first.
 - **`ccw-repair` runs 15 minutes after `ccw-sweep` on purpose**, so the two never contend
   for the same catalog lock (`locks/sweep` and `locks/build` are separate locks, but
   running them back to back rather than concurrently was the simpler choice made when

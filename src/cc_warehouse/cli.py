@@ -798,6 +798,7 @@ def _run_sweep(args: Sequence[str]) -> int:
                 f"{would_store} would be stored, 0 written"
             )
         return 1 if failures else 0
+    _log_sweep_started(config)
     report = sweep.sweep(config, source, keep, limit=limit)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         # Ticket 42 #2: a refusal that leaves no trace is exactly what ticket 41 had to
@@ -1043,6 +1044,37 @@ def _log_run_summary(
                 "project": None,
                 "message": f"{verb}: {message}",
                 "elapsed_ms": elapsed_ms,
+            },
+        )
+    except Exception:
+        return
+
+
+def _log_sweep_started(config: Config) -> None:
+    """One `sweep-started` capture.jsonl record, written BEFORE `ccw sweep` does any
+    work (W-20260930-A28), so a sweep killed mid-run leaves a start with no run
+    summary after it, which `doctor._sweep_unfinished` reports. Before this, the
+    only sweep record was the summary written at the very end, and a killed sweep
+    left nothing: the 2026-09-29 12:30 sweep logged items until 12:49 AEST and
+    vanished when its launchd job was reloaded at 13:57.
+
+    The message is `sweep started (pid N)`, deliberately NOT the `sweep: ` run
+    summary prefix: every reader of that prefix counts one summary per
+    invocation (`_last_sweep_completed`, `reconcile._EXCLUDED_PREFIXES`, the
+    ticket 42 #2 tests). The pid folds into `message` under the same six-field
+    rule as `_log_run_summary`, because the sweep lock is released before the
+    sweep-triggered build and the coverage scan, so doctor needs the process
+    itself to tell a long tail from a dead run. Best effort, like its siblings."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "sweep-started",
+                "session": None,
+                "project": None,
+                "message": f"sweep started (pid {os.getpid()})",
+                "elapsed_ms": None,
             },
         )
     except Exception:

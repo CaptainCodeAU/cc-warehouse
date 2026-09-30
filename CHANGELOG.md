@@ -22,6 +22,22 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw doctor` reports a `ccw sweep` that started and never finished (2026-09-30,
+W-20260930-A28).** A sweep wrote its only capture.jsonl record, the run summary, as it
+ended, so a sweep killed mid-run left nothing: the 2026-09-29 12:30 sweep logged items until
+12:49 AEST and never wrote its summary after its launchd job was reloaded at 13:57, and
+doctor noticed only days later through `overdue`, with no way to say why. `ccw sweep` now
+writes a `sweep-started` record, message `sweep started (pid N)`, before it does any work;
+the message deliberately avoids the `sweep: ` run summary prefix, so every reader that counts
+one summary per invocation is unchanged. A new never-blocking `sweep` line, placed right
+after `overdue`, pairs the newest start with any later run summary (a completed run, a
+failed one or a lock refusal) and reports a start older than 120 s whose process is gone
+while no process holds the sweep lock. The pid is the main witness because `sweep.sweep`
+releases its lock before the sweep-triggered build and the coverage scan, so a live sweep on
+the share spends a long tail holding no sweep lock. Never blocking, the `companions` posture:
+the next sweep redoes the work and `overdue` owns the FAIL. A log from before this change,
+with no start line, reads as fine.
+
 **The archive ends on a session's newest payload whatever order captures land in
 (2026-09-29, W-20260929-A104; ruling: Gavin, option C).** The capture lock is per payload
 HASH, so two captures of one session with different payloads ran at once, and the older one
