@@ -26,6 +26,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from cc_warehouse import doctor
 from cc_warehouse.config import Config
 from conftest import HOOKS_DIR
@@ -49,7 +51,7 @@ def _lines(tmp_path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def _statuses(tmp_path: Path, session: str = SESSION) -> list[object]:
+def _statuses(tmp_path: Path, session: str | None = SESSION) -> list[object]:
     return [line["status"] for line in _lines(tmp_path) if line["session"] == session]
 
 
@@ -277,3 +279,123 @@ def test_ccw_not_found_is_logged_and_spoken_to_ccw_voice_url(tmp_path: Path) -> 
     error = next(line for line in _lines(tmp_path) if line["status"] == "error")
     assert "ccw is not installed" in str(error["detail"])
     assert "ccw is not installed" in str(spy.bodies[0]["message"])
+
+
+# --- edge cases --------------------------------------------------------------
+
+
+def test_control_a_failing_ccw_is_logged_by_the_runner_after_the_hook_has_gone(
+    tmp_path: Path,
+) -> None:
+    """Control for the happy paths above: the runner still tells failure from
+    success. Both failure shapes, a non-zero exit and a graceful `error:` line,
+    land after the hook has already returned."""
+    crashing = _fake_ccw(tmp_path, 'sleep 1\necho "boom" >&2\nexit 3')
+    started = time.monotonic()
+    _run_hook(tmp_path, crashing, _payload("fails-hard"))
+    assert time.monotonic() - started < 1.0
+    assert "error" not in _statuses(tmp_path, "fails-hard")  # not yet: ccw still running
+    assert _wait_for(lambda: "error" in _statuses(tmp_path, "fails-hard"))
+    error = next(
+        line
+        for line in _lines(tmp_path)
+        if line["session"] == "fails-hard" and line["status"] == "error"
+    )
+    assert "exited 3: boom" in str(error["detail"])
+
+    graceful = _fake_ccw(tmp_path, 'echo "error: unreadable transcript /x/y.jsonl: boom"')
+    _run_hook(tmp_path, graceful, _payload("fails-soft"))
+    assert _wait_for(lambda: "capture-error" in _statuses(tmp_path, "fails-soft"))
+
+
+@pytest.mark.parametrize("stdin", ["", "not json at all"])
+def test_an_empty_or_unparseable_payload_still_returns_fast_and_is_handed_on(
+    tmp_path: Path, stdin: str
+) -> None:
+    """A bad payload is `ccw hook`'s to judge, as it was before the detach; the
+    hook must still return at once and leave its trail."""
+    ccw = _fake_ccw(tmp_path, 'sleep 2\necho "ok: captured"')
+    started = time.monotonic()
+    _run_hook(tmp_path, ccw, stdin)
+    assert time.monotonic() - started < 1.0
+    assert _wait_for(lambda: _statuses(tmp_path, None) == ["dispatched", "started", "ok"])
+    delivered = list(tmp_path.glob("payload-*"))
+    assert len(delivered) == 1
+    assert delivered[0].read_text(encoding="utf-8") == stdin
+
+
+def test_two_sessions_ending_at_once_are_both_captured_and_kept_apart(tmp_path: Path) -> None:
+    ccw = _fake_ccw(tmp_path, 'sleep 1\necho "ok: captured"')
+    env = _env(tmp_path, ccw)
+    hooks = [
+        subprocess.Popen(
+            [sys.executable, str(WRAPPER)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env=env,
+        )
+        for _ in range(2)
+    ]
+    for hook, session in zip(hooks, ("first", "second"), strict=True):
+        assert hook.stdin is not None
+        hook.stdin.write(_payload(session))
+        hook.stdin.close()
+    for hook in hooks:
+        assert hook.wait(timeout=5) == 0
+    for session in ("first", "second"):
+        assert _wait_for(lambda s=session: _statuses(tmp_path, s) == ["started", "ok"]), session
+    delivered = sorted(
+        json.loads(path.read_text(encoding="utf-8"))["session_id"]
+        for path in tmp_path.glob("payload-*")
+    )
+    assert delivered == ["first", "second"]
+
+
+def test_a_payload_larger_than_a_pipe_buffer_reaches_ccw_whole(tmp_path: Path) -> None:
+    """A pipe holds 64 KB on macOS and Linux; past that, a writer that does not
+    hand over the whole payload, or a reader that stops early, truncates it."""
+    ccw = _fake_ccw(tmp_path, 'echo "ok: captured"')
+    payload = json.dumps(
+        {"session_id": SESSION, "transcript_path": "/x/big.jsonl", "pad": "x" * 300_000}
+    )
+    _run_hook(tmp_path, ccw, payload)
+    assert _wait_for(lambda: "ok" in _statuses(tmp_path))
+    delivered = list(tmp_path.glob("payload-*"))
+    assert len(delivered) == 1
+    assert delivered[0].read_text(encoding="utf-8") == payload
+
+
+def test_a_runner_that_crashes_still_logs_why(tmp_path: Path) -> None:
+    """R10: the runner has no terminal and no parent left to see it die, so an
+    unforeseen exception must still reach the log. The crash is injected into
+    the REAL runner process: a `sitecustomize` on PYTHONPATH breaks
+    `subprocess.run` in any process started with the runner's flag only."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import subprocess, sys\n"
+        "if sys.argv[1:] == ['--run']:\n"
+        "    def _boom(*args, **kwargs):\n"
+        "        raise RuntimeError('injected runner crash')\n"
+        "    subprocess.run = _boom\n",
+        encoding="utf-8",
+    )
+    ccw = _fake_ccw(tmp_path, 'echo "ok: captured"')
+    env = _env(tmp_path, ccw)
+    env["PYTHONPATH"] = str(site)
+    result = subprocess.run(
+        [sys.executable, str(WRAPPER)],
+        input=_payload(),
+        text=True,
+        env=env,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert _wait_for(lambda: "error" in _statuses(tmp_path))
+    error = next(line for line in _lines(tmp_path) if line["status"] == "error")
+    assert error["detail"] == "runner crashed: RuntimeError: injected runner crash"
+    assert "ok" not in _statuses(tmp_path)
