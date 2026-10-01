@@ -41,7 +41,15 @@ the open-items drawer, not here.
   session did not search the drawer for the error text before acting, so one ruling
   ("leave the folders") was overtaken without being shown. The principal reconciled it
   on 2026-10-02 (DESIGN 15). Search `open-items --grep "<error text>" --all` first.
-- One test failed once under load average ~50 and was not named (W-20261002-A12).
+- One test failed under load average ~50. It was later named:
+  `test_the_detach_works_end_to_end_under_an_old_python3`, 1.09 s against a 1.0 s
+  limit. The principal ruled for a 1.4 s limit tied to Claude Code's 1.5 s budget, to
+  be built later (W-20261002-A12).
+- **A wrong claim, caught by a peer:** this session blamed `gitleaks detect --pipe` for
+  passing a planted token (8f37b29). The token was hand-typed and low-entropy, and
+  gitleaks skips those in every mode. Corrected in 4a9cf9a and pinned by
+  `tests/test_wrap_up_message_scan.py` (d7a0357), which fails on a hand-typed control.
+  A control that does not fire is an invalid trial, not a tool defect.
 
 ### Fiftieth handoff, 2026-09-13 (a SessionEnd hook that died before it could log, and an alarm we nearly built twice)
 
