@@ -343,3 +343,62 @@ def test_an_uncataloged_uuidless_file_is_still_overdue(tmp_path: Path) -> None:
     found = _check(config, tmp_path, tmp_path / "claude" / "projects", "overdue")
     assert not found.ok
     assert found.detail.startswith("1 session(s) OVERDUE")
+
+
+def _hidden_uuidless(ts: str = "2026-09-29T14:01:24.763Z") -> bytes:
+    """Only system and result lines: no typed prompt, so the catalog hides it."""
+    return jsonl(
+        {"type": "system", "subtype": "init", "cwd": CWD, "timestamp": ts},
+        {"type": "result", "subtype": "success", "timestamp": ts},
+    )
+
+
+def _to_legacy_name(config: Config) -> Path:
+    """Put the one uuid-less folder back where the pre-fix hook wrote it:
+    `<ts>_session/session.jsonl`."""
+    assert config.archive_root is not None
+    (jsonl_path,) = _session_jsonls(config.archive_root)
+    stamp = jsonl_path.parent.name.split("_", 1)[0]
+    legacy = jsonl_path.parent.with_name(f"{stamp}_session")
+    jsonl_path.parent.rename(legacy)
+    (legacy / jsonl_path.name).rename(legacy / "session.jsonl")
+    return legacy
+
+
+def test_doctor_names_a_visible_uuidless_head_left_under_the_legacy_name(
+    tmp_path: Path,
+) -> None:
+    config = vaultless(tmp_path)
+    capture.capture_transcript(config, transcript(tmp_path, uuidless()), session_id=None, cwd=None)
+    legacy = _to_legacy_name(config)
+    found = _check(config, tmp_path, tmp_path / "claude" / "projects", "unreadable")
+    assert found.blocking and not found.ok
+    assert found.detail.startswith("1 visible session(s) not at their archive path")
+    assert legacy.name in found.detail
+    assert "tools/rename_uuidless_folders.py" in found.detail
+
+
+def test_doctor_reports_a_missing_hidden_uuidless_head_without_failing(
+    tmp_path: Path,
+) -> None:
+    """A hidden head is never read by `ccw build`, and a missing hidden copy can
+    be permanent (two data files that once shared one bare `session` folder),
+    so it is reported and never moves the exit code (ticket 24.7's lesson)."""
+    config = vaultless(tmp_path)
+    capture.capture_transcript(
+        config, transcript(tmp_path, _hidden_uuidless()), session_id=None, cwd=None
+    )
+    _to_legacy_name(config)
+    found = _check(config, tmp_path, tmp_path / "claude" / "projects", "unreadable")
+    assert found.ok
+    assert "1 hidden" in found.detail
+
+
+def test_doctor_unreadable_is_clean_when_every_uuidless_head_is_in_place(
+    tmp_path: Path,
+) -> None:
+    config = vaultless(tmp_path)
+    capture.capture_transcript(config, transcript(tmp_path, uuidless()), session_id=None, cwd=None)
+    found = _check(config, tmp_path, tmp_path / "claude" / "projects", "unreadable")
+    assert found.ok
+    assert found.detail.startswith("0 of 1 uuid-less head(s) missing")

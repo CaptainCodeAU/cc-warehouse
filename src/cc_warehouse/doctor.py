@@ -1494,6 +1494,73 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     return len(overdue), (oldest.isoformat() if oldest else None)
 
 
+def _unreadable(config: Config) -> tuple[int, int, int, str | None]:
+    """(checked, visible missing, hidden missing, first example) over every
+    uuid-less catalog head: is its JSONL where every reader looks for it?
+
+    WHY ONLY THE UUID-LESS. They are the population whose folder name came
+    from a fallback stem, and the writers and readers spelled that stem two
+    ways until W-20261001-A56, so a head can be cataloged and archived and
+    still unreadable. Uuid-bearing heads are covered by the desync sample;
+    checking all ~31k on a network share at SessionStart is the cost ticket 44
+    removed. One stat per uuid-less head (23 on this machine, 2026-10-01).
+
+    The example names a legacy `<stamp>_session/` folder when one sits where
+    the pre-fix hook wrote it, because that is the fix: a rename, not a
+    re-capture.
+    """
+    path = config.root / "catalog.sqlite"
+    if config.archive_root is None or not path.is_file():
+        return 0, 0, 0, None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 0, 0, 0, None
+    try:
+        rows = cast(
+            list[tuple[str, str, str | None, int]],
+            conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT short, label, first_ts, hidden FROM ranked"
+                " WHERE rn = 1 AND session_uuid IS NULL"
+            ).fetchall(),
+        )
+    except sqlite3.Error:
+        return 0, 0, 0, None
+    finally:
+        conn.close()
+    visible = hidden = 0
+    example: str | None = None
+    for short, label, first_ts, is_hidden in rows:
+        stem = build.session_stem(None, short)
+        folder = build.archive_dir(
+            config.archive_root, label, first_ts, None, config.archive_timezone,
+            fallback_stem=stem,
+        )
+        if (folder / f"{stem}.jsonl").is_file():
+            continue
+        if is_hidden:
+            hidden += 1
+            continue
+        visible += 1
+        if example is None:
+            # The bare stem the pre-fix writers used, named here only to find
+            # what they left behind.
+            legacy = folder.with_name(
+                build.archive_folder_name(
+                    first_ts, None, config.archive_timezone, fallback_stem="session"
+                )
+            )
+            where = f"{folder.parent.name}/{folder.name}"
+            if (legacy / "session.jsonl").is_file():
+                where += (
+                    f": legacy {legacy.name}/ beside it, rename with"
+                    " tools/rename_uuidless_folders.py"
+                )
+            example = where
+    return len(rows), visible, hidden, example
+
+
 def _cataloged_hashes(config: Config, hashes: set[str]) -> frozenset[str]:
     """Which of `hashes` the catalog holds, read-only. No catalog, or an
     unreadable one, answers none, so nothing is cleared that is not proven."""
@@ -1646,6 +1713,27 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             f" folder(s) {_QUICK_NOTE}, e.g. {first_problem}"
         )
     checks.append(Check("desync", problems == 0, desync_detail))
+
+    # W-20261001-A56. BLOCKING for VISIBLE heads only: each one makes `ccw
+    # build` fail every night until it is fixed, and once fixed the figure
+    # returns to 0, so it cannot become a permanent banner. A missing HIDDEN
+    # head is never read by build and can be permanent (two data files that
+    # once shared one bare `session` folder), so it is reported only.
+    checked_uuidless, visible_missing, hidden_missing, example = _unreadable(config)
+    hidden_note = (
+        f"; {hidden_missing} hidden (never built, reported only)" if hidden_missing else ""
+    )
+    if visible_missing:
+        unreadable_detail = (
+            f"{visible_missing} visible session(s) not at their archive path, so ccw build"
+            f" fails on each, e.g. {example}{hidden_note}"
+        )
+    else:
+        unreadable_detail = (
+            f"0 of {checked_uuidless} uuid-less head(s) missing from their archive path"
+            f"{hidden_note}"
+        )
+    checks.append(Check("unreadable", visible_missing == 0, unreadable_detail))
 
     # Ticket 38, ruling (e). NEVER BLOCKING, and that is the decision rather than
     # a softness: an unarchived sibling is worth knowing about and is not a broken
