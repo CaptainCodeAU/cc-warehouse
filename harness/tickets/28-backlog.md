@@ -134,8 +134,9 @@ here into their own ticket when they are taken up.
 
 ## Known defects and debts
 
-- **28.29  FIXED IN THE REPO 2026-10-01 (W-20261001-A56), NOT YET INSTALLED OR
-  APPLIED. Uuid-less sessions were written to one folder and read from another.**
+- **28.29  FIXED 2026-10-01 (W-20261001-A56), INSTALLED AND APPLIED THE SAME NIGHT
+  (see the deploy note at the end of this entry). Uuid-less sessions were written to
+  one folder and read from another.**
   A payload with no `sessionId` (a `claude -p` stream-json output, a workflow
   `journal.jsonl`, a data file such as `refusals.jsonl` that happens to sit under
   `~/.claude/projects`) is cataloged with `session_uuid` NULL and named by a
@@ -205,6 +206,15 @@ here into their own ticket when they are taken up.
   NEEDS THE PRINCIPAL: reinstall, then `tools/rename_uuidless_folders.py
   --apply --record FILE` on the real archive, in that order or the other, see
   the conductor's report.
+
+  DEPLOYED 2026-10-01, on the principal's word in an AskUserQuestion box ("Run all
+  three now"): frozen reinstall at 22:08 AEST (`direct_url.json` `dir_info:{}`);
+  rename `--apply`: 12 renamed, 11 skipped, 0 refused, record kept beside the
+  warehouse logs; `ccw build`: 30,472 sessions, 8 built, 0 failed (32 min on the
+  share); `ccw doctor` from outside the repo: exit 0, overdue 0, `unreadable` 0.
+  Rulings taken the same night on the two items above: W-20261001-A59 "decide by
+  content", W-20261001-A60 "name doctor's failing line". Last proof owed: the
+  scheduled 02:00 `ccw-sweep` exits 0.
 
 - **28.21  DONE 2026-08-05. The sidecar is now written by whatever CREATES the
   folder, so 27.4's prerequisite is met.** `capture._archive_project_file`

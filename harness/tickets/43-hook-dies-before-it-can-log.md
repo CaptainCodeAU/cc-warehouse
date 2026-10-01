@@ -266,3 +266,13 @@ Suite 2041 -> 2054.
 **Not done here, by the brief:** no push, no `/plugin` update, no change to hooks.json's
 `timeout: 45` (now inert for the hook itself), no change to pj's 10 s settings hook.
 
+
+**DEPLOYED 2026-10-01 23:39 AEST.** Pushed `66e2bbf`; the operator ran the plugin
+update, and the installed cache is `66e2bbf841ae` (holds `RUN_FLAG`; older cache dirs
+kept). Proved in the real execution context the same night: `claude -p` exits with
+`--setting-sources ''` and `--plugin-dir`, and a real `ccw` behind an 8 s delay under the
+1.5 s budget. The OLD wrapper (`75378cd1a678`) printed "Hook cancelled" and its child
+never finished. The NEW wrapper printed nothing; its detached runner logged
+`ok: captured` 9 s later, and `started` carried `reason=other`. Still owed before A65
+closes: 3 real closes, including a pj session and a transcript over 5 MB, each with an
+outcome line in `ccw-hook.log`.
