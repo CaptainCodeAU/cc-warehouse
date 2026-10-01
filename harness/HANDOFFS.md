@@ -21,6 +21,28 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-first handoff, 2026-10-01 to 10-02 (a nightly sweep that failed on 8 files, and a hook Claude Code was killing)
+
+Session e6f56455 ("ccw-dude"), conductor with two herdr workers, all code test-first.
+Entries between 2026-09-13 and this one live in the generated `HANDOFF.md` history and
+the open-items drawer, not here.
+
+- **W-20261001-A56.** The alert said "capture broken"; capture worked. Two causes:
+  writer and reader disagreed on the folder name for a session with no `sessionId`
+  (hidden by the vault until 27.3), and doctor's `overdue` keyed on file names. Fixed
+  a27c0b1..8a80a0e, frozen reinstall, 12 folders renamed, `ccw build` 0 failed,
+  `ccw doctor` exit 0. Last proof owed: the 02:00 sweep. Backlog 28.29.
+- **W-20261001-A65.** "SessionEnd hook ... Hook cancelled": a plugin hook's timeout does
+  not raise Claude Code's exit budget (4-arm probe). The hook now detaches the capture.
+  Pushed 66e2bbf, plugin 66e2bbf841ae, proved with an old-versus-new control on real
+  exits. Ticket 43.
+- **Process miss, recorded so it is not repeated:** the drawer already held
+  W-20260930-A59 for the same 8 files, with four of the principal's rulings. The
+  session did not search the drawer for the error text before acting, so one ruling
+  ("leave the folders") was overtaken without being shown. The principal reconciled it
+  on 2026-10-02 (DESIGN 15). Search `open-items --grep "<error text>" --all` first.
+- One test failed once under load average ~50 and was not named (W-20261002-A12).
+
 ### Fiftieth handoff, 2026-09-13 (a SessionEnd hook that died before it could log, and an alarm we nearly built twice)
 
 Started as "why is session 5c652174 not in the archive". It was never lost: the

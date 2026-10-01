@@ -26,9 +26,9 @@
 
 ## Ruled, not built (build test-first, `cc-skills:tdd`)
 
-- W-20261001-A59: a uuid-less JSONL is a session only when it has user and assistant
-  message lines; anything else goes to `_not-sessions`. Sweep and import must agree.
-  DESIGN.md section 15 entry owed.
+- W-20260930-A59 (W-20261001-A59 folded in): a .jsonl is a session when it has user
+  and assistant lines, never under a project's memory/ subtree; sweep and import agree.
+  Ruled 2026-10-02, DESIGN 15. Resume WIP branch a59-no-bytes-rows against it.
 - W-20261001-A60: the freshness alert names doctor's first blocking FAIL line,
   not "capture has been broken".
 
@@ -46,8 +46,9 @@
 - `hooks.json` still says `timeout: 45`. It is inert for the hook. Leave it.
 - Three older plugin cache dirs remain under `~/.claude/plugins/cache/cc-warehouse/`.
   Removing them is Gavin's call only (nothing is deleted from `~/.claude` by agents).
-- `.worktree/a59-no-bytes-rows` (30 Sep, WIP red tests) belongs to another session.
+- `.worktree/a59-no-bytes-rows` (30 Sep, WIP red tests) is W-20260930-A59's branch.
 - CHANGELOG still has two `## Unreleased` headings (pre-existing open item).
+- One test failed once under heavy load and was not named (W-20261002-A12).
 
 ## Records
 
