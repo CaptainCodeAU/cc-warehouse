@@ -120,7 +120,10 @@ from pathlib import Path
 from typing import cast
 
 LOG = Path.home() / ".claude" / "logs" / "ccw-hook.log"
-VOICE_URL = "http://localhost:8888/notify"
+# CCW_VOICE_URL, when set, is the operator's own voice endpoint: `ccw hook`
+# already reads it (handed on below), so this file's own alerts follow it too.
+# Also how the tests keep a real failure from reaching a real voice server.
+VOICE_URL = os.environ.get("CCW_VOICE_URL") or "http://localhost:8888/notify"
 VOICE_ID = "fTtv3eikoepIosk8dTZ5"
 # The argument that makes this file the detached runner rather than the hook.
 RUN_FLAG = "--run"

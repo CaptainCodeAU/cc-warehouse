@@ -14,15 +14,20 @@ fake only `ccw` (CCW_BIN) and the voice server (CCW_VOICE_URL). HOME points into
 the test's scratch dir, so the log is never the real `~/.claude/logs`.
 """
 
+import http.server
 import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from cc_warehouse import doctor
+from cc_warehouse.config import Config
 from conftest import HOOKS_DIR
 
 WRAPPER = HOOKS_DIR / "ccw-hook.py"
@@ -162,3 +167,113 @@ def test_the_runner_does_not_hold_the_hooks_stdout_or_stderr_open(tmp_path: Path
     elapsed = time.monotonic() - started
     assert elapsed < 1.0, f"the hook's pipes stayed open {elapsed:.2f}s"
     assert _wait_for(lambda: (tmp_path / "marker").exists())
+
+
+def _run_hook(tmp_path: Path, ccw: Path | None, payload: str) -> None:
+    result = subprocess.run(
+        [sys.executable, str(WRAPPER)],
+        input=payload,
+        text=True,
+        env=_env(tmp_path, ccw),
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0
+
+
+def test_started_carries_the_sessionend_reason_in_its_own_key(tmp_path: Path) -> None:
+    """W-20260929-A127: 11 of 775 runs died and nothing said why the session
+    ended. The reason gets its OWN key: `doctor._hook_unfinished` reads
+    `detail` as the transcript path, so it must stay exactly that."""
+    ccw = _fake_ccw(tmp_path, 'echo "ok: captured"')
+    _run_hook(tmp_path, ccw, _payload(reason="logout"))
+    assert _wait_for(lambda: "ok" in _statuses(tmp_path))
+    started = next(line for line in _lines(tmp_path) if line["status"] == "started")
+    assert started["reason"] == "logout"
+    assert started["detail"] == f"/x/{SESSION}.jsonl"
+    assert started["session"] == SESSION
+
+
+def _backdate(tmp_path: Path, seconds: int) -> None:
+    """Move every line's `ts` back, keeping the real wrapper's lines otherwise
+    exactly as it wrote them (doctor's grace window is 120 s)."""
+    path = _log(tmp_path)
+    moved: list[str] = []
+    for line in _lines(tmp_path):
+        stamp = datetime.fromisoformat(str(line["ts"])) - timedelta(seconds=seconds)
+        moved.append(json.dumps({**line, "ts": stamp.isoformat(timespec="seconds")}))
+    path.write_text("\n".join(moved) + "\n", encoding="utf-8")
+
+
+def test_doctor_pairs_the_runners_ok_with_the_hooks_started(tmp_path: Path) -> None:
+    """`started` is written by the hook and `ok` by the detached runner, two
+    processes. Doctor pairs them by session id, so a real run must read as
+    finished; the control drops the runner's line and must read as dead."""
+    ccw = _fake_ccw(tmp_path, 'echo "ok: captured"')
+    _run_hook(tmp_path, ccw, _payload())
+    assert _wait_for(lambda: "ok" in _statuses(tmp_path))
+    _backdate(tmp_path, 3600)
+    config = Config(root=tmp_path / "warehouse")
+
+    ok, detail, _blocking = doctor._hook_unfinished(config, _home(tmp_path))  # pyright: ignore[reportPrivateUsage]
+    assert ok is True and detail.startswith("0 hook run(s)"), detail
+
+    kept = [line for line in _lines(tmp_path) if line["status"] != "ok"]
+    _log(tmp_path).write_text("".join(json.dumps(line) + "\n" for line in kept), encoding="utf-8")
+    ok, detail, _blocking = doctor._hook_unfinished(config, _home(tmp_path))  # pyright: ignore[reportPrivateUsage]
+    assert ok is False, detail
+    assert SESSION in detail, detail
+
+
+class _VoiceSpy:
+    """A local stand-in for the voice server that records every POST body."""
+
+    def __init__(self) -> None:
+        bodies: list[dict[str, object]] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - the stdlib's name
+                length = int(self.headers.get("Content-Length") or 0)
+                bodies.append(json.loads(self.rfile.read(length)))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+                pass
+
+        self.bodies = bodies
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/notify"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_ccw_not_found_is_logged_and_spoken_to_ccw_voice_url(tmp_path: Path) -> None:
+    """No CCW_BIN, nothing on PATH, no uv-tool shim. The runner logs `error`
+    and speaks it, to CCW_VOICE_URL when that is set (the same variable the
+    wrapper already hands `ccw hook`), never to the built-in default."""
+    spy = _VoiceSpy()
+    try:
+        env = _env(tmp_path, None)
+        env["CCW_VOICE_URL"] = spy.url
+        result = subprocess.run(
+            [sys.executable, str(WRAPPER)],
+            input=_payload(),
+            text=True,
+            env=env,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert _wait_for(lambda: "error" in _statuses(tmp_path))
+        assert _wait_for(lambda: len(spy.bodies) == 1)
+    finally:
+        spy.close()
+    error = next(line for line in _lines(tmp_path) if line["status"] == "error")
+    assert "ccw is not installed" in str(error["detail"])
+    assert "ccw is not installed" in str(spy.bodies[0]["message"])
