@@ -295,10 +295,13 @@ trust past:**
    git log --format=%B SESSION_START_REF..HEAD | gitleaks stdin --no-banner
    ```
    (the underlying tool directly, since the wrapper has no stdin mode). Non-zero means a hit.
-   **Use `gitleaks stdin`, and the control must exit 1 before the real scan counts.** The
-   older `gitleaks detect --pipe` form passed a planted random `ghp_` token with exit 0 on
-   gitleaks 8.30.1 (measured 2026-10-02), so it certified every message as clean while
-   scanning nothing. A control that does not fire makes the scan an invalid trial.
+   **The control must exit 1 before the real scan counts, and its token must be RANDOM.**
+   `gitleaks stdin` and `gitleaks detect --pipe` behave the same on gitleaks 8.30.1: both
+   catch a random 36-character `ghp_` token (exit 1) and both pass a hand-typed
+   low-entropy one such as `ghp_aBcD...0123456789` (exit 0), because gitleaks skips
+   low-entropy matches. Measured 2026-10-02 after an earlier version of this note blamed
+   `--pipe` on the strength of exactly that hand-typed control; a peer session caught it.
+   A control that does not fire makes the scan an invalid trial, not a tool defect.
 2. **Binary file content is invisible** - `git diff` prints "Binary files ... differ" and nothing
    else, confirmed live with a token embedded in a binary file (exit 0, no mention). This repo's
    own tracked files are all text as of this writing (checked); if that ever changes, this gap
