@@ -290,9 +290,15 @@ trust past:**
    string in a commit message scanned exit 0 with `git-leak-scan`, while the same string in file
    content correctly blocked. Run this too:
    ```bash
-   git log --format=%B SESSION_START_REF..HEAD | gitleaks detect --pipe --no-banner
+   T="ghp_$(uv run --no-project python3 -c 'import secrets,string;print("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(36)))')"
+   printf 'token %s\n' "$T" | gitleaks stdin --no-banner >/dev/null 2>&1; echo "control rc=$? (must be 1)"
+   git log --format=%B SESSION_START_REF..HEAD | gitleaks stdin --no-banner
    ```
    (the underlying tool directly, since the wrapper has no stdin mode). Non-zero means a hit.
+   **Use `gitleaks stdin`, and the control must exit 1 before the real scan counts.** The
+   older `gitleaks detect --pipe` form passed a planted random `ghp_` token with exit 0 on
+   gitleaks 8.30.1 (measured 2026-10-02), so it certified every message as clean while
+   scanning nothing. A control that does not fire makes the scan an invalid trial.
 2. **Binary file content is invisible** - `git diff` prints "Binary files ... differ" and nothing
    else, confirmed live with a token embedded in a binary file (exit 0, no mention). This repo's
    own tracked files are all text as of this writing (checked); if that ever changes, this gap
