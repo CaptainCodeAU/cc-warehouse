@@ -112,8 +112,8 @@ def _cataloged_hashes(root: Path) -> frozenset[str]:
     return frozenset(cast(str, row[0]) for row in rows)
 
 
-def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None]]:
-    """head hash -> (session_uuid, label, first_ts) for every session whose catalog
+def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None, str]]:
+    """head hash -> (session_uuid, label, first_ts, short) for every session whose catalog
     holds TWO OR MORE versions (W-20260929-A104; ruling: Gavin, option C).
 
     Only those can have lost a same-session capture race, so only those are worth
@@ -125,21 +125,21 @@ def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None]]:
     conn = catalog.open_catalog(root)
     try:
         rows = cast(
-            list[tuple[str, str, str, str | None]],
+            list[tuple[str, str, str, str | None, str]],
             conn.execute(
                 build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
-                + "SELECT hash, session_uuid, label, first_ts FROM ranked WHERE rn = 1"
+                + "SELECT hash, session_uuid, label, first_ts, short FROM ranked WHERE rn = 1"
                 " AND session_uuid IN (SELECT session_uuid FROM session"
                 " WHERE session_uuid IS NOT NULL GROUP BY session_uuid HAVING COUNT(*) >= 2)"
             ).fetchall(),
         )
     finally:
         conn.close()
-    return {row[0]: (row[1], row[2], row[3]) for row in rows}
+    return {row[0]: (row[1], row[2], row[3], row[4]) for row in rows}
 
 
 def _repair_head_jsonl(
-    config: Config, path: Path, head: tuple[str, str, str | None]
+    config: Config, path: Path, head: tuple[str, str, str | None, str]
 ) -> ItemOutcome | None:
     """Put a multi-version session's head payload back when its archive JSONL is
     SHORTER than the source that hashes to that head (W-20260929-A104).
@@ -157,12 +157,22 @@ def _repair_head_jsonl(
 
     if config.archive_root is None:
         return None
-    session_uuid, label, first_ts = head
+    session_uuid, label, first_ts, short = head
+    # One stem rule for every writer and reader (build.session_stem,
+    # W-20261001-A56). The query above only returns uuid-bearing heads, so the
+    # `session-<short>` arm is unreachable here today; spelling the uuid in by
+    # hand was still a second derivation of the same name.
+    stem = build.session_stem(session_uuid, short)
     jsonl = (
         build.archive_dir(
-            config.archive_root, label, first_ts, session_uuid, config.archive_timezone
+            config.archive_root,
+            label,
+            first_ts,
+            session_uuid,
+            config.archive_timezone,
+            fallback_stem=stem,
         )
-        / f"{session_uuid}.jsonl"
+        / f"{stem}.jsonl"
     )
     try:
         data = path.read_bytes()
@@ -171,7 +181,12 @@ def _repair_head_jsonl(
         if not jsonl.is_file() or jsonl.stat().st_size >= len(data):
             return None
         archive.write_source(
-            config.archive_root, label, data, config.archive_timezone, warehouse_root=config.root
+            config.archive_root,
+            label,
+            data,
+            config.archive_timezone,
+            warehouse_root=config.root,
+            fallback_stem=stem,
         )
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"repair: {type(exc).__name__}: {exc}")

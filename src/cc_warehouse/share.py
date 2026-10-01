@@ -458,7 +458,7 @@ def share(
             first_ts,
             item.session_uuid,
             zone,
-            fallback_stem=f"session-{item.short}",
+            fallback_stem=build.session_stem(item.session_uuid, item.short),
         )
         try:
             build.write_projection(subdir, redacted_bytes, options, force=True)

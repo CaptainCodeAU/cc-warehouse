@@ -414,7 +414,7 @@ def test_a_payload_the_catalog_has_no_size_for_is_hashed_not_skipped(tmp_path: P
 
     folder = archive.write_session_folder(
         tmp_path, "widget", basic_session(session_id=UUID_A), RenderOptions(), ZONE
-    ).directory
+    , fallback_stem="session").directory
     payload = archive.sole_jsonl(folder)
     assert payload is not None
     meta = parser.parse_session(payload.read_bytes())

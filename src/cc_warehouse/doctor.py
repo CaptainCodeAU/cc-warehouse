@@ -514,7 +514,7 @@ def _catalog_index(
                 first_ts,
                 session_uuid,
                 config.archive_timezone,
-                fallback_stem=f"session-{short}",
+                fallback_stem=build.session_stem(session_uuid, short),
             ),
             captured_at,
             payload_hash,

@@ -548,7 +548,7 @@ def _reveal_target(config: Config, short: str | None) -> str:
                         head.first_ts,
                         head.session_uuid,
                         config.archive_timezone,
-                        fallback_stem=f"session-{head.short}",
+                        fallback_stem=build.session_stem(head.session_uuid, head.short),
                     )
                 )
         except Exception:  # noqa: BLE001 - a reveal may never fail a capture
@@ -1312,7 +1312,7 @@ def _render_flags(rest: Sequence[str]) -> tuple[str | None, str | None, str | No
     return session, out, source
 
 
-def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> None:
+def _mirror_to_archive(config: Config, label: str, stem: str, data: bytes) -> None:
     """Keep the archive-first tree CURRENT from the capture path (slice 19i).
 
     Before this, `ccw archive` filled a tree once and nothing kept it there, so
@@ -1357,7 +1357,7 @@ def _mirror_to_archive(config: Config, label: str, short: str, data: bytes) -> N
         build.render_options(config),
         config.archive_timezone,
         warehouse_root=config.root,
-        fallback_stem=f"session-{short}",
+        fallback_stem=stem,
     )
 
 
@@ -1436,7 +1436,9 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
         )
         if config.keep_projections:
             build.write_projection(directory, data, build.render_options(config), force=False)
-        _mirror_to_archive(config, head.label, head.short, data)
+        _mirror_to_archive(
+            config, head.label, build.session_stem(head.session_uuid, head.short), data
+        )
     except Exception as exc:  # the detached child's only surviving signal (DESIGN 4)
         try:
             notify.report(config, notify.NotifyEvent("error", short, None, repr(exc), None))

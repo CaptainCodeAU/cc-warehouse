@@ -75,12 +75,15 @@ def test_the_fixture_pair_is_actually_equal_length_but_different() -> None:
 def test_an_equal_size_mismatch_does_not_rewrite_the_rendered_files(tmp_path: Path) -> None:
     """THE DEFECT. The four rendered files must still describe the payload that
     survived (`archived()`), not the one that was declined (`offered()`)."""
-    archive.write_session_folder(tmp_path, LABEL, archived(), OPTS, ZONE)
-    result = archive.write_session_folder(tmp_path, LABEL, offered(), OPTS, ZONE)
+    archive.write_session_folder(tmp_path, LABEL, archived(), OPTS, ZONE, fallback_stem="session")
+    result = archive.write_session_folder(
+        tmp_path, LABEL, offered(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.refused_equal_size
     expected = archive.write_session_folder(
         tmp_path / "control", LABEL, archived(), OPTS, ZONE
-    )
+    , fallback_stem="session")
     for name in _RENDERED:
         assert (result.directory / name).read_bytes() == (
             expected.directory / name
@@ -92,8 +95,11 @@ def test_after_an_equal_size_refusal_the_manifest_still_agrees_with_the_jsonl(
 ) -> None:
     """The property `ccw archive --verify` actually checks. A manifest naming a
     payload the folder does not hold is the failure this whole family opened on."""
-    archive.write_session_folder(tmp_path, LABEL, archived(), OPTS, ZONE)
-    result = archive.write_session_folder(tmp_path, LABEL, offered(), OPTS, ZONE)
+    archive.write_session_folder(tmp_path, LABEL, archived(), OPTS, ZONE, fallback_stem="session")
+    result = archive.write_session_folder(
+        tmp_path, LABEL, offered(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["source_hash"] == store.sha256_hex(result.jsonl.read_bytes())
     assert manifest["source_hash"] == store.sha256_hex(archived())
@@ -102,8 +108,11 @@ def test_after_an_equal_size_refusal_the_manifest_still_agrees_with_the_jsonl(
 def test_an_equal_size_refusal_names_its_own_reason(tmp_path: Path) -> None:
     """F6: never silent, and never MISLEADING either - a same-size mismatch
     must not be reported with the smaller-payload wording."""
-    archive.write_session_folder(tmp_path, LABEL, archived(), OPTS, ZONE)
-    result = archive.write_session_folder(tmp_path, LABEL, offered(), OPTS, ZONE)
+    archive.write_session_folder(tmp_path, LABEL, archived(), OPTS, ZONE, fallback_stem="session")
+    result = archive.write_session_folder(
+        tmp_path, LABEL, offered(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
     reason = manifest["replace_refused"]["reason"]
     assert "same size" in reason
@@ -118,11 +127,17 @@ def test_whichever_one_arrives_first_is_the_one_that_stays_and_renders(tmp_path:
     depending on which arrived first (that swap is the mechanism-2 failure
     shape this file exists to keep fixed)."""
     a_first = tmp_path / "a"
-    archive.write_session_folder(a_first, LABEL, archived(), OPTS, ZONE)
-    second_in_a = archive.write_session_folder(a_first, LABEL, offered(), OPTS, ZONE)
+    archive.write_session_folder(a_first, LABEL, archived(), OPTS, ZONE, fallback_stem="session")
+    second_in_a = archive.write_session_folder(
+        a_first, LABEL, offered(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     b_first = tmp_path / "b"
-    archive.write_session_folder(b_first, LABEL, offered(), OPTS, ZONE)
-    second_in_b = archive.write_session_folder(b_first, LABEL, archived(), OPTS, ZONE)
+    archive.write_session_folder(b_first, LABEL, offered(), OPTS, ZONE, fallback_stem="session")
+    second_in_b = archive.write_session_folder(
+        b_first, LABEL, archived(), OPTS, ZONE,
+        fallback_stem="session",
+    )
 
     assert second_in_a.refused_equal_size and second_in_b.refused_equal_size
     assert second_in_a.jsonl.read_bytes() == archived(), "the FIRST payload in `a` must survive"
@@ -147,8 +162,14 @@ def test_archive_verify_reports_no_problem_after_an_equal_size_refusal(
     )
     ccw_env["XDG_CONFIG_HOME"] = str(cfg.parent)
 
-    archive.write_session_folder(archive_root, LABEL, archived(), OPTS, ZONE)
-    archive.write_session_folder(archive_root, LABEL, offered(), OPTS, ZONE)
+    archive.write_session_folder(
+        archive_root, LABEL, archived(), OPTS, ZONE,
+        fallback_stem="session",
+    )
+    archive.write_session_folder(
+        archive_root, LABEL, offered(), OPTS, ZONE,
+        fallback_stem="session",
+    )
 
     result = run_ccw(["archive", "--verify", "--to", str(archive_root)], ccw_env)
     assert result.code == 0, result.err + result.out

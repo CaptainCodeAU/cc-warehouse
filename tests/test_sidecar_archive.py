@@ -46,7 +46,7 @@ STDOUT_BYTES = b"Output too large (132.9KB). Full output saved to: /home/alice/x
 def parent_folder(root: Path) -> Path:
     return archive.write_session_folder(
         root, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE
-    ).directory
+    , fallback_stem="session").directory
 
 
 def source_tool_results(tmp_path: Path) -> Path:
@@ -162,7 +162,7 @@ def test_the_manifest_lists_each_tool_result_with_its_hash_and_size(tmp_path: Pa
     archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
     records = listed(folder, "tool_results")
     assert {r["name"] for r in records} == {STDOUT_NAME, "pdf-4f1e/page-01.jpg"}
     stdout_rec = next(r for r in records if r["name"] == STDOUT_NAME)
@@ -179,7 +179,7 @@ def test_the_manifest_lists_workflow_files_under_their_own_key(tmp_path: Path) -
     archive.copy_companion_dir(folder, "workflows", src)
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
     records = listed(folder, "workflows")
     assert {r["name"] for r in records} == {"wf_abc.json", "scripts/review-wf_abc.js"}
 
@@ -212,7 +212,7 @@ def test_verify_reports_a_tool_result_that_has_been_deleted(tmp_path: Path) -> N
     archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
     (folder / "tool-results" / STDOUT_NAME).unlink()
     problems = [p.problem for p in archive.verify_folder(folder, ZONE)]
     assert f"tool-result {STDOUT_NAME} is missing" in problems, problems
@@ -223,7 +223,7 @@ def test_verify_reports_a_tool_result_whose_bytes_changed(tmp_path: Path) -> Non
     archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
     (folder / "tool-results" / STDOUT_NAME).write_bytes(b"tampered")
     problems = [p.problem for p in archive.verify_folder(folder, ZONE)]
     assert any("does not match its hash" in p for p in problems), problems
@@ -237,7 +237,7 @@ def test_no_sidecar_problem_string_starts_with_the_word_missing(tmp_path: Path) 
     archive.copy_companion_dir(folder, "tool-results", source_tool_results(tmp_path))
     archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
     (folder / "tool-results" / STDOUT_NAME).unlink()
     (folder / "tool-results" / "pdf-4f1e" / "page-01.jpg").write_bytes(b"x")
     sidecar_problems = [

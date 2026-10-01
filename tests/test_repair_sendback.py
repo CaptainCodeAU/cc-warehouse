@@ -92,13 +92,13 @@ TMP = ".late.txt.k3j2h1ab.tmp"
 def unit_folder(root: Path) -> Path:
     return archive.write_session_folder(
         root, "widget", basic_session(session_id=UUID_A), RenderOptions(), ZONE
-    ).directory
+    , fallback_stem="session").directory
 
 
 def rerender(root: Path, *, rebuild: bool = True) -> None:
     archive.write_session_folder(
         root, "widget", basic_session(session_id=UUID_A), RenderOptions(), ZONE, rebuild=rebuild
-    )
+    , fallback_stem="session")
 
 
 def test_a_temp_file_mid_copy_is_never_recorded(tmp_path: Path) -> None:

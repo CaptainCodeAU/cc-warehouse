@@ -206,13 +206,13 @@ def test_a_size_changing_damage_stays_visible_to_doctors_quick_check(
 def unit_folder(root: Path) -> Path:
     return archive.write_session_folder(
         root, "widget", basic_session(session_id=UUID_A), RenderOptions(), ZONE
-    ).directory
+    , fallback_stem="session").directory
 
 
 def rerender(root: Path) -> None:
     archive.write_session_folder(
         root, "widget", basic_session(session_id=UUID_A), RenderOptions(), ZONE, rebuild=True
-    )
+    , fallback_stem="session")
 
 
 @pytest.mark.parametrize("name", sorted(archive.COMPANION_MANIFEST_KEYS))

@@ -912,14 +912,14 @@ def read_payload(
     the failure this project exists to prevent.
     """
     if config.archive_root is not None:
-        stem = session_uuid or f"session-{short}"
+        stem = build.session_stem(session_uuid, short)
         directory = build.archive_dir(
             config.archive_root,
             label,
             first_ts,
             session_uuid,
             config.archive_timezone,
-            fallback_stem=f"session-{short}",
+            fallback_stem=stem,
         )
         candidate = directory / f"{stem}{_JSONL_SUFFIX}"
         if candidate.is_file():
@@ -989,7 +989,7 @@ def write_source(
     timezone: str,
     *,
     warehouse_root: Path | None = None,
-    fallback_stem: str = "session",
+    fallback_stem: str,
 ) -> Path:
     """Write ONLY the session's JSONL into its archive folder, and nothing else.
 
@@ -1387,7 +1387,7 @@ def write_session_folder(
     timezone: str,
     *,
     warehouse_root: Path | None = None,
-    fallback_stem: str = "session",
+    fallback_stem: str,
     rebuild: bool = False,
 ) -> FolderResult:
     """Write one self-contained session folder. Never deletes anything.
@@ -1896,7 +1896,7 @@ def _migrate_locked(
             # need the vault to refresh it -- its own JSONL, already safely on
             # disk, IS the payload. Only a row with no archive folder at all
             # (never archived) genuinely has nothing left here to recover.
-            existing_jsonl = directory / f"{session_uuid or stem}{_JSONL_SUFFIX}"
+            existing_jsonl = directory / f"{stem}{_JSONL_SUFFIX}"
             if existing_jsonl.exists():
                 data = existing_jsonl.read_bytes()
             elif session_uuid is None:
@@ -1956,7 +1956,7 @@ def _migrate_locked(
 
 
 def _session_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str, str | None, str | None]]:
-    """(hash, project label, fallback stem, first_ts, session_uuid) for every
+    """(hash, project label, stem (`build.session_stem`), first_ts, session_uuid) for every
     session the catalog holds.
 
     EVERY row, not only heads: the archive keeps what it was given, and the
@@ -1977,7 +1977,7 @@ def _session_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str, str | N
         out.append((
             str(row[0]),
             str(row[1]),
-            f"session-{row[2]}",
+            build.session_stem(cast(str | None, row[4]), str(row[2])),
             cast(str | None, row[3]),
             cast(str | None, row[4]),
         ))

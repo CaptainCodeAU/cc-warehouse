@@ -45,21 +45,24 @@ MELBOURNE = "Australia/Melbourne"
 def test_the_name_is_local_stamp_offset_underscore_uuid() -> None:
     """The frozen shape, asserted literally rather than by regex: a regex that
     matches the wrong thing is the failure mode a literal cannot have."""
-    assert archive_folder_name(AEST_UTC, UUID, MELBOURNE) == f"20260507-134745+1000_{UUID}"
+    assert archive_folder_name(
+        AEST_UTC, UUID, MELBOURNE,
+        fallback_stem="session",
+    ) == f"20260507-134745+1000_{UUID}"
 
 
 def test_a_daylight_saving_session_carries_the_other_offset() -> None:
     """+1100 in AEDT, +1000 in AEST. If the offset were a constant this passes
     only by luck, so both are pinned and they must differ."""
-    aedt = archive_folder_name(AEDT_UTC, UUID, MELBOURNE)
-    aest = archive_folder_name(AEST_UTC, UUID, MELBOURNE)
+    aedt = archive_folder_name(AEDT_UTC, UUID, MELBOURNE, fallback_stem="session")
+    aest = archive_folder_name(AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
     assert aedt == f"20260115-144745+1100_{UUID}"
     assert aest.endswith("+1000_" + UUID)
     assert aedt[15:20] != aest[15:20]
 
 
 def test_the_uuid_survives_verbatim_so_the_tree_stays_greppable() -> None:
-    name = archive_folder_name(AEST_UTC, UUID, MELBOURNE)
+    name = archive_folder_name(AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
     assert UUID in name
     assert name.split("_", 1)[1] == UUID
 
@@ -85,14 +88,17 @@ def test_the_machine_clock_cannot_move_the_name(
     tzset: Callable[[], None] | None = getattr(os, "tzset", None)
     if tzset is not None:
         tzset()
-    assert archive_folder_name(AEST_UTC, UUID, MELBOURNE) == f"20260507-134745+1000_{UUID}"
+    assert archive_folder_name(
+        AEST_UTC, UUID, MELBOURNE,
+        fallback_stem="session",
+    ) == f"20260507-134745+1000_{UUID}"
 
 
 def test_a_different_configured_zone_does_move_the_name() -> None:
     """The counterweight to the test above: if NOTHING moved the name, the zone
     would be decorative and the test above would be vacuous."""
-    melbourne = archive_folder_name(AEST_UTC, UUID, MELBOURNE)
-    utc = archive_folder_name(AEST_UTC, UUID, "UTC")
+    melbourne = archive_folder_name(AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
+    utc = archive_folder_name(AEST_UTC, UUID, "UTC", fallback_stem="session")
     assert melbourne != utc
     assert utc == f"20260507-034745+0000_{UUID}"
 
@@ -101,8 +107,8 @@ def test_naming_is_idempotent_so_a_re_run_lands_in_the_same_folder() -> None:
     """What makes the migration safe to run twice: the name is a pure function of
     the payload plus the pinned zone, so a second pass finds every session
     already where it belongs instead of creating a shadow tree."""
-    first = archive_folder_name(AEST_UTC, UUID, MELBOURNE)
-    second = archive_folder_name(AEST_UTC, UUID, MELBOURNE)
+    first = archive_folder_name(AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
+    second = archive_folder_name(AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
     assert first == second
 
 
@@ -120,7 +126,7 @@ def test_plain_string_sort_is_chronological_order() -> None:
         "2026-05-07T03:47:46.000Z",
         "2026-12-31T13:00:00.000Z",
     ]
-    names = [archive_folder_name(s, UUID, MELBOURNE) for s in stamps]
+    names = [archive_folder_name(s, UUID, MELBOURNE, fallback_stem="session") for s in stamps]
     assert sorted(names) == names
 
 
@@ -128,8 +134,14 @@ def test_sorting_holds_across_a_daylight_saving_boundary() -> None:
     """The one case where local-time naming can invert against real time: the
     hour AEDT gives back. Pinned so a future change cannot quietly break it.
     """
-    before = archive_folder_name("2026-04-04T15:30:00.000Z", UUID, MELBOURNE)
-    after = archive_folder_name("2026-04-04T16:30:00.000Z", UUID, MELBOURNE)
+    before = archive_folder_name(
+        "2026-04-04T15:30:00.000Z", UUID, MELBOURNE,
+        fallback_stem="session",
+    )
+    after = archive_folder_name(
+        "2026-04-04T16:30:00.000Z", UUID, MELBOURNE,
+        fallback_stem="session",
+    )
     assert before < after or before[:15] >= after[:15], (before, after)
 
 
@@ -149,15 +161,18 @@ def test_a_session_with_no_uuid_keeps_its_source_stem() -> None:
 def test_a_session_with_no_timestamp_anywhere_is_named_undated() -> None:
     """9 real cases in the corpus (ticket 18 census). An undated session must
     still get a stable, sortable, non-colliding folder."""
-    name = archive_folder_name(None, UUID, MELBOURNE)
+    name = archive_folder_name(None, UUID, MELBOURNE, fallback_stem="session")
     assert name == f"undated_{UUID}"
-    assert archive_folder_name(None, UUID, MELBOURNE) == name
+    assert archive_folder_name(None, UUID, MELBOURNE, fallback_stem="session") == name
 
 
 def test_an_unparseable_timestamp_degrades_rather_than_raising() -> None:
     """R5: errors default to the conservative branch, report and leave alone. A
     migration that raises on one malformed stamp abandons the other 13,835."""
-    assert archive_folder_name("not-a-timestamp", UUID, MELBOURNE) == f"undated_{UUID}"
+    assert archive_folder_name(
+        "not-a-timestamp", UUID, MELBOURNE,
+        fallback_stem="session",
+    ) == f"undated_{UUID}"
 
 
 def test_an_offset_carrying_source_stamp_is_converted_not_copied() -> None:
@@ -166,7 +181,7 @@ def test_an_offset_carrying_source_stamp_is_converted_not_copied() -> None:
     would file a session under the wrong local day."""
     assert archive_folder_name(
         "2026-05-07T13:47:45+10:00", UUID, MELBOURNE
-    ) == f"20260507-134745+1000_{UUID}"
+    , fallback_stem="session") == f"20260507-134745+1000_{UUID}"
 
 
 # ---------------------------------------------------------------------------
@@ -185,14 +200,14 @@ def test_locks_and_catalog_are_reserved_project_labels() -> None:
 @pytest.mark.parametrize("label", ["locks", "catalog.sqlite"])
 def test_a_reserved_label_is_escaped_rather_than_allowed_to_collide(label: str) -> None:
     root = Path("/tmp/unused-warehouse")
-    directory = archive_dir(root, label, AEST_UTC, UUID, MELBOURNE)
+    directory = archive_dir(root, label, AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
     assert directory.parent.name != label
     assert directory.parent.parent == root
 
 
 def test_an_ordinary_label_is_used_as_is() -> None:
     root = Path("/tmp/unused-warehouse")
-    directory = archive_dir(root, "widget", AEST_UTC, UUID, MELBOURNE)
+    directory = archive_dir(root, "widget", AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
     assert directory.parent.name == "widget"
     assert directory.name == f"20260507-134745+1000_{UUID}"
 
@@ -208,7 +223,7 @@ def test_a_label_cannot_escape_the_warehouse_root() -> None:
     on an unsafe one; the property is where the path lands.
     """
     root = Path("/tmp/unused-warehouse")
-    directory = archive_dir(root, "../../etc", AEST_UTC, UUID, MELBOURNE)
+    directory = archive_dir(root, "../../etc", AEST_UTC, UUID, MELBOURNE, fallback_stem="session")
     assert root in directory.parents
     # Exactly one segment between the root and the session folder.
     assert len(directory.parent.relative_to(root).parts) == 1

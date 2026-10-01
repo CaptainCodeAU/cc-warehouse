@@ -163,7 +163,7 @@ def archive_folder_name(
     session_uuid: str | None,
     timezone: str,
     *,
-    fallback_stem: str = "session",
+    fallback_stem: str,
 ) -> str:
     """`<YYYYMMDD-HHMMSS><offset>_<uuid>` for one session (DESIGN 15, 2026-08-02).
 
@@ -186,6 +186,21 @@ def archive_folder_name(
     """
     stamp = _local_stamp(first_ts, timezone)
     return f"{stamp}_{session_uuid or fallback_stem}"
+
+
+def session_stem(session_uuid: str | None, short: str) -> str:
+    """The one name a session's archive folder and JSONL are keyed by (R9).
+
+    The payload's uuid when it has one; `session-<short>` when it does not (a
+    `claude -p` stream-json transcript carries no `sessionId`). Writers and
+    readers both call this, because they used to spell it separately: the
+    writers fell back to a bare `session` and the readers to `session-<short>`,
+    so with the vault retired every uuid-less session was written to one folder
+    and looked for in another (W-20261001-A56). A bare `session` also put every
+    uuid-less session in a label that started in the same second into ONE
+    folder, and every uuid-less session anywhere under ONE session lock.
+    """
+    return session_uuid or f"session-{short}"
 
 
 def _local_stamp(first_ts: str | None, timezone: str) -> str:
@@ -231,7 +246,7 @@ def archive_dir(
     session_uuid: str | None,
     timezone: str,
     *,
-    fallback_stem: str = "session",
+    fallback_stem: str,
 ) -> Path:
     """`<root>/<label>/<name>/`, the one directory-naming function (R9).
 
@@ -433,7 +448,7 @@ def _read(config: Config, head: _Head) -> bytes:
 def _mirror(
     config: Config,
     label: str,
-    short: str,
+    stem: str,
     data: bytes,
     options: render.RenderOptions,
     *,
@@ -485,7 +500,7 @@ def _mirror(
             options,
             config.archive_timezone,
             warehouse_root=config.root,
-            fallback_stem=f"session-{short}",
+            fallback_stem=stem,
             rebuild=rebuild,
         )
     except archive.ManifestUnreadable as exc:
@@ -602,7 +617,7 @@ def _archive_dir_for(config: Config, head: _Head) -> Path | None:
         head.first_ts,
         head.session_uuid,
         config.archive_timezone,
-        fallback_stem=f"session-{head.short}",
+        fallback_stem=session_stem(head.session_uuid, head.short),
     )
 
 
@@ -812,7 +827,14 @@ def _build_head(
         # `ccw build` has to keep meaning something once the old tree is
         # retired: it is the verb that rebuilds after a render change,
         # so it rebuilds whichever tree still exists (slice 19j).
-        held = _mirror(config, head.label, head.short, data, options, rebuild=rebuild)
+        held = _mirror(
+            config,
+            head.label,
+            session_stem(head.session_uuid, head.short),
+            data,
+            options,
+            rebuild=rebuild,
+        )
         if held is not None:
             # W-20260929-A82: an unreadable manifest holds the folder for repair.
             outcomes.append(ItemOutcome(head.short, HELD, held))

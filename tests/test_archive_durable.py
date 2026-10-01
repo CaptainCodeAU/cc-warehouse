@@ -120,7 +120,10 @@ def test_the_folder_is_the_one_the_verb_would_have_chosen(
     from cc_warehouse.build import archive_folder_name
 
     folder = sole_jsonl(target).parent
-    assert folder.name == archive_folder_name("2026-05-07T03:47:45.000Z", UUID_A, ZONE)
+    assert folder.name == archive_folder_name(
+        "2026-05-07T03:47:45.000Z", UUID_A, ZONE,
+        fallback_stem="session",
+    )
 
 
 def test_the_render_child_then_fills_in_the_five_files(

@@ -139,7 +139,10 @@ def test_ccw_archive_to_refuses_a_target_inside_the_warehouse(ccw_env: dict[str,
 
 @pytest.mark.parametrize("label", ["projections", "objects", "logs"])
 def test_warehouse_directory_names_are_reserved_labels(label: str, tmp_path: Path) -> None:
-    folder = build.archive_dir(tmp_path, label, "2026-01-05T10:00:00Z", UUID, ZONE)
+    folder = build.archive_dir(
+        tmp_path, label, "2026-01-05T10:00:00Z", UUID, ZONE,
+        fallback_stem="session",
+    )
     assert folder.parent.name == f"_{label}"
     assert label in build.RESERVED_LABELS
 

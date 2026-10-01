@@ -67,7 +67,7 @@ def seeded(tmp_path: Path, data: bytes) -> tuple[Config, Path]:
     (root / "objects").mkdir(parents=True)
     store.put(root, data)
     archive_root = tmp_path / "archive"
-    jsonl_path = archive.write_source(archive_root, LABEL, data, ZONE)
+    jsonl_path = archive.write_source(archive_root, LABEL, data, ZONE, fallback_stem="session")
     return config_for(root, archive_root), jsonl_path
 
 

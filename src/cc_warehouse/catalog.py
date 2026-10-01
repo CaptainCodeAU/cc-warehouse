@@ -143,10 +143,17 @@ def open_catalog_at(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _short_key(conn: sqlite3.Connection, sha256: str) -> str:
+def short_key(conn: sqlite3.Connection, sha256: str) -> str:
     """First 12 hex; on a prefix collision with an earlier session, extend by 4
     until no other stored hash shares the prefix (DESIGN section 2). Older
-    citations stay valid: existing short keys are never rewritten."""
+    citations stay valid: existing short keys are never rewritten.
+
+    PUBLIC since W-20261001-A56: the capture hook names a uuid-less session's
+    archive folder `session-<short>` BEFORE the catalog row exists (the durable
+    write precedes the row), so it asks this same function rather than deriving
+    a short key a second way (R9). `add_session` calls it again inside its
+    insert; the two answers differ only when another session sharing the same
+    48-bit prefix is inserted between them."""
     for length in range(12, 65, 4):
         candidate = sha256[:length]
         # Prefix membership as a range on the hash PK so the query rides the
@@ -226,7 +233,7 @@ def add_session(
         ).fetchone()
         if existing is not None:
             return cast(str, cast(tuple[object, ...], existing)[0])
-        short = _short_key(conn, meta.sha256)
+        short = short_key(conn, meta.sha256)
         supersedes = latest_version(conn, meta.session_uuid)
         conn.execute(
             "INSERT INTO session (hash, short, project_id, source_kind, session_uuid,"

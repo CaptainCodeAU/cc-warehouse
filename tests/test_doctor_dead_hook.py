@@ -80,7 +80,10 @@ def _world(ccw_env: dict[str, str], tmp_path: Path) -> tuple[Config, Path, Path,
         label = str(conn.execute("SELECT label FROM project").fetchone()[0])
     finally:
         conn.close()
-    folder = build.archive_dir(archive_root, label, "2026-01-05T10:00:00.000Z", DEAD, ZONE)
+    folder = build.archive_dir(
+        archive_root, label, "2026-01-05T10:00:00.000Z", DEAD, ZONE,
+        fallback_stem="session",
+    )
     folder.mkdir(parents=True)
     tmp = folder / f".{DEAD}.jsonl.ab12cd34.tmp"
     tmp.write_bytes(b"half a payload")

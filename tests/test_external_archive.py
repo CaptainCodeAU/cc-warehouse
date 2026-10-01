@@ -41,7 +41,7 @@ SNAP_BYTES = b"--- a/widget.py\n+++ b/widget.py\n@@ -1 +1 @@\n-old\n+new\n"
 def parent_folder(root: Path) -> Path:
     return archive.write_session_folder(
         root, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE
-    ).directory
+    , fallback_stem="session").directory
 
 
 def source_history(tmp_path: Path) -> Path:
@@ -64,7 +64,7 @@ def listed(folder: Path, key: str) -> list[dict[str, object]]:
 def rebuild(root: Path) -> None:
     archive.write_session_folder(
         root, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
 
 
 # ---------------------------------------------------------------------------

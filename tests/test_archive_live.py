@@ -172,7 +172,10 @@ def test_the_hook_and_the_verb_agree_on_the_folder_name(
 
     from cc_warehouse.build import archive_folder_name
 
-    assert live == archive_folder_name("2026-05-07T03:47:45.000Z", UUID_A, ZONE)
+    assert live == archive_folder_name(
+        "2026-05-07T03:47:45.000Z", UUID_A, ZONE,
+        fallback_stem="session",
+    )
 
 
 def test_the_old_projection_is_still_written(
