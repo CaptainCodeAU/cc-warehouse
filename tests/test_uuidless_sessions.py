@@ -23,7 +23,7 @@ from typing import cast
 
 import pytest
 
-from cc_warehouse import archive, build, capture, catalog
+from cc_warehouse import archive, build, capture, catalog, doctor
 from cc_warehouse.config import Config
 from conftest import jsonl, lock_held_elsewhere, mark_archive
 
@@ -301,3 +301,45 @@ def test_a_mismatched_uuidless_archive_copy_raises_a_named_error(tmp_path: Path)
     jsonl_path.write_bytes(uuidless("tampered"))
     with pytest.raises(OSError, match=rf"no bytes for {result.sha256[:12]}\.jsonl in the vault"):
         read_back(config, result.sha256)
+
+
+# ---------------------------------------------------------------------------
+# Doctor: what the 2026-10-01 alert actually tripped on
+# ---------------------------------------------------------------------------
+
+
+def _check(config: Config, home: Path, source: Path, name: str) -> doctor.Check:
+    report = doctor.diagnose(config, home=home, source=source)
+    (found,) = [c for c in report.checks if c.name == name]
+    return found
+
+
+def test_a_cataloged_uuidless_file_is_not_overdue(tmp_path: Path) -> None:
+    """`overdue` decided "captured" by the FILE NAME matching a catalog uuid
+    (F4, path as identity). A `claude -p` output saved as `armC.jsonl` is
+    cataloged by its hash and still read as overdue forever, which was the one
+    blocking FAIL behind the 2026-10-01 freshness alert. Identity is the hash
+    (R1): a file whose exact bytes are cataloged is captured."""
+    config = vaultless(tmp_path)
+    old = transcript(tmp_path, uuidless("old", ts="2020-01-01T00:00:00.000Z"), "armC.jsonl")
+    newer = transcript(tmp_path, uuidless("new", ts="2026-09-30T00:00:00.000Z"), "armD.jsonl")
+    for path in (old, newer):
+        assert capture.capture_transcript(config, path, session_id=None, cwd=None).action == (
+            "stored"
+        )
+    found = _check(config, tmp_path, tmp_path / "claude" / "projects", "overdue")
+    assert found.ok, found.detail
+
+
+def test_an_uncataloged_uuidless_file_is_still_overdue(tmp_path: Path) -> None:
+    """Control: the hash rule only clears files whose exact bytes are
+    cataloged. An uncaptured one still fails."""
+    config = vaultless(tmp_path)
+    newer = transcript(tmp_path, uuidless("new", ts="2026-09-30T00:00:00.000Z"), "armD.jsonl")
+    assert capture.capture_transcript(config, newer, session_id=None, cwd=None).action == (
+        "stored"
+    )
+    transcript(tmp_path, uuidless("old", ts="2020-01-01T00:00:00.000Z"), "armC.jsonl")
+    found = _check(config, tmp_path, tmp_path / "claude" / "projects", "overdue")
+    assert not found.ok
+    assert found.detail.startswith("1 session(s) OVERDUE")

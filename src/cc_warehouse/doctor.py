@@ -1464,12 +1464,27 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     # of them is a payload-derived anchor that costs a directory listing (R12).
     sessions, _subagents = sweep.source_transcripts(walk_root)
     stamps: dict[Path, datetime] = {}
+    hashes: dict[Path, str] = {}
     for path in sessions:
         if path.name.removesuffix(".jsonl") in archived:
             continue
-        moment = _moment(_last_activity(path))
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        moment = _moment(parser.parse_session(data).last_ts)
         if moment is not None:
             stamps[path] = moment
+            hashes[path] = store.sha256_hex(data)
+    # THE NAME IS A SHORTCUT, THE HASH IS THE IDENTITY (R1, F4). A file whose
+    # stem is not a cataloged uuid can still be captured: a `claude -p`
+    # stream-json output saved as `armC.jsonl` carries no `sessionId`, is
+    # cataloged by its hash with `session_uuid` NULL, and was read here as
+    # overdue forever (W-20261001-A56: the one blocking FAIL behind that day's
+    # freshness alert). Only the files the name test left are hashed, and they
+    # were already read for their last timestamp.
+    cataloged = _cataloged_hashes(config, set(hashes.values()))
+    stamps = {path: last for path, last in stamps.items() if hashes[path] not in cataloged}
     if not stamps:
         return 0, None
     anchor = max([*stamps.values(), *filter(None, (newest_archived,))])
@@ -1477,6 +1492,31 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     overdue = [path for path, last in stamps.items() if last < cutoff]
     oldest = min((stamps[p] for p in overdue), default=None)
     return len(overdue), (oldest.isoformat() if oldest else None)
+
+
+def _cataloged_hashes(config: Config, hashes: set[str]) -> frozenset[str]:
+    """Which of `hashes` the catalog holds, read-only. No catalog, or an
+    unreadable one, answers none, so nothing is cleared that is not proven."""
+    path = config.root / "catalog.sqlite"
+    if not hashes or not path.is_file():
+        return frozenset()
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return frozenset()
+    try:
+        marks = ",".join("?" * len(hashes))
+        rows = cast(
+            list[tuple[str]],
+            conn.execute(
+                f"SELECT hash FROM session WHERE hash IN ({marks})", sorted(hashes)
+            ).fetchall(),
+        )
+    except sqlite3.Error:
+        return frozenset()
+    finally:
+        conn.close()
+    return frozenset(row[0] for row in rows)
 
 
 def _archive_root_check(config: Config) -> tuple[bool, str]:
