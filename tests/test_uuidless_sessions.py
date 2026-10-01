@@ -21,9 +21,11 @@ import ast
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from cc_warehouse import archive, build, capture, catalog
 from cc_warehouse.config import Config
-from conftest import jsonl, mark_archive
+from conftest import jsonl, lock_held_elsewhere, mark_archive
 
 ZONE = "Australia/Melbourne"
 LABEL_DIR = "-home-alice-projects-widget"
@@ -221,3 +223,81 @@ def test_the_uuidless_stem_is_spelled_in_one_place() -> None:
                 ):
                     spelled.append(f"{path.name}:{node.lineno} in {func.name}")
     assert not spelled, f"uuid-less stem spelled outside build.session_stem: {spelled}"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases the shared bare stem used to merge
+# ---------------------------------------------------------------------------
+
+
+def _session_jsonls(archive_root: Path) -> list[Path]:
+    return sorted(
+        p for p in archive_root.glob("*/*/*.jsonl") if not p.parent.parent.name.startswith("_")
+    )
+
+
+def test_two_uuidless_sessions_starting_in_the_same_second_get_two_folders(
+    tmp_path: Path,
+) -> None:
+    config = vaultless(tmp_path)
+    assert config.archive_root is not None
+    first, second = uuidless("first"), uuidless("second")
+    a = capture.capture_transcript(
+        config, transcript(tmp_path, first, "a.jsonl"), session_id=None, cwd=None
+    )
+    b = capture.capture_transcript(
+        config, transcript(tmp_path, second, "b.jsonl"), session_id=None, cwd=None
+    )
+    found = _session_jsonls(config.archive_root)
+    assert len(found) == 2, found
+    assert len({p.parent for p in found}) == 2
+    assert read_back(config, a.sha256) == first
+    assert read_back(config, b.sha256) == second
+
+
+def test_two_uuidless_sessions_do_not_share_one_session_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The session lock is keyed by the stem. Hold the FIRST session's lock,
+    named from the file it actually wrote, and capture a second: it must not
+    wait on a lock that belongs to a different session."""
+    monkeypatch.setattr(archive, "_SESSION_LOCK_WAIT_S", 1.0)
+    config = vaultless(tmp_path)
+    assert config.archive_root is not None
+    capture.capture_transcript(
+        config, transcript(tmp_path, uuidless("first"), "a.jsonl"), session_id=None, cwd=None
+    )
+    (held,) = _session_jsonls(config.archive_root)
+    with lock_held_elsewhere(config.root, f"archive-{held.stem}"):
+        result = capture.capture_transcript(
+            config, transcript(tmp_path, uuidless("second"), "b.jsonl"), session_id=None, cwd=None
+        )
+    assert result.action == "stored"
+    assert len(_session_jsonls(config.archive_root)) == 2
+
+
+def test_a_built_uuidless_folder_passes_the_full_integrity_check(tmp_path: Path) -> None:
+    """`verify_folder` reads the stem back out of the folder name; a
+    `session-<short>` folder must satisfy it (archive._name_problems)."""
+    config = vaultless(tmp_path)
+    assert config.archive_root is not None
+    capture.capture_transcript(config, transcript(tmp_path, uuidless()), session_id=None, cwd=None)
+    assert build.build(config).failures == ()
+    (jsonl_path,) = _session_jsonls(config.archive_root)
+    assert jsonl_path.parent.name.startswith("20260930-000124+1000_session-")
+    assert archive.verify_folder(jsonl_path.parent, ZONE) == []
+
+
+def test_a_mismatched_uuidless_archive_copy_raises_a_named_error(tmp_path: Path) -> None:
+    """The verified read still refuses a file that is not the session asked
+    for, and with no vault the refusal names the hash and the missing vault."""
+    config = vaultless(tmp_path)
+    assert config.archive_root is not None
+    data = uuidless()
+    result = capture.capture_transcript(
+        config, transcript(tmp_path, data), session_id=None, cwd=None
+    )
+    (jsonl_path,) = _session_jsonls(config.archive_root)
+    jsonl_path.write_bytes(uuidless("tampered"))
+    with pytest.raises(OSError, match=rf"no bytes for {result.sha256[:12]}\.jsonl in the vault"):
+        read_back(config, result.sha256)

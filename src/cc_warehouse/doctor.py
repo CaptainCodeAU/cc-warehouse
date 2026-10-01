@@ -477,18 +477,21 @@ def _catalog_index(
         return empty
     try:
         rows = cast(
-            list[tuple[str, str, str | None, str, str | None, str, int]],
+            list[tuple[str, str, str | None, str | None, str | None, str, int]],
             conn.execute(
                 build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
                 + "SELECT short, label, first_ts, session_uuid, captured_at, hash, hidden"
-                " FROM ranked WHERE rn = 1 AND session_uuid IS NOT NULL"
+                " FROM ranked WHERE rn = 1"
             ).fetchall(),
         )
         archived: set[str] = set()
-        dated: list[tuple[datetime, str, str, str | None, str, str | None, str, int]] = []
+        dated: list[tuple[datetime, str, str, str | None, str | None, str | None, str, int]] = []
         newest: datetime | None = None
         for short, label, first_ts, session_uuid, captured_at, payload_hash, hidden in rows:
-            archived.add(session_uuid)
+            # A uuid-less head (W-20261001-A56) is sampled for the desync
+            # check like any other, but it has no uuid to count as archived.
+            if session_uuid is not None:
+                archived.add(session_uuid)
             moment = _moment(first_ts)
             if moment is None:
                 continue
@@ -501,7 +504,8 @@ def _catalog_index(
         sample = dated[:limit]
         in_window = {row[4] for row in sample}
         sample += [row for row in dated[limit:] if row[4] in also and row[4] not in in_window]
-        sizes = _payload_sizes(conn, {row[4] for row in sample})
+        sizes = _payload_sizes(conn, {row[4] for row in sample if row[4] is not None})
+        uuidless = _row_sizes(conn, {row[6] for row in sample if row[4] is None})
     except sqlite3.Error:
         return empty
     finally:
@@ -519,13 +523,34 @@ def _catalog_index(
             captured_at,
             payload_hash,
             short,
-            archive.KnownPayload(session_uuid, first_ts, bool(hidden), sizes.get(session_uuid, {})),
+            archive.KnownPayload(
+                session_uuid,
+                first_ts,
+                bool(hidden),
+                sizes.get(session_uuid, {}) if session_uuid is not None else uuidless,
+            ),
         )
         for _moment_, short, label, first_ts, session_uuid, captured_at, payload_hash, hidden in (
             sample
         )
     )
     return _CatalogIndex(frozenset(archived), newest, recent)
+
+
+def _row_sizes(conn: sqlite3.Connection, hashes: set[str]) -> dict[str, int]:
+    """sha256 -> `size_bytes` for uuid-less heads, which `_payload_sizes`
+    cannot group by session. A uuid-less row is its own head, so its own size
+    is the only version a folder's manifest can name."""
+    if not hashes:
+        return {}
+    marks = ",".join("?" * len(hashes))
+    rows = cast(
+        list[tuple[str, int | None]],
+        conn.execute(
+            f"SELECT hash, size_bytes FROM session WHERE hash IN ({marks})", sorted(hashes)
+        ).fetchall(),
+    )
+    return {payload_hash: size for payload_hash, size in rows if size is not None}
 
 
 def _payload_sizes(conn: sqlite3.Connection, uuids: set[str]) -> dict[str, dict[str, int]]:
