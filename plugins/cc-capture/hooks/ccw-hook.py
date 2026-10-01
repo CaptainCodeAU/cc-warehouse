@@ -58,6 +58,32 @@ prints nothing on success, so `result.stdout` is empty and the wrapper logs `ok`
 exactly as before. A NEW `ccw` against the OLD wrapper still logs `ok`, with the
 new line folded into `detail` -- the old wrapper doesn't know to look for it, but
 the truth is at least visible in the record rather than lost.
+
+DETACHED SINCE W-20261001-A65 (2026-10-01). Measured that night with a
+`claude -p` probe on Claude Code 2.1.286: a PLUGIN hook's `timeout` (45 in
+hooks.json) does not raise Claude Code's SessionEnd budget; only a
+settings-file hook's does. The budget is about 1.5 s, or 10 s in a pj session,
+whose own settings-file hook asks for 10. Then SIGTERM goes to the hook's
+process group and `ccw hook` dies with it. Two sessions that night reached the
+archive in full and died before their catalog row. ccw-hook.log held 15 of 894
+runs that started and never finished.
+
+So the hook now does only the bounded part: log `dispatched`, read the payload,
+log `started` (with the SessionEnd `reason`, W-20260929-A127), start a copy of
+this same file with RUN_FLAG in a NEW SESSION, write it the payload, and exit 0.
+The runner is outside the process group Claude Code kills, its stdout and
+stderr are DEVNULL rather than the hook's pipes, and it runs `ccw hook` and logs
+`ok`, `capture-error` or `error` exactly as the hook used to. One file, so
+`report()`, `find_ccw()` and the outcome reading stay one implementation (R9).
+
+WHY GIVING UP THE SYNCHRONOUS CAPTURE IS SAFE. Slice 19k made the hook write
+the archive folder before it returns. That bought nothing once Claude Code
+killed the hook at 1.5 s, and the transcript was never at risk anyway: it stays
+in `~/.claude/projects` (nothing here deletes from `~/.claude`, CLAUDE.md), and
+the daily `ccw sweep` captures any session the hook missed, which is how the 15
+killed runs were recovered. A runner that never runs is therefore the same case
+as a killed hook, and the detach makes it rarer, not commoner. What a missed run
+costs is lag until the next sweep, plus `ccw doctor`'s `hook runs` warning.
 """
 
 # WHY THIS IMPORT IS THE FIRST LINE OF CODE IN THE FILE. These hooks do not
@@ -96,12 +122,14 @@ from typing import cast
 LOG = Path.home() / ".claude" / "logs" / "ccw-hook.log"
 VOICE_URL = "http://localhost:8888/notify"
 VOICE_ID = "fTtv3eikoepIosk8dTZ5"
+# The argument that makes this file the detached runner rather than the hook.
+RUN_FLAG = "--run"
 
 
 _session: str | None = None  # set once from the payload; carried by every line
 
 
-def report(status: str, detail: str) -> None:
+def report(status: str, detail: str, reason: str | None = None) -> None:
     """Say it out loud and write it down. Never raises: a reporting failure must
     not become the thing that breaks capture.
 
@@ -128,6 +156,8 @@ def report(status: str, detail: str) -> None:
         "status": status,
         "detail": detail,
     }
+    if reason is not None:
+        record["reason"] = reason
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
         with LOG.open("a", encoding="utf-8") as handle:
@@ -183,6 +213,27 @@ def find_ccw() -> str | None:
     return str(shim) if shim.is_file() else None
 
 
+def _read_payload(payload: str) -> tuple[str, str | None]:
+    """Set the session id every later line carries; return (transcript, reason).
+
+    Parses defensively: a bad payload is one of the things the log exists to
+    record, so it must not be the reason there is no line."""
+    global _session
+    transcript, reason = "", None
+    try:
+        data: object = json.loads(payload)
+        if isinstance(data, dict):
+            fields = cast("dict[object, object]", data)
+            raw = fields.get("session_id")
+            _session = str(raw) if raw is not None else None
+            transcript = str(fields.get("transcript_path") or "")
+            raw_reason = fields.get("reason")
+            reason = str(raw_reason) if raw_reason is not None else None
+    except (ValueError, TypeError):
+        pass
+    return transcript, reason
+
+
 def _started(payload: str) -> None:
     """Write `started` BEFORE anything that can die (ticket 37 part B).
 
@@ -193,20 +244,41 @@ def _started(payload: str) -> None:
     did not leave: a `started` with no `ok`/`error` after it is a hook that
     died mid-run, and the session id says which one.
 
-    Parses the payload defensively: a bad payload is one of the things this
-    line exists to record, so it must not be the reason there is no line."""
-    global _session
-    transcript = ""
+    It carries the SessionEnd `reason` in its own key (W-20260929-A127), never
+    in `detail`: `doctor._hook_unfinished` reads `detail` as the transcript
+    path."""
+    transcript, reason = _read_payload(payload)
+    report("started", transcript, reason=reason)
+
+
+def _detach(payload: str) -> None:
+    """Hand the payload to a copy of this file run with RUN_FLAG, in its own
+    session, and return without waiting (W-20261001-A65).
+
+    `start_new_session` puts the runner outside the hook's process group, so
+    Claude Code's SIGTERM to that group does not reach it. Its stdout and
+    stderr are DEVNULL, never the hook's pipes, which Claude Code may wait on.
+    The payload goes through a pipe that is closed once written, so the runner
+    reads it whole whatever its size."""
     try:
-        data: object = json.loads(payload)
-        if isinstance(data, dict):
-            fields = cast("dict[object, object]", data)
-            raw = fields.get("session_id")
-            _session = str(raw) if raw is not None else None
-            transcript = str(fields.get("transcript_path") or "")
-    except (ValueError, TypeError):
-        pass
-    report("started", transcript)
+        child = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), RUN_FLAG],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        report("error", f"could not start the capture runner: {type(exc).__name__}: {exc}")
+        return
+    try:
+        assert child.stdin is not None
+        child.stdin.write(payload)
+        child.stdin.close()
+    except (OSError, ValueError) as exc:
+        report("error", f"could not hand the payload to the capture runner: {type(exc).__name__}: {exc}")
 
 
 def main() -> int:
@@ -234,6 +306,14 @@ def main() -> int:
     report("dispatched", "")
     payload = sys.stdin.read()
     _started(payload)
+    _detach(payload)
+    return 0
+
+
+def run(payload: str) -> int:
+    """The detached half: run `ccw hook` and log how it went. Never raises
+    past the backstop at the bottom of this file, and always returns 0."""
+    _read_payload(payload)
     executable = find_ccw()
     if executable is None:
         report(
@@ -293,8 +373,9 @@ if __name__ == "__main__":
     # The hook never fails the session end (SPEC 2.6). Everything above already
     # returns 0; this is the backstop for anything unforeseen, and it still
     # reports rather than dying quietly.
+    _runner = sys.argv[1:] == [RUN_FLAG]
     try:
-        sys.exit(main())
+        sys.exit(run(sys.stdin.read()) if _runner else main())
     except Exception as exc:  # noqa: BLE001
-        report("error", f"wrapper crashed: {type(exc).__name__}: {exc}")
+        report("error", f"{'runner' if _runner else 'wrapper'} crashed: {type(exc).__name__}: {exc}")
         sys.exit(0)
