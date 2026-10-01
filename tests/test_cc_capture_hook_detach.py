@@ -399,3 +399,45 @@ def test_a_runner_that_crashes_still_logs_why(tmp_path: Path) -> None:
     error = next(line for line in _lines(tmp_path) if line["status"] == "error")
     assert error["detail"] == "runner crashed: RuntimeError: injected runner crash"
     assert "ok" not in _statuses(tmp_path)
+
+
+def _old_python() -> tuple[str, str] | None:
+    """macOS's /usr/bin/python3 (3.9 on the author's Mac) when it is older than
+    3.10: hooks.json runs a bare `python3`, so the runner may run under it."""
+    path = "/usr/bin/python3"
+    if not Path(path).is_file():
+        return None
+    probe = subprocess.run(
+        [path, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    try:
+        major, minor = (int(n) for n in probe.stdout.split())
+    except ValueError:
+        return None
+    return (path, f"{major}.{minor}.") if (major, minor) < (3, 10) else None
+
+
+def test_the_detach_works_end_to_end_under_an_old_python3(tmp_path: Path) -> None:
+    found = _old_python()
+    if found is None:
+        pytest.skip("no python3 older than 3.10 on this machine")
+    old, version = found
+    ccw = _fake_ccw(tmp_path, f'sleep 3\ntouch "{tmp_path}/marker"\necho "ok: captured"')
+    started = time.monotonic()
+    result = subprocess.run(
+        [old, str(WRAPPER)],
+        input=_payload(reason="other"),
+        text=True,
+        env=_env(tmp_path, ccw),
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert time.monotonic() - started < 1.0
+    assert _wait_for(lambda: _statuses(tmp_path) == ["started", "ok"])
+    assert all(str(line["python"]).startswith(version) for line in _lines(tmp_path))

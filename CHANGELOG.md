@@ -22,6 +22,22 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**The SessionEnd hook hands the capture to a detached runner (2026-10-01,
+W-20261001-A65, folding in W-20260929-A127).** Measured with a `claude -p` probe on
+Claude Code 2.1.286: a plugin hook's `timeout` does not raise Claude Code's SessionEnd
+budget (only a settings-file hook's does), so `ccw-hook.py` got about 1.5 s, or 10 s in
+a pj session, before SIGTERM to its process group killed `ccw hook` mid-capture. 15 of
+894 logged runs had started and never finished; two that night reached the archive and
+died before their catalog row. The hook now logs `dispatched` and `started`, starts a
+copy of itself with `--run` in a new session (stdout and stderr on DEVNULL, payload
+through a pipe it closes), and exits 0 at once. The runner runs `ccw hook` with the same
+40 s ceiling and logs `ok`, `capture-error` or `error` as before; an unforeseen crash in
+it logs `runner crashed` (R10). `started` now carries the SessionEnd `reason` in its own
+key; `detail` stays the transcript path, which `ccw doctor`'s `hook runs` check reads.
+No new status value. The wrapper's own spoken alerts now follow `CCW_VOICE_URL` when it
+is set. Plugin-only change: it reaches a machine through a push and `/plugin` update,
+not a `ccw` reinstall.
+
 **Uuid-less sessions are written where they are read (2026-10-01, W-20261001-A56).** A
 payload with no `sessionId`, such as a `claude -p` stream-json output, was archived by
 the capture hook at `<stamp>_session/session.jsonl` and looked for by every reader at

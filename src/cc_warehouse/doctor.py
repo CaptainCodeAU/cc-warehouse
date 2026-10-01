@@ -996,7 +996,9 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str, bool]:
     """SessionEnd hook runs that wrote `started` and never finished (W-20260929-A105).
 
     Returns (ok, detail, blocking). `ccw-hook.py` writes `started` before it runs
-    `ccw hook` and an `ok`, `error` or `capture-error` line after; a `started` with
+    `ccw hook` and an `ok`, `error` or `capture-error` line after (since
+    W-20261001-A65 that line comes from its detached runner, a second process,
+    which is why runs pair by session id); a `started` with
     nothing after it, older than the hook's own timeout plus a margin, is a run
     that was killed. Read over the same bounded window as the dispatch check.
 

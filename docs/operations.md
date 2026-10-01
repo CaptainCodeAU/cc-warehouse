@@ -139,8 +139,11 @@ home directory layout for symlinking) at `.local/bin/ccw-watch`, and symlinked i
 **This repo's own plugin** - `plugins/cc-capture/hooks/hooks.json` (installed as the
 `cc-capture@cc-warehouse` plugin, confirmed enabled in `~/.claude/settings.json`'s
 `enabledPlugins`) registers:
-- `SessionEnd` -> `ccw-hook.py` (the actual capture: writes the session's JSONL
-  synchronously, then spawns the detached render child - SPEC section 2.5/5).
+- `SessionEnd` -> `ccw-hook.py` (the actual capture). Since W-20261001-A65 the hook
+  itself only logs `dispatched` and `started` and starts a copy of itself with `--run`
+  in a new session; that detached runner runs `ccw hook` (which writes the session's
+  JSONL, then spawns the detached render child - SPEC section 2.5/5) and logs the
+  outcome.
 - `SessionStart` -> `ccw-freshness-check.py` (ticket 24.7). See below.
 
 Neither hook is visible by grepping `~/.claude/settings.json` alone for `ccw` - the
@@ -417,7 +420,14 @@ one `ccw doctor` used to make 292,286 filesystem calls under `archive_root` (mea
 2026-09-28); it now touches only the 25 most recently captured folders.
 
 **The SessionEnd hook's budget, recorded here because ticket 44 moves the archive onto a
-slower disk.** `plugins/cc-capture/hooks/hooks.json` gives `ccw-hook.py` 45 s and the
+slower disk.** SUPERSEDED IN PART 2026-10-01 (W-20261001-A65): the 45 s in
+`plugins/cc-capture/hooks/hooks.json` was never the real budget. Measured with a
+`claude -p` probe on Claude Code 2.1.286, a PLUGIN hook's `timeout` does not raise the
+SessionEnd budget; only a settings-file hook's does, so the hook got about 1.5 s (10 s in
+a pj session) before SIGTERM to its process group. The hook now returns at once and a
+detached runner, outside that group, does the work below with the same 40 s ceiling on
+`ccw hook`. The rest of this paragraph is the state before that change.
+`plugins/cc-capture/hooks/hooks.json` gives `ccw-hook.py` 45 s and the
 wrapper kills the `ccw hook` child at 40 s. The ONLY synchronous write to `archive_root`
 inside that budget is the session's JSONL (`capture._archive_source`); rendering and the
 companion copies run in detached children afterwards. Measured locally the capture
