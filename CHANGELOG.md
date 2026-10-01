@@ -22,6 +22,21 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Uuid-less sessions are written where they are read (2026-10-01, W-20261001-A56).** A
+payload with no `sessionId`, such as a `claude -p` stream-json output, was archived by
+the capture hook at `<stamp>_session/session.jsonl` and looked for by every reader at
+`<stamp>_session-<short>/`. With `keep_objects = false` there was no vault behind the
+read, so `ccw build` failed on each visible one and the nightly sweep exited 1. One
+function, `build.session_stem`, now names the folder for every writer and reader, and
+`fallback_stem` is a required argument so a caller cannot fall back to a different
+default. When the hook supplies a `session_id` and the payload has none, that id names
+the folder, matching the catalog row. `ccw doctor`: `overdue` now treats a file whose
+exact bytes are cataloged as captured, whatever its file name (it read 8 such files as
+overdue forever); the desync sample includes uuid-less heads; and a new `unreadable`
+line names uuid-less heads whose JSONL is not at their archive path, failing only for
+visible ones. Folders written before the fix are moved by the one-off
+`tools/rename_uuidless_folders.py` (dry run by default). No version bump.
+
 **`ccw doctor` reports a `ccw sweep` that started and never finished (2026-09-30,
 W-20260930-A28).** A sweep wrote its only capture.jsonl record, the run summary, as it
 ended, so a sweep killed mid-run left nothing: the 2026-09-29 12:30 sweep logged items until

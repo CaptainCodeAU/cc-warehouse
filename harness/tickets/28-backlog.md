@@ -134,6 +134,78 @@ here into their own ticket when they are taken up.
 
 ## Known defects and debts
 
+- **28.29  FIXED IN THE REPO 2026-10-01 (W-20261001-A56), NOT YET INSTALLED OR
+  APPLIED. Uuid-less sessions were written to one folder and read from another.**
+  A payload with no `sessionId` (a `claude -p` stream-json output, a workflow
+  `journal.jsonl`, a data file such as `refusals.jsonl` that happens to sit under
+  `~/.claude/projects`) is cataloged with `session_uuid` NULL and named by a
+  fallback stem. The capture hook wrote `<stamp>_session/session.jsonl`; every
+  reader looked for `<stamp>_session-<short>/session-<short>.jsonl`. With
+  `keep_objects = false` nothing was left to fall through to, so `ccw build`
+  failed on every visible such head and the 2026-10-01 nightly sweep exited 1.
+
+  ROOT CAUSE, from `git log -S fallback_stem` and `-S'archive.write_source('`.
+  `4ee7941` (2026-08-02, slice 19a) gave `archive_folder_name`/`archive_dir` a
+  DEFAULT `fallback_stem="session"`. The migration (`33c4ad4`) and the build
+  mirror (`fa35d0d`, 19i) passed `session-<short>` explicitly. `de336dd` (19k,
+  2026-08-03) added `write_source` with the same default, and the hook called
+  it without one: the divergence was born there. `e4ff8aa` (19l, same day) wrote
+  `read_payload` with `session-<short>` and a fall-through to `store.get`.
+  THE CONDUCTOR'S HYPOTHESIS IS CONFIRMED, WITH ONE MORE LAYER. The vault hid it
+  until `keep_objects = false` went live (2026-08-20, 27.3). After that the first
+  uuid-less captures (2026-08-22, 08-29, 08-30, 09-13 to 09-15) were all HIDDEN,
+  and `ccw build` never reads a hidden head, so they failed silently; doctor's
+  desync sample excluded uuid-less heads by SQL. The first VISIBLE ones were 8
+  `claude -p` outputs captured 2026-09-30, and the next build failed.
+  WHY NO TEST CAUGHT IT: `conftest.entry()` always writes a `sessionId`, so no
+  fixture payload was uuid-less; no test combined a uuid-less payload with
+  `keep_objects = false`; and the default meant no caller had to choose a stem.
+
+  THE CLASS FIX. `build.session_stem(session_uuid, short)` is the one derivation,
+  and `fallback_stem` is a REQUIRED keyword on all four naming functions, so
+  pyright strict names any caller that forgets (it named 128 test callers).
+  Fences in `tests/test_uuidless_sessions.py`: no default, every call passes it,
+  `session-<short>` spelled only inside `session_stem`. A matrix in
+  `tests/test_reader_writer_matrix.py` runs payload {uuid, no uuid} x
+  keep_objects {true, false} x writer {hook, sweep, build, import} against every
+  reader with the vault moved aside; on the pre-fix commit it fails all six
+  uuid-less hook/sweep/build cases and passes all eight uuid cases.
+
+  FOUND BY THE FIX, NOT IN THE BRIEF:
+  1. The 2026-10-01 freshness alert's one BLOCKING FAIL was `overdue 8`, not the
+     build. `doctor._overdue` decided "captured" by the file NAME matching a
+     catalog uuid (F4); `armA.jsonl` never matches, so 8 cataloged files were
+     overdue forever. Now a file the name test leaves is cleared only when its
+     exact sha256 is cataloged. Measured read-only on this machine: 8 -> 0.
+  2. The hook's `session_id` now names the folder when the payload has none
+     (the catalog row records it), or the build mirror would open a second
+     folder beside the hook's.
+  3. A bare `session` stem also put every uuid-less session under ONE session
+     lock, and two in one label starting in the same second into ONE folder.
+     It happened: 5 `harness-sealed` rows (two data files, five versions) share
+     `undated_session/`, which holds only the largest. Three older versions
+     (`317fef17f064`, `abb6a682d775`, `681ea21638bd`) now exist nowhere: not in
+     the archive, not in the source (the files have grown since), and the vault
+     is retired. They are hidden data-file versions, not sessions.
+  4. Doctor's desync sample never included a uuid-less head. It does now.
+  5. A new BLOCKING `unreadable` doctor line, one stat per uuid-less head:
+     visible heads not at their archive path FAIL (they break every build and
+     return to 0 once fixed); hidden ones are reported only, because some can
+     never return (item 3). Read-only on this machine today: 8 visible, 15
+     hidden.
+
+  BRIEF ITEMS THAT WERE WRONG: there are 12 uuid-less folders on the archive,
+  not 15 (the rename dry run: 12 to rename, 11 skipped, 0 refused). The sweep
+  repair path could not build `None.jsonl`: its query selects only uuid-bearing
+  heads. It uses the shared stem now anyway.
+
+  STILL OPEN, filed as open items the same day: the `Uncaptured` figure and the
+  `dispatch` line still key on file names (non-blocking, over-count); `ccw
+  sweep` and `ccw import` disagree on whether a uuid-less payload is a session.
+  NEEDS THE PRINCIPAL: reinstall, then `tools/rename_uuidless_folders.py
+  --apply --record FILE` on the real archive, in that order or the other, see
+  the conductor's report.
+
 - **28.21  DONE 2026-08-05. The sidecar is now written by whatever CREATES the
   folder, so 27.4's prerequisite is met.** `capture._archive_project_file`
   refreshes the one project's `project.json` after its session lands, which
