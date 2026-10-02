@@ -22,6 +22,29 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw sweep` waits for a vanished archive root, then carries on (2026-10-02,
+W-20261002-A72).** The archive root is an SMB share on the live machine, and it dropped
+four times in six days. The 2026-10-02 02:00 sweep checked the root marker once at
+entry; the share went away at 02:31 for three minutes and the run ended with 767 failed
+items, one lost `.tmp` write and 766 sub-agents refused with `Permission denied:
+'/Volumes/mac'`. Every sweep item that writes into the archive is now checked first,
+using `root_problem` (one call cost a median 0.04 ms against the real share, 0.20 ms when
+spaced 3 s apart, 30 ms at worst on the first call). A root that is not proven pauses the
+run, re-checking every 30 s for up to 15 min, then the run carries on. An item that
+failed while the root vanished under it is retried once when the root returns; a failure
+with the root still proven is an ordinary failure and never waits. A bare directory or a
+marker naming another zone is not proven, so nothing is written into a leftover mount
+point. When the root does not return, the run stops with one `sweep stopped:` line
+saying when it was lost, why, and how many items were not attempted, and it exits 1 with
+no per-item failures, no sweep-triggered build and no coverage record. A recovered pause
+is logged once to `capture.jsonl` (status `archive-root-paused`) and counted in the
+summary line (`paused N time(s) waiting for the archive root`), and the run exits 0 when
+nothing else failed. The build the sweep triggers uses the same check for each head it is
+about to write; `ccw build` run by hand is unchanged. Items reported `skipped_unchanged`
+pay for no check. Two small side effects: a write failure in the history snapshot or the
+paste gather is now a named failed item rather than an exception that ended the sweep,
+and the summary's item count no longer counts its own pause or stop outcomes.
+
 **The SessionEnd hook hands the capture to a detached runner (2026-10-01,
 W-20261001-A65, folding in W-20260929-A127).** Measured with a `claude -p` probe on
 Claude Code 2.1.286: a plugin hook's `timeout` does not raise Claude Code's SessionEnd

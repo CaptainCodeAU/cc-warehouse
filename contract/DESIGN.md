@@ -2384,3 +2384,23 @@ carries user and assistant message lines, and never when it sits under a project
 `memory/` subtree; `ccw sweep` and `ccw import` must apply the same test. The 2026-09-30
 guard "never catalog a no-uuid payload while the vault is off" is withdrawn: since
 W-20261001-A56 the archive holds those bytes at the reader's path. Not built yet.
+
+**2026-10-02, W-20261002-A72: a vanished archive root pauses a sweep instead of failing
+it.** The root marker check (ticket 44a) ran once, at entry, so a share that dropped for
+three minutes in a seven-hour sweep failed 767 items. Decided (principal, 2026-10-02:
+"Wait, then carry on"): the sweep pauses, re-checks every 30 s for up to 15 min, then
+carries on; if the root does not return it stops with ONE line. Design: one helper,
+`archive.wait_for_root`, decides "is the root back" with `root_problem` and nothing else
+(R9), so a bare mount point or another zone's marker is waited on like a missing
+directory. `archive.RootGuard` applies it per item: a check before every item that writes
+into the archive (never for `skipped_unchanged`), and after a failed item a wait plus one
+retry ONLY when the root is gone at that moment; with the root proven the failure is the
+item's own (R10). A stop is one `archive-root-lost` outcome naming when the root was
+lost, the problem, and the items not attempted in the pass it stopped in plus the passes
+that never ran; the lock is released by the existing `finally`. The 30 s and 15 min are
+module constants, not config keys. The sweep-triggered build takes the same guard per head
+it is about to write and re-takes a currency check made stale by a pause; `ccw build`,
+`ccw import` and the hook are unchanged. Known limit: a root that drops and returns
+within one item, before the item raises, leaves that item an ordinary failure for the
+next sweep, and with `keep_objects = true` an archive refusal inside a capture is logged,
+not raised, so only the pre-item check covers it.
