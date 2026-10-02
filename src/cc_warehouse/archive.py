@@ -2607,3 +2607,194 @@ def root_refusal(config: Config) -> BatchReport | None:
     except ArchiveRootRefused as exc:
         return BatchReport((ItemOutcome(str(config.archive_root), "error", str(exc)),))
     return None
+
+
+# ---------------------------------------------------------------------------
+# Waiting for a root that vanished mid-run (W-20261002-A72)
+# ---------------------------------------------------------------------------
+
+# Principal ruling 2026-10-02, "wait, then carry on": re-check every 30 s, for
+# up to 15 min. Constants, not config keys: the share's measured outages were
+# 1, 3, 13 and 31 minutes, and no operator has asked to tune either number.
+ROOT_WAIT_POLL_SECONDS = 30.0
+ROOT_WAIT_CAP_SECONDS = 15 * 60.0
+
+# The outcome action AND the capture.jsonl status of a pause the root came back
+# from; the outcome action of a run stopped because it did not.
+ROOT_PAUSED = "archive-root-paused"
+ROOT_LOST = "archive-root-lost"
+
+# The two injection points, so a test swaps the clock instead of sleeping for
+# fifteen real minutes. Read at call time, never bound as defaults.
+root_wait_sleep: Callable[[float], None] = time.sleep
+root_wait_clock: Callable[[], float] = time.monotonic
+
+
+@dataclass(frozen=True)
+class RootWait:
+    """What `wait_for_root` saw: whether the root is proven at the end, how
+    long it waited, and `root_problem`'s sentence (the first one when the root
+    came back, the last one when it did not; None when there was no wait)."""
+
+    returned: bool
+    waited_seconds: float
+    problem: str | None
+
+
+def wait_for_root(archive_root: Path, zone: str, *, warehouse_root: Path | None) -> RootWait:
+    """Wait while `archive_root` is not a proven root, polling every
+    `ROOT_WAIT_POLL_SECONDS`, for at most `ROOT_WAIT_CAP_SECONDS`.
+
+    A proven root returns at once, after ONE `root_problem` call and no sleep.
+    "Proven" is `root_problem`'s answer and nothing else (R9): a directory
+    without the marker, or with another zone's, is waited on exactly like a
+    missing one, so a leftover mount point never counts as the share coming
+    back (tests/test_sweep_root_pause.py::
+    test_root_returns_as_a_bare_mount_point_and_nothing_is_written_into_it).
+    Read-only, like `root_problem`: it never creates anything.
+    """
+    problem = root_problem(archive_root, zone, warehouse_root=warehouse_root)
+    if problem is None:
+        return RootWait(True, 0.0, None)
+    first = problem
+    start = root_wait_clock()
+    while True:
+        waited = root_wait_clock() - start
+        remaining = ROOT_WAIT_CAP_SECONDS - waited
+        if remaining <= 0:
+            return RootWait(False, waited, problem)
+        root_wait_sleep(min(ROOT_WAIT_POLL_SECONDS, remaining))
+        problem = root_problem(archive_root, zone, warehouse_root=warehouse_root)
+        if problem is None:
+            return RootWait(True, root_wait_clock() - start, first)
+
+
+class RootLost(Exception):
+    """`RootGuard.run` gave up: the root did not come back within the cap.
+    The guard holds the details; the batch turns them into ONE outcome."""
+
+
+class RootGuard:
+    """Per-item root checks for a long batch that writes into the archive.
+
+    THE FAILURE THIS CLOSES (W-20261002-A72). `root_refusal` checks the root
+    once, at entry. The 2026-10-02 02:00 sweep ran for seven hours; the share
+    dropped for three minutes at 02:31 and every item after that failed, 767 of
+    them. One check per writing item, in front of the write, turns a short
+    outage into a pause, and also stops a write landing in an unmarked
+    leftover directory at the mount path (W-20260929-A108).
+
+    `run` is the only entry a batch needs: check before, attempt, and when the
+    attempt failed AND the root is gone now, wait and retry that item once. A
+    failure with the root still proven is an ordinary item failure (R10) and
+    never waits. Inert when no `archive_root` is configured.
+
+    Proved in tests/test_sweep_root_pause.py: the pause and carry on
+    (test_root_vanishes_between_items_and_returns_nothing_fails), the retry
+    (test_root_vanishes_during_an_item_and_that_item_is_retried_once), the one
+    stop line (test_root_never_returns_stops_with_one_line), no wait on an
+    ordinary failure (test_an_ordinary_item_failure_with_the_root_fine_never_waits)
+    and no check without a root
+    (test_no_archive_root_configured_means_no_checks_at_all).
+    """
+
+    def __init__(self, config: Config, verb: str) -> None:
+        self.config = config
+        self.verb = verb
+        self.pauses: list[ItemOutcome] = []
+        self.lost_at: datetime | None = None
+        self.lost_problem: str | None = None
+        self.in_flight: str | None = None
+
+    @property
+    def stopped(self) -> bool:
+        return self.lost_at is not None
+
+    def ready(self, item: str) -> bool:
+        """Before a writing item: True when the root is proven, at once or
+        after a pause; False when it did not come back (the batch stops)."""
+        if self.config.archive_root is None:
+            return True
+        if self.stopped:
+            return False
+        return self._wait(item)
+
+    def run[T](self, item: str, attempt: Callable[[], T], failed: Callable[[T], bool]) -> T:
+        """`attempt()` for one item, guarded; raises `RootLost` to stop the batch."""
+        if not self.ready(item):
+            raise RootLost(item)
+        outcome = attempt()
+        config = self.config
+        if config.archive_root is None or not failed(outcome):
+            return outcome
+        # The item failed. Only a root that is gone NOW makes it the root's
+        # failure; with the root proven it is the item's own (R10), no wait.
+        problem = root_problem(
+            config.archive_root, config.archive_timezone, warehouse_root=config.root
+        )
+        if problem is None:
+            return outcome
+        if not self._wait(item):
+            self.in_flight = item
+            raise RootLost(item)
+        return attempt()
+
+    def _wait(self, item: str) -> bool:
+        root = self.config.archive_root
+        assert root is not None
+        noticed = datetime.now(UTC)
+        result = wait_for_root(root, self.config.archive_timezone, warehouse_root=self.config.root)
+        if result.returned:
+            if result.problem is not None:
+                self._paused(item, result)
+            return True
+        self.lost_at = noticed
+        self.lost_problem = result.problem
+        return False
+
+    def _paused(self, item: str, result: RootWait) -> None:
+        """A pause the root came back from: one outcome for the batch's summary
+        line, one record in capture.jsonl (F6, nothing silent). The message
+        never starts `sweep: `, which `doctor._sweep_unfinished` reads as the
+        run's own summary."""
+        from cc_warehouse import notify
+
+        waited = round(result.waited_seconds)
+        detail = f"paused {waited} s before {item} ({result.problem}); it came back"
+        self.pauses.append(ItemOutcome(str(self.config.archive_root), ROOT_PAUSED, detail))
+        try:
+            notify.append_log(
+                self.config,
+                {
+                    "at": datetime.now(UTC).isoformat(),
+                    "status": ROOT_PAUSED,
+                    "session": None,
+                    "project": None,
+                    "message": f"{self.verb} {detail}",
+                    "elapsed_ms": int(result.waited_seconds * 1000),
+                },
+            )
+        except Exception:  # noqa: BLE001 - a log line may not fail the batch
+            return
+
+    def lost_outcome(self, left: int, unrun: Sequence[str] = ()) -> ItemOutcome:
+        """The ONE outcome a stopped batch reports: when the root was lost, why,
+        and how much was left undone. Shared by the sweep and its build (R9).
+
+        `left` counts the item the guard stopped on plus every one after it in
+        the same pass. When that item had already been attempted and failed as
+        the root vanished, it is named instead of counted as not attempted.
+        `unrun` names the later passes that never started."""
+        assert self.lost_at is not None
+        when = self.lost_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        minutes = round(ROOT_WAIT_CAP_SECONDS / 60)
+        not_attempted = left - 1 if self.in_flight is not None else left
+        detail = (
+            f"archive root lost at {when}: {self.lost_problem}; waited {minutes} min and it"
+            f" did not come back; {not_attempted} item(s) not attempted"
+        )
+        if self.in_flight is not None:
+            detail += f"; {self.in_flight} failed as the root vanished"
+        if unrun:
+            detail += f"; not run: {', '.join(unrun)}"
+        return ItemOutcome(str(self.config.archive_root), ROOT_LOST, detail)

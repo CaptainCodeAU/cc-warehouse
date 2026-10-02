@@ -17,12 +17,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cc_warehouse import catalog, parallel, render, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
+
+if TYPE_CHECKING:
+    from cc_warehouse import archive
 
 # The five files a projection dir holds (DESIGN section 1/6). The manifest is
 # serialized deterministically so an unchanged session re-projects to the same
@@ -660,7 +663,13 @@ def _head_is_current(
     return checked
 
 
-def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False) -> BatchReport:
+def build(
+    config: Config,
+    *,
+    rebuild: bool = False,
+    include_hidden: bool = False,
+    root_guard: "archive.RootGuard | None" = None,
+) -> BatchReport:
     """Project the catalog head sessions; --rebuild regenerates every file.
 
     Runs under a locks/build O_EXCL lock (R14/DESIGN section 13): a live holder
@@ -683,6 +692,13 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
     session with zero projections (F7/F9), and a later clean build
     reconciles. Item failures are reported and the batch continues (R10);
     nothing outside projections/ moves.
+
+    `root_guard` (W-20261002-A72) is passed by the sweep-triggered build only:
+    each head that is about to be WRITTEN is checked against the archive root
+    first, and a vanished root pauses the build instead of failing every head
+    after it. A root that never comes back stops the build with one outcome
+    and, like any incomplete build, prunes nothing. `ccw build` itself passes
+    none and behaves exactly as before.
     """
     root = config.root
     projections = root / "projections"
@@ -702,7 +718,13 @@ def build(config: Config, *, rebuild: bool = False, include_hidden: bool = False
         conn = catalog.open_catalog(root)
         try:
             return _build_heads(
-                config, conn, projections, options, rebuild=rebuild, include_hidden=include_hidden
+                config,
+                conn,
+                projections,
+                options,
+                rebuild=rebuild,
+                include_hidden=include_hidden,
+                guard=root_guard,
             )
         finally:
             conn.close()
@@ -718,6 +740,7 @@ def _build_heads(
     *,
     rebuild: bool,
     include_hidden: bool,
+    guard: "archive.RootGuard | None" = None,
 ) -> BatchReport:
     """The body of `build()`, run under its lock with one catalog connection.
 
@@ -755,9 +778,12 @@ def _build_heads(
     Heads are distinct sessions with distinct folders, so acting on one cannot
     change another's answer.
     """
+    from cc_warehouse import archive
+
     heads = _heads(conn, include_hidden)
     outcomes: list[ItemOutcome] = []
     expected: set[Path] = set()
+    done = 0
     for chunk in parallel.chunks(heads):
         directories = [
             projection_dir(projections, head.label, head.first_ts, head.slug, head.short)
@@ -771,8 +797,28 @@ def _build_heads(
                 list(zip(chunk, directories, strict=True)),
             )
         )
+        paused_before = len(guard.pauses) if guard is not None else 0
         for head, directory, check in zip(chunk, directories, checks, strict=True):
-            _build_head(config, conn, head, directory, check, options, outcomes, expected, rebuild)
+            # A head the pool found current writes nothing, so it never pays for
+            # a root check (W-20261002-A72); only a head about to be written does.
+            if guard is None or not (rebuild or check.error is not None or not check.value):
+                _build_head(
+                    config, conn, head, directory, check, options, outcomes, expected, rebuild
+                )
+                done += 1
+                continue
+            attempt = _GuardedHead(
+                config, conn, head, directory, check, options, expected, rebuild,
+                guard=guard,
+                paused_before=paused_before,
+            )
+            try:
+                outcomes.extend(guard.run(head.short, attempt, _any_error))
+            except archive.RootLost:
+                outcomes.append(guard.lost_outcome(len(heads) - done))
+                outcomes.extend(guard.pauses)
+                return BatchReport(tuple(outcomes))
+            done += 1
     # Prune retired dirs ONLY on a fully-successful build. If any head errored
     # the new tree is incomplete, so keeping the last-good projections is the
     # conservative branch (F7/F9); the next clean build reconciles.
@@ -791,7 +837,58 @@ def _build_heads(
                 projection_dir(projections, head.label, head.first_ts, head.slug, head.short)
             )
         _prune(projections, expected)
+    if guard is not None:
+        outcomes.extend(guard.pauses)
     return BatchReport(tuple(outcomes))
+
+
+def _any_error(outcomes: list[ItemOutcome]) -> bool:
+    return any(outcome.action == "error" for outcome in outcomes)
+
+
+class _GuardedHead:
+    """One head's `_build_head`, as a retryable attempt for the root guard.
+
+    The pool's currency answer was taken before the head was acted on. When
+    that check raised, when the root went away after it (a pause since the
+    chunk was checked), or when this is the retry after a failure, it is taken
+    again here, on this thread, so a check that failed because the share was
+    away is not acted on after the share is back.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        conn: sqlite3.Connection,
+        head: _Head,
+        directory: Path,
+        check: "parallel.Read[bool]",
+        options: render.RenderOptions,
+        expected: set[Path],
+        rebuild: bool,
+        *,
+        guard: "archive.RootGuard",
+        paused_before: int,
+    ) -> None:
+        self.args = (config, conn, head, directory, options, expected, rebuild)
+        self.check = check
+        self.guard = guard
+        self.paused_before = paused_before
+        self.calls = 0
+
+    def __call__(self) -> list[ItemOutcome]:
+        config, conn, head, directory, options, expected, rebuild = self.args
+        check = self.check
+        stale = len(self.guard.pauses) > self.paused_before or check.error is not None
+        if not rebuild and (self.calls > 0 or stale):
+            try:
+                check = parallel.Read(_head_is_current(config, head, directory, options))
+            except Exception as exc:  # noqa: BLE001 - re-raised by .get(), as the pool does
+                check = parallel.Read[bool](error=exc)
+        self.calls += 1
+        outcomes: list[ItemOutcome] = []
+        _build_head(config, conn, head, directory, check, options, outcomes, expected, rebuild)
+        return outcomes
 
 
 def _build_head(

@@ -809,6 +809,14 @@ def _run_sweep(args: Sequence[str]) -> int:
     failures = report.failures
     for outcome in failures:
         print(f"sweep failed: {outcome.item}: {outcome.detail or outcome.action}", file=sys.stderr)
+    # W-20261002-A72: a root that vanished mid-run and never came back is ONE
+    # line, not a failure per item it left; a pause it came back from is
+    # counted in the summary below, and each one is already in capture.jsonl.
+    lost = [o for o in report.outcomes if o.action == archive.ROOT_LOST]
+    paused = [o for o in report.outcomes if o.action == archive.ROOT_PAUSED]
+    for outcome in lost:
+        print(f"sweep stopped: {outcome.detail}", file=sys.stderr)
+    items = len(report.outcomes) - len(lost) - len(paused)
     stored = sum(1 for outcome in report.outcomes if outcome.action == "stored")
     # PROJECT WHAT WE JUST STORED. Found on real data 2026-08-04: the scheduled
     # sweep rescued 642 sessions with zero failures, and `ccw archive --verify`
@@ -830,20 +838,30 @@ def _run_sweep(args: Sequence[str]) -> int:
     archived_sidecars = sum(
         1 for outcome in report.outcomes if outcome.action in sweep.SIDECAR_ARCHIVED_ACTIONS
     )
-    if stored or archived_sidecars:
-        build_report = build.build(config)
+    # A STOPPED run skips the build and the coverage record: the root they
+    # write into is the thing that is missing, and the next sweep that stores
+    # anything builds every head that is not current, these included.
+    if not lost and (stored or archived_sidecars):
+        build_report = build.build(
+            config, root_guard=archive.RootGuard(config, "sweep-triggered build")
+        )
         build_failures = build_report.failures
         for outcome in build_failures:
             print(f"sweep: projection failed: {outcome.item}: {outcome.detail}", file=sys.stderr)
             _log_build_failure(config, outcome, "sweep-triggered build")
         failures = failures + build_failures
+        build_lost = [o for o in build_report.outcomes if o.action == archive.ROOT_LOST]
+        for outcome in build_lost:
+            print(f"sweep stopped: projection: {outcome.detail}", file=sys.stderr)
+        lost += build_lost
+        paused += [o for o in build_report.outcomes if o.action == archive.ROOT_PAUSED]
     # TICKET 44b, and LAST for a reason: the two corpus-wide coverage figures
     # `ccw doctor` used to walk the whole archive for at every SessionStart are
     # measured here, once per sweep, AFTER the build above has rendered the
     # manifests they read. The sweep is the batch job that already pays for a
     # full listing; doctor reads the record with its age. A failure is one
     # named line and a failed item (R10), never a lost sweep.
-    if config.archive_root is not None:
+    if config.archive_root is not None and not lost:
         try:
             status.write_coverage(config, source)
         except OSError as exc:
@@ -851,18 +869,23 @@ def _run_sweep(args: Sequence[str]) -> int:
             print(f"sweep: {status.COVERAGE_NAME}: {detail}", file=sys.stderr)
             failures = failures + (ItemOutcome(status.COVERAGE_NAME, "error", detail),)
     sidecar_note = f", {archived_sidecars} with sidecars" if archived_sidecars else ""
-    summary = (
-        f"{len(report.outcomes)} items, {stored} stored{sidecar_note}, {len(failures)} failed"
+    pause_note = (
+        f", paused {len(paused)} time(s) waiting for the archive root" if paused else ""
     )
+    summary = (
+        f"{items} items, {stored} stored{sidecar_note}, {len(failures)} failed{pause_note}"
+    )
+    if lost:
+        summary += "; stopped: " + "; ".join(o.detail for o in lost)
     # Ticket 42 #2: written REGARDLESS of --quiet, matching _log_repair_outcome's own
     # contract -- --quiet drops the stdout line below only, never the durable record.
-    _log_run_summary(config, "sweep", "error" if failures else "ok", summary)
+    _log_run_summary(config, "sweep", "error" if failures or lost else "ok", summary)
     if not quiet:
         # --quiet drops STDOUT only. Failures are already on stderr above, and the
         # exit code is untouched, so a scheduled sweep stays silent when it works
         # and still speaks when it does not (ticket 23, 24.5).
         print(f"sweep: {summary}")
-    return 1 if failures else 0
+    return 1 if failures or lost else 0
 
 
 def _parse_notify_record(args: Sequence[str]) -> dict[str, object] | None:
