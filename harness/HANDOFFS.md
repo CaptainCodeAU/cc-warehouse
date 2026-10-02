@@ -21,6 +21,49 @@ For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-second handoff, 2026-10-02 to 10-03 (the share dropped mid-sweep, so the sweep learned to wait)
+
+Session 69919909 ("ccw-dude"), conductor with one herdr worker (`sharepause`) and one
+read-only helper. It ended without `/pj:wrap-up`; this entry was written the next day
+by session 68ce9d5d from its commits, its open items and its transcript.
+
+- **W-20261002-A72.** The 2026-10-02 02:00 sweep failed 767 items (766
+  `PermissionError: '/Volumes/mac'`, 1 `FileNotFoundError` on a `.tmp`) because the SMB
+  share holding the archive dropped from 02:31:36 to 02:34:20 AEST, and the root marker
+  was checked once at entry and never again. Principal ruling: wait, then carry on.
+  Built test-first by the worker: `archive.wait_for_root` (30 s checks, 15 min cap) and
+  `archive.RootGuard` (one check per writing item, one wait and retry when an item fails
+  with the root gone), wired through every writing pass of `sweep` and the
+  sweep-triggered build. A root that never returns stops the run with one line.
+  9 oracle tests, 7 red on master. Shipped da733b4 + 17f8151 on the principal's word:
+  2066 passed, ruff and pyright clean, pushed, frozen reinstall verified (26 of 26 files
+  identical). DESIGN section 15 holds the ruling and its two known limits.
+- **All four share drops now have a cause.** 26 and 27 Sep: this Mac restarted
+  (verified). 29 Sep: a power cut on the server; 2 Oct: a planned host patch reboot
+  (both agent-reported by proxmox-expert).
+- **Server side, ruled by the principal and handed to proxmox-expert.** No planned host
+  reboot, or restart of the share's container CT 220, between 02:00 and 09:30 AEST, and
+  each one announced to this project first (Network_Plan HOST D-028, agent-reported).
+  The 09:30 cut-off was sized on one run ending 09:13; W-20261002-A74 keeps it in step.
+  proxmox-expert also fixed `~/.local/bin/fileshare-remount.sh`, which could hang
+  about 11 minutes after an outage: it now checks the server answers first and gives
+  up on a stuck attempt after 45 s (re-checked by the conductor). W-20261002-A78 closes
+  on the next real outage recovering within about 2 minutes.
+- **Follow-ups filed, not started:** A68 (`ccw doctor`'s sweep line said "finished",
+  ok, for the run that failed 767), A79 (`ccw import`, a manual `ccw build` and the
+  hook's detached runner still check the root once at entry), A80 (a stopped sweep's
+  "not attempted" count includes unchanged transcripts), A81 (sessions stored before a
+  stop wait for a later storing sweep to be rendered).
+- **Closed on 2026-10-03 by session 68ce9d5d, from first-hand logs.** The 3 Oct 02:00
+  sweep, the first on the guarded code, logged "30509 items, 74 stored, 0 failed",
+  launchctl exit 0. That closed A72 and W-20261001-A56. The share did not drop during
+  it, so the pause path is proved by tests only. W-20261001-A65 and W-20260929-A127 also
+  closed: all 49 hook runs on the new wrapper since the deploy have an outcome line,
+  including pj sessions of 17.2, 5.2 and 5.0 MB; exit reasons were
+  `prompt_input_exit` 46, `other` 2, `clear` 1. The two runs with no outcome were the
+  deliberate old-wrapper control and a session opened before the deploy, whose archive
+  JSONL is byte-identical to its source.
+
 ### Fifty-first handoff, 2026-10-01 to 10-02 (a nightly sweep that failed on 8 files, and a hook Claude Code was killing)
 
 Session e6f56455 ("ccw-dude"), conductor with two herdr workers, all code test-first.
