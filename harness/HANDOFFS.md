@@ -23,6 +23,32 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-third handoff, 2026-10-05 (/wrap-up hands over to /pj:wrap-up)
+
+Session c8d150e0, worker W49 for the engage conductor, under Gavin's 2026-10-05 picks
+(engage #1014: /pj:wrap-up runs a project's own wrap-up; typed alone, the project
+wrap-up hands over to it).
+
+- `4173682`: `.claude/commands/wrap-up.md` gains Step H (handover; `check` runs direct)
+  and loses its manual-only flag; new `.claude/pj-homes` (`wrap-up: /wrap-up`,
+  `handoff: repo:HANDOFF.md`). `0e63728`: its description matches the new Step 7 order.
+- Step 1's session-start commit now comes from HEAD's reflog at the transcript's first
+  timestamp. The planned `C-Sess-Id` route was measured dead here: `trailers.disable` is
+  set, 0 of the last 200 commits carry the trailer. Recorded here rather than DESIGN 15
+  because it is how the close-out works, not how `ccw` works.
+- New tests run the Step 0 and Step 1 snippets in bash and zsh. They caught
+  `git rev-parse -q` hiding the reflog's "only goes back" warning, which gave a wrong
+  start commit from a young worktree. A review caught the old Step 7 scanning before the
+  commit, so `git-leak-scan` refused (exit 2) whenever nothing was committed yet.
+- Evidence: CI gates green on both commits; locally 2083 passed; W-20261004-A14 closed
+  with the start card now printing `Handoff: repo:HANDOFF.md`. Filed W-20261005-A68 (the
+  a59 branch keeps the old /wrap-up copy; `git checkout <path>` there was hook-blocked)
+  and W-20261005-A69 (public commit `ca83ce7` carries a session UUID trailer).
+- This session's own wrap-up was the first run of the new command, started by the
+  pre-10-05 /pj:wrap-up via `from-pj-wrap-up`.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-second handoff, 2026-10-02 to 10-03 (the share dropped mid-sweep, so the sweep learned to wait)
 
 Session 69919909 ("ccw-dude"), conductor with one herdr worker (`sharepause`) and one
