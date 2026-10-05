@@ -17,7 +17,9 @@ Two things to know before reading:
   only as a condensed status block inside `OPENING-PROMPT.md`'s old "ACTIVE TASK: ticket
   28.9" section. It is reconstructed here in its rightful place in the sequence.
 
-For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
+For live "what to do next" state, read `HANDOFF.md` (rewritten by `/pj:wrap-up` each
+session) and the open-items drawer (`open-items`), not this file; since 2026-10-02
+`OPENING-PROMPT.md` is orientation, not the queue. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
