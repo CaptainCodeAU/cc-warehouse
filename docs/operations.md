@@ -85,7 +85,9 @@ Notes:
   is narrowed to the `since` and project lists saved in `dashboard-defaults.json`, because
   whatever renders it has no controls. Both carry a machine-comparable `scope` object saying
   which they are. All three
-  children only READ `~/.claude/projects` and `~/cc-warehouse-archive`; every write lands
+  children only READ `~/.claude/projects` and the configured `archive_root`
+  (`/Volumes/mac/cc-warehouse-archive` since ticket 44; no fallback, they stop if config
+  sets none); every write lands
   under `~/.cc-warehouse/stats`, and `common.resolve_out` refuses an output root inside the
   repo, `~/.claude`, the archive or the warehouse data root. It passes no project
   include/exclude flags on purpose - `dashboard.py` reads the saved

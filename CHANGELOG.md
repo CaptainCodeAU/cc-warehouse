@@ -22,6 +22,21 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**A failed build names the frame that raised (2026-10-09, W-20261006-A43, `5faa141`).**
+The nightly sweep's own build failed one old session on 2026-10-06 and again on 2026-10-09
+with a bare `OSError: [Errno 22] Invalid argument`: no path and no call site, so the cause
+could not be traced from `capture.jsonl`. A per-item build failure now ends with
+`(at <file>:<line> in <func>, via <file>:<line> in <func>)`: the raising frame, plus the
+last frame inside `cc_warehouse` when the raiser is outside it. The `<ExcType>: <message>`
+prefix is unchanged, so readers keyed on it still match. A read-only scan put both
+failures on the READ path (both folders were current, nothing was written).
+
+**ccstats and `recover_hidden_sessions.py` no longer fall back to `~/cc-warehouse-archive`
+(2026-10-09, `ca309e5`).** Both read `archive_root` from config and, when it is unset or
+the config cannot load, stop with a clear message instead of reading the frozen pre-ticket-44
+local tree (or, once it is removed, an empty archive). ccstats also takes the catalog and the
+fenced data root from `config.root` (new shared `DATA_ROOT`). Tools only; `ccw` unchanged.
+
 **`ccw sweep` waits for a vanished archive root, then carries on (2026-10-02,
 W-20261002-A72).** The archive root is an SMB share on the live machine, and it dropped
 four times in six days. The 2026-10-02 02:00 sweep checked the root marker once at

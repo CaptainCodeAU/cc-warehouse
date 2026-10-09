@@ -23,6 +23,41 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-fourth handoff, 2026-10-09 to 10-10 (the sweep "failing" was one item; the local archive is safe to delete)
+
+Session 1a991ede ("cc-warehouse-main"), with read-only helper agents for each investigation.
+
+- **The 9 Oct sweep alert was a misread.** `ccw-sweep.log` stacks runs with no timestamps,
+  so its tail (766 `Errno 13` lines) is the 2 Oct share outage, not 9 Oct. The per-run truth
+  is `capture.jsonl`: 9 Oct ran 2:00 AM to 11:52 AM, `30981 items, 7 stored, 30 with sidecars,
+  1 failed`; 6 Oct the same shape. Both failures `OSError: [Errno 22]` on an old, current
+  folder; folders intact. A read-only scan put it on the READ path (no `.tmp`, mtimes
+  unchanged, no filename in the error = fd-level read/fstat/close; a stale SMB handle would be
+  EBADF, not EINVAL). Closed W-20261006-A48 and W-20261009-A01 against W-20261006-A43.
+- `5faa141`: `reports.describe_failure` makes a failed build log `(at <file>:<line> in <func>,
+  via <file>:<line> in <func>)`. Test-first (`tests/test_build_failure_location.py`, red then
+  green); one test that pinned the exact old text now checks the prefix. Frozen 0.1.4
+  reinstalled with Gavin's yes, verified via `direct_url.json` and doctor from outside the repo.
+- `ca309e5`: ccstats and `tools/recover_hidden_sessions.py` read `archive_root` and the data
+  root from config and stop with a message when it is unset; no HOME fallback (Gavin chose this
+  over hardcoding the network-drive path in a public repo). The ccstats-dashboard plist's
+  comment (outside the repo) corrected the same way.
+- **Local archive `~/cc-warehouse-archive` measured** against the network-drive archive by
+  session uuid, project label and alias at every depth: it holds nothing the network drive
+  lacks; the network drive holds 682 sessions it lacks (all started after the 28 Sep freeze).
+  Three read-only audits (code, machine-wide references, filesystem links and snapshots):
+  deleting it cannot touch the network drive and nothing recreates it. Not deleted; W-20260929-A28
+  is his hand. The data folder stays local by the 28 Sep ruling (hard-link locks and SQLite
+  fail on the share). Time Machine has no destination (W-20260929-A89 extended).
+- a59 branch: master merged in (`9300bb2`, pushed, dry-run tree matched). The unwrapped 4 Oct
+  session d9fb7fd0, swept here, had measured that the 2 Oct A59 rule would drop ~18,245
+  typed-but-unanswered sessions; Gavin ruled "Re-measure, then decide". A59 is paused.
+- Gates: ruff clean, pyright 0 errors, `2086 passed`; CI green on both commits.
+- Recorded here rather than DESIGN 15: no `ccw` design decision changed; the tools fallback
+  is outside `src/`.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-third handoff, 2026-10-05 (/wrap-up hands over to /pj:wrap-up)
 
 Session c8d150e0, worker W49 for the engage conductor, under Gavin's 2026-10-05 picks

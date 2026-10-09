@@ -354,8 +354,9 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   direct cause of the `_hook_commands` SessionEnd-scoping bug fixed the same day
   (`CHANGELOG.md` 0.1.2): `ccw-watch`'s own command string is what tripped it, by
   containing the substring `ccw`. Separately, a weekly `launchd` job,
-  `com.captaincodeau.ccw-archive`, now runs `ccw archive --to ~/cc-warehouse-archive`
-  (Sunday 03:00) beside the pre-existing daily `com.captaincodeau.ccw-sweep`; see ticket 30
+  `com.captaincodeau.ccw-archive`, now runs `ccw archive --to /Volumes/mac/cc-warehouse-archive`
+  (Sunday 05:00; it targeted `~/cc-warehouse-archive` at 03:00 until ticket 44 moved the
+  archive to the network drive, 2026-09-29; the local tree is frozen since) beside the pre-existing daily `com.captaincodeau.ccw-sweep`; see ticket 30
   for the incremental-rebuild work that job's cost motivated. And the competing exporter
   this repo used to run alongside (`export_transcript.sh` -> a separate, unrelated
   `claude-code-transcripts` tool, writing a second copy of every session) is retired as of
@@ -377,7 +378,10 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   The 17th is `~/CODE/Scaffoldings/fifty-shades-of-dotfiles/.claude/settings.minimal.json`,
   a filename Claude Code never reads, whose referenced script does not exist either. Inert
   twice over. Of the 16 armed, 15 target this machine's home. All 17 registrations are on
-  `SessionEnd` with matcher `prompt_input_exit|logout|other`, so `/clear` does not fire them.
+  `SessionEnd`. **CORRECTED 2026-10-09: 13 carry matcher `prompt_input_exit|logout|other`;
+  3 have NO matcher and so fire on every SessionEnd, `/clear` included**
+  (`Ideas/GitFoot_DetailedSpec_GSD`, `Ideas/my_claude_code_scaffolding` - the one targeting
+  another home dir - and `PRD_Storage/GitFoot_Copy_(w Docs)`).
   **The scripts write nothing themselves.** They shell out to
   `claude-code-transcripts json <path> -o ~/CODE/claude-code-transcripts -a --json`, so the
   behaviour is the CLI's, not the hook's. Read that CLI's 26 source files with a proven
