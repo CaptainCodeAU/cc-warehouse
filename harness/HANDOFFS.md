@@ -23,6 +23,37 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-fifth handoff, 2026-10-10 early hours (the job files and their logs move into the private companion)
+
+Same session 1a991ede, after its first wrap-up; every step on Gavin's numbered answers
+(cc-warehouse-main Q1-Q14).
+
+- `3fce449`: the freshness hook's job line for a sweep that FINISHED with failed items reads
+  "last run finished <time> with K of N item(s) failed ... Which items and why: capture.jsonl"
+  instead of "has been failing for". Test-first (`tests/test_freshness_sweep_outcome.py`),
+  exercised under the system python3 3.9.6 against the real log. Pushed; Gavin ran the
+  marketplace and plugin update (installed sha `3fce44923315`); W-20261010-A02 closed.
+- The three launchd job files moved into the project's private engage companion,
+  `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/`, with symlinks left in
+  `~/Library/LaunchAgents/` (Q1 v4: 2). The only precedent (mlbox-relay, into dot-private)
+  was symlinked after the last boot, so loading at login is unproven (W-20261010-A11).
+  Their logs moved there too (`launch-agents/logs/`, committed; Q5-Q7, Q12), including the
+  old `~/.claude/logs/ccw-*.log`, moved on Gavin's word: CLAUDE.md records the exception.
+  The companion disarms only the leak scanner's username-path rule (Q2), un-ignores `logs/`
+  against `~/.gitignore_global`, and is pushed to a private GitHub repo on the medium-value
+  App tier (Gavin created it; a session's App token cannot).
+- The sweep was paused 1:52 AM to 2:17 AM, so the 10 Oct 2:00 AM run did not happen.
+- engage-main's item #1292 (the same misread "Permission denied" sweep) was corrected and
+  closed there. engage sessions read their own rendered settings, not `~/.claude/settings.json`
+  (W-20261010-A13).
+- Planned, not built (Gavin: next session): W-20261010-A12, each job logs start, end, elapsed
+  and work, with Q9 (both capture.jsonl and a human line in the job log, per engage-main),
+  Q10 (cap a finished sweep's alert at WARNING), Q11 (stay 0.1.4) and a search for anything
+  still reading the old log paths. The opening prompt is in that item.
+- Gates: ruff clean, pyright 0 errors, `2093 passed`.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-fourth handoff, 2026-10-09 to 10-10 (the sweep "failing" was one item; the local archive is safe to delete)
 
 Session 1a991ede ("cc-warehouse-main"), with read-only helper agents for each investigation.

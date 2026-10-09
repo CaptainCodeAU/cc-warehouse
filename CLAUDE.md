@@ -52,6 +52,11 @@ edits to the principal instead.
   permission. Older notes in this repo say `~/.claude` "is scheduled to be
   wiped" and use it to justify urgency; that is SUPERSEDED. The archive being a
   proven second copy is the win, and a second copy is added, never traded.
+  **ONE EXCEPTION, 2026-10-10, by the principal's own word (cc-warehouse-main Q7, "Move
+  them"):** the three scheduled-job logs `~/.claude/logs/ccw-{sweep,repair,archive}.log`
+  were MOVED (hash-verified) to `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/`,
+  where the jobs now write. Their absence from `~/.claude/logs/` is that move, not a breach.
+  The rule otherwise stands unchanged.
 - **CLOSED 2026-09-07. `~/CODE/my-claude-code-transcripts` HAS BEEN DELETED, BY THE
   PRINCIPAL, AND THIS RULE IS DISCHARGED. DO NOT RE-ADD IT AS A LIVE PROHIBITION.**
   He said so in his own words, unprompted, when asked directly: he deleted it believing
