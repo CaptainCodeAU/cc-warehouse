@@ -74,6 +74,17 @@ end is worse than a missed capture. Every failure is instead written to
 `~/.claude/logs/ccw-hook.log` and announced through the operator's notification
 channel if one is configured.
 
+## Why the hook returns at once
+
+Claude Code gives a plugin's SessionEnd hook about 1.5 seconds, whatever its
+`timeout` says (measured 2026-10-01), then stops the hook's whole process group.
+So the hook only logs `dispatched` and `started` (with the session's end
+`reason`) and hands the payload to a copy of itself started with `--run` in its
+own session. That runner is outside the group Claude Code stops; it runs
+`ccw hook` and logs `ok`, `capture-error` or `error`. A runner that never runs
+loses nothing: the transcript stays in `~/.claude` and the daily `ccw sweep`
+captures it.
+
 ## Configuration
 
 None of its own. It reads these from the environment if set:

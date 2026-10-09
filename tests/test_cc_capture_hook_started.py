@@ -32,6 +32,13 @@ def hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, P
     module = load_hook_module("ccw_hook", "ccw-hook.py")
     log = tmp_path / "ccw-hook.log"
     monkeypatch.setattr(module, "LOG", log)
+    # W-20261001-A65: `main()` hands the work to a DETACHED runner, a new
+    # process that would see neither this LOG patch nor the stubs below. These
+    # tests are about what gets logged, so they run the runner's half in this
+    # process; tests/test_cc_capture_hook_detach.py runs the real detach. HOME
+    # is scratch too, so a stray real runner could not reach the real log.
+    monkeypatch.setattr(module, "_detach", module.run)
+    monkeypatch.setenv("HOME", str(tmp_path / "scratch-home"))
     monkeypatch.setattr(module, "VOICE_URL", "http://127.0.0.1:9/never")
     # A ccw that succeeds instantly, so the wrapper's normal path runs end to end.
     fake = tmp_path / "ccw"

@@ -86,7 +86,7 @@ def test_the_session_writer_refuses_a_subagent(tmp_path: object) -> None:
     with pytest.raises(ValueError):
         archive.write_session_folder(
             tmp_path, "widget", subagent_session(), OPTS, ZONE
-        )
+        , fallback_stem="session")
 
 
 def test_a_larger_subagent_cannot_overwrite_its_parent(tmp_path: object) -> None:
@@ -99,13 +99,16 @@ def test_a_larger_subagent_cannot_overwrite_its_parent(tmp_path: object) -> None
 
     assert isinstance(tmp_path, Path)
     parent = basic_session(session_id=DEFAULT_UUID)
-    result = archive.write_session_folder(tmp_path, "widget", parent, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, "widget", parent, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.jsonl.read_bytes() == parent
 
     fat = subagent_session(parent_uuid=DEFAULT_UUID, prompt="x" * 20_000)
     assert len(fat) > len(parent), "fixture is not larger; the test would pass vacuously"
     with pytest.raises(ValueError):
-        archive.write_session_folder(tmp_path, "widget", fat, OPTS, ZONE)
+        archive.write_session_folder(tmp_path, "widget", fat, OPTS, ZONE, fallback_stem="session")
 
     assert result.jsonl.read_bytes() == parent, "the parent transcript was overwritten"
 

@@ -17,9 +17,110 @@ Two things to know before reading:
   only as a condensed status block inside `OPENING-PROMPT.md`'s old "ACTIVE TASK: ticket
   28.9" section. It is reconstructed here in its rightful place in the sequence.
 
-For live "what to do next" state, read `OPENING-PROMPT.md`, not this file. For
+For live "what to do next" state, read `HANDOFF.md` (rewritten by `/pj:wrap-up` each
+session) and the open-items drawer (`open-items`), not this file; since 2026-10-02
+`OPENING-PROMPT.md` is orientation, not the queue. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
+
+### Fifty-third handoff, 2026-10-05 (/wrap-up hands over to /pj:wrap-up)
+
+Session c8d150e0, worker W49 for the engage conductor, under Gavin's 2026-10-05 picks
+(engage #1014: /pj:wrap-up runs a project's own wrap-up; typed alone, the project
+wrap-up hands over to it).
+
+- `4173682`: `.claude/commands/wrap-up.md` gains Step H (handover; `check` runs direct)
+  and loses its manual-only flag; new `.claude/pj-homes` (`wrap-up: /wrap-up`,
+  `handoff: repo:HANDOFF.md`). `0e63728`: its description matches the new Step 7 order.
+- Step 1's session-start commit now comes from HEAD's reflog at the transcript's first
+  timestamp. The planned `C-Sess-Id` route was measured dead here: `trailers.disable` is
+  set, 0 of the last 200 commits carry the trailer. Recorded here rather than DESIGN 15
+  because it is how the close-out works, not how `ccw` works.
+- New tests run the Step 0 and Step 1 snippets in bash and zsh. They caught
+  `git rev-parse -q` hiding the reflog's "only goes back" warning, which gave a wrong
+  start commit from a young worktree. A review caught the old Step 7 scanning before the
+  commit, so `git-leak-scan` refused (exit 2) whenever nothing was committed yet.
+- Evidence: CI gates green on both commits; locally 2083 passed; W-20261004-A14 closed
+  with the start card now printing `Handoff: repo:HANDOFF.md`. Filed W-20261005-A68 (the
+  a59 branch keeps the old /wrap-up copy; `git checkout <path>` there was hook-blocked)
+  and W-20261005-A69 (public commit `ca83ce7` carries a session UUID trailer).
+- This session's own wrap-up was the first run of the new command, started by the
+  pre-10-05 /pj:wrap-up via `from-pj-wrap-up`.
+
+Next: see `HANDOFF.md`.
+
+### Fifty-second handoff, 2026-10-02 to 10-03 (the share dropped mid-sweep, so the sweep learned to wait)
+
+Session 69919909 ("ccw-dude"), conductor with one herdr worker (`sharepause`) and one
+read-only helper. It ended without `/pj:wrap-up`; this entry was written the next day
+by session 68ce9d5d from its commits, its open items and its transcript.
+
+- **W-20261002-A72.** The 2026-10-02 02:00 sweep failed 767 items (766
+  `PermissionError: '/Volumes/mac'`, 1 `FileNotFoundError` on a `.tmp`) because the SMB
+  share holding the archive dropped from 02:31:36 to 02:34:20 AEST, and the root marker
+  was checked once at entry and never again. Principal ruling: wait, then carry on.
+  Built test-first by the worker: `archive.wait_for_root` (30 s checks, 15 min cap) and
+  `archive.RootGuard` (one check per writing item, one wait and retry when an item fails
+  with the root gone), wired through every writing pass of `sweep` and the
+  sweep-triggered build. A root that never returns stops the run with one line.
+  9 oracle tests, 7 red on master. Shipped da733b4 + 17f8151 on the principal's word:
+  2066 passed, ruff and pyright clean, pushed, frozen reinstall verified (26 of 26 files
+  identical). DESIGN section 15 holds the ruling and its two known limits.
+- **All four share drops now have a cause.** 26 and 27 Sep: this Mac restarted
+  (verified). 29 Sep: a power cut on the server; 2 Oct: a planned host patch reboot
+  (both agent-reported by proxmox-expert).
+- **Server side, ruled by the principal and handed to proxmox-expert.** No planned host
+  reboot, or restart of the share's container CT 220, between 02:00 and 09:30 AEST, and
+  each one announced to this project first (Network_Plan HOST D-028, agent-reported).
+  The 09:30 cut-off was sized on one run ending 09:13; W-20261002-A74 keeps it in step.
+  proxmox-expert also fixed `~/.local/bin/fileshare-remount.sh`, which could hang
+  about 11 minutes after an outage: it now checks the server answers first and gives
+  up on a stuck attempt after 45 s (re-checked by the conductor). W-20261002-A78 closes
+  on the next real outage recovering within about 2 minutes.
+- **Follow-ups filed, not started:** A68 (`ccw doctor`'s sweep line said "finished",
+  ok, for the run that failed 767), A79 (`ccw import`, a manual `ccw build` and the
+  hook's detached runner still check the root once at entry), A80 (a stopped sweep's
+  "not attempted" count includes unchanged transcripts), A81 (sessions stored before a
+  stop wait for a later storing sweep to be rendered).
+- **Closed on 2026-10-03 by session 68ce9d5d, from first-hand logs.** The 3 Oct 02:00
+  sweep, the first on the guarded code, logged "30509 items, 74 stored, 0 failed",
+  launchctl exit 0. That closed A72 and W-20261001-A56. The share did not drop during
+  it, so the pause path is proved by tests only. W-20261001-A65 and W-20260929-A127 also
+  closed: all 49 hook runs on the new wrapper since the deploy have an outcome line,
+  including pj sessions of 17.2, 5.2 and 5.0 MB; exit reasons were
+  `prompt_input_exit` 46, `other` 2, `clear` 1. The two runs with no outcome were the
+  deliberate old-wrapper control and a session opened before the deploy, whose archive
+  JSONL is byte-identical to its source.
+
+### Fifty-first handoff, 2026-10-01 to 10-02 (a nightly sweep that failed on 8 files, and a hook Claude Code was killing)
+
+Session e6f56455 ("ccw-dude"), conductor with two herdr workers, all code test-first.
+Entries between 2026-09-13 and this one live in the generated `HANDOFF.md` history and
+the open-items drawer, not here.
+
+- **W-20261001-A56.** The alert said "capture broken"; capture worked. Two causes:
+  writer and reader disagreed on the folder name for a session with no `sessionId`
+  (hidden by the vault until 27.3), and doctor's `overdue` keyed on file names. Fixed
+  a27c0b1..8a80a0e, frozen reinstall, 12 folders renamed, `ccw build` 0 failed,
+  `ccw doctor` exit 0. Last proof owed: the 02:00 sweep. Backlog 28.29.
+- **W-20261001-A65.** "SessionEnd hook ... Hook cancelled": a plugin hook's timeout does
+  not raise Claude Code's exit budget (4-arm probe). The hook now detaches the capture.
+  Pushed 66e2bbf, plugin 66e2bbf841ae, proved with an old-versus-new control on real
+  exits. Ticket 43.
+- **Process miss, recorded so it is not repeated:** the drawer already held
+  W-20260930-A59 for the same 8 files, with four of the principal's rulings. The
+  session did not search the drawer for the error text before acting, so one ruling
+  ("leave the folders") was overtaken without being shown. The principal reconciled it
+  on 2026-10-02 (DESIGN 15). Search `open-items --grep "<error text>" --all` first.
+- One test failed under load average ~50. It was later named:
+  `test_the_detach_works_end_to_end_under_an_old_python3`, 1.09 s against a 1.0 s
+  limit. The principal ruled for a 1.4 s limit tied to Claude Code's 1.5 s budget, to
+  be built later (W-20261002-A12).
+- **A wrong claim, caught by a peer:** this session blamed `gitleaks detect --pipe` for
+  passing a planted token (8f37b29). The token was hand-typed and low-entropy, and
+  gitleaks skips those in every mode. Corrected in 4a9cf9a and pinned by
+  `tests/test_wrap_up_message_scan.py` (d7a0357), which fails on a hand-typed control.
+  A control that does not fire is an invalid trial, not a tool defect.
 
 ### Fiftieth handoff, 2026-09-13 (a SessionEnd hook that died before it could log, and an alarm we nearly built twice)
 

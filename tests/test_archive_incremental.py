@@ -82,7 +82,10 @@ def mtimes_of(directory: Path) -> dict[str, int]:
 
 
 def test_folder_is_current_true_when_everything_matches(tmp_path: Path) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert archive.folder_is_current(result.directory, store.sha256_hex(session()), OPTS)
 
 
@@ -93,18 +96,27 @@ def test_folder_is_current_false_with_no_manifest(tmp_path: Path) -> None:
 
 
 def test_folder_is_current_false_with_a_corrupt_manifest(tmp_path: Path) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     (result.directory / _MANIFEST).write_text("not json{{{", encoding="utf-8")
     assert not archive.folder_is_current(result.directory, store.sha256_hex(session()), OPTS)
 
 
 def test_folder_is_current_false_on_a_hash_mismatch(tmp_path: Path) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert not archive.folder_is_current(result.directory, "0" * 64, OPTS)
 
 
 def test_folder_is_current_false_on_a_config_mismatch(tmp_path: Path) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     changed = RenderOptions(thinking_withheld="marker")
     assert not archive.folder_is_current(
         result.directory, store.sha256_hex(session()), changed
@@ -114,7 +126,10 @@ def test_folder_is_current_false_on_a_config_mismatch(tmp_path: Path) -> None:
 def test_folder_is_current_false_on_a_renderer_version_mismatch(tmp_path: Path) -> None:
     """H1. Without this, a `ccw` upgrade that changes rendered output would
     leave every existing folder frozen at the old format forever."""
-    result = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     manifest = manifest_of(result.directory)
     assert manifest["renderer_version"] == __version__  # the fixture assumption
     manifest["renderer_version"] = "0.0.0-older"
@@ -132,7 +147,10 @@ def test_folder_is_current_false_when_a_generated_file_is_missing(tmp_path: Path
     deleted `transcript.md` beside an otherwise-untouched manifest must still be
     read as \"rebuild\", or `ccw build --rebuild`'s existing self-healing quietly
     stops working the moment this skip exists."""
-    result = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     (result.directory / "transcript.md").unlink()
     assert not archive.folder_is_current(
         result.directory, store.sha256_hex(session()), OPTS
@@ -140,9 +158,15 @@ def test_folder_is_current_false_when_a_generated_file_is_missing(tmp_path: Path
 
 
 def test_a_deleted_generated_file_is_restored_by_a_later_write(tmp_path: Path) -> None:
-    first = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    first = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     (first.directory / "transcript.md").unlink()
-    second = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    second = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert not second.skipped_current
     assert (second.directory / "transcript.md").is_file()
 
@@ -152,7 +176,7 @@ def test_folder_is_current_false_on_a_stale_subagent_list(tmp_path: Path) -> Non
     `subagents` list must force a rebuild, or the list never catches up."""
     result = archive.write_session_folder(
         tmp_path, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE
-    )
+    , fallback_stem="session")
     assert manifest_of(result.directory)["subagents"] == []
     archive.write_subagent(
         tmp_path, LABEL, subagent_session(parent_uuid=DEFAULT_UUID), ZONE,
@@ -168,25 +192,37 @@ def test_folder_is_current_false_on_a_stale_subagent_list(tmp_path: Path) -> Non
 
 
 def test_an_unchanged_session_is_skipped_and_nothing_moves(tmp_path: Path) -> None:
-    first = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    first = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert not first.skipped_current
     before = mtimes_of(first.directory)
 
-    second = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    second = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert second.skipped_current
     assert second.wrote_projections
     assert mtimes_of(second.directory) == before, "an unchanged folder was rewritten"
 
 
 def test_a_changed_payload_forces_a_rebuild(tmp_path: Path) -> None:
-    first = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    first = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     original_hash = manifest_of(first.directory)["source_hash"]
 
     changed = session() + jsonl(
         entry("assistant", [{"type": "text", "text": "One more thing."}],
               "2026-05-07T03:48:00.000Z", session_id=UUID_A),
     )
-    second = archive.write_session_folder(tmp_path, LABEL, changed, OPTS, ZONE)
+    second = archive.write_session_folder(
+        tmp_path, LABEL, changed, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert not second.skipped_current
     assert second.directory == first.directory  # same session, same folder
     assert manifest_of(second.directory)["source_hash"] == store.sha256_hex(changed)
@@ -194,11 +230,14 @@ def test_a_changed_payload_forces_a_rebuild(tmp_path: Path) -> None:
 
 
 def test_rebuild_flag_bypasses_the_skip_even_when_current(tmp_path: Path) -> None:
-    first = archive.write_session_folder(tmp_path, LABEL, session(), OPTS, ZONE)
+    first = archive.write_session_folder(
+        tmp_path, LABEL, session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     before = mtimes_of(first.directory)
     second = archive.write_session_folder(
         tmp_path, LABEL, session(), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
     assert not second.skipped_current
     assert mtimes_of(second.directory) != before, "--rebuild must rewrite even a current folder"
 
@@ -216,8 +255,11 @@ def test_a_refusal_is_never_skipped_even_when_the_surviving_hash_still_matches(
     truncated = session()
     assert len(full) > len(truncated)
 
-    archive.write_session_folder(tmp_path, LABEL, full, OPTS, ZONE)
-    result = archive.write_session_folder(tmp_path, LABEL, truncated, OPTS, ZONE)
+    archive.write_session_folder(tmp_path, LABEL, full, OPTS, ZONE, fallback_stem="session")
+    result = archive.write_session_folder(
+        tmp_path, LABEL, truncated, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.refused_smaller
     assert not result.skipped_current
     manifest = manifest_of(result.directory)
@@ -229,14 +271,17 @@ def test_a_subagent_added_after_the_parents_render_forces_a_rebuild_and_gets_lis
     tmp_path: Path,
 ) -> None:
     data = basic_session(session_id=DEFAULT_UUID)
-    first = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    first = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE, fallback_stem="session")
     assert manifest_of(first.directory)["subagents"] == []
 
     archive.write_subagent(
         tmp_path, LABEL, subagent_session(parent_uuid=DEFAULT_UUID), ZONE,
         meta=subagent_meta(),
     )
-    second = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    second = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert not second.skipped_current
     listed = manifest_of(second.directory)["subagents"]
     assert isinstance(listed, list)
@@ -269,7 +314,7 @@ def test_an_interrupted_run_leaves_a_stale_manifest_which_forces_a_rebuild(
         entry("assistant", [{"type": "text", "text": "A second reply."}],
               "2026-05-07T03:48:20.000Z", session_id=UUID_A),
     )
-    first = archive.write_session_folder(tmp_path, LABEL, old, OPTS, ZONE)
+    first = archive.write_session_folder(tmp_path, LABEL, old, OPTS, ZONE, fallback_stem="session")
     stale_manifest = (first.directory / _MANIFEST).read_bytes()
 
     # Simulate the interruption: the four pages get rewritten from the NEW
@@ -279,7 +324,7 @@ def test_an_interrupted_run_leaves_a_stale_manifest_which_forces_a_rebuild(
         store.atomic_write(first.directory / name, new_pages[name])
     assert (first.directory / _MANIFEST).read_bytes() == stale_manifest
 
-    retry = archive.write_session_folder(tmp_path, LABEL, new, OPTS, ZONE)
+    retry = archive.write_session_folder(tmp_path, LABEL, new, OPTS, ZONE, fallback_stem="session")
     assert not retry.skipped_current, "a stale manifest was trusted as current"
     assert manifest_of(retry.directory)["source_hash"] == store.sha256_hex(new)
     for name in _RENDERED:

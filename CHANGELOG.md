@@ -22,6 +22,60 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw sweep` waits for a vanished archive root, then carries on (2026-10-02,
+W-20261002-A72).** The archive root is an SMB share on the live machine, and it dropped
+four times in six days. The 2026-10-02 02:00 sweep checked the root marker once at
+entry; the share went away at 02:31 for three minutes and the run ended with 767 failed
+items, one lost `.tmp` write and 766 sub-agents refused with `Permission denied:
+'/Volumes/mac'`. Every sweep item that writes into the archive is now checked first,
+using `root_problem` (one call cost a median 0.04 ms against the real share, 0.20 ms when
+spaced 3 s apart, 30 ms at worst on the first call). A root that is not proven pauses the
+run, re-checking every 30 s for up to 15 min, then the run carries on. An item that
+failed while the root vanished under it is retried once when the root returns; a failure
+with the root still proven is an ordinary failure and never waits. A bare directory or a
+marker naming another zone is not proven, so nothing is written into a leftover mount
+point. When the root does not return, the run stops with one `sweep stopped:` line
+saying when it was lost, why, and how many items were not attempted, and it exits 1 with
+no per-item failures, no sweep-triggered build and no coverage record. A recovered pause
+is logged once to `capture.jsonl` (status `archive-root-paused`) and counted in the
+summary line (`paused N time(s) waiting for the archive root`), and the run exits 0 when
+nothing else failed. The build the sweep triggers uses the same check for each head it is
+about to write; `ccw build` run by hand is unchanged. Items reported `skipped_unchanged`
+pay for no check. Two small side effects: a write failure in the history snapshot or the
+paste gather is now a named failed item rather than an exception that ended the sweep,
+and the summary's item count no longer counts its own pause or stop outcomes.
+
+**The SessionEnd hook hands the capture to a detached runner (2026-10-01,
+W-20261001-A65, folding in W-20260929-A127).** Measured with a `claude -p` probe on
+Claude Code 2.1.286: a plugin hook's `timeout` does not raise Claude Code's SessionEnd
+budget (only a settings-file hook's does), so `ccw-hook.py` got about 1.5 s, or 10 s in
+a pj session, before SIGTERM to its process group killed `ccw hook` mid-capture. 15 of
+894 logged runs had started and never finished; two that night reached the archive and
+died before their catalog row. The hook now logs `dispatched` and `started`, starts a
+copy of itself with `--run` in a new session (stdout and stderr on DEVNULL, payload
+through a pipe it closes), and exits 0 at once. The runner runs `ccw hook` with the same
+40 s ceiling and logs `ok`, `capture-error` or `error` as before; an unforeseen crash in
+it logs `runner crashed` (R10). `started` now carries the SessionEnd `reason` in its own
+key; `detail` stays the transcript path, which `ccw doctor`'s `hook runs` check reads.
+No new status value. The wrapper's own spoken alerts now follow `CCW_VOICE_URL` when it
+is set. Plugin-only change: it reaches a machine through a push and `/plugin` update,
+not a `ccw` reinstall.
+
+**Uuid-less sessions are written where they are read (2026-10-01, W-20261001-A56).** A
+payload with no `sessionId`, such as a `claude -p` stream-json output, was archived by
+the capture hook at `<stamp>_session/session.jsonl` and looked for by every reader at
+`<stamp>_session-<short>/`. With `keep_objects = false` there was no vault behind the
+read, so `ccw build` failed on each visible one and the nightly sweep exited 1. One
+function, `build.session_stem`, now names the folder for every writer and reader, and
+`fallback_stem` is a required argument so a caller cannot fall back to a different
+default. When the hook supplies a `session_id` and the payload has none, that id names
+the folder, matching the catalog row. `ccw doctor`: `overdue` now treats a file whose
+exact bytes are cataloged as captured, whatever its file name (it read 8 such files as
+overdue forever); the desync sample includes uuid-less heads; and a new `unreadable`
+line names uuid-less heads whose JSONL is not at their archive path, failing only for
+visible ones. Folders written before the fix are moved by the one-off
+`tools/rename_uuidless_folders.py` (dry run by default). No version bump.
+
 **`ccw doctor` reports a `ccw sweep` that started and never finished (2026-09-30,
 W-20260930-A28).** A sweep wrote its only capture.jsonl record, the run summary, as it
 ended, so a sweep killed mid-run left nothing: the 2026-09-29 12:30 sweep logged items until

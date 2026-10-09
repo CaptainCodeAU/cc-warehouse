@@ -1,8 +1,7 @@
 ---
 name: wrap-up
-description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from a captured session-start commit rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), checks OPENING-PROMPT.md's "Next task" still matches reality and routes anything narrative to `harness/HANDOFFS.md` instead, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - before committing, then stages by name, commits, pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Manual only.
-argument-hint: "[all(default) | check(report-only)]"
-disable-model-invocation: true
+description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from the session-start commit (HEAD's reflog at the time this session's transcript began) rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), uses the handoff lines /pj:wrap-up hands it (HANDOFF.md) and adds the dated record to `harness/HANDOFFS.md`, sends loose ends to the open-items drawer, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - after it stages by name and commits and before it pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Typed alone it hands over to /pj:wrap-up, which runs it at its project step; `check` runs direct. Model: invoke it only from /pj:wrap-up's project step, never on your own.
+argument-hint: "[all(default) | check(report-only) | from-pj-wrap-up <handoff lines>]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
 ---
 
@@ -20,7 +19,8 @@ live ground truth and is expensive. This asks one smaller question: **did THIS s
 get written down, gated, and pushed?**
 
 **Modes.** No arg or `all` = do the checks below AND the writes/commit/push/tag. `check` = run
-every check and report, change nothing.
+every check and report, change nothing. `from-pj-wrap-up <handoff lines>` = mode `all`, started
+by /pj:wrap-up (Step H).
 
 **Autonomy.** Mode `all` does the additive, reversible parts without asking - a ticket status
 line, a `HANDOFFS.md` entry, a commit, a push. It still asks before anything the standing rules
@@ -30,56 +30,127 @@ version bump looks undeliberate rather than routine.
 
 ---
 
+## Step H - hand over to /pj:wrap-up, unless it sent you
+
+Before anything else. One path closes a session, and it is always marked (Gavin, 2026-10-05,
+engage #1014): /pj:wrap-up runs this command at its project step, after it has rewritten
+`HANDOFF.md` and before its tidy, delivery and push, and it marks the session itself.
+
+**Carry on to Step 0** when any one of these holds:
+
+- The arguments start with `from-pj-wrap-up`. Everything after that word is /pj:wrap-up's
+  step 5 handoff lines: keep them for Step 5. The mode is `all`.
+- The line `pj:wrap-up hands over to /wrap-up` appears in this conversation after the user's
+  last message. Take the handoff lines it gave with it, if any.
+- An older /pj:wrap-up (before 2026-10-05) prints no handover line: its step 9 asked "run
+  /wrap-up now, or not now" and the user's last message answered now. Never hand back to the
+  skill that called you: that is a loop.
+- The mode is `check`. It reports and writes nothing, so there is nothing for /pj:wrap-up to
+  deliver or mark; it runs direct, at any time. Every other mode hands over.
+
+**Otherwise** (typed alone as `/wrap-up` or `/wrap-up all`, or started by the model): say
+"Handing over to /pj:wrap-up; it runs these steps at its project step." Then Read
+`~/.claude/pj/skills/wrap-up/SKILL.md` and follow it from its first step, and stop following
+this file: /pj:wrap-up comes back to it. (/pj:wrap-up is manual only, so the Skill tool cannot
+start it; reading it can.)
+
+This command never runs `pj-wrap done`: /pj:wrap-up marks the session.
+
+---
+
 ## Step 0 - did the last session actually close out?
 
-Cheap, so always run it. Find the most recent OTHER session transcript for this project and
-check whether `/wrap-up` ran near its end:
+Cheap, so always run it. Find the most recent OTHER session transcripts for this project and
+check whether a wrap-up ran near their end. Since 2026-09-29 a session closes with
+`/pj:wrap-up` (which runs this command at its project step), so count both, and read pj's own
+mark, which /pj:wrap-up's last step leaves only when it finished:
 
 ```bash
-# Never hardcode this slug (it encodes the real machine path/username) - derive it fresh.
-SLUG=$(pwd | sed 's/[^a-zA-Z0-9]/-/g')
-TDIR="$HOME/.claude/projects/$SLUG"
-for f in $(ls -1t "$TDIR"/*.jsonl 2>/dev/null); do
-  case "$f" in *"$CLAUDE_SESSION_ID"*) continue;; esac
-  n=$(wc -l < "$f"); [ "$n" -lt 50 ] && continue   # skip companion/remote-control stubs
-  printf '%s  lines=%-6s wrap-up=%s\n' "$(basename "$f" | cut -c1-8)" "$n" \
-    "$(grep -c '<command-name>/wrap-up</command-name>' "$f")"
+# Never hardcode this slug (it encodes the real machine path/username) - derive it fresh,
+# from the MAIN checkout: a session started in .worktree/<name> keeps its transcript in
+# "$SLUG--worktree-<name>", and those are this project's sessions too.
+MAIN=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); MAIN=${MAIN:-$PWD}
+SLUG=$(printf '%s' "$MAIN" | sed 's/[^a-zA-Z0-9]/-/g')
+SID="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+[ -n "$SID" ] || echo "no session id: this session's own transcript is not skipped"
+find "$HOME/.claude/projects" -maxdepth 2 -name '*.jsonl' \
+  \( -path "*/$SLUG/*" -o -path "*/$SLUG--worktree-*/*" \) -exec stat -f '%m %N' {} + 2>/dev/null |
+sort -rn | cut -d' ' -f2- | while IFS= read -r f; do
+  [ -n "$SID" ] && case "$f" in *"$SID"*) continue;; esac
+  n=$(wc -l < "$f" | tr -d ' '); [ "$n" -lt 50 ] && continue   # companion/remote-control stubs
+  id=$(basename "$f" .jsonl)
+  printf '%s  lines=%-6s wrap-up=%s pj:wrap-up=%s marked=%s  %s\n' "$(printf '%s' "$id" | cut -c1-8)" "$n" \
+    "$(grep -cE '"content":"<command-(message|name)>/?wrap-up</command-' "$f")" \
+    "$(grep -cE '"content":"<command-(message|name)>/?pj:wrap-up</command-' "$f")" \
+    "$([ -e "$HOME/.local/state/pj/wrapped/$id" ] && echo yes || echo no)" \
+    "$(stat -f '%Sm' -t '%F %R' "$f")"
 done | head -3
 ```
 
-A marker proves the command was typed, not that it finished - a session can be cut off mid-tool-
-call. If the most recent real session shows the marker, confirm it actually produced something
-(a commit that session, or a `HANDOFFS.md` entry dated that day). No marker, or a marker with
-nothing behind it, is a gap: name the session (date + first user message) and fold anything it
-left genuinely undone into this run rather than opening a second ritual.
+The two greps are anchored on `"content":"<command-`, the shape a typed command leaves; a plain
+grep for the tag also counts every quote of it (this file being read, an agent prompt) and
+overcounted 11 to 2 on 2026-10-05. `stat -f` is the macOS form. With no session id the newest
+row is probably this session: skip it when its first user message is this conversation's, and
+say so.
 
-**This command did not exist before 2026-09-06.** A run that walks back past that date and finds
-nothing is expected, not a finding - do not report it as one.
+A marker proves the command was typed, not that it finished - a session can be cut off mid-tool-
+call. `marked=yes` is stronger: /pj:wrap-up's last step wrote it. If the most recent real session
+shows a marker, confirm it actually produced something (a commit that session, a `HANDOFFS.md`
+entry or a `HANDOFF.md` dated that day). No marker, or a marker with nothing behind it, is a
+gap: name the session (date + first user message) and fold anything it left genuinely undone
+into this run rather than opening a second ritual.
+
+**This command did not exist before 2026-09-06, and `/pj:wrap-up` not before 2026-09-29.** A run
+that walks back past those dates and finds nothing is expected, not a finding - do not report it
+as one.
 
 ---
 
 ## Step 1 - the touched set, derived from git alone
 
-**First, fix SESSION_START_REF** - the commit `HEAD` was at when this conversation began.
-Claude Code shows a "Recent commits" block at session start; that top commit is it. Note it
-now, before running anything else here. This matters because this machine routinely runs
-several sessions against the same checkout at once (see `python-process-resource-limits`
-memory) - a concurrent session can commit AND push while you're still working, which makes
-`@{u}..HEAD` read **empty even after this session did real work**, because someone else's
-push already caught the upstream comparison up. Measured live 2026-09-06: a session's own
-`@{u}..HEAD` showed nothing partway through its work for exactly this reason, and the only
-thing that still showed the real picture was comparing against the remembered start commit.
-This is deliberately a captured value, not something re-derived later from a commit trailer
-or similar marker - a marker stamped by a hook is absent exactly when a hook was skipped
-(`--no-verify`, an editor's skip-hooks toggle, an unhooked machine), which silently shortens
-the range on precisely the commits least likely to have been scanned in the first place.
-Capturing the plain starting `HEAD` has no such dependency.
+**First, find SESSION_START_REF** - the commit `HEAD` was at when this conversation began.
+This matters because this machine routinely runs several sessions against the same checkout
+at once (see `python-process-resource-limits` memory) - a concurrent session can commit AND
+push while you're still working, which makes `@{u}..HEAD` read **empty even after this session
+did real work**, because someone else's push already caught the upstream comparison up.
+Measured live 2026-09-06: a session's own `@{u}..HEAD` showed nothing partway through its work
+for exactly this reason, and the only thing that still showed the real picture was comparing
+against the start commit.
 
-If you didn't note SESSION_START_REF at the time and can't recover it (context got
-summarized, say), **that is a refuse condition, not a guess-and-continue one**: say so
-plainly in the Step 9 report, name it as unresolved, and do not silently substitute the
-earliest commit you merely recognize as "probably" this session's own - a wrong guess here
-makes every check in this step to certify a range that quietly isn't the real one, and looks
+Git already recorded it: the HEAD reflog logs every move of HEAD with its time, and this
+session's transcript logs when the session began, so `HEAD@{<start time>}` is HEAD as it was
+then. No hook is involved. A `C-Sess-Id` commit trailer is not used: this repo sets
+`trailers.disable = true` (measured 2026-10-05: 0 of the last 200 commits carry one), and a
+hook-stamped marker is absent exactly when a hook was skipped. Nor does it need the "Recent
+commits" block, which engage sessions never get.
+
+```bash
+SID="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+MAIN=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); MAIN=${MAIN:-$PWD}
+T=""; [ -n "$SID" ] && T=$(find "$HOME/.claude/projects" -maxdepth 2 -name "$SID.jsonl" \
+  -exec grep -o -m1 '"timestamp":"[^"]*"' {} + 2>/dev/null | head -1 | sed 's/.*"timestamp":"//; s/"$//')
+SESSION_START_REF="NOT MEASURED"
+if [ -n "$T" ]; then
+  for d in "$PWD" "$MAIN"; do   # a worktree made after the session began has a shorter reflog;
+    # never add -q below: it hides the "only goes back" warning that says so
+    r=$(git -C "$d" rev-parse --verify "HEAD@{$T}" 2>&1) || continue
+    case "$r" in *"only goes back"*) continue;; esac
+    SESSION_START_REF=$r; break
+  done
+fi
+echo "session ${SID:-(no id)} began ${T:-(no transcript found)}; SESSION_START_REF=$SESSION_START_REF"
+```
+
+Shell variables do not carry from one Bash call to the next: wherever this file writes
+`SESSION_START_REF` below, substitute the sha this block printed.
+
+**NOT MEASURED is reported, never papered over.** It means no session id, no transcript for
+it, or a reflog that starts after the session did. Say which in the Step 9 report and name it
+unresolved. Fall back to the upstream plus uncommitted work (`@{u}..HEAD` and
+`git status --short` below; Step 7 then scans `--since @{u}`, or `--since origin/master` when
+there is no upstream) and label every result built on
+them a guess. Do not substitute the earliest commit you merely recognize as "probably" this
+session's own - a wrong guess here certifies a range that quietly isn't the real one, and looks
 identical to a correct one.
 
 ```bash
@@ -99,7 +170,8 @@ conversation are the real touched set for every step below. Commits you didn't -
 concurrent session's own, already committed and pushed - are not yours to fold in or
 re-document; identify whose they look like (a commit message, a same-day `HANDOFFS.md`
 entry) and say so plainly in Step 9 rather than silently absorbing or silently ignoring them.
-Never substitute "what I remember editing" for what git actually shows.
+Never substitute "what I remember editing" for what git actually shows. `HANDOFF.md`, when
+/pj:wrap-up's step 5 rewrote it in this conversation, is this session's own: Step 7 commits it.
 
 🛑 **Uncommitted changes you don't recognise as your own work are a STOP.** Say so and ask;
 do not fold them into your commit and do not route around them. A concurrent session's own
@@ -182,34 +254,54 @@ says nothing.
 
 ---
 
-## Step 5 - is OPENING-PROMPT.md still true, and did today's work get written down anywhere?
+## Step 5 - the handoff, the session log, and anything with no home
 
-`OPENING-PROMPT.md` is the first thing a fresh session reads. Its own rules (see its "Keep it
-this way" section) are explicit and this command should follow them exactly, not improvise:
+Four files, four jobs. Never write the same thing into two of them:
 
-- **Only touch its "Next task" / backlog sections if the LIVE status actually changed** - a
-  ticket closed, a new blocker found, something that was "next" no longer is. Edit in place;
-  it's a snapshot, not a log.
+| File | Holds | Written by |
+|---|---|---|
+| `HANDOFF.md` | the live snapshot: where things stand, the literal next step, decisions waiting, hazards | /pj:wrap-up, rewritten whole at its step 5 (named by `.claude/pj-homes`) |
+| `harness/HANDOFFS.md` | the dated session log, newest first: what happened and the evidence | this step |
+| `OPENING-PROMPT.md` | hand-written orientation for a fresh session; NOT the queue since 2026-10-02 | by hand only |
+| `harness/GOTCHAS.md` | task-independent environment gotchas | this step, when one is new |
+
+- **`HANDOFF.md`: use the lines /pj:wrap-up handed over** (the arguments after
+  `from-pj-wrap-up`, or the lines given with its handover line). It wrote that file moments ago;
+  do not rewrite it. If nothing was handed over, read the file instead. If this run found
+  something that makes a line false (a gate failed, a push did not land), fix that line in place
+  and keep the first line exactly `<!-- generated by /pj:wrap-up -->`: without it /pj:wrap-up
+  treats the file as hand-written and stops writing it. If the file has lost that marker,
+  /pj:wrap-up skipped its step 5 and handed you its proposed lines instead: write them as the
+  whole file, first line the marker, at most 60 lines.
 - **If today's work is worth a dated record, add a new entry to the TOP of
-  `harness/HANDOFFS.md`** (newest-first) - never narrate it into `OPENING-PROMPT.md` itself. That
-  habit is exactly what grew that file to 1,930 lines before the 2026-08-27 split.
-- **A genuinely new, task-independent environment gotcha** (not specific to this session's
-  ticket) belongs in `harness/GOTCHAS.md`, not either of the above.
+  `harness/HANDOFFS.md`.** Record what happened and its evidence (commits, measurements,
+  rulings). Do not copy the next step, the waiting decisions or the hazards from the handoff
+  lines: write "Next: see `HANDOFF.md`" instead, so the two never drift apart.
+- **`OPENING-PROMPT.md` is not the queue.** Its "Next task" section says so itself: since
+  2026-10-02 the live queue is the open-items drawer and `HANDOFF.md`. Do not add a queue, a
+  next step or a narrative to it; fix it only where it now says something false. That narrating
+  habit is what grew it to 1,930 lines before the 2026-08-27 split.
 
 ```bash
-wc -l OPENING-PROMPT.md
+wc -l OPENING-PROMPT.md HANDOFF.md
 ```
 
-Say the line count in the report. It was restructured down from 1,930 lines once already - if it
-has crept back up past roughly 150-200 lines, say a trim may be due; don't fix it here uninvited.
+Say both line counts in the report. If `OPENING-PROMPT.md` has crept past roughly 150-200 lines,
+say a trim may be due; if `HANDOFF.md` is over 60 lines, say /pj:wrap-up's limit is broken. Do
+not fix either here uninvited.
 
 Also re-read the session for anything raised in prose as "worth doing later" / "still open" /
-"not done yet" that has no home yet. Give it one: the ticket's own open-items list, `CLAUDE.md`'s
-"OPEN / next" section, or a memory file if it's a fact that should outlive this repo state
-(project convention: `~/.claude/projects/<slug>/memory/`, where `<slug>` is this checkout's own
-path with `/` replaced by `-` - see Step 0's `SLUG` derivation; never hardcode it - following the
-two-level convention already documented there). A caveat that only exists in this transcript
-dies with it.
+"not done yet" that has no home yet. Give it one: the ticket's own open list when it belongs to
+a ticket this session worked, otherwise the drawer, from this checkout:
+
+```bash
+open-items --grep "<a few words>"          # already there? /pj:wrap-up step 4 may have filed it
+open-items add "<title>" --done-when "<how we will know it is done>"
+```
+
+Never a memory file: memory is frozen (D-20260929-A01) and edits under
+`~/.claude/projects/*/memory` are denied; `open-items` is the one sanctioned writer of the
+drawer that lives there. A caveat that only exists in this transcript dies with it.
 
 ---
 
@@ -223,7 +315,11 @@ release (Step 3 fired) needs its entry written BEFORE the tag is pushed, per `RE
 
 ---
 
-## Step 7 - before staging: a live scan, not a hardcoded pattern
+## Step 7 - commit, then a live scan of the whole session before pushing
+
+The order: stage by name and commit (the pre-commit hook scans each commit as it is made), then
+the control and the range scans below, then push. Scanning before the commit would leave this
+run's own commit outside the range.
 
 This is a **public** repo. `CLAUDE.md`'s standing rule is no personal data in it, ever - real
 username, machine name, or personal path. Compute the pattern fresh each run rather than typing
@@ -254,11 +350,16 @@ Read the line itself: "tested N of M rules, K disarmed" and every rule reading `
 `NOT TESTED`. A green control proves the SCANNER still works today, not that this session is
 clean - the two are separate facts, and this is the same principle behind every other "verify
 the instrument, not just the reading" moment in this project's own history. Only once this
-comes back clean, run the real scan:
+comes back clean, count the range, then run the real scan:
 
 ```bash
+git rev-list --count SESSION_START_REF..HEAD
 git-leak-scan --since SESSION_START_REF
 ```
+
+**A count of 0 means nothing was committed this session, so there is nothing to push:** write the
+range scan as NOT APPLICABLE with that count and do not run it (on an empty range it refuses with
+exit 2). On a non-empty range, exit 2 is a failure, never a pass.
 
 Range mode prints a denominator line regardless of verdict (e.g. "scanned 20 commit(s), 1339
 added line(s) in `<range>`") - **quote it verbatim in the Step 9 report**, the same way
@@ -290,9 +391,18 @@ trust past:**
    string in a commit message scanned exit 0 with `git-leak-scan`, while the same string in file
    content correctly blocked. Run this too:
    ```bash
-   git log --format=%B SESSION_START_REF..HEAD | gitleaks detect --pipe --no-banner
+   T="ghp_$(uv run --no-project python3 -c 'import secrets,string;print("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(36)))')"
+   printf 'token %s\n' "$T" | gitleaks stdin --no-banner >/dev/null 2>&1; echo "control rc=$? (must be 1)"
+   git log --format=%B SESSION_START_REF..HEAD | gitleaks stdin --no-banner
    ```
    (the underlying tool directly, since the wrapper has no stdin mode). Non-zero means a hit.
+   **The control must exit 1 before the real scan counts, and its token must be RANDOM.**
+   `gitleaks stdin` and `gitleaks detect --pipe` behave the same on gitleaks 8.30.1: both
+   catch a random 36-character `ghp_` token (exit 1) and both pass a hand-typed
+   low-entropy one such as `ghp_aBcD...0123456789` (exit 0), because gitleaks skips
+   low-entropy matches. Measured 2026-10-02 after an earlier version of this note blamed
+   `--pipe` on the strength of exactly that hand-typed control; a peer session caught it.
+   A control that does not fire makes the scan an invalid trial, not a tool defect.
 2. **Binary file content is invisible** - `git diff` prints "Binary files ... differ" and nothing
    else, confirmed live with a token embedded in a binary file (exit 0, no mention). This repo's
    own tracked files are all text as of this writing (checked); if that ever changes, this gap
@@ -316,7 +426,8 @@ inside test fixtures, per `CLAUDE.md`) - it never matches the `/Users/...` patte
 needs no exception. Anything that DOES match the checks above is a real leak - fix the source
 line, never strip it from the diff after the fact.
 
-**Stage by name.** Never `git add -A` or `git add .` - another session may share this tree.
+**Stage by name** (this is the commit the order above puts first; include `HANDOFF.md` when
+/pj:wrap-up rewrote it this session). Never `git add -A` or `git add .` - another session may share this tree.
 Commit with the project's identity override
 (`git -c user.name='CaptainCodeAU' -c user.email='69835039+CaptainCodeAU@users.noreply.github.com'
 commit ...`, or rely on the repo's local config if it's already set - check with
@@ -324,18 +435,16 @@ commit ...`, or rely on the repo's local config if it's already set - check with
 whatever session-attribution trailer line the current system context has given you for this
 session - never invent one and never hand-add a `C-*` trailer, those are hook-stamped.
 
-Push immediately once committed - this project's standing rule is not to offer first. Tag a real
+Push once the scans above are clean - this project's standing rule is not to offer first. Tag a real
 milestone if this session's work amounts to one (see Step 3 for the release-tag distinction).
 
 ---
 
-## Step 8 - memory, one soft line
+## Step 8 - memory: nothing to write
 
-If it's been a while since anything in this project's `~/.claude/projects/<slug>/memory/` (see
-Step 0) was updated and this session surfaced something durable (a preference, a project fact, a
-gotcha), make sure it actually got written - Step 5 already covers that. Beyond that, this step
-is a single line, not an action: mention that the MemoryCuration skill exists for a periodic
-audit, and stop. Never run it as part of this command.
+Memory is frozen (D-20260929-A01): this command writes no memory file. A durable fact this
+session surfaced goes to the drawer or `harness/GOTCHAS.md` (Step 5). Reading memory, as
+Step 3 does, is fine.
 
 ---
 
@@ -350,12 +459,19 @@ for anything that could otherwise read as a silent pass:
 | **NOT APPLICABLE** | The precondition is false by construction (e.g. no version bump this session) | "n/a" with no reason given |
 | **NOT MEASURED** | Couldn't actually run it (tool missing, command failed) | "skipped", or silence |
 
-Cover: Step 0's result; the guard totals verbatim; the release-tag check and what (if anything)
-was pushed; which ticket/decision files gained entries; whether `OPENING-PROMPT.md` needed a
-correction and its current line count; the CHANGELOG entry if one was written; the `--control`
+Cover: who started this run (Step H: from /pj:wrap-up, or `check` direct); Step 0's result;
+SESSION_START_REF and how Step 1 found it (or NOT MEASURED and why); the guard totals verbatim;
+the release-tag check and what (if anything) was pushed; which ticket/decision files gained
+entries; any line of `HANDOFF.md` this run corrected; whether `OPENING-PROMPT.md` needed a
+correction, and both line counts; each item added to the drawer, by id; the CHANGELOG entry if
+one was written; the `--control`
 result AND the secrets scan's own summary line (both quoted, not summarized as "clean"); commit
 + push confirmation and the tag name if any; anything still open with its trigger; anything that
 needs the operator's own action, spelled out exactly. End with one line: the tree is fully
 clean, or it explicitly is not and why.
 
 In `check` mode, report the same list as findings and stop - nothing gets written.
+
+When /pj:wrap-up started this run, the report goes back to it and it carries on with whatever
+of its steps remain (since 2026-10-05: tidy, delivery check, push, then the session mark; an
+older /pj:wrap-up has only the mark left).

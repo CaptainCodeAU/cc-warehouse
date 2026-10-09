@@ -38,7 +38,10 @@ def _archived(env: dict[str, str], tmp_path: Path) -> tuple[Path, Path, Path]:
     mark_archive(archive_root, ZONE)
     data = basic_session(session_id=UUID)
     options = build.render_options(load_config())
-    folder = archive.write_session_folder(archive_root, "widget", data, options, ZONE).directory
+    folder = archive.write_session_folder(
+        archive_root, "widget", data, options, ZONE,
+        fallback_stem="session",
+    ).directory
     source = tmp_path / "loose.jsonl"
     source.write_bytes(data)
     return archive_root, folder, source

@@ -5,6 +5,14 @@ file" at the bottom). It tells you what to do next and where to look for everyth
 
 ## Next task
 
+**READ FIRST, added 2026-10-02: the live queue is no longer in this file.** Since
+2026-09-29 it lives in the open-items drawer (`open-items` from this checkout) and the
+generated `HANDOFF.md` (rewritten by `/pj:wrap-up` each session). The priority list below
+is the 2026-09-09 to 09-17 state, kept for its history. As of 2026-10-02: capture is
+healthy; W-20261001-A56 (uuid-less folder names, nightly sweep failing) and
+W-20261001-A65 (SessionEnd hook cut off at exit) are fixed and deployed, each open only
+for a last real-world proof; W-20260930-A59 carries the session-rule ruling to build.
+
 **PRIORITY ORDER, set 2026-09-09, supersedes "nothing is queued" below until
 someone changes it.** Everything found during the 2026-09-09 capture-alert
 incident (tickets 41/42) now sits at the top of the queue, ahead of the

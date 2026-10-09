@@ -40,7 +40,7 @@ LABEL = "widget"
 def parent_folder(root: Path) -> Path:
     return archive.write_session_folder(
         root, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE
-    ).directory
+    , fallback_stem="session").directory
 
 
 def manifest_of(folder: Path) -> dict[str, object]:
@@ -50,7 +50,7 @@ def manifest_of(folder: Path) -> dict[str, object]:
 def rebuild(root: Path) -> None:
     archive.write_session_folder(
         root, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE, rebuild=True
-    )
+    , fallback_stem="session")
 
 
 def history_row(session_id: str, pasted: dict[str, object]) -> bytes:

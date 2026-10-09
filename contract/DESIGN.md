@@ -2354,3 +2354,53 @@ never counted), fix-os-locks (this lock, and doctor's `locks` line), fix-paralle
 (read-only share checks in a bounded pool). Every principal ruling behind them is
 recorded on its open item. Deploy hazard, accepted: old and new code do not see each
 other's locks, so a reinstall happens only while `ccw doctor` reports no lock held.
+
+**2026-10-01, W-20261001-A56: one stem rule for sessions with no `sessionId`.** The capture
+hook and the sweep named such a folder `<stamp>_session/` (a defaulted `fallback_stem`),
+while every reader looked for `<stamp>_session-<short>/`. The vault hid the mismatch until
+`keep_objects = false` (ticket 27.3), and the first VISIBLE uuid-less heads (8 `claude -p`
+captures, 2026-09-30) then failed every build. Decided: `build.session_stem(uuid, short)`
+is the one derivation, and `fallback_stem` has no default on any naming function, so
+pyright strict refuses a caller that forgets it. Doctor's `overdue` now decides
+"captured" by payload hash, not file name (F4), and a new `unreadable` line names a
+visible head that is not at its reader path. The principal ruled to RENAME the 12
+existing folders (2026-10-01) and confirmed on 2026-10-02 that this replaces his
+2026-09-30 ruling "(4) leave the 8 `<stamp>_session` folders" (W-20260930-A59), which
+the session had not shown him first. Record of the renames:
+`~/cc-warehouse-data/logs/rename-uuidless-20261001.json`. Backlog 28.29.
+
+**2026-10-01, W-20261001-A65: the SessionEnd hook no longer does the capture itself.**
+Measured on Claude Code 2.1.286: a PLUGIN hook's `timeout` does not raise Claude Code's
+exit budget (1.5 s, or the largest settings-file SessionEnd timeout, 10 s in pj sessions),
+and the cut is SIGTERM to the hook's process group. Decided (principal: "Measure, then
+detach"): the wrapper logs `started` (now with the SessionEnd `reason`) and hands
+`ccw hook` to a runner in its own session with stdio on DEVNULL, then returns. This
+relaxes slice 19k's "durable before the hook returns": durability now rests on the
+transcript staying in `~/.claude` (nothing is ever deleted there) plus the daily sweep,
+the same backstop a killed hook always had. Ticket 43, 2026-10-01 section.
+
+**2026-10-02, W-20260930-A59: what counts as a session.** A `.jsonl` is a session when it
+carries user and assistant message lines, and never when it sits under a project's
+`memory/` subtree; `ccw sweep` and `ccw import` must apply the same test. The 2026-09-30
+guard "never catalog a no-uuid payload while the vault is off" is withdrawn: since
+W-20261001-A56 the archive holds those bytes at the reader's path. Not built yet.
+
+**2026-10-02, W-20261002-A72: a vanished archive root pauses a sweep instead of failing
+it.** The root marker check (ticket 44a) ran once, at entry, so a share that dropped for
+three minutes in a seven-hour sweep failed 767 items. Decided (principal, 2026-10-02:
+"Wait, then carry on"): the sweep pauses, re-checks every 30 s for up to 15 min, then
+carries on; if the root does not return it stops with ONE line. Design: one helper,
+`archive.wait_for_root`, decides "is the root back" with `root_problem` and nothing else
+(R9), so a bare mount point or another zone's marker is waited on like a missing
+directory. `archive.RootGuard` applies it per item: a check before every item that writes
+into the archive (never for `skipped_unchanged`), and after a failed item a wait plus one
+retry ONLY when the root is gone at that moment; with the root proven the failure is the
+item's own (R10). A stop is one `archive-root-lost` outcome naming when the root was
+lost, the problem, and the items not attempted in the pass it stopped in plus the passes
+that never ran; the lock is released by the existing `finally`. The 30 s and 15 min are
+module constants, not config keys. The sweep-triggered build takes the same guard per head
+it is about to write and re-takes a currency check made stale by a pause; `ccw build`,
+`ccw import` and the hook are unchanged. Known limit: a root that drops and returns
+within one item, before the item raises, leaves that item an ordinary failure for the
+next sweep, and with `keep_objects = true` an archive refusal inside a capture is logged,
+not raised, so only the pre-item check covers it.

@@ -142,7 +142,7 @@ def test_a_lone_surrogate_payload_writes_an_archive_folder_at_all(
     killed 9 of 13,608 sessions on 2026-08-01."""
     result = archive.write_session_folder(
         tmp_path, LABEL, surrogate_session(), OPTS, ZONE
-    )
+    , fallback_stem="session")
     assert result.jsonl.exists()
     assert result.wrote_projections
     assert (result.directory / "transcript.md").exists()
@@ -154,7 +154,10 @@ def test_the_archived_jsonl_keeps_the_ORIGINAL_bytes(tmp_path: Path) -> None:
     the archive IS the store, so the promise moves to this file. The scrub is a
     RENDERING decision and must not reach the source."""
     data = surrogate_session()
-    result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.jsonl.read_bytes() == data
     assert rb"\ud83d" in result.jsonl.read_bytes()
 
@@ -165,7 +168,7 @@ def test_the_projection_replaced_it_and_the_manifest_counted_it(
     """F6: replacing silently is the failure, not the replacement."""
     result = archive.write_session_folder(
         tmp_path, LABEL, surrogate_session(), OPTS, ZONE
-    )
+    , fallback_stem="session")
     text = (result.directory / "transcript.md").read_text(encoding="utf-8")
     assert "SURROGATEMARKER" in text
     assert "�" in text
@@ -178,7 +181,7 @@ def test_verify_passes_a_surrogate_folder(tmp_path: Path) -> None:
     must not make its own folder fail integrity."""
     result = archive.write_session_folder(
         tmp_path, LABEL, surrogate_session(), OPTS, ZONE
-    )
+    , fallback_stem="session")
     assert archive.verify_folder(result.directory, ZONE) == []
 
 
@@ -253,7 +256,10 @@ def test_a_100mb_payload_archives_within_a_bounded_ceiling(tmp_path: Path) -> No
     assert len(data) > 100 * 1024 * 1024, len(data)
     tracemalloc.start()
     try:
-        result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+        result = archive.write_session_folder(
+            tmp_path, LABEL, data, OPTS, ZONE,
+            fallback_stem="session",
+        )
         _current, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -272,5 +278,8 @@ def test_the_huge_archived_jsonl_is_byte_identical(tmp_path: Path) -> None:
     """Hashed rather than compared in memory: holding a second 100 MB copy to
     assert equality would make the test the thing that runs out of memory."""
     data = huge_session()
-    result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert store.sha256_hex(result.jsonl.read_bytes()) == store.sha256_hex(data)

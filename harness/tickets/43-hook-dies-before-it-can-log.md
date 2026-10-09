@@ -213,3 +213,66 @@ method gap as the earlier import disagreement (that timing wraps shell plus
 spawn). So the residual blind window may be double what is written above. Both
 figures are bounded and small, neither changes the decision to skip the shell
 wrapper, and 10 ms should not harden into a fact without this caveat.
+
+## 2026-10-01: the hook was being killed, not dying (W-20261001-A65, A127)
+
+**Root cause, VERIFIED by the conductor session with a 4-arm `claude -p` probe on
+Claude Code 2.1.286.** A settings-file SessionEnd hook with no timeout was SIGTERMed at
+about 1.5 s; with `timeout: 45` it ran the full 45 s. A PLUGIN hook with `timeout: 45`
+was SIGTERMed at about 1.5 s. Plugin 45 plus a settings hook asking for 10: both
+SIGTERMed at 10 s. So hooks.json's 45 never applied; the budget is 1.5 s, or 10 s in a
+pj session whose own settings-file hook asks for 10. The kill goes to the hook's
+process group, and `ccw hook` died with it, leaving live-looking `capture-<hash>` lock
+files. Two sessions that night (8.0 and 10.3 MB) reached the archive in full and died
+before `catalog.add_session`. `ccw-hook.log`: 15 of 894 runs started and never
+finished; finished runs median 0 s, p95 1 s, max 28 s; size alone is not the cause.
+
+**Ruling (Gavin, AskUserQuestion 2026-10-01): "Measure, then detach".** Built:
+
+- `ccw-hook.py` logs `dispatched`, reads the payload, logs `started` (now with the
+  SessionEnd `reason` in its own key, closing A127), starts `sys.executable <itself>
+  --run` with `start_new_session=True`, stdout/stderr DEVNULL, writes the payload to its
+  stdin and closes it, and exits 0.
+- **Self re-invocation, not a second script**, so `report()`, `find_ccw()`, the 40 s
+  ceiling and the outcome reading stay one implementation (R9) and there is one file to
+  deploy and keep 3.9-safe.
+- **Durability argument** (also in the module docstring): slice 19k's synchronous
+  archive write bought nothing once Claude Code killed the hook at 1.5 s. The
+  transcript stays in `~/.claude/projects` (never deleted, CLAUDE.md) and the daily
+  `ccw sweep` captures any session the hook missed, which is how the 15 killed runs were
+  recovered. A runner that never runs is the same case as a killed hook, and the detach
+  makes it rarer. The cost of a miss is lag plus doctor's `hook runs` warning.
+- **Readers.** Only `doctor._dispatch_gap` (`status == "started"`, unchanged) and
+  `doctor._hook_unfinished` (pairs by session id, reads `started.detail` as the
+  transcript path, unchanged) read the statuses. `ccw-freshness-check.py` only appends.
+  Searched outside the repo with a control: 0 readers in the dotfiles repo,
+  `~/.claude/tools`, `~/.claude/hooks`, `~/.local/bin`. No new status value was added.
+- **Stale capture locks are already free.** Locks are kernel flocks
+  (W-20260929-A84), released by the kernel when the holder dies however it dies;
+  `lock_is_held` reads a file nobody flocks as not held. Proved by
+  `tests/test_os_locks.py::test_a_holder_killed_with_sigkill_frees_the_lock` and
+  `::test_doctor_says_none_and_ignores_unheld_pid_files`. The files themselves stay on
+  disk until the next acquire-and-release of the same name; that is cosmetic.
+
+Tests: `tests/test_cc_capture_hook_detach.py` (13, real processes). RED on the old
+wrapper: returns in under 1 s while ccw takes 5 (was 5.51 s); SIGTERM to the hook's
+group at 1.5 s does not stop the capture; the hook's pipes reach EOF at once (was
+5.41 s); `started` carries `reason` (KeyError); ccw-not-found is spoken to
+`CCW_VOICE_URL`; a crashing runner still logs (crash injected into the real `--run`
+process by a `sitecustomize`); the timing edge cases. Mutants proved the group and pipe
+tests pin `start_new_session` and DEVNULL, and the 64 KB test pins a whole read.
+Suite 2041 -> 2054.
+
+**Not done here, by the brief:** no push, no `/plugin` update, no change to hooks.json's
+`timeout: 45` (now inert for the hook itself), no change to pj's 10 s settings hook.
+
+
+**DEPLOYED 2026-10-01 23:39 AEST.** Pushed `66e2bbf`; the operator ran the plugin
+update, and the installed cache is `66e2bbf841ae` (holds `RUN_FLAG`; older cache dirs
+kept). Proved in the real execution context the same night: `claude -p` exits with
+`--setting-sources ''` and `--plugin-dir`, and a real `ccw` behind an 8 s delay under the
+1.5 s budget. The OLD wrapper (`75378cd1a678`) printed "Hook cancelled" and its child
+never finished. The NEW wrapper printed nothing; its detached runner logged
+`ok: captured` 9 s later, and `started` carried `reason=other`. Still owed before A65
+closes: 3 real closes, including a pj session and a transcript over 5 MB, each with an
+outcome line in `ccw-hook.log`.

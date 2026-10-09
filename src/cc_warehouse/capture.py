@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import catalog, external, notify, parser, registry, sidecars, store
+from cc_warehouse import build, catalog, external, notify, parser, registry, sidecars, store
 from cc_warehouse.config import Config
 
 # DESIGN section 4: a re-fire whose latest capture_event landed within this window is a
@@ -255,7 +255,14 @@ def _capture_locked(
         store.put(config.root, data)
     parsed = parser.parse_session(data)
     source, session_cwd, project_id = _resolve(conn, transcript_path, payload_cwd, parsed, now_iso)
-    _archive_source(config, conn, project_id, data)
+    # The folder is named from the SAME uuid the catalog row will carry (the
+    # hook's session_id stands in when the payload has none) and, failing
+    # that, the short key the row will get, so every reader finds it there
+    # (build.session_stem, W-20261001-A56).
+    stem = build.session_stem(
+        parsed.session_uuid or session_id, catalog.short_key(conn, digest)
+    )
+    _archive_source(config, conn, project_id, data, stem)
     _archive_custom_title_of(config, conn, project_id, transcript_path, parsed.session_uuid)
     if not defer_companions:
         archive_companions(config, conn, project_id, transcript_path, parsed.session_uuid)
@@ -294,7 +301,7 @@ def _capture_locked(
 
 
 def _archive_source(
-    config: Config, conn: sqlite3.Connection, project_id: int, data: bytes
+    config: Config, conn: sqlite3.Connection, project_id: int, data: bytes, stem: str
 ) -> None:
     """Put the session's JSONL in its archive folder SYNCHRONOUSLY (slice 19k).
 
@@ -343,7 +350,12 @@ def _archive_source(
         ).fetchone()
         label = str(row[0]) if row else "_unlabeled"
         archive.write_source(
-            config.archive_root, label, data, config.archive_timezone, warehouse_root=config.root
+            config.archive_root,
+            label,
+            data,
+            config.archive_timezone,
+            warehouse_root=config.root,
+            fallback_stem=stem,
         )
     except Exception:
         if not config.keep_objects:

@@ -822,7 +822,14 @@ def test_every_hook_imports_cleanly_under_an_old_python3() -> None:
             text=True,
             timeout=30,
             check=False,
-            env={"CCW_SKIP_HOOK": "1", "HOME": "/tmp", "PATH": "/usr/bin:/bin"},
+            # CCW_VOICE_URL: ccw-hook.py's runner finds no ccw here and reports
+            # `error`, which speaks; a dead port keeps that off the real server.
+            env={
+                "CCW_SKIP_HOOK": "1",
+                "HOME": "/tmp",
+                "PATH": "/usr/bin:/bin",
+                "CCW_VOICE_URL": "http://127.0.0.1:9/never",
+            },
             stdin=subprocess.DEVNULL,
         )
         if "Traceback" in result.stderr or result.returncode != 0:

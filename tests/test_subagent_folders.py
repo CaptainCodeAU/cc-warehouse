@@ -44,7 +44,7 @@ def parent_folder(root: Path) -> Path:
     """Write the parent session and return its folder."""
     return archive.write_session_folder(
         root, LABEL, basic_session(session_id=DEFAULT_UUID), OPTS, ZONE
-    ).directory
+    , fallback_stem="session").directory
 
 
 # ---------------------------------------------------------------------------

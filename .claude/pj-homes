@@ -1,0 +1,10 @@
+# pj-homes: where this project's records live (D-20260920-06). Root markers only:
+# repo: (this repo's root), drawer: (the folder `open-items --where` names), ~/ (home).
+# Every key is optional; missing keys take the D-20260920-06 defaults.
+# wrap-up names this project's own close command (.claude/commands/wrap-up.md);
+# /pj:wrap-up runs it after its handoff step and hands it that step's lines.
+# handoff is the generated snapshot /pj:wrap-up rewrites each session (it carries the
+# generated-by marker). OPENING-PROMPT.md is hand-written and stays out of its reach;
+# harness/HANDOFFS.md is the dated session log /wrap-up adds to.
+wrap-up: /wrap-up
+handoff: repo:HANDOFF.md

@@ -477,18 +477,21 @@ def _catalog_index(
         return empty
     try:
         rows = cast(
-            list[tuple[str, str, str | None, str, str | None, str, int]],
+            list[tuple[str, str, str | None, str | None, str | None, str, int]],
             conn.execute(
                 build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
                 + "SELECT short, label, first_ts, session_uuid, captured_at, hash, hidden"
-                " FROM ranked WHERE rn = 1 AND session_uuid IS NOT NULL"
+                " FROM ranked WHERE rn = 1"
             ).fetchall(),
         )
         archived: set[str] = set()
-        dated: list[tuple[datetime, str, str, str | None, str, str | None, str, int]] = []
+        dated: list[tuple[datetime, str, str, str | None, str | None, str | None, str, int]] = []
         newest: datetime | None = None
         for short, label, first_ts, session_uuid, captured_at, payload_hash, hidden in rows:
-            archived.add(session_uuid)
+            # A uuid-less head (W-20261001-A56) is sampled for the desync
+            # check like any other, but it has no uuid to count as archived.
+            if session_uuid is not None:
+                archived.add(session_uuid)
             moment = _moment(first_ts)
             if moment is None:
                 continue
@@ -501,7 +504,8 @@ def _catalog_index(
         sample = dated[:limit]
         in_window = {row[4] for row in sample}
         sample += [row for row in dated[limit:] if row[4] in also and row[4] not in in_window]
-        sizes = _payload_sizes(conn, {row[4] for row in sample})
+        sizes = _payload_sizes(conn, {row[4] for row in sample if row[4] is not None})
+        uuidless = _row_sizes(conn, {row[6] for row in sample if row[4] is None})
     except sqlite3.Error:
         return empty
     finally:
@@ -514,18 +518,39 @@ def _catalog_index(
                 first_ts,
                 session_uuid,
                 config.archive_timezone,
-                fallback_stem=f"session-{short}",
+                fallback_stem=build.session_stem(session_uuid, short),
             ),
             captured_at,
             payload_hash,
             short,
-            archive.KnownPayload(session_uuid, first_ts, bool(hidden), sizes.get(session_uuid, {})),
+            archive.KnownPayload(
+                session_uuid,
+                first_ts,
+                bool(hidden),
+                sizes.get(session_uuid, {}) if session_uuid is not None else uuidless,
+            ),
         )
         for _moment_, short, label, first_ts, session_uuid, captured_at, payload_hash, hidden in (
             sample
         )
     )
     return _CatalogIndex(frozenset(archived), newest, recent)
+
+
+def _row_sizes(conn: sqlite3.Connection, hashes: set[str]) -> dict[str, int]:
+    """sha256 -> `size_bytes` for uuid-less heads, which `_payload_sizes`
+    cannot group by session. A uuid-less row is its own head, so its own size
+    is the only version a folder's manifest can name."""
+    if not hashes:
+        return {}
+    marks = ",".join("?" * len(hashes))
+    rows = cast(
+        list[tuple[str, int | None]],
+        conn.execute(
+            f"SELECT hash, size_bytes FROM session WHERE hash IN ({marks})", sorted(hashes)
+        ).fetchall(),
+    )
+    return {payload_hash: size for payload_hash, size in rows if size is not None}
 
 
 def _payload_sizes(conn: sqlite3.Connection, uuids: set[str]) -> dict[str, dict[str, int]]:
@@ -971,7 +996,9 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str, bool]:
     """SessionEnd hook runs that wrote `started` and never finished (W-20260929-A105).
 
     Returns (ok, detail, blocking). `ccw-hook.py` writes `started` before it runs
-    `ccw hook` and an `ok`, `error` or `capture-error` line after; a `started` with
+    `ccw hook` and an `ok`, `error` or `capture-error` line after (since
+    W-20261001-A65 that line comes from its detached runner, a second process,
+    which is why runs pair by session id); a `started` with
     nothing after it, older than the hook's own timeout plus a margin, is a run
     that was killed. Read over the same bounded window as the dispatch check.
 
@@ -1439,12 +1466,27 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     # of them is a payload-derived anchor that costs a directory listing (R12).
     sessions, _subagents = sweep.source_transcripts(walk_root)
     stamps: dict[Path, datetime] = {}
+    hashes: dict[Path, str] = {}
     for path in sessions:
         if path.name.removesuffix(".jsonl") in archived:
             continue
-        moment = _moment(_last_activity(path))
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        moment = _moment(parser.parse_session(data).last_ts)
         if moment is not None:
             stamps[path] = moment
+            hashes[path] = store.sha256_hex(data)
+    # THE NAME IS A SHORTCUT, THE HASH IS THE IDENTITY (R1, F4). A file whose
+    # stem is not a cataloged uuid can still be captured: a `claude -p`
+    # stream-json output saved as `armC.jsonl` carries no `sessionId`, is
+    # cataloged by its hash with `session_uuid` NULL, and was read here as
+    # overdue forever (W-20261001-A56: the one blocking FAIL behind that day's
+    # freshness alert). Only the files the name test left are hashed, and they
+    # were already read for their last timestamp.
+    cataloged = _cataloged_hashes(config, set(hashes.values()))
+    stamps = {path: last for path, last in stamps.items() if hashes[path] not in cataloged}
     if not stamps:
         return 0, None
     anchor = max([*stamps.values(), *filter(None, (newest_archived,))])
@@ -1452,6 +1494,98 @@ def _overdue(config: Config, walk_root: Path) -> tuple[int, str | None]:
     overdue = [path for path, last in stamps.items() if last < cutoff]
     oldest = min((stamps[p] for p in overdue), default=None)
     return len(overdue), (oldest.isoformat() if oldest else None)
+
+
+def _unreadable(config: Config) -> tuple[int, int, int, str | None]:
+    """(checked, visible missing, hidden missing, first example) over every
+    uuid-less catalog head: is its JSONL where every reader looks for it?
+
+    WHY ONLY THE UUID-LESS. They are the population whose folder name came
+    from a fallback stem, and the writers and readers spelled that stem two
+    ways until W-20261001-A56, so a head can be cataloged and archived and
+    still unreadable. Uuid-bearing heads are covered by the desync sample;
+    checking all ~31k on a network share at SessionStart is the cost ticket 44
+    removed. One stat per uuid-less head (23 on this machine, 2026-10-01).
+
+    The example names a legacy `<stamp>_session/` folder when one sits where
+    the pre-fix hook wrote it, because that is the fix: a rename, not a
+    re-capture.
+    """
+    path = config.root / "catalog.sqlite"
+    if config.archive_root is None or not path.is_file():
+        return 0, 0, 0, None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 0, 0, 0, None
+    try:
+        rows = cast(
+            list[tuple[str, str, str | None, int]],
+            conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT short, label, first_ts, hidden FROM ranked"
+                " WHERE rn = 1 AND session_uuid IS NULL"
+            ).fetchall(),
+        )
+    except sqlite3.Error:
+        return 0, 0, 0, None
+    finally:
+        conn.close()
+    visible = hidden = 0
+    example: str | None = None
+    for short, label, first_ts, is_hidden in rows:
+        stem = build.session_stem(None, short)
+        folder = build.archive_dir(
+            config.archive_root, label, first_ts, None, config.archive_timezone,
+            fallback_stem=stem,
+        )
+        if (folder / f"{stem}.jsonl").is_file():
+            continue
+        if is_hidden:
+            hidden += 1
+            continue
+        visible += 1
+        if example is None:
+            # The bare stem the pre-fix writers used, named here only to find
+            # what they left behind.
+            legacy = folder.with_name(
+                build.archive_folder_name(
+                    first_ts, None, config.archive_timezone, fallback_stem="session"
+                )
+            )
+            where = f"{folder.parent.name}/{folder.name}"
+            if (legacy / "session.jsonl").is_file():
+                where += (
+                    f": legacy {legacy.name}/ beside it, rename with"
+                    " tools/rename_uuidless_folders.py"
+                )
+            example = where
+    return len(rows), visible, hidden, example
+
+
+def _cataloged_hashes(config: Config, hashes: set[str]) -> frozenset[str]:
+    """Which of `hashes` the catalog holds, read-only. No catalog, or an
+    unreadable one, answers none, so nothing is cleared that is not proven."""
+    path = config.root / "catalog.sqlite"
+    if not hashes or not path.is_file():
+        return frozenset()
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return frozenset()
+    try:
+        marks = ",".join("?" * len(hashes))
+        rows = cast(
+            list[tuple[str]],
+            conn.execute(
+                f"SELECT hash FROM session WHERE hash IN ({marks})", sorted(hashes)
+            ).fetchall(),
+        )
+    except sqlite3.Error:
+        return frozenset()
+    finally:
+        conn.close()
+    return frozenset(row[0] for row in rows)
 
 
 def _archive_root_check(config: Config) -> tuple[bool, str]:
@@ -1581,6 +1715,27 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
             f" folder(s) {_QUICK_NOTE}, e.g. {first_problem}"
         )
     checks.append(Check("desync", problems == 0, desync_detail))
+
+    # W-20261001-A56. BLOCKING for VISIBLE heads only: each one makes `ccw
+    # build` fail every night until it is fixed, and once fixed the figure
+    # returns to 0, so it cannot become a permanent banner. A missing HIDDEN
+    # head is never read by build and can be permanent (two data files that
+    # once shared one bare `session` folder), so it is reported only.
+    checked_uuidless, visible_missing, hidden_missing, example = _unreadable(config)
+    hidden_note = (
+        f"; {hidden_missing} hidden (never built, reported only)" if hidden_missing else ""
+    )
+    if visible_missing:
+        unreadable_detail = (
+            f"{visible_missing} visible session(s) not at their archive path, so ccw build"
+            f" fails on each, e.g. {example}{hidden_note}"
+        )
+    else:
+        unreadable_detail = (
+            f"0 of {checked_uuidless} uuid-less head(s) missing from their archive path"
+            f"{hidden_note}"
+        )
+    checks.append(Check("unreadable", visible_missing == 0, unreadable_detail))
 
     # Ticket 38, ruling (e). NEVER BLOCKING, and that is the decision rather than
     # a softness: an unarchived sibling is worth knowing about and is not a broken

@@ -247,7 +247,10 @@ def test_the_parent_manifest_lists_its_subagents(
 def test_a_session_with_no_subagents_reports_an_empty_list(tmp_path: Path) -> None:
     """An empty list, never a missing key: a reader must be able to tell "none"
     from "this manifest predates the feature"."""
-    result = archive.write_session_folder(tmp_path, LABEL, basic_session(), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, basic_session(), OPTS, ZONE,
+        fallback_stem="session",
+    )
     manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["subagents"] == []
 

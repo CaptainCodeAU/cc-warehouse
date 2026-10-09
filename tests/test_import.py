@@ -142,7 +142,7 @@ def test_the_reserved_label_is_neutralised_as_a_project_label(tmp_path: Path) ->
     the reserved folder; build neutralises it rather than dropping the session."""
     directory = build.archive_dir(
         tmp_path, archive.NOT_SESSIONS_LABEL, "2026-01-05T10:00:00Z", UUID_A, ZONE
-    )
+    , fallback_stem="session")
     assert directory.parent.name == "_" + archive.NOT_SESSIONS_LABEL
 
 

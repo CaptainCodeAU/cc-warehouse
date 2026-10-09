@@ -8,6 +8,7 @@ racing the hook harmless. Item failures are reported and the batch continues pas
 (R5/R10); sources stay read-only (F9). See DESIGN sections 4 and 13.
 """
 
+import functools
 import os
 import re
 import sqlite3
@@ -15,11 +16,14 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from cc_warehouse import capture, catalog, notify, parser, registry, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
+
+if TYPE_CHECKING:
+    from cc_warehouse import archive
 
 # DESIGN sections 4/13: one lock per sweep, O_EXCL, stale after a recorded PID dies.
 _SWEEP_LOCK = "sweep"
@@ -112,8 +116,8 @@ def _cataloged_hashes(root: Path) -> frozenset[str]:
     return frozenset(cast(str, row[0]) for row in rows)
 
 
-def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None]]:
-    """head hash -> (session_uuid, label, first_ts) for every session whose catalog
+def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None, str]]:
+    """head hash -> (session_uuid, label, first_ts, short) for every session whose catalog
     holds TWO OR MORE versions (W-20260929-A104; ruling: Gavin, option C).
 
     Only those can have lost a same-session capture race, so only those are worth
@@ -125,21 +129,21 @@ def _multi_version_heads(root: Path) -> dict[str, tuple[str, str, str | None]]:
     conn = catalog.open_catalog(root)
     try:
         rows = cast(
-            list[tuple[str, str, str, str | None]],
+            list[tuple[str, str, str, str | None, str]],
             conn.execute(
                 build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
-                + "SELECT hash, session_uuid, label, first_ts FROM ranked WHERE rn = 1"
+                + "SELECT hash, session_uuid, label, first_ts, short FROM ranked WHERE rn = 1"
                 " AND session_uuid IN (SELECT session_uuid FROM session"
                 " WHERE session_uuid IS NOT NULL GROUP BY session_uuid HAVING COUNT(*) >= 2)"
             ).fetchall(),
         )
     finally:
         conn.close()
-    return {row[0]: (row[1], row[2], row[3]) for row in rows}
+    return {row[0]: (row[1], row[2], row[3], row[4]) for row in rows}
 
 
 def _repair_head_jsonl(
-    config: Config, path: Path, head: tuple[str, str, str | None]
+    config: Config, path: Path, head: tuple[str, str, str | None, str]
 ) -> ItemOutcome | None:
     """Put a multi-version session's head payload back when its archive JSONL is
     SHORTER than the source that hashes to that head (W-20260929-A104).
@@ -157,12 +161,22 @@ def _repair_head_jsonl(
 
     if config.archive_root is None:
         return None
-    session_uuid, label, first_ts = head
+    session_uuid, label, first_ts, short = head
+    # One stem rule for every writer and reader (build.session_stem,
+    # W-20261001-A56). The query above only returns uuid-bearing heads, so the
+    # `session-<short>` arm is unreachable here today; spelling the uuid in by
+    # hand was still a second derivation of the same name.
+    stem = build.session_stem(session_uuid, short)
     jsonl = (
         build.archive_dir(
-            config.archive_root, label, first_ts, session_uuid, config.archive_timezone
+            config.archive_root,
+            label,
+            first_ts,
+            session_uuid,
+            config.archive_timezone,
+            fallback_stem=stem,
         )
-        / f"{session_uuid}.jsonl"
+        / f"{stem}.jsonl"
     )
     try:
         data = path.read_bytes()
@@ -171,7 +185,12 @@ def _repair_head_jsonl(
         if not jsonl.is_file() or jsonl.stat().st_size >= len(data):
             return None
         archive.write_source(
-            config.archive_root, label, data, config.archive_timezone, warehouse_root=config.root
+            config.archive_root,
+            label,
+            data,
+            config.archive_timezone,
+            warehouse_root=config.root,
+            fallback_stem=stem,
         )
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"repair: {type(exc).__name__}: {exc}")
@@ -490,7 +509,7 @@ def _log_item_failure(config: Config, path: Path, detail: str) -> None:
         return
 
 
-def _capture_item(config: Config, path: Path) -> ItemOutcome:
+def _capture_item(config: Config, path: Path, guard: "archive.RootGuard") -> ItemOutcome:
     """Hand one path to the shared capture routine (R9) and record its outcome.
 
     capture_transcript itself only guarantees a graceful `error` result for one
@@ -507,16 +526,42 @@ def _capture_item(config: Config, path: Path) -> ItemOutcome:
     `capture_transcript`'s own docstring) used to reach only stderr via the caller's
     `ItemOutcome`, invisible to `capture.jsonl` and therefore to
     `reconcile.find_unrecoverable`. Logged here too, same writer as the raised-exception
-    case just above."""
+    case just above.
+
+    W-20261002-A72: the attempt runs under the root guard, and the failure is
+    logged only once the guard has decided it stands. An attempt that failed
+    because the archive root vanished under it, and then succeeded on the
+    retry, must not sit in `capture.jsonl` as a lost session for
+    `reconcile.find_unrecoverable` to report."""
+    outcome = guard.run(path.name, functools.partial(_capture_attempt, config, path), _is_error)
+    if outcome.action == "error":
+        _log_item_failure(config, path, outcome.detail)
+    return outcome
+
+
+def _capture_attempt(config: Config, path: Path) -> ItemOutcome:
+    """One call into the shared capture routine, any raise turned into an
+    `error` outcome (R10). Logs nothing; `_capture_item` does, once."""
     try:
         result = capture.capture_transcript(config, path, session_id=None, cwd=None)
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
-        detail = f"{type(exc).__name__}: {exc}"
-        _log_item_failure(config, path, detail)
-        return ItemOutcome(path.name, "error", detail)
-    if result.action == "error":
-        _log_item_failure(config, path, result.detail)
+        return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
     return ItemOutcome(path.name, result.action, result.detail)
+
+
+def _is_error(outcome: ItemOutcome | None) -> bool:
+    """The root guard's failure test for an item that reports an outcome."""
+    return outcome is not None and outcome.action == "error"
+
+
+def _subagent_attempt(config: Config, path: Path) -> tuple[ItemOutcome, bool]:
+    """A deferred item: the sub-agent writer, or the ordinary capture when the
+    payload turns out not to be a sub-agent. The flag says which ran, because
+    only the capture path's failures have ever been logged (ticket 42 #3)."""
+    handled = _archive_subagent(config, path)
+    if handled is not None:
+        return handled, False
+    return _capture_attempt(config, path), True
 
 
 def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
@@ -739,8 +784,35 @@ def _log_sidecar_anomaly(
     capture.announce_sidecar_anomaly(config, session_uuid, path.name, scan, refused)
 
 
+class _Progress:
+    """Where a guarded sweep has got to, so a stop can say what it left undone
+    (W-20261002-A72). `left` counts the item in hand and every one after it in
+    the same pass; `unrun` names the passes that never started."""
+
+    PASSES = ("sessions", "sub-agents", "sidecars", "stranded", "history", "orphans")
+
+    def __init__(self) -> None:
+        self.stage = self.PASSES[0]
+        self.total = 0
+        self.index = 0
+
+    def at(self, stage: str, total: int, index: int) -> None:
+        self.stage, self.total, self.index = stage, total, index
+
+    @property
+    def left(self) -> int:
+        return max(0, self.total - self.index)
+
+    def unrun(self) -> tuple[str, ...]:
+        return self.PASSES[self.PASSES.index(self.stage) + 1 :]
+
+
 def _archive_stranded(
-    config: Config, walk_root: Path, known: "dict[str, Path]"
+    config: Config,
+    walk_root: Path,
+    known: "dict[str, Path]",
+    guard: "archive.RootGuard",
+    progress: _Progress,
 ) -> list[ItemOutcome]:
     """Sidecar dirs with no transcript beside them (ruling (d)).
 
@@ -754,53 +826,82 @@ def _archive_stranded(
     the caller and shared with `_process_history` (fix for the "scan once, join
     second" principle `_session_keyed_ids` already documents - this pass and that
     one used to each pay for their own full two-level archive-tree listing).
+
+    Each dir is one item under the root guard (W-20261002-A72). Both lists are
+    drawn from the SOURCE side up front, so a stop can count what is left.
     """
-    from cc_warehouse import archive, sidecars
+    from cc_warehouse import external, sidecars
 
     if config.archive_root is None or not config.archive_tool_results:
         return []
-    wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
+    archive_root = config.archive_root
+    home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
+    history = (
+        list(external.stranded_file_history(home, set(known)))
+        if config.archive_file_history
+        else []
+    )
+    dirs = [d for p in _project_dirs(walk_root) for d in sidecars.stranded_dirs(p)]
+    total = len(history) + len(dirs)
     outcomes: list[ItemOutcome] = []
-    outcomes.extend(_archive_stranded_file_history(config, walk_root, known))
-    for project_dir in _project_dirs(walk_root):
-        for stranded in sidecars.stranded_dirs(project_dir):
-            try:
-                folder = known.get(stranded.name)
-                if folder is not None:
-                    written = sum(
-                        archive.copy_companion_dir(folder, name, stranded / name).written
-                        for name in wanted
-                        if (stranded / name).is_dir()
-                    )
-                    title_file = stranded / archive.CUSTOM_TITLE_FILE
-                    if title_file.is_file() and archive.write_custom_title(
-                        folder, title_file.read_bytes()
-                    ):
-                        written += 1
-                    if written:
-                        outcomes.append(
-                            ItemOutcome(
-                                stranded.name, "archived-sidecars", f"{written} file(s) -> {folder}"
-                            )
-                        )
-                    continue
-                copied = archive.write_stranded_sidecars(config.archive_root, stranded)
-                if copied.written:
-                    outcomes.append(
-                        ItemOutcome(
-                            stranded.name,
-                            "archived-stranded-sidecars",
-                            f"{copied.written} file(s)",
-                        )
-                    )
-            except Exception as exc:  # noqa: BLE001, PERF203 - R10: name it and carry on
-                outcomes.append(ItemOutcome(stranded.name, "error", f"{type(exc).__name__}: {exc}"))
+    for index, stranded in enumerate(history):
+        progress.at("stranded", total, index)
+        outcome = guard.run(
+            stranded.name,
+            functools.partial(_archive_one_stranded_file_history, archive_root, stranded),
+            _is_error,
+        )
+        if outcome is not None:
+            outcomes.append(outcome)
+    for index, stranded in enumerate(dirs, start=len(history)):
+        progress.at("stranded", total, index)
+        outcome = guard.run(
+            stranded.name,
+            functools.partial(_archive_one_stranded, archive_root, stranded, known),
+            _is_error,
+        )
+        if outcome is not None:
+            outcomes.append(outcome)
     return outcomes
 
 
-def _archive_stranded_file_history(
-    config: Config, walk_root: Path, known: "dict[str, Path]"
-) -> list[ItemOutcome]:
+def _archive_one_stranded(
+    archive_root: Path, stranded: Path, known: "dict[str, Path]"
+) -> ItemOutcome | None:
+    """One stranded sidecar dir, into its known session's folder or under
+    `_not-sessions/` (see `_archive_stranded`)."""
+    from cc_warehouse import archive, sidecars
+
+    wanted = sorted(sidecars.SESSION_SIDECARS - {archive.SUBAGENTS_DIR})
+    try:
+        folder = known.get(stranded.name)
+        if folder is not None:
+            written = sum(
+                archive.copy_companion_dir(folder, name, stranded / name).written
+                for name in wanted
+                if (stranded / name).is_dir()
+            )
+            title_file = stranded / archive.CUSTOM_TITLE_FILE
+            if title_file.is_file() and archive.write_custom_title(
+                folder, title_file.read_bytes()
+            ):
+                written += 1
+            if written:
+                return ItemOutcome(
+                    stranded.name, "archived-sidecars", f"{written} file(s) -> {folder}"
+                )
+            return None
+        copied = archive.write_stranded_sidecars(archive_root, stranded)
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return ItemOutcome(stranded.name, "error", f"{type(exc).__name__}: {exc}")
+    if copied.written:
+        return ItemOutcome(
+            stranded.name, "archived-stranded-sidecars", f"{copied.written} file(s)"
+        )
+    return None
+
+
+def _archive_one_stranded_file_history(archive_root: Path, stranded: Path) -> ItemOutcome | None:
     """Snapshots whose session the archive does not hold (39b, 42 of the live 1,056).
 
     Their session left `~/.claude/projects` before the archive ever saw it, so
@@ -809,31 +910,25 @@ def _archive_stranded_file_history(
     never used to invent a session folder - the same call ticket 38's ruling (d)
     made, for the same reason.
     """
-    from cc_warehouse import archive, external
+    from cc_warehouse import archive
 
-    if config.archive_root is None or not config.archive_file_history:
-        return []
-    home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
-    outcomes: list[ItemOutcome] = []
-    for stranded in external.stranded_file_history(home, set(known)):
-        try:
-            copied = archive.write_stranded_file_history(config.archive_root, stranded)
-        except Exception as exc:  # noqa: BLE001, PERF203 - R10: name it and carry on
-            outcomes.append(ItemOutcome(stranded.name, "error", f"{type(exc).__name__}: {exc}"))
-            continue
-        if copied.written:
-            outcomes.append(
-                ItemOutcome(
-                    stranded.name,
-                    "archived-stranded-file-history",
-                    f"{copied.written} file(s)",
-                )
-            )
-    return outcomes
+    try:
+        copied = archive.write_stranded_file_history(archive_root, stranded)
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return ItemOutcome(stranded.name, "error", f"{type(exc).__name__}: {exc}")
+    if copied.written:
+        return ItemOutcome(
+            stranded.name, "archived-stranded-file-history", f"{copied.written} file(s)"
+        )
+    return None
 
 
 def _process_history(
-    config: Config, walk_root: Path, known: "dict[str, Path]"
+    config: Config,
+    walk_root: Path,
+    known: "dict[str, Path]",
+    guard: "archive.RootGuard",
+    progress: _Progress,
 ) -> list[ItemOutcome]:
     """Protect, split and gather from `~/.claude/history.jsonl`, once per run
     (39c/39d/39e).
@@ -870,54 +965,110 @@ def _process_history(
     fixed later precisely because the snapshot is never touched. The
     paste-cache gather has the SAME "no matching folder, silently skipped"
     behaviour, for the same reason.
+
+    W-20261002-A72: the snapshot, each session's prompts and each session's
+    pastes are one item each under the root guard. A write that raises is now a
+    named `error` item (R10) rather than an exception out of the whole sweep,
+    because the guard can only retry a failure it is shown.
     """
     from cc_warehouse import archive, external
 
     if config.archive_root is None or not config.archive_history_prompts:
         return []
+    archive_root = config.archive_root
     home = external.home_for_transcript(walk_root / "x" / "y.jsonl")
     try:
         data = (home / "history.jsonl").read_bytes()
     except OSError:
         return []
 
+    prompts = [
+        (uuid, lines, known[uuid])
+        for uuid, lines in archive.split_history_by_session(data).items()
+        if uuid in known
+    ]
+    pastes = [
+        (uuid, hashes, known[uuid])
+        for uuid, hashes in archive.paste_hashes_by_session(data).items()
+        if uuid in known
+    ]
+    total = 1 + len(prompts) + len(pastes)
     outcomes: list[ItemOutcome] = []
-    target = archive.history_snapshot_path(config.archive_root, data)
-    if not target.is_file():
-        archive.write_history_snapshot(config.archive_root, data)
-        outcomes.append(ItemOutcome("history.jsonl", "archived-history-snapshot", str(target)))
+    progress.at("history", total, 0)
+    snapshot = guard.run(
+        "history.jsonl", functools.partial(_snapshot_history, archive_root, data), _is_error
+    )
+    if snapshot is not None:
+        outcomes.append(snapshot)
+    for index, (uuid, lines, folder) in enumerate(prompts, start=1):
+        progress.at("history", total, index)
+        written = guard.run(uuid, functools.partial(_write_prompts, uuid, folder, lines), _is_error)
+        if written is not None:
+            outcomes.append(written)
+    for index, (uuid, hashes, folder) in enumerate(pastes, start=1 + len(prompts)):
+        progress.at("history", total, index)
+        outcomes.extend(
+            guard.run(
+                uuid,
+                functools.partial(_paste_item, config, folder, home, uuid, hashes),
+                _any_error,
+            )
+        )
+    return outcomes
 
-    for uuid, lines in archive.split_history_by_session(data).items():
-        folder = known.get(uuid)
-        if folder is None:
-            continue
-        try:
-            changed = archive.write_prompts(folder, lines)
-        except OSError as exc:  # noqa: PERF203 - R10: name it and carry on
-            outcomes.append(ItemOutcome(uuid, "error", f"{type(exc).__name__}: {exc}"))
-            continue
-        if changed:
-            outcomes.append(ItemOutcome(uuid, "archived-prompts", str(folder)))
 
-    for uuid, hashes in archive.paste_hashes_by_session(data).items():
-        folder = known.get(uuid)
-        if folder is None:
-            continue
+def _any_error(outcomes: "list[ItemOutcome]") -> bool:
+    return any(outcome.action == "error" for outcome in outcomes)
+
+
+def _snapshot_history(archive_root: Path, data: bytes) -> ItemOutcome | None:
+    """The whole-file `history.jsonl` snapshot (39c), when these bytes lack one."""
+    from cc_warehouse import archive
+
+    target = archive.history_snapshot_path(archive_root, data)
+    try:
+        if target.is_file():
+            return None
+        archive.write_history_snapshot(archive_root, data)
+    except OSError as exc:
+        return ItemOutcome("history.jsonl", "error", f"{type(exc).__name__}: {exc}")
+    return ItemOutcome("history.jsonl", "archived-history-snapshot", str(target))
+
+
+def _write_prompts(uuid: str, folder: Path, lines: bytes) -> ItemOutcome | None:
+    """One session's `prompts.jsonl` (39d)."""
+    from cc_warehouse import archive
+
+    try:
+        changed = archive.write_prompts(folder, lines)
+    except OSError as exc:
+        return ItemOutcome(uuid, "error", f"{type(exc).__name__}: {exc}")
+    return ItemOutcome(uuid, "archived-prompts", str(folder)) if changed else None
+
+
+def _paste_item(
+    config: Config, folder: Path, home: Path, uuid: str, hashes: "frozenset[str]"
+) -> list[ItemOutcome]:
+    """One session's paste-cache gather (39e), as up to two outcomes."""
+    try:
         written, missing, refused = _gather_pastes(config, folder, home, uuid, hashes)
-        if written:
-            detail = f"{written} file(s) -> {folder}"
-            if missing:
-                detail += f", {missing} missing"
-            outcomes.append(ItemOutcome(uuid, "archived-pastes", detail))
-        elif missing:
-            detail = f"{missing} hash(es) missing from paste-cache"
-            outcomes.append(ItemOutcome(uuid, "pastes-missing", detail))
-        # A SEPARATE outcome, appended IN ADDITION to whichever of the two
-        # above fired: a session can have some pastes written, some missing
-        # from paste-cache, and some refused as a collision, all in the same
-        # run, and none of the three should suppress another (F6).
-        if refused:
-            outcomes.append(ItemOutcome(uuid, "pastes-refused", f"{refused} paste(s) refused"))
+    except OSError as exc:
+        return [ItemOutcome(uuid, "error", f"{type(exc).__name__}: {exc}")]
+    outcomes: list[ItemOutcome] = []
+    if written:
+        detail = f"{written} file(s) -> {folder}"
+        if missing:
+            detail += f", {missing} missing"
+        outcomes.append(ItemOutcome(uuid, "archived-pastes", detail))
+    elif missing:
+        detail = f"{missing} hash(es) missing from paste-cache"
+        outcomes.append(ItemOutcome(uuid, "pastes-missing", detail))
+    # A SEPARATE outcome, appended IN ADDITION to whichever of the two
+    # above fired: a session can have some pastes written, some missing
+    # from paste-cache, and some refused as a collision, all in the same
+    # run, and none of the three should suppress another (F6).
+    if refused:
+        outcomes.append(ItemOutcome(uuid, "pastes-refused", f"{refused} paste(s) refused"))
     return outcomes
 
 
@@ -1183,6 +1334,12 @@ def sweep(
         )
         already_known = _cataloged_hashes(config.root)
         repair_heads = _multi_version_heads(config.root) if config.archive_root else {}
+        # W-20261002-A72: every item that WRITES into the archive goes through
+        # the root guard, which pauses the run while the share is away instead
+        # of failing every item after it. Items that write nothing (the
+        # `skipped_unchanged` ~30k a night) never pay for the check.
+        guard = archive.RootGuard(config, "sweep")
+        progress = _Progress()
         # TWO PASSES, and the order is load-bearing. A sub-agent nests inside
         # its parent's folder, so the parent has to exist first; a single pass in
         # filename order files most sub-agents as orphans purely because they
@@ -1191,63 +1348,109 @@ def sweep(
         deferred: list[Path] = []
         skipped = 0
         skip_elapsed_ms = 0
-        for path in wanted:
-            start = time.monotonic()
-            digest = _content_hash(path)
-            if digest is not None and digest in already_known:
-                outcomes.append(ItemOutcome(path.name, "skipped_unchanged", ""))
-                skipped += 1
-                skip_elapsed_ms += _elapsed_ms(start)
-                if digest in repair_heads:
-                    repaired = _repair_head_jsonl(config, path, repair_heads[digest])
-                    if repaired is not None:
-                        outcomes.append(repaired)
-                continue
-            if _is_subagent_file(path):
-                deferred.append(path)
-                continue
-            outcomes.append(_capture_item(config, path))
-        for path in deferred:
-            handled = _archive_subagent(config, path)
-            outcomes.append(handled if handled is not None else _capture_item(config, path))
-        # PASS THREE (ticket 38), over EVERY session path the walk yielded,
-        # including the ones the pre-filter reported `skipped_unchanged`. A
-        # sidecar can arrive after the last capture with the transcript's hash
-        # unchanged, so a pass that only looked at newly stored sessions would
-        # never see it - which is exactly how 1,067 directories went uncopied for
-        # four months. Runs LAST because a sidecar nests inside its session's
-        # folder and the folder has to exist first (ticket 21.4's lesson).
-        names_by_dir: dict[Path, frozenset[str]] = {}
-        keyed = _session_keyed_ids(walk_root)
-        for path in wanted:
-            names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
-            if not _sidecar_candidate(path, names, keyed):
-                continue
-            handled = _archive_sidecars(config, path)
-            if handled is not None:
-                outcomes.append(handled)
-        # SCAN ONCE, JOIN TWICE: `_archive_stranded` and `_process_history` both
-        # need "every archived session's uuid mapped to its folder", so it is
-        # read here, once, instead of each pass paying for its own full
-        # two-level archive-tree listing.
-        known = (
-            _archived_session_folders(config.archive_root)
-            if config.archive_root is not None
-            else {}
-        )
-        outcomes.extend(_archive_stranded(config, walk_root, known))
-        # ONE READ, WHOLE-MACHINE (ticket 39c/39d). `history.jsonl` is not
-        # session-keyed like everything above it: it is read once here, after
-        # every session folder above already exists, so the per-session split
-        # has somewhere to write.
-        outcomes.extend(_process_history(config, walk_root, known))
-        cataloged = _cataloged_hashes(config.root)
-        outcomes.extend(
-            _capture_item(config, path)
-            for path in _orphan_object_paths(config.root, cataloged)
-        )
+        try:
+            for index, path in enumerate(wanted):
+                progress.at("sessions", len(wanted), index)
+                start = time.monotonic()
+                digest = _content_hash(path)
+                if digest is not None and digest in already_known:
+                    outcomes.append(ItemOutcome(path.name, "skipped_unchanged", ""))
+                    skipped += 1
+                    skip_elapsed_ms += _elapsed_ms(start)
+                    if digest in repair_heads:
+                        repaired = guard.run(
+                            path.name,
+                            functools.partial(
+                                _repair_head_jsonl, config, path, repair_heads[digest]
+                            ),
+                            _is_error,
+                        )
+                        if repaired is not None:
+                            outcomes.append(repaired)
+                    continue
+                if _is_subagent_file(path):
+                    deferred.append(path)
+                    continue
+                outcomes.append(_capture_item(config, path, guard))
+            for index, path in enumerate(deferred):
+                progress.at("sub-agents", len(deferred), index)
+                outcome, via_capture = guard.run(
+                    path.name, functools.partial(_subagent_attempt, config, path), _subagent_failed
+                )
+                if via_capture and outcome.action == "error":
+                    _log_item_failure(config, path, outcome.detail)
+                outcomes.append(outcome)
+            # PASS THREE (ticket 38), over EVERY session path the walk yielded,
+            # including the ones the pre-filter reported `skipped_unchanged`. A
+            # sidecar can arrive after the last capture with the transcript's hash
+            # unchanged, so a pass that only looked at newly stored sessions would
+            # never see it - which is exactly how 1,067 directories went uncopied
+            # for four months. Runs LAST because a sidecar nests inside its
+            # session's folder and the folder has to exist first (ticket 21.4's
+            # lesson).
+            names_by_dir: dict[Path, frozenset[str]] = {}
+            keyed = _session_keyed_ids(walk_root)
+            for index, path in enumerate(wanted):
+                progress.at("sidecars", len(wanted), index)
+                names = names_by_dir.setdefault(path.parent, _sidecar_dir_names(path.parent))
+                if not _sidecar_candidate(path, names, keyed):
+                    continue
+                handled = guard.run(
+                    path.name, functools.partial(_archive_sidecars, config, path), _is_error
+                )
+                if handled is not None:
+                    outcomes.append(handled)
+            # SCAN ONCE, JOIN TWICE: `_archive_stranded` and `_process_history`
+            # both need "every archived session's uuid mapped to its folder", so
+            # it is read here, once, instead of each pass paying for its own full
+            # two-level archive-tree listing.
+            progress.at("stranded", 0, 0)
+            known = _known_folders(config, guard)
+            outcomes.extend(_archive_stranded(config, walk_root, known, guard, progress))
+            # ONE READ, WHOLE-MACHINE (ticket 39c/39d). `history.jsonl` is not
+            # session-keyed like everything above it: it is read once here, after
+            # every session folder above already exists, so the per-session split
+            # has somewhere to write.
+            progress.at("history", 0, 0)
+            outcomes.extend(_process_history(config, walk_root, known, guard, progress))
+            progress.at("orphans", 0, 0)
+            orphans = _orphan_object_paths(config.root, _cataloged_hashes(config.root))
+            for index, path in enumerate(orphans):
+                progress.at("orphans", len(orphans), index)
+                outcomes.append(_capture_item(config, path, guard))
+        except archive.RootLost:
+            # The root did not come back within the cap: ONE outcome for the
+            # whole stop, never a failure per item it left (the ruling).
+            left = progress.left + (len(deferred) if progress.stage == "sessions" else 0)
+            outcomes.append(guard.lost_outcome(left, progress.unrun()))
+        outcomes.extend(guard.pauses)
         if skipped:
             _record_sweep_unchanged(config.root, skipped, skip_elapsed_ms)
         return BatchReport(tuple(outcomes))
     finally:
         store.release_lock(config.root, _SWEEP_LOCK)
+
+
+def _subagent_failed(result: tuple[ItemOutcome, bool]) -> bool:
+    return result[0].action == "error"
+
+
+def _known_folders(config: Config, guard: "archive.RootGuard") -> dict[str, Path]:
+    """`_archived_session_folders`, taken while the root is proven.
+
+    A listing taken while the share is away is empty or partial, and the
+    stranded pass would then file a KNOWN session's sidecars under
+    `_not-sessions/`. So the listing is one guarded item whose result is always
+    re-checked: when the root is gone right after it, the guard waits and lists
+    again (W-20261002-A72)."""
+    if config.archive_root is None:
+        return {}
+    return guard.run(
+        "the archive listing",
+        functools.partial(_archived_session_folders, config.archive_root),
+        _always_recheck,
+    )
+
+
+def _always_recheck(_listing: object) -> bool:
+    return True

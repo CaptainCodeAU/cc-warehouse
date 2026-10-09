@@ -59,7 +59,10 @@ def machinery_only(uuid: str) -> bytes:
 
 def test_the_folder_holds_the_jsonl_beside_its_five_projections(tmp_path: Path) -> None:
     data = session_with(UUID_A)
-    result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     names = {p.name for p in result.directory.iterdir()}
     assert names == {f"{UUID_A}.jsonl", *archive.GENERATED_NAMES}
     assert result.directory.parent.name == LABEL
@@ -70,14 +73,20 @@ def test_the_archived_jsonl_is_byte_identical_to_the_source(tmp_path: Path) -> N
     """The whole point of the redesign: the raw session is a REAL file in the
     folder, not a re-serialization of it."""
     data = session_with(UUID_A)
-    result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.jsonl.read_bytes() == data
     assert store.sha256_hex(result.jsonl.read_bytes()) == store.sha256_hex(data)
 
 
 def test_the_manifest_source_hash_matches_the_archived_jsonl(tmp_path: Path) -> None:
     data = session_with(UUID_A)
-    result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["source_hash"] == store.sha256_hex(data)
 
@@ -87,7 +96,10 @@ def test_a_conversation_free_session_is_archived_without_projections(tmp_path: P
     single "skip anything with no conversation" rule was MEASURED before
     adoption and would have discarded all 139, which is why emptiness and
     is-this-a-session are two questions here, not one."""
-    result = archive.write_session_folder(tmp_path, LABEL, machinery_only(UUID_A), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, machinery_only(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.jsonl.exists()
     assert not result.wrote_projections
     names = {p.name for p in result.directory.iterdir()}
@@ -121,8 +133,8 @@ def test_a_larger_payload_replaces_in_place_and_the_folder_name_holds(
             session_id=UUID_A,
         )
     )
-    one = archive.write_session_folder(tmp_path, LABEL, first, OPTS, ZONE)
-    two = archive.write_session_folder(tmp_path, LABEL, grown, OPTS, ZONE)
+    one = archive.write_session_folder(tmp_path, LABEL, first, OPTS, ZONE, fallback_stem="session")
+    two = archive.write_session_folder(tmp_path, LABEL, grown, OPTS, ZONE, fallback_stem="session")
     assert two.directory == one.directory
     assert two.replaced
     assert two.jsonl.read_bytes() == grown
@@ -135,8 +147,11 @@ def test_a_smaller_payload_is_refused_and_the_refusal_is_recorded(tmp_path: Path
         entry("assistant", [{"type": "text", "text": "More."}], "2026-05-07T04:00:00.000Z",
               session_id=UUID_A)
     )
-    archive.write_session_folder(tmp_path, LABEL, full, OPTS, ZONE)
-    result = archive.write_session_folder(tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE)
+    archive.write_session_folder(tmp_path, LABEL, full, OPTS, ZONE, fallback_stem="session")
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert result.refused_smaller
     assert result.jsonl.read_bytes() == full
     manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
@@ -156,8 +171,11 @@ def test_an_equal_size_content_mismatch_is_refused_and_recorded(tmp_path: Path) 
     assert len(offered) == len(archived), "fixture precondition: equal length"
     assert offered != archived, "fixture precondition: different content"
 
-    archive.write_session_folder(tmp_path, LABEL, archived, OPTS, ZONE)
-    result = archive.write_session_folder(tmp_path, LABEL, offered, OPTS, ZONE)
+    archive.write_session_folder(tmp_path, LABEL, archived, OPTS, ZONE, fallback_stem="session")
+    result = archive.write_session_folder(
+        tmp_path, LABEL, offered, OPTS, ZONE,
+        fallback_stem="session",
+    )
 
     assert result.refused_equal_size
     assert not result.refused_smaller
@@ -176,9 +194,12 @@ def test_re_writing_an_identical_payload_leaves_the_jsonl_untouched(tmp_path: Pa
     that churns mtimes for nothing would make a backup tool think every session
     changed."""
     data = session_with(UUID_A)
-    first = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    first = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE, fallback_stem="session")
     before = first.jsonl.stat().st_mtime_ns
-    second = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    second = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert second.jsonl.stat().st_mtime_ns == before
     assert not second.replaced
     assert not second.refused_smaller
@@ -215,9 +236,12 @@ def test_rewriting_a_folder_never_removes_the_jsonl(tmp_path: Path) -> None:
     """The behavioural half of the rule above, because a static fence proves the
     call is absent and this proves the outcome."""
     data = session_with(UUID_A)
-    result = archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, data, OPTS, ZONE,
+        fallback_stem="session",
+    )
     for _ in range(3):
-        archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE)
+        archive.write_session_folder(tmp_path, LABEL, data, OPTS, ZONE, fallback_stem="session")
     assert result.jsonl.exists()
     assert result.jsonl.read_bytes() == data
 
@@ -380,21 +404,30 @@ def test_migration_never_permanently_fails_a_row_with_no_session_identity(
 
 
 def test_verify_passes_a_freshly_written_folder(tmp_path: Path) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
     assert archive.verify_folder(result.directory, ZONE) == []
 
 
 def test_verify_fails_a_folder_whose_jsonl_no_longer_matches_its_manifest(
     tmp_path: Path,
 ) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
     store.atomic_write(result.jsonl, session_with(UUID_A, prompt="TAMPERED"))
     problems = [p.problem for p in archive.verify_folder(result.directory, ZONE)]
     assert any("source_hash" in p for p in problems), problems
 
 
 def test_verify_fails_a_folder_missing_any_generated_file(tmp_path: Path) -> None:
-    result = archive.write_session_folder(tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
     (result.directory / "conversation.html").rename(tmp_path / "moved-away.html")
     problems = [p.problem for p in archive.verify_folder(result.directory, ZONE)]
     assert any("conversation.html" in p for p in problems), problems
@@ -405,7 +438,10 @@ def test_verify_fails_a_folder_whose_name_disagrees_with_its_payload(
 ) -> None:
     """The check that catches a hand-renamed folder, which is the one way an
     archive can lie about when something happened."""
-    result = archive.write_session_folder(tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE)
+    result = archive.write_session_folder(
+        tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
     wrong = result.directory.parent / f"19990101-000000+1000_{UUID_A}"
     result.directory.rename(wrong)
     problems = [p.problem for p in archive.verify_folder(wrong, ZONE)]
@@ -422,8 +458,14 @@ def test_verify_reports_a_folder_with_no_jsonl_at_all(tmp_path: Path) -> None:
 def test_walk_folders_finds_every_session_and_skips_reserved_names(
     tmp_path: Path,
 ) -> None:
-    archive.write_session_folder(tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE)
-    archive.write_session_folder(tmp_path, "other", session_with(UUID_B), OPTS, ZONE)
+    archive.write_session_folder(
+        tmp_path, LABEL, session_with(UUID_A), OPTS, ZONE,
+        fallback_stem="session",
+    )
+    archive.write_session_folder(
+        tmp_path, "other", session_with(UUID_B), OPTS, ZONE,
+        fallback_stem="session",
+    )
     (tmp_path / "locks").mkdir()
     (tmp_path / "catalog.sqlite").write_bytes(b"not a project")
     found = list(archive.walk_folders(tmp_path))

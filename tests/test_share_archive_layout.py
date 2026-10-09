@@ -101,7 +101,7 @@ def test_a_shared_session_dir_uses_the_archive_folder_name(
 
     dirs = shared_dirs(out)
     assert len(dirs) == 1, dirs
-    assert dirs[0].name == archive_folder_name(FIRST_TS, UUID_A, ZONE)
+    assert dirs[0].name == archive_folder_name(FIRST_TS, UUID_A, ZONE, fallback_stem="session")
 
 
 def test_the_old_projection_naming_is_gone(
