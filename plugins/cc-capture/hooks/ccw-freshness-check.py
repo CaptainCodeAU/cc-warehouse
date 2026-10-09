@@ -595,7 +595,48 @@ def job_exit_codes() -> dict[str, int | None]:
     return {label: _job_last_exit(label) for label in _WATCHED_JOBS}
 
 
-def job_message(label: str, code: int, broken_for_s: float) -> str:
+# `cli._log_run_summary`'s completed-sweep line: "sweep: N items, ..., K failed".
+_SWEEP_SUMMARY = re.compile(r"^sweep: (\d+) items, .*?(\d+) failed")
+
+
+def latest_sweep_outcome(capture_log: Path) -> tuple[int, int, datetime] | None:
+    """(failed, items, finished_at) of the newest completed sweep, or None when
+    there is none, the log cannot be read, or a sweep has started since (so the
+    newest summary is the previous run's and cannot explain the current exit
+    code). Pairs lines in file order, as `ccw doctor` does: the log is
+    append-only (W-20261010-A02)."""
+    try:
+        lines = capture_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    outcome: tuple[int, int, datetime] | None = None
+    for line in lines:
+        if '"sweep' not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        message = record.get("message")
+        if record.get("status") == "sweep-started":
+            outcome = None
+            continue
+        match = _SWEEP_SUMMARY.match(message) if isinstance(message, str) else None
+        at = _parse_ts(record.get("at"))
+        if match and at is not None:
+            outcome = (int(match.group(2)), int(match.group(1)), at)
+    return outcome
+
+
+def job_message(
+    label: str,
+    code: int,
+    broken_for_s: float,
+    outcome: tuple[int, int, datetime] | None = None,
+    capture_log: Path | None = None,
+) -> str:
     """The line for one failing scheduled job, tiered on how long it has been
     seen failing. `ccw doctor` does not check these jobs at all, so this is
     the only place that would have caught the real archive-job incident this
@@ -603,8 +644,23 @@ def job_message(label: str, code: int, broken_for_s: float) -> str:
     desktop and voice, at every session start until fixed; sent back
     2026-09-29 it runs the same clock and dedup as the doctor verdict,
     because `ccw repair` exiting 1 for a day would otherwise speak at every
-    start of that day."""
+    start of that day.
+
+    W-20261010-A02: when the sweep's newest run finished with failed items,
+    say that, with the count and capture.jsonl, instead of "has been failing
+    for": on 2026-10-09 that wording sent a session to the launchd log, whose
+    untimestamped tail was a 2 Oct outage, for a run with 1 of 30,981 failed."""
     lasted = _duration(broken_for_s)
+    tier = _tier(broken_for_s)
+    if label.endswith("ccw-sweep") and outcome is not None and outcome[0] > 0:
+        failed, items, at = outcome
+        when = at.astimezone().strftime("%-I:%M %p %a %-d %b")
+        body = (
+            f"ccw-sweep's last run finished {when} with {failed} of {items} item(s) "
+            f"failed (exit {code}, first seen {lasted} ago). Which items and why: "
+            f"{capture_log if capture_log is not None else 'capture.jsonl'}."
+        )
+        return ("cc-warehouse: ", "cc-warehouse: WARNING - ", "cc-warehouse: ALERT - ")[tier] + body
     return (
         f"cc-warehouse: scheduled job failing: {label} (exit {code}), first seen "
         f"{lasted} ago. Check its log under ~/.claude/logs/.",
@@ -612,7 +668,7 @@ def job_message(label: str, code: int, broken_for_s: float) -> str:
         f"{lasted} (exit {code}). Check its log under ~/.claude/logs/.",
         f"cc-warehouse: ALERT - scheduled job {label} has been failing for "
         f"{lasted} (exit {code}). Check its log under ~/.claude/logs/ now.",
-    )[_tier(broken_for_s)]
+    )[tier]
 
 
 def extract_root(doctor_output: str) -> Path | None:
@@ -890,7 +946,7 @@ def _check(executable: str, started: datetime, lock_fd: int | None) -> int:
         lines.append(message)
 
     lines += _unknown_notice(prev, now, unreachable is not None, updates)
-    lines += _job_lines(prev, now, updates)
+    lines += _job_lines(prev, now, updates, result.stdout if result is not None else None)
     lines += _refusal_lines(prev, now, updates, result.stdout if result is not None else None)
     updates["last_lines"] = lines
     _write_state(STATE_PATH, updates, drop=("consecutive_broken",))
@@ -899,7 +955,12 @@ def _check(executable: str, started: datetime, lock_fd: int | None) -> int:
     return 0
 
 
-def _job_lines(prev: dict[str, object], now: datetime, updates: dict[str, object]) -> list[str]:
+def _job_lines(
+    prev: dict[str, object],
+    now: datetime,
+    updates: dict[str, object],
+    doctor_output: str | None = None,
+) -> list[str]:
     """Each failing watched job on its own clock, from when this hook first
     saw it failing, with its own one-alert-per-tier dedup. A job seen exiting
     0 clears; a job launchctl could not answer about keeps its period."""
@@ -907,6 +968,8 @@ def _job_lines(prev: dict[str, object], now: datetime, updates: dict[str, object
         codes = job_exit_codes()
     except Exception:  # noqa: BLE001 - must never fail session start
         codes = {}
+    capture_log = _warehouse_root(doctor_output) / "logs" / "capture.jsonl"
+    outcome = latest_sweep_outcome(capture_log) if any(codes.values()) else None
     old = prev.get("jobs")
     jobs: dict[str, object] = dict(old) if isinstance(old, dict) else {}
     lines: list[str] = []
@@ -922,7 +985,7 @@ def _job_lines(prev: dict[str, object], now: datetime, updates: dict[str, object
         since = since or now
         broken_for = max(0.0, (now - since).total_seconds())
         tier = _tier(broken_for)
-        message = job_message(label, code, broken_for)
+        message = job_message(label, code, broken_for, outcome, capture_log)
         _raise(tier, message, tier > alerted)
         jobs[label] = {"since": since.isoformat(), "exit": code, "alerted_tier": max(alerted, tier)}
         lines.append(message)
