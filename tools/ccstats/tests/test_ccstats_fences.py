@@ -65,7 +65,7 @@ def test_derive_label_matches_the_real_one(path: str) -> None:
 # could.
 
 SHARED = {
-    "DEFAULT_OUT", "REPO_ROOT", "ARCHIVE", "LIVE", "CATALOG", "HOME",
+    "DEFAULT_OUT", "REPO_ROOT", "ARCHIVE", "DATA_ROOT", "LIVE", "CATALOG", "HOME",
     "COST_NOTE", "IDLE_GAP_SECONDS", "DAY_SECONDS",
 }
 

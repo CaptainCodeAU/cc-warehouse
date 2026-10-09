@@ -40,24 +40,29 @@ from pathlib import Path
 HOME = Path.home()
 
 
-def _archive_root() -> Path:
-    """The live archive_root from ccw's own config, falling back to the historical
-    default. Ticket 44 moved the archive onto a network share, so a hard-coded
-    HOME path would have read a frozen copy from then on."""
+def _warehouse_paths() -> tuple[Path, Path]:
+    """The data root and archive_root from ccw's own config, with NO fallback.
+
+    Ticket 44 moved the archive onto a network share and left the old local
+    tree frozen, so a hard-coded HOME fallback would silently read that frozen
+    copy (or, once it is removed, report an empty archive). Stopping with a
+    clear message is the only answer that cannot be quietly wrong."""
     try:
         from cc_warehouse.config import load_config
 
-        root = load_config().archive_root
-        if root is not None:
-            return root
-    except Exception:  # noqa: BLE001 - a stats tool must not die on a config problem
-        pass
-    return HOME / "cc-warehouse-archive"
+        config = load_config()
+    except Exception as exc:  # noqa: BLE001 - reported, then stop
+        raise SystemExit(f"ccstats: could not load ccw's config ({exc}); run `ccw doctor`") from exc
+    if config.archive_root is None:
+        raise SystemExit(
+            "ccstats: ccw's config sets no archive_root (or could not be read); run `ccw doctor`"
+        )
+    return config.root, config.archive_root
 
 
-ARCHIVE = _archive_root()
+DATA_ROOT, ARCHIVE = _warehouse_paths()
 LIVE = HOME / ".claude" / "projects"
-CATALOG = HOME / "cc-warehouse-data" / "catalog.sqlite"
+CATALOG = DATA_ROOT / "catalog.sqlite"
 
 # Where generated files land when nothing overrides it. Outside the repo (a
 # tracked folder inside the repo is a second publication surface, see
@@ -75,7 +80,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _FENCED_ROOTS: tuple[tuple[str, Path], ...] = (
     ("~/.claude (never touched by anything, ever)", HOME / ".claude"),
     ("the archive", ARCHIVE),
-    ("the warehouse data root", HOME / "cc-warehouse-data"),
+    ("the warehouse data root", DATA_ROOT),
     ("this repository", REPO_ROOT),
 )
 

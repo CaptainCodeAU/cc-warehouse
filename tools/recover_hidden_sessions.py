@@ -23,8 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from cc_warehouse import catalog, config, parser  # noqa: E402
 
-# Ticket 44: the live archive_root from config, not a hard-coded HOME path.
-ARCHIVE_ROOT = config.load_config().archive_root or Path.home() / "cc-warehouse-archive"
+# Ticket 44: the live archive_root from config, with no HOME fallback (the old
+# local tree is frozen; guessing it would read stale folders).
+_archive_root = config.load_config().archive_root
+if _archive_root is None:
+    sys.exit("recover_hidden_sessions: ccw's config sets no archive_root; run `ccw doctor`")
+ARCHIVE_ROOT: Path = _archive_root
 CCW_BIN = Path.home() / ".local" / "bin" / "ccw"
 
 
