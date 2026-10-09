@@ -362,7 +362,8 @@ def test_a_currency_check_that_raises_in_a_worker_fails_only_its_own_head(
 
     failed = {o.item for o in report.outcomes if o.action == "error"}
     assert len(failed) == 2, report.outcomes
-    assert all(o.detail == "OSError: Host is down" for o in report.failures)
+    # A43: the detail now ends with "(at <file>:<line> in <func>...)".
+    assert all(o.detail.startswith("OSError: Host is down (at ") for o in report.failures)
     assert sum(o.action == build.UNCHANGED for o in report.outcomes) == len(UUIDS) - 2
     assert threads == [False, False], "the raise did not happen in a worker thread"
 

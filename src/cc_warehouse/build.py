@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cc_warehouse import catalog, parallel, render, store
 from cc_warehouse.config import Config
-from cc_warehouse.reports import BatchReport, ItemOutcome
+from cc_warehouse.reports import BatchReport, ItemOutcome, describe_failure
 
 if TYPE_CHECKING:
     from cc_warehouse import archive
@@ -938,4 +938,4 @@ def _build_head(
             return
         outcomes.append(ItemOutcome(head.short, "built", ""))
     except Exception as exc:  # report and continue past a bad item (R10)
-        outcomes.append(ItemOutcome(head.short, "error", f"{type(exc).__name__}: {exc}"))
+        outcomes.append(ItemOutcome(head.short, "error", describe_failure(exc)))
