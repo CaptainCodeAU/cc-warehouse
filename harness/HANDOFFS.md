@@ -23,6 +23,37 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-sixth handoff, 2026-10-10 (every scheduled job logs its start, end, time and work)
+
+Session ac12d9f5 built W-20261010-A12 test-first, on Gavin's rulings Q9-Q11 plus six more
+given in this session.
+
+- Step 0, before any code: a control-proven census (census.py, every root's control hit)
+  over ~/CODE, ~/.local/bin, ~/.config, ~/Library/LaunchAgents, the plugin caches and
+  ~/.claude (read only) found NO live code reading the old `~/.claude/logs/ccw-*.log`; the
+  only writers are the three plists, already on the new paths. The hook's "Check its log
+  under ~/.claude/logs/" line was the one live pointer. Three docs updated on Gavin's OK.
+- `71d5aec`: start record and timed summary for sweep, repair and archive; one dated
+  12-hour line per run, kept under `--quiet` (ruling); archive may append its two lines to
+  the warehouse log (ruling, reversing ticket 42 #2's exclusion); hook caps a finished
+  sweep with failed items at WARNING (Q10) and names the launchctl log path.
+- Five review agents then probed 71d5aec in scratch copies. Real bugs, all mine: the cap
+  softened a sweep refused for a missing share (logged as "1 items, 0 stored, 1 failed"),
+  vanished mid-run, and trusted a days-old summary. `a45a378` fixed those, made every
+  refusal and crash leave a start, an end and the dated line (ruling), added doctor
+  `repair`/`archive` started-never-finished lines (ruling), and corrected the "exactly
+  two lines" claim (archive already wrote `writer-held` lines).
+- Both pushed; `ccw` reinstalled frozen 0.1.4 (installed files byte-identical to repo);
+  cc-capture updated to a45a378 by Gavin. Gates at a45a378: ruff clean, pyright 0 errors,
+  2132 passed.
+- Repair proven LIVE (kickstarted on Gavin's word, 6:35 AM): `repair-started`, then
+  `repair-summary` with elapsed_ms 50313 and 25 checked, and the dated line
+  `6:36 AM Sat 10 Oct: repair: 25 checked, ... took 50 s`; exit 0.
+- Rulings recorded: DESIGN 15 (two entries), D-20261010-A03 (commit the companion's job
+  logs at each wrap-up). Filed W-20261010-A18; closed W-20261010-A19.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-fifth handoff, 2026-10-10 early hours (the job files and their logs move into the private companion)
 
 Same session 1a991ede, after its first wrap-up; every step on Gavin's numbered answers
