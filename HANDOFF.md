@@ -27,8 +27,6 @@ control-proven search for anything still reading the three logs at their OLD pat
 - W-20260930-A59: which test makes a .jsonl a session. "Re-measure, then decide".
 - W-20260929-A28: deleting the local archive `~/cc-warehouse-archive` is his hand only.
 - W-20261009-A04: proxmox-expert reads the Samba log at the two Errno 22 times; warn first.
-- Global record #1306 (lesson: list assumptions, get confirmation) is a draft until he
-  runs `engage-go record approve-ruling` on it.
 
 ## Waiting on real events
 
