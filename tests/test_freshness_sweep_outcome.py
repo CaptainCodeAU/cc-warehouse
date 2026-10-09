@@ -8,7 +8,8 @@ log under ~/.claude/logs/ now." The run had finished at 11:52 AM with
 stacks runs with no timestamps, so its tail (a 2 Oct outage) was misread as
 that day's failure. When the sweep's newest run summary in capture.jsonl closes
 its newest start and names failed items, the alert now says so, with the count
-and capture.jsonl as the place to look. The tiers are unchanged.
+and capture.jsonl as the place to look. Since W-20261010-A12 (Gavin, 2026-10-10,
+Q10) such a run is capped at WARNING: it is never spoken.
 """
 
 import json
@@ -87,7 +88,8 @@ def test_a_finished_run_with_failed_items_says_so_and_points_at_capture_log(
     assert "1 of 30981 item(s) failed" in message, message
     assert str(log) in message, message
     assert "~/.claude/logs" not in message, message
-    assert message.startswith("cc-warehouse: ALERT - "), message  # tier unchanged
+    # Capped at WARNING since W-20261010-A12 (Gavin, Q10): never the spoken ALERT.
+    assert message.startswith("cc-warehouse: WARNING - "), message
     assert "exit 1" in message and "4 h 11 min" in message, message
 
 

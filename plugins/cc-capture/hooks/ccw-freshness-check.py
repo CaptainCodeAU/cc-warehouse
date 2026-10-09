@@ -193,7 +193,8 @@ _UNKNOWN_NOTICE_S = 2 * 60 * 60
 # run, because Claude Code does not enforce `timeout` on an async hook.
 _DOCTOR_TIMEOUT = 45
 
-# Per `launchctl print` call in job_exit_codes(). Measured 2026-09-07: all three
+# Per `launchctl print` call in job_reports(), ONE call per job: the exit code
+# and the log path come from the same report (W-20261010-A12). Measured 2026-09-07: all three
 # calls together return in 0.03s, because launchctl is local IPC and never
 # touches the projects tree the way `ccw doctor` does. 2s is ~66x that. It was
 # 5s, which cost nothing while the timeout path still returned early and never
@@ -231,6 +232,10 @@ _WATCHED_JOBS = (
 # 2026-08-24) -- a DIFFERENT format from `launchctl list`'s plist-style
 # "LastExitStatus" = N; that an earlier draft of this file wrongly assumed.
 _LAST_EXIT = re.compile(r"last exit code = (-?\d+)")
+# The same report's log line, e.g. "stdout path = /.../launch-agents/logs/ccw-sweep.log".
+# The jobs' logs moved out of ~/.claude/logs/ on 2026-10-10, so the hook reads
+# where each job really writes rather than naming a folder (W-20261010-A12).
+_LOG_PATH = re.compile(r"^\s*stdout path = (.+?)\s*$", re.MULTILINE)
 
 # Ticket 42 item #1: which statuses raise WHICH channel. Before this, only
 # "error" spoke at all and nothing ever raised a desktop notification, so the
@@ -569,11 +574,18 @@ def extract_last_exit(launchctl_output: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _job_last_exit(label: str) -> int | None:
-    """Ask launchctl about one job, best-effort. None on ANY failure to check
-    at all (launchctl missing -- e.g. not macOS, the job not loaded, a hung
-    call) -- this must never block or fail session start, same posture as the
-    `ccw doctor` subprocess call below."""
+def extract_log_path(launchctl_output: str) -> str | None:
+    """The job's stdout log path from a `launchctl print` report, or None
+    when the report names none."""
+    match = _LOG_PATH.search(launchctl_output)
+    return match.group(1) if match else None
+
+
+def _job_report(label: str) -> tuple[int | None, str | None]:
+    """Ask launchctl about one job, best-effort: (last exit code, log path).
+    (None, None) on ANY failure to check at all (launchctl missing -- e.g. not
+    macOS, the job not loaded, a hung call) -- this must never block or fail
+    session start, same posture as the `ccw doctor` subprocess call below."""
     try:
         result = subprocess.run(
             ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
@@ -583,16 +595,16 @@ def _job_last_exit(label: str) -> int | None:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
-    return extract_last_exit(result.stdout)
+        return None, None
+    return extract_last_exit(result.stdout), extract_log_path(result.stdout)
 
 
-def job_exit_codes() -> dict[str, int | None]:
-    """Each watched job's last exit code, None where launchctl could not say
-    (never run, not loaded, not macOS, a hung call). Unknown is not the same
-    as healthy, and not the same as failing either: callers leave a job's
-    failure period untouched when its code is None."""
-    return {label: _job_last_exit(label) for label in _WATCHED_JOBS}
+def job_reports() -> dict[str, tuple[int | None, str | None]]:
+    """Each watched job's (last exit code, log path). The code is None where
+    launchctl could not say (never run, not loaded, not macOS, a hung call).
+    Unknown is not the same as healthy, and not the same as failing either:
+    callers leave a job's failure period untouched when its code is None."""
+    return {label: _job_report(label) for label in _WATCHED_JOBS}
 
 
 # `cli._log_run_summary`'s completed-sweep line: "sweep: N items, ..., K failed".
@@ -630,12 +642,29 @@ def latest_sweep_outcome(capture_log: Path) -> tuple[int, int, datetime] | None:
     return outcome
 
 
+def _finished_with_failures(label: str, outcome: tuple[int, int, datetime] | None) -> bool:
+    """The sweep's newest run finished and named failed items (W-20261010-A02)."""
+    return label.endswith("ccw-sweep") and outcome is not None and outcome[0] > 0
+
+
+def job_tier(
+    label: str, broken_for_s: float, outcome: tuple[int, int, datetime] | None = None
+) -> int:
+    """The job's tier on its clock. A sweep that FINISHED with failed items is
+    capped at WARNING (Gavin, 2026-10-10, Q10: "Cap it at WARNING"): the next
+    sweep retries those items, so it is never spoken. A job that cannot run
+    keeps the full ladder."""
+    tier = _tier(broken_for_s)
+    return min(tier, 1) if _finished_with_failures(label, outcome) else tier
+
+
 def job_message(
     label: str,
     code: int,
     broken_for_s: float,
     outcome: tuple[int, int, datetime] | None = None,
     capture_log: Path | None = None,
+    log_path: str | None = None,
 ) -> str:
     """The line for one failing scheduled job, tiered on how long it has been
     seen failing. `ccw doctor` does not check these jobs at all, so this is
@@ -649,10 +678,15 @@ def job_message(
     W-20261010-A02: when the sweep's newest run finished with failed items,
     say that, with the count and capture.jsonl, instead of "has been failing
     for": on 2026-10-09 that wording sent a session to the launchd log, whose
-    untimestamped tail was a 2 Oct outage, for a run with 1 of 30,981 failed."""
+    untimestamped tail was a 2 Oct outage, for a run with 1 of 30,981 failed.
+
+    W-20261010-A12: the generic line names the log launchctl reports for the
+    job, or says how to find it; it no longer names ~/.claude/logs/, which the
+    jobs stopped writing to on 2026-10-10."""
     lasted = _duration(broken_for_s)
-    tier = _tier(broken_for_s)
-    if label.endswith("ccw-sweep") and outcome is not None and outcome[0] > 0:
+    tier = job_tier(label, broken_for_s, outcome)
+    if _finished_with_failures(label, outcome):
+        assert outcome is not None
         failed, items, at = outcome
         when = at.astimezone().strftime("%-I:%M %p %a %-d %b")
         body = (
@@ -661,13 +695,18 @@ def job_message(
             f"{capture_log if capture_log is not None else 'capture.jsonl'}."
         )
         return ("cc-warehouse: ", "cc-warehouse: WARNING - ", "cc-warehouse: ALERT - ")[tier] + body
+    where = (
+        f"Check its log: {log_path}"
+        if log_path
+        else f"Its log is the stdout path in: launchctl print gui/$(id -u)/{label}"
+    )
     return (
         f"cc-warehouse: scheduled job failing: {label} (exit {code}), first seen "
-        f"{lasted} ago. Check its log under ~/.claude/logs/.",
+        f"{lasted} ago. {where}",
         f"cc-warehouse: WARNING - scheduled job {label} has been failing for "
-        f"{lasted} (exit {code}). Check its log under ~/.claude/logs/.",
+        f"{lasted} (exit {code}). {where}",
         f"cc-warehouse: ALERT - scheduled job {label} has been failing for "
-        f"{lasted} (exit {code}). Check its log under ~/.claude/logs/ now.",
+        f"{lasted} (exit {code}). {where} (now)",
     )[tier]
 
 
@@ -965,9 +1004,10 @@ def _job_lines(
     saw it failing, with its own one-alert-per-tier dedup. A job seen exiting
     0 clears; a job launchctl could not answer about keeps its period."""
     try:
-        codes = job_exit_codes()
+        reports = job_reports()
     except Exception:  # noqa: BLE001 - must never fail session start
-        codes = {}
+        reports = {}
+    codes = {label: code for label, (code, _log) in reports.items()}
     capture_log = _warehouse_root(doctor_output) / "logs" / "capture.jsonl"
     outcome = latest_sweep_outcome(capture_log) if any(codes.values()) else None
     old = prev.get("jobs")
@@ -984,8 +1024,8 @@ def _job_lines(
         alerted = _alerted(entry) if since is not None else 0
         since = since or now
         broken_for = max(0.0, (now - since).total_seconds())
-        tier = _tier(broken_for)
-        message = job_message(label, code, broken_for, outcome, capture_log)
+        tier = job_tier(label, broken_for, outcome)
+        message = job_message(label, code, broken_for, outcome, capture_log, reports[label][1])
         _raise(tier, message, tier > alerted)
         jobs[label] = {"since": since.isoformat(), "exit": code, "alerted_tier": max(alerted, tier)}
         lines.append(message)

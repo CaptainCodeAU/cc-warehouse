@@ -27,6 +27,7 @@ from conftest import (
     mark_archive,
     run_ccw,
     run_cli,
+    the_dated_run_line,
     warehouse_root,
     write_transcript,
 )
@@ -145,7 +146,7 @@ def test_repair_success_is_logged_even_when_quiet(
 
     result = run_ccw(["repair", "--quiet"], ccw_env)
     assert result.code == 0
-    assert result.out == "", "--quiet must still drop the stdout summary"
+    the_dated_run_line(result.out, "repair")  # --quiet keeps only this line
 
     records = _log_records(ccw_env)
     fixed = [r for r in records if r.get("status") == "ok" and "repair" in str(r.get("message"))]
@@ -181,7 +182,7 @@ def test_repair_failure_is_logged_even_when_quiet(
 
     result = run_ccw(["repair", "--quiet"], ccw_env)
     assert result.code == 1, "a genuinely unfixable folder must exit non-zero"
-    assert result.out == "", "--quiet must still drop the stdout summary"
+    the_dated_run_line(result.out, "repair")  # --quiet keeps only this line
 
     records = _log_records(ccw_env)
     failures = [r for r in records if r.get("status") == "error"]

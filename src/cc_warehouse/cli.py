@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -798,12 +799,16 @@ def _run_sweep(args: Sequence[str]) -> int:
                 f"{would_store} would be stored, 0 written"
             )
         return 1 if failures else 0
+    started = time.monotonic()
     _log_sweep_started(config)
     report = sweep.sweep(config, source, keep, limit=limit)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         # Ticket 42 #2: a refusal that leaves no trace is exactly what ticket 41 had to
         # reconstruct by hand -- log it before returning, same as a real run below.
-        _log_run_summary(config, "sweep", "error", "refused: lock held by a live holder")
+        _log_run_summary(
+            config, "sweep", "error", "refused: lock held by a live holder",
+            _elapsed_since(started),
+        )
         print("sweep refused: lock held by a live holder", file=sys.stderr)
         return 2
     failures = report.failures
@@ -879,12 +884,13 @@ def _run_sweep(args: Sequence[str]) -> int:
         summary += "; stopped: " + "; ".join(o.detail for o in lost)
     # Ticket 42 #2: written REGARDLESS of --quiet, matching _log_repair_outcome's own
     # contract -- --quiet drops the stdout line below only, never the durable record.
-    _log_run_summary(config, "sweep", "error" if failures or lost else "ok", summary)
-    if not quiet:
-        # --quiet drops STDOUT only. Failures are already on stderr above, and the
-        # exit code is untouched, so a scheduled sweep stays silent when it works
-        # and still speaks when it does not (ticket 23, 24.5).
-        print(f"sweep: {summary}")
+    elapsed = _elapsed_since(started)
+    _log_run_summary(config, "sweep", "error" if failures or lost else "ok", summary, elapsed)
+    # One dated line, printed even under --quiet (Gavin, 2026-10-10,
+    # W-20261010-A12): --quiet drops every other stdout line, so the scheduled
+    # job's log gains exactly one line per run that says when and how it went.
+    # Failures are already on stderr above, and the exit code is untouched.
+    _print_run_line(config, f"sweep: {summary}", elapsed)
     return 1 if failures or lost else 0
 
 
@@ -1028,14 +1034,44 @@ def _log_repair_outcome(config: Config, status: str, session: str | None, messag
         return
 
 
+def _elapsed_since(started: float) -> int:
+    """Whole milliseconds since a `time.monotonic()` reading, never negative."""
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _took(elapsed_ms: int) -> str:
+    """A run's length for a person: 0.4 s, 12 s, 1 min 5 s, 2 h 4 min."""
+    seconds = elapsed_ms // 1000
+    if elapsed_ms < 10_000:
+        return f"{elapsed_ms / 1000:.1f} s"
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3600:
+        return f"{seconds // 60} min {seconds % 60} s"
+    return f"{seconds // 3600} h {seconds % 3600 // 60} min"
+
+
+def dated_run_line(at: datetime, zone: str, message: str, elapsed_ms: int) -> str:
+    """The one human line a scheduled job prints as it ends (W-20261010-A12,
+    Gavin's Q9 ruling (b)): 12-hour local time in the archive's zone, the run
+    summary, and how long it took. It lands in the job's own launchd log,
+    which stacks runs with no timestamps of their own. No tool parses it."""
+    when = at.astimezone(ZoneInfo(zone)).strftime("%-I:%M %p %a %-d %b")
+    return f"{when}: {message}, took {_took(elapsed_ms)}"
+
+
+def _print_run_line(config: Config, message: str, elapsed_ms: int) -> None:
+    print(dated_run_line(datetime.now(UTC), config.archive_timezone, message, elapsed_ms))
+
+
 def _log_run_summary(
     config: Config, verb: str, status: str, message: str, elapsed_ms: int | None = None
 ) -> None:
-    """One durable capture.jsonl record per `ccw sweep`/`ccw build` INVOCATION
-    (ticket 42 #2), not just per failed item. NOT called from `ccw archive` --
-    see `_run_archive`'s own scope note: a warehouse-log write would break its
-    "the source warehouse stays untouched" contract, load-bearing and pinned by
-    an existing oracle test in `test_archive_cli.py`.
+    """One durable capture.jsonl record per `ccw sweep`/`ccw build`/`ccw archive`
+    INVOCATION (ticket 42 #2), not just per failed item.
+    Archive joined on 2026-10-10 (W-20261010-A12, Gavin's ruling); before that
+    it was kept out to honour its "the source warehouse stays untouched"
+    contract, which now allows exactly its start line and this record.
 
     Before this, a run that captured or rendered anything with zero failures left no
     durable trace at all -- `ccw sweep`'s own launchd stdout redirect is empty by
@@ -1097,6 +1133,26 @@ def _log_sweep_started(config: Config) -> None:
                 "session": None,
                 "project": None,
                 "message": f"sweep started (pid {os.getpid()})",
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
+def _log_job_started(config: Config, verb: str) -> None:
+    """One `<verb>-started` capture.jsonl record, written before a scheduled
+    job's work (W-20261010-A12), so a run that dies leaves a start with no
+    summary after it. Same shape as `_log_sweep_started`; best effort."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": f"{verb}-started",
+                "session": None,
+                "project": None,
+                "message": f"{verb} started (pid {os.getpid()})",
                 "elapsed_ms": None,
             },
         )
@@ -2102,9 +2158,9 @@ def _run_repair(rest: Sequence[str]) -> int:
     with nobody there to want or dismiss it.
 
     `--quiet` matches `sweep`'s own contract exactly (cli.py `_run_sweep`): drops the
-    STDOUT summary only, so a scheduled run's log stays empty when nothing was wrong
-    and non-empty exactly when it wasn't -- failures still go to stderr and the exit
-    code is unaffected.
+    STDOUT summary lines, keeping only the one dated run line (W-20261010-A12, Gavin
+    2026-10-10), so a scheduled run's log gains one line per run -- failures still go
+    to stderr and the exit code is unaffected.
 
     Ticket 42 #5: ALSO runs the reconciliation cross-check and announces any NEWLY
     confirmed unrecoverable session, deliberately BEFORE the desync early-return just
@@ -2149,6 +2205,8 @@ def _run_repair(rest: Sequence[str]) -> int:
             _log_repair_outcome(config, "error", None, str(exc))
             print(f"repair: {exc}", file=sys.stderr)
             return 1
+    started = time.monotonic()
+    _log_job_started(config, "repair")
     reconcile_since = datetime.now(UTC) - reconcile.DEFAULT_WINDOW
     # One history.jsonl read, shared by the new-loss check and the retraction pass.
     history = reconcile.HistoryOnce(Path.home())
@@ -2273,7 +2331,10 @@ def _run_repair(rest: Sequence[str]) -> int:
     _resolve_refusals(
         config, [u for u in open_before if u in checked and u not in unresolved]
     )
-    open_after = _write_repair_summary(config)
+    elapsed = _elapsed_since(started)
+    open_after, summary = _write_repair_summary(
+        config, RepairCounts(len(folders), fixed, len(still_broken), len(held), pending), elapsed
+    )
     if not quiet:
         if reconcile_new:
             print(f"repair: {len(reconcile_new)} newly-confirmed unrecoverable session(s)")
@@ -2293,6 +2354,8 @@ def _run_repair(rest: Sequence[str]) -> int:
             print(f"repair: {open_after} open refusal(s), see docs/operations.md")
     for line in [*still_broken, *held.values()]:
         print(f"  {line}", file=sys.stderr)
+    # The one dated line, kept under --quiet too (W-20261010-A12, as in sweep).
+    _print_run_line(config, summary, elapsed)
     # Item 6: exit 1 means repair ITSELF failed. A held folder is evidence kept,
     # counted in the `repair-summary` line the start-up hook reads on its clock.
     return 0 if not still_broken else 1
@@ -2349,14 +2412,36 @@ def _resolve_refusals(config: Config, session_uuids: Sequence[str]) -> None:
             continue
 
 
-def _write_repair_summary(config: Config) -> int:
+@dataclass(frozen=True)
+class RepairCounts:
+    """What one `ccw repair` run did, for its summary line (W-20261010-A12)."""
+
+    checked: int
+    fixed: int
+    still_broken: int
+    held: int
+    pending: int
+
+
+def _write_repair_summary(
+    config: Config, counts: RepairCounts, elapsed_ms: int
+) -> tuple[int, str]:
     """The ONE line per run the start-up hook reads (W-20260929-A82 item 6):
     how many refusals are open, counting EVERY session with an unresolved
     `repair-refused` record whether or not it is still in the 25-folder sample,
     and when the oldest was first refused, so the hook's time clock starts from
-    the damage and not from today. Returns the open count."""
+    the damage and not from today. Returns the open count and the message.
+
+    W-20261010-A12: it also says what this run did (folders checked, fixed,
+    still broken, held, pending) and how long it took, so it closes the
+    run's `repair-started` line the way a `sweep: ` summary closes a sweep's."""
     state = reconcile.open_refusals(config)
     oldest = min((r.first_at for r in state.values() if r.first_at), default=None)
+    work = (
+        f"{counts.checked} checked, {counts.fixed} fixed, {counts.still_broken} still broken, "
+        f"{counts.held} held, {counts.pending} pending"
+    )
+    message = f"repair: {work}; {len(state)} open refusal(s)"
     try:
         notify.append_log(
             config,
@@ -2365,15 +2450,20 @@ def _write_repair_summary(config: Config) -> int:
                 "status": reconcile.REPAIR_SUMMARY,
                 "session": None,
                 "project": None,
-                "message": f"repair: {len(state)} open refusal(s)",
-                "elapsed_ms": None,
+                "message": message,
+                "elapsed_ms": elapsed_ms,
                 "open_refusals": len(state),
                 "oldest_refusal_at": oldest,
+                "checked": counts.checked,
+                "fixed": counts.fixed,
+                "still_broken": counts.still_broken,
+                "held": counts.held,
+                "pending": counts.pending,
             },
         )
     except Exception:  # noqa: BLE001 - a signal never fails repair (DESIGN 12)
         pass
-    return len(state)
+    return len(state), message
 
 def _flag_value(args: Sequence[str], name: str) -> str | None:
     """The value following `--name`, or None. Exact equality, so `--to` never
@@ -2455,12 +2545,15 @@ def _run_archive(args: Sequence[str]) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     rebuild = "--rebuild" in args
+    started = time.monotonic()
+    _log_job_started(config, "archive")
     report = archive.migrate(
         config.root, target, build.render_options(config), zone, rebuild=rebuild
     )
     if report.lock_held:
         # R14/R10: a refusal is named and exits non-zero, never counted as a
         # run that wrote nothing successfully.
+        _log_run_summary(config, "archive", "error", report.summary(), _elapsed_since(started))
         print(f"archive: {report.summary()}", file=sys.stderr)
         return 1
     # After the folders, because a project.json for a project with no surviving
@@ -2470,19 +2563,16 @@ def _run_archive(args: Sequence[str]) -> int:
         print(f"archive: FAILED {hash_[:16]}: {why}", file=sys.stderr)
     for hash_ in report.skipped_not_a_session:
         print(f"archive: not a session (no sessionId) {hash_[:16]}", file=sys.stderr)
-    # TICKET 42 #2 SCOPE NOTE, found while building this: `ccw archive` deliberately
-    # does NOT get a durable capture.jsonl run summary, unlike sweep/build above.
-    # `test_archive_leaves_the_source_warehouse_byte_identical` pins a real, load-
-    # bearing contract -- this verb builds the archive tree BESIDE the warehouse it
-    # reads, touching NOTHING under config.root, which is the whole safety argument
-    # for running it against a live warehouse. A capture.jsonl write is a warehouse
-    # write. Ticket 41 Finding 2's actual incident was about `ccw sweep`; extending
-    # "the same treatment" to archive "for consistency" would trade a real, tested
-    # invariant for a log line this verb's own scheduled job (`ccw-archive.log`,
-    # docs/operations.md) already gets from stdout. Not done; flagged rather than
-    # silently dropped.
+    # W-20261010-A12 (Gavin, 2026-10-10): logged like sweep and repair, a start
+    # above and this run summary, so all three scheduled jobs leave the same
+    # record. These two lines are the ONLY warehouse write this verb makes;
+    # until that ruling it made none (the "build BESIDE" contract, which
+    # test_archive_cli.py still pins for everything else under config.root).
+    # `--verify` and `--init` return before either line and still write nothing.
     summary = f"{report.summary()}, {projects} project.json written"
-    print(summary)
+    elapsed = _elapsed_since(started)
+    _log_run_summary(config, "archive", "error" if report.failed else "ok", summary, elapsed)
+    _print_run_line(config, f"archive: {summary}", elapsed)
     return 1 if report.failed else 0
 
 

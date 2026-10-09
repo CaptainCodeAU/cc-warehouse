@@ -21,6 +21,7 @@ from conftest import (
     catalog_rows,
     run_ccw,
     session_count,
+    the_dated_run_line,
     write_transcript,
 )
 
@@ -112,7 +113,7 @@ def test_limit_composes_with_quiet(ccw_env: dict[str, str]) -> None:
     seed_three_sessions(ccw_env)
     result = run_ccw(["sweep", "--quiet", "--limit", "1"], ccw_env)
     assert result.code == 0, result.err
-    assert not result.out.strip(), f"--quiet still printed: {result.out!r}"
+    the_dated_run_line(result.out, "sweep")  # --quiet keeps only this line
     assert session_count(ccw_env) == 1
 
 

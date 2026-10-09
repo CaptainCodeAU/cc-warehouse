@@ -2404,3 +2404,22 @@ it is about to write and re-takes a currency check made stale by a pause; `ccw b
 within one item, before the item raises, leaves that item an ordinary failure for the
 next sweep, and with `keep_objects = true` an archive refusal inside a capture is logged,
 not raised, so only the pre-item check covers it.
+
+**2026-10-10, W-20261010-A12: every scheduled job logs its start, end, time and work.**
+Decided (principal, 2026-10-10, cc-warehouse-main Q9 v2, Q10, Q11 and three rulings in
+the build session). (a) `ccw sweep`, `ccw repair` and `ccw archive` each write a
+`<verb>-started` record to `logs/capture.jsonl` before any work and a run summary with
+`elapsed_ms` and the work counts after, so a run that dies is a start with no summary. The
+pinned readers keep matching: the `sweep: N items` prefix, and `repair-summary`'s status,
+`open_refusals` and `oldest_refusal_at` (it gains `checked`, `fixed`, `still_broken`,
+`held`, `pending`). (b) This REVERSES the 2026-09-09 ticket 42 #2 entry above for
+`ccw archive`: a build run now appends exactly those two lines to the warehouse's log. The
+"build BESIDE" contract otherwise stands, still pinned for every other path under
+`config.root`, and `--verify`/`--init` still write nothing. (c) Each job prints ONE dated
+line as it ends (12-hour time in `archive_timezone`, the summary, how long it took), and
+`--quiet` now keeps that one line, reversing "a quiet run's log stays empty when it
+worked": the job logs stack runs with no timestamps, and a dated line per run is what
+makes them readable. (d) The start-up hook caps a sweep that FINISHED with failed items at
+WARNING, never spoken; a job that cannot run keeps the full ladder. Its job line names the
+log from `launchctl print`'s `stdout path`, never a fixed folder. (e) No version bump:
+`renderer_version` is the package version and a bump re-renders ~30k folders.

@@ -28,7 +28,14 @@ import pytest
 
 from cc_warehouse import reconcile
 from cc_warehouse.config import Config
-from conftest import basic_session, mark_archive, run_ccw, warehouse_root, write_transcript
+from conftest import (
+    basic_session,
+    mark_archive,
+    run_ccw,
+    the_dated_run_line,
+    warehouse_root,
+    write_transcript,
+)
 
 ZONE = "Australia/Melbourne"
 LOST_UUID = "11111111-1111-4111-8111-111111111111"
@@ -171,13 +178,13 @@ def test_excluded_prefixes_are_never_treated_as_a_session_loss(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
     """`repair: `, `companions: `, `post-archive-write failure at `, `could not
-    read sidecar `, `refused sidecar `, and (ticket 42 #2) `sweep: `/`build: `
-    all describe an ALREADY-archived session, a sidecar file, or a per-RUN
-    summary naming no session at all -- never the session's own loss. Real
+    read sidecar `, `refused sidecar `, (ticket 42 #2) `sweep: `/`build: ` and
+    (W-20261010-A12) `archive: ` all describe an ALREADY-archived session, a
+    sidecar file, or a per-RUN summary naming no session at all -- never the
+    session's own loss. Real
     shapes this codebase's own writers produce (cli._log_repair_outcome,
     cli._log_companions, capture._log_stage_failure, capture.log_sidecar_trouble,
-    cli._log_run_summary). `ccw archive` has no such summary at all -- see
-    cli._run_archive's own scope note."""
+    cli._log_run_summary)."""
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     prefixes = (
@@ -188,6 +195,7 @@ def test_excluded_prefixes_are_never_treated_as_a_session_loss(
         "refused sidecar ",
         "sweep: ",
         "build: ",
+        "archive: ",
     )
     old_at = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     for i, prefix in enumerate(prefixes):
@@ -428,7 +436,7 @@ def test_repair_quiet_still_dedups_but_prints_nothing(
     result = run_ccw(["repair", "--quiet"], ccw_env)
 
     assert result.code == 0, result.err
-    assert result.out == "", f"--quiet still printed to stdout: {result.out!r}"
+    the_dated_run_line(result.out, "repair")  # --quiet keeps only this line
     config = Config(root=warehouse_root(ccw_env), archive_root=archive_root, archive_timezone=ZONE)
     assert reconcile.known_unrecoverable_uuids(config) == frozenset({LOST_UUID}), (
         "the dedup record must still be written under --quiet"
@@ -735,11 +743,12 @@ def log_recorded(env: dict[str, str], *uuids: str) -> None:
 def ledger(env: dict[str, str]) -> list[dict[str, object]]:
     """The reconciliation ledger lines. Excludes `repair-summary`, which every
     `ccw repair` run appends once BY DESIGN since W-20260929-A82 item 6 (the
-    start-up hook's count), so "a second run appends nothing" still means
-    nothing to this ledger."""
+    start-up hook's count), and `repair-started`, appended once per run since
+    W-20261010-A12, so "a second run appends nothing" still means nothing to
+    this ledger."""
     path = warehouse_root(env) / "logs" / "capture.jsonl"
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    return [r for r in lines if r.get("status") != "repair-summary"]
+    return [r for r in lines if r.get("status") not in {"repair-summary", "repair-started"}]
 
 
 def retractions(env: dict[str, str]) -> list[dict[str, object]]:

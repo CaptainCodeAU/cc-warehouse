@@ -160,7 +160,8 @@ something existing is an implementation detail, not a design question.
 - `render.py` — `build_manifest()`, ~line 2237-2284
 - `store.py` — `atomic_write()` (no content-comparison short circuit today;
   it always writes)
-- A real run's log: `~/.claude/logs/ccw-archive.log`
+- A real run's log: `~/.claude/logs/ccw-archive.log` at the time (moved 2026-10-10 to
+  `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-archive.log`)
 - Measured via `ps -o pid,etime,pcpu,stat -p <pid>` during the run this
   document is based on
 

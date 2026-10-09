@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -735,6 +736,26 @@ def settle_log_status(
         f"detached children did not settle within {timeout}s under {log}"
         f" (wanted at least {expected} {status!r} line(s))"
     )
+
+
+# The one line a scheduled job prints as it ends, kept under --quiet
+# (W-20261010-A12): "3:51 AM Sat 10 Oct: sweep: 1 items, ..., took 0.4 s".
+DATED_RUN_LINE = re.compile(
+    r"^\d{1,2}:\d{2} [AP]M [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}: (?P<rest>.+), "
+    r"took (?:\d+\.\d s|\d+ s|\d+ min \d+ s|\d+ h \d+ min)$"
+)
+
+
+def the_dated_run_line(out: str, verb: str) -> str:
+    """Stdout is exactly one dated run line for `verb`; returns it without
+    its time and duration. What `--quiet` leaves since W-20261010-A12."""
+    lines = out.splitlines()
+    assert len(lines) == 1, f"expected exactly one dated line, got {lines!r}"
+    match = DATED_RUN_LINE.match(lines[0])
+    assert match is not None, lines[0]
+    rest = match.group("rest")
+    assert rest.startswith(f"{verb}: "), lines[0]
+    return rest
 
 
 def tree_snapshot(root: Path) -> dict[str, bytes]:

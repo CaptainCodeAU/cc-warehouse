@@ -117,17 +117,37 @@ def test_archive_builds_the_tree_at_the_named_target(
         assert any(p.suffix == ".jsonl" for p in folder.iterdir())
 
 
+def _without_log(snapshot: dict[str, bytes]) -> dict[str, bytes]:
+    return {k: v for k, v in snapshot.items() if k not in {"logs/", "logs/capture.jsonl"}}
+
+
+def _log_lines(snapshot: dict[str, bytes]) -> list[dict[str, object]]:
+    raw = snapshot.get("logs/capture.jsonl", b"").decode("utf-8")
+    return [json.loads(line) for line in raw.splitlines()]
+
+
 def test_archive_leaves_the_source_warehouse_byte_identical(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
     """Build BESIDE. The whole safety argument for running this on a live
-    archive is that the old tree is not a participant."""
+    archive is that the old tree is not a participant.
+
+    ONE EXCEPTION, Gavin 2026-10-10 (W-20261010-A12): a build run appends its
+    `archive-started` line and its `archive: ` run summary to logs/capture.jsonl,
+    the only record the tools read. Nothing else under the warehouse changes,
+    and nothing already in the log is rewritten."""
     populated(ccw_env)
     before = tree_snapshot(warehouse_root(ccw_env))
     assert run_cli(["archive", "--to", str(tmp_path / "archive"), "--init"]).code == 0
     result = run_cli(["archive", "--to", str(tmp_path / "archive")])
     assert result.code == 0, result.err
-    assert tree_snapshot(warehouse_root(ccw_env)) == before
+    after = tree_snapshot(warehouse_root(ccw_env))
+    assert _without_log(after) == _without_log(before)
+    old, new = _log_lines(before), _log_lines(after)
+    assert new[: len(old)] == old, "an existing log line was rewritten"
+    added = new[len(old):]
+    assert [r["status"] for r in added] == ["archive-started", "ok"], added
+    assert str(added[1]["message"]).startswith("archive: "), added
 
 
 def test_archive_refuses_to_build_into_the_warehouse_itself(

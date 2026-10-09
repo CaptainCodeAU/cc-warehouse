@@ -12,11 +12,24 @@ Four jobs, all under `~/Library/LaunchAgents/`, all currently loaded
 (`launchctl list | grep captaincode`). A fifth entry there,
 `com.captaincodeau.hermes-o-backup-pull`, is unrelated to this project.
 
+Since 2026-10-10 the three `ccw-*` job files there are SYMLINKS into
+`~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/` (the private repo
+`CaptainCodeAU/cc-warehouse-isolinear`), where the real files live with history; edit
+them there (its `README.md` says how to reload). Their logs moved the same day from
+`~/.claude/logs/` to `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/`, committed in that repo. The old lines at the top of each
+log carry no timestamps; since W-20261010-A12 every run ends with one dated line,
+`3:51 AM Sun 11 Oct: sweep: ..., took 2 h 4 min`, printed even under `--quiet`.
+The record tools read is `~/cc-warehouse-data/logs/capture.jsonl`: each of the three jobs
+writes a `<verb>-started` line before any work and a summary with `elapsed_ms` and its
+work counts after (`sweep: N items, ...`, `repair-summary`, `archive: ...`), so a run that
+died shows as a start with no summary after it. `launchctl print gui/$(id -u)/<label>`
+names each job's log as its `stdout path`.
+
 | Job | Schedule | Command | Log |
 |---|---|---|---|
-| `com.captaincodeau.ccw-sweep` | daily 02:00 (was 12:30 until 2026-09-30); no scheduled wake, so on a sleeping Mac it runs at the first wake after 02:00 | `ccw sweep --quiet` | `~/.claude/logs/ccw-sweep.log` |
-| `com.captaincodeau.ccw-repair` | daily 15:30 (was 12:45 until 2026-09-29, ticket 44) | `ccw repair --quiet` | `~/.claude/logs/ccw-repair.log` |
-| `com.captaincodeau.ccw-archive` | weekly, Sunday 05:00 (was 03:00 until 2026-09-30, moved clear of the 02:00 sweep) | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/.claude/logs/ccw-archive.log` |
+| `com.captaincodeau.ccw-sweep` | daily 02:00 (was 12:30 until 2026-09-30); no scheduled wake, so on a sleeping Mac it runs at the first wake after 02:00 | `ccw sweep --quiet` | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-sweep.log` |
+| `com.captaincodeau.ccw-repair` | daily 15:30 (was 12:45 until 2026-09-29, ticket 44) | `ccw repair --quiet` | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-repair.log` |
+| `com.captaincodeau.ccw-archive` | weekly, Sunday 05:00 (was 03:00 until 2026-09-30, moved clear of the 02:00 sweep) | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-archive.log` |
 | `com.captaincodeau.ccstats-dashboard` | daily 13:00 | `.venv/bin/python3 tools/ccstats/refresh.py --quiet` | `~/.claude/logs/ccstats-dashboard.log` |
 
 Notes:

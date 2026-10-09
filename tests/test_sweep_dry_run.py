@@ -32,6 +32,7 @@ from conftest import (
     basic_session,
     claude_projects,
     run_ccw,
+    the_dated_run_line,
     tree_snapshot,
     warehouse_root,
     write_transcript,
@@ -163,20 +164,22 @@ def test_dry_run_honours_the_import_window(ccw_env: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_quiet_suppresses_the_summary_on_a_clean_run(ccw_env: dict[str, str]) -> None:
-    """A cron sweep that prints on every success is one whose output nobody
-    reads. NOTE: `_run_sweep` emits no per-item SUCCESS lines today, only
-    failures plus one end summary, so the summary IS what --quiet suppresses."""
+def test_quiet_leaves_one_dated_line_on_a_clean_run(ccw_env: dict[str, str]) -> None:
+    """`_run_sweep` emits no per-item SUCCESS lines, only failures plus one end
+    summary. Until 2026-10-10 --quiet dropped that summary; since
+    W-20261010-A12 (Gavin) the summary is one dated line that --quiet keeps,
+    so the scheduled job's log says when each run ended and how it went."""
     _seed_two_sessions(ccw_env)
 
     loud = run_ccw(["sweep"], ccw_env)
-    assert loud.code == 0 and loud.out.strip()
+    assert loud.code == 0
+    the_dated_run_line(loud.out, "sweep")
 
     _seed_two_sessions(ccw_env)
     quiet = run_ccw(["sweep", "--quiet"], ccw_env)
 
     assert quiet.code == 0
-    assert not quiet.out.strip(), f"--quiet still printed: {quiet.out!r}"
+    the_dated_run_line(quiet.out, "sweep")
 
 
 def test_quiet_never_suppresses_a_failure(ccw_env: dict[str, str]) -> None:

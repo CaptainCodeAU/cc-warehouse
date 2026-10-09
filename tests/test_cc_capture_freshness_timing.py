@@ -464,10 +464,10 @@ def test_a_job_the_hook_could_not_ask_about_keeps_its_period(
     _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(0), T0, jobs={_REPAIR: 1})
     _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(0), T0 + timedelta(minutes=31),
            jobs={_REPAIR: 1})
-    def unanswerable(_label: str) -> int | None:
-        return None
+    def unanswerable(_label: str) -> tuple[int | None, str | None]:
+        return None, None
 
-    monkeypatch.setattr(freshness, "_job_last_exit", unanswerable)
+    monkeypatch.setattr(freshness, "_job_report", unanswerable)
     capsys.readouterr()
     monkeypatch.setattr(freshness, "_now", lambda: T0 + timedelta(minutes=40))
     freshness.main()
@@ -837,11 +837,17 @@ def test_a_dead_holder_never_leaves_a_stale_lock(tmp_path: Path) -> None:
 # changed too), copied verbatim from logs/capture.jsonl. Note the microseconds in
 # both timestamps. tests/test_integration_0929.py pins the writer to this exact
 # key set and these value types, so neither side can drift alone.
+# W-20261010-A12 extended it BY HAND (message, elapsed_ms, which was null, and
+# the five work counts), in the shape tests/test_run_summary_logging.py pins;
+# the hook still reads only status, open_refusals and oldest_refusal_at.
 _SUMMARY_FIXTURE = json.loads(
     '{"at": "2026-09-29T05:28:39.478309+00:00", "status": "repair-summary",'
-    ' "session": null, "project": null, "message": "repair: 1 open refusal(s)",'
-    ' "elapsed_ms": null, "open_refusals": 1,'
-    ' "oldest_refusal_at": "2026-09-29T05:28:39.478226+00:00"}'
+    ' "session": null, "project": null,'
+    ' "message": "repair: 1 checked, 0 fixed, 0 still broken, 1 held, 0 pending;'
+    ' 1 open refusal(s)",'
+    ' "elapsed_ms": 1840, "open_refusals": 1,'
+    ' "oldest_refusal_at": "2026-09-29T05:28:39.478226+00:00",'
+    ' "checked": 1, "fixed": 0, "still_broken": 0, "held": 1, "pending": 0}'
 )
 
 
@@ -890,6 +896,7 @@ def test_the_summary_fixture_matches_the_agreed_interface() -> None:
     assert set(_SUMMARY_FIXTURE) == {
         "at", "status", "session", "project", "elapsed_ms", "message",
         "open_refusals", "oldest_refusal_at",
+        "checked", "fixed", "still_broken", "held", "pending",
     }
     assert _SUMMARY_FIXTURE["status"] == "repair-summary"
 

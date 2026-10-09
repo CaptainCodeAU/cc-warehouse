@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 import pytest
+from test_repair import _age_capture, _break_render  # pyright: ignore[reportPrivateUsage]
 
 from cc_warehouse import archive
 from conftest import (
@@ -29,6 +30,7 @@ from conftest import (
     settle_companions,
     settle_log_status,
     settle_render,
+    the_dated_run_line,
     warehouse_root,
     write_transcript,
 )
@@ -58,11 +60,15 @@ def _log_records(env: dict[str, str]) -> list[dict[str, object]]:
     return [json.loads(line) for line in log_path.read_text().splitlines()]
 
 
-def start_pid(record: dict[str, object]) -> int:
-    """The pid a `sweep started (pid N)` line names; a positive integer or the test fails."""
-    text = str(record["message"]).removeprefix("sweep started (pid ").removesuffix(")")
+def start_pid_of(record: dict[str, object], verb: str) -> int:
+    """The pid a `<verb> started (pid N)` line names; a positive integer or the test fails."""
+    text = str(record["message"]).removeprefix(f"{verb} started (pid ").removesuffix(")")
     assert text.isdigit() and int(text) > 0, record
     return int(text)
+
+
+def start_pid(record: dict[str, object]) -> int:
+    return start_pid_of(record, "sweep")
 
 
 def _run_summaries(env: dict[str, str], verb: str) -> list[dict[str, object]]:
@@ -87,6 +93,22 @@ def test_sweep_writes_one_ok_run_summary(ccw_env: dict[str, str], tmp_path: Path
     assert len(summaries) == 1, summaries
     assert summaries[0]["status"] == "ok"
     assert "1 stored" in str(summaries[0]["message"])
+
+
+def test_sweep_run_summary_says_how_long_the_run_took(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """W-20261010-A12: launchd keeps no durations, so the run summary carries
+    the run's own elapsed time; before this it was always null."""
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0
+
+    (summary,) = _run_summaries(ccw_env, "sweep")
+    elapsed = summary["elapsed_ms"]
+    assert isinstance(elapsed, int) and elapsed >= 0, summary
 
 
 def test_sweep_writes_a_start_line_before_its_run_summary(
@@ -132,7 +154,7 @@ def test_sweep_run_summary_is_written_even_when_quiet(
 
     result = run_ccw(["sweep", "--quiet"], ccw_env)
     assert result.code == 0
-    assert result.out == "", "--quiet must still drop the stdout summary"
+    the_dated_run_line(result.out, "sweep")  # --quiet keeps only this line
 
     summaries = _run_summaries(ccw_env, "sweep")
     assert summaries, "a quiet, fully-successful sweep left no durable trace"
@@ -173,6 +195,75 @@ def test_sweep_lock_refusal_is_logged(ccw_env: dict[str, str], tmp_path: Path) -
     assert summaries, "a sweep lock refusal left no durable trace"
     assert summaries[-1]["status"] == "error"
     assert "lock held" in str(summaries[-1]["message"])
+
+
+# ---------------------------------------------------------------------------
+# ccw repair (W-20261010-A12)
+# ---------------------------------------------------------------------------
+
+
+def _repair_records(env: dict[str, str]) -> tuple[int, int, list[dict[str, object]]]:
+    """(index of the one start, index of the one summary, every record)."""
+    records = _log_records(env)
+    starts = [i for i, r in enumerate(records) if r.get("status") == "repair-started"]
+    ends = [i for i, r in enumerate(records) if r.get("status") == "repair-summary"]
+    assert len(starts) == 1, records
+    assert len(ends) == 1, records
+    return starts[0], ends[0], records
+
+
+def test_repair_writes_a_start_line_before_any_work(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """A repair killed mid-run leaves a start with no summary after it. The
+    start precedes even the per-folder records, so it is written before work."""
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
+    before = len(_log_records(ccw_env))
+
+    assert run_ccw(["repair", "--quiet"], ccw_env).code == 0
+
+    start, end, records = _repair_records(ccw_env)
+    assert start == before, records[before:]
+    assert start < end
+    pid = start_pid_of(records[start], "repair")
+    assert records[start]["message"] == f"repair started (pid {pid})"
+    assert records[start]["session"] is None
+
+
+def test_repair_summary_counts_the_work_and_the_time(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """One folder checked and re-rendered: the summary says so in its fields
+    and its message, keeps the two fields the start-up hook reads, and
+    carries the run's elapsed time."""
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0
+    folder = next(archive.walk_folders(archive_root))
+    _break_render(folder)
+    _age_capture(ccw_env, UUID_A, seconds_ago=3600)
+
+    assert run_ccw(["repair", "--quiet"], ccw_env).code == 0
+
+    _start, end, records = _repair_records(ccw_env)
+    summary = records[end]
+    assert summary["status"] == "repair-summary"
+    assert summary["open_refusals"] == 0
+    assert summary["oldest_refusal_at"] is None
+    assert (summary["checked"], summary["fixed"], summary["still_broken"]) == (1, 1, 0)
+    assert (summary["held"], summary["pending"]) == (0, 0)
+    elapsed = summary["elapsed_ms"]
+    assert isinstance(elapsed, int) and elapsed >= 0, summary
+    assert summary["message"] == (
+        "repair: 1 checked, 1 fixed, 0 still broken, 0 held, 0 pending; 0 open refusal(s)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -217,40 +308,119 @@ def test_build_failure_writes_an_error_run_summary(
 
 
 # ---------------------------------------------------------------------------
-# ccw archive: DELIBERATELY OUT OF SCOPE, and pinned as such.
+# ccw archive (W-20261010-A12)
 #
-# `_run_archive` does NOT get a run summary, unlike sweep/build above. Found while
-# building this: `test_archive_cli.py::test_archive_leaves_the_source_warehouse_
-# byte_identical` pins a real, load-bearing contract -- `ccw archive` builds the
-# tree BESIDE the warehouse it reads, touching nothing under `config.root`, which
-# is the whole safety argument for running it against a live warehouse. A
-# capture.jsonl write IS a warehouse write. Ticket 41 Finding 2's actual incident
-# was about `ccw sweep`; extending "the same treatment" to archive "for
-# consistency" would trade a real, tested invariant for a log line this verb's
-# own scheduled job already gets from stdout (`ccw-archive.log`,
-# docs/operations.md).
+# Until 2026-10-10 archive was pinned OUT of scope: it builds the tree BESIDE
+# the warehouse and touched nothing under `config.root`. Gavin ruled that day
+# that a build run appends exactly two lines to logs/capture.jsonl, its start
+# and its run summary, so all three scheduled jobs are logged alike. Nothing
+# else under the warehouse changes (test_archive_cli.py pins that), and
+# `--verify` still writes nothing.
 # ---------------------------------------------------------------------------
 
 
-def test_archive_writes_no_capture_jsonl_record_of_any_kind(
-    ccw_env: dict[str, str], tmp_path: Path
-) -> None:
-    archive_root = tmp_path / "archive"
+def _archive_baseline(ccw_env: dict[str, str], archive_root: Path) -> int:
     configure_archive(ccw_env, archive_root)
     transcript = write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
     assert run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, session_id=UUID_A)).code == 0
-    # Wait out the hook's own DETACHED companions child (ticket 37 Part B) before
-    # taking the baseline -- it writes "companions-done" to this same log on its
-    # own schedule, and that is not archive's doing.
     settle_companions(ccw_env)
-    # ...and the render child it spawns, which logs "render-done" (W-20260929-A62).
     settle_log_status(ccw_env, "render-done")
+    return len(_log_records(ccw_env))
+
+
+def test_archive_writes_a_start_line_and_a_timed_run_summary(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """W-20261010-A12, Gavin's ruling: the archive job is logged like the other
+    two, a start before the work and a summary with its elapsed time after."""
+    archive_root = tmp_path / "archive"
+    before = _archive_baseline(ccw_env, archive_root)
+
+    assert run_ccw(["archive", "--to", str(archive_root)], ccw_env).code == 0
+
+    added = _log_records(ccw_env)[before:]
+    assert [r["status"] for r in added] == ["archive-started", "ok"], added
+    start, summary = added
+    pid = start_pid_of(start, "archive")
+    assert start["message"] == f"archive started (pid {pid})"
+    message = str(summary["message"])
+    assert message.startswith("archive: ") and "0 failed" in message, summary
+    assert "project.json written" in message, summary
+    elapsed = summary["elapsed_ms"]
+    assert isinstance(elapsed, int) and elapsed >= 0, summary
+
+
+def test_archive_verify_still_writes_nothing_to_the_log(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    _archive_baseline(ccw_env, archive_root)
+    assert run_ccw(["archive", "--to", str(archive_root)], ccw_env).code == 0
     before = len(_log_records(ccw_env))
 
-    result = run_ccw(["archive", "--to", str(archive_root)], ccw_env)
-    assert result.code == 0
+    run_ccw(["archive", "--to", str(archive_root), "--verify"], ccw_env)
 
-    assert len(_log_records(ccw_env)) == before, "ccw archive wrote to the warehouse's own log"
+    assert len(_log_records(ccw_env)) == before
+
+
+# ---------------------------------------------------------------------------
+# The one dated line each scheduled job prints to its own log (W-20261010-A12,
+# Gavin's Q9 ruling (b), and 2026-10-10: --quiet keeps that one line).
+# ---------------------------------------------------------------------------
+
+def test_a_quiet_sweep_prints_one_dated_summary_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    configure_archive(ccw_env, tmp_path / "archive")
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+
+    result = run_ccw(["sweep", "--quiet"], ccw_env)
+
+    assert result.code == 0
+    assert the_dated_run_line(result.out, "sweep") == "sweep: 1 items, 1 stored, 0 failed"
+
+
+def test_a_quiet_repair_prints_one_dated_summary_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    configure_archive(ccw_env, tmp_path / "archive")
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    assert run_ccw(["sweep", "--quiet"], ccw_env).code == 0
+
+    result = run_ccw(["repair", "--quiet"], ccw_env)
+
+    assert result.code == 0
+    assert the_dated_run_line(result.out, "repair") == (
+        "repair: 1 checked, 0 fixed, 0 still broken, 0 held, 0 pending; 0 open refusal(s)"
+    )
+
+
+def test_archive_ends_with_one_dated_summary_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    _archive_baseline(ccw_env, archive_root)
+
+    result = run_ccw(["archive", "--to", str(archive_root)], ccw_env)
+
+    assert result.code == 0
+    the_dated_run_line(result.out, "archive")
+
+
+def test_the_dated_line_is_melbourne_twelve_hour_time() -> None:
+    """A known instant, read independently: 16:51 UTC on 9 Oct 2026 is
+    3:51 AM Saturday 10 Oct in Melbourne (AEDT, UTC+11)."""
+    from datetime import UTC, datetime
+
+    from cc_warehouse.cli import dated_run_line
+
+    at = datetime(2026, 10, 9, 16, 51, 51, tzinfo=UTC)
+    assert dated_run_line(at, ZONE, "sweep: 1 items", 7_444_000) == (
+        "3:51 AM Sat 10 Oct: sweep: 1 items, took 2 h 4 min"
+    )
+    assert dated_run_line(at, ZONE, "repair: x", 412) == "3:51 AM Sat 10 Oct: repair: x, took 0.4 s"
+    assert dated_run_line(at, ZONE, "repair: x", 65_000).endswith("took 1 min 5 s")
+    assert dated_run_line(at, ZONE, "repair: x", 12_300).endswith("took 12 s")
 
 
 def test_a_failed_sweep_run_summary_appears_in_ccw_status(

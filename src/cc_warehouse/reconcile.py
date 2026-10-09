@@ -45,15 +45,14 @@ from cc_warehouse.status import archived_session_uuids
 # "sweep: "/"build: " (ticket 42 #2, cli._log_run_summary) are per-RUN summaries, not
 # per-session records -- they name no session and no UUID ever appears in one, so
 # nothing here would have matched them anyway, but excluding the prefix outright is
-# cheaper than relying on that and makes the intent explicit. `ccw archive` has NO
-# such summary (see cli._run_archive's own scope note: writing one would violate its
-# "leaves the source warehouse byte-identical" contract), so there is no "archive: "
-# to exclude. These do NOT collide with the per-item failure prefixes this module
-# already resolves through the UUID-in-text fallback below: sweep's own per-item
-# failure is "sweep item <name> failed: " (sweep.py's `_log_item_failure`, note
-# "item", no colon after "sweep") and build's is "build failed: " / "sweep-triggered
-# build failed: " (cli.py's `_log_build_failure`) -- neither starts with "sweep: " or
-# "build: ".
+# cheaper than relying on that and makes the intent explicit. "archive: " joined them
+# on 2026-10-10 (W-20261010-A12), when `ccw archive` started writing a run summary
+# too; its per-item failures go to stderr only. These do NOT collide with the
+# per-item failure prefixes this module already resolves through the UUID-in-text
+# fallback below: sweep's own per-item failure is "sweep item <name> failed: "
+# (sweep.py's `_log_item_failure`, note "item", no colon after "sweep") and build's
+# is "build failed: " / "sweep-triggered build failed: " (cli.py's
+# `_log_build_failure`) -- neither starts with "sweep: " or "build: ".
 _EXCLUDED_PREFIXES = (
     "repair: ",
     "companions: ",
@@ -62,6 +61,7 @@ _EXCLUDED_PREFIXES = (
     "refused sidecar ",
     "sweep: ",
     "build: ",
+    "archive: ",
 )
 
 # A permissive, UNANCHORED search: every record written before ticket 42 #5 carries
