@@ -312,10 +312,10 @@ def test_build_failure_writes_an_error_run_summary(
 #
 # Until 2026-10-10 archive was pinned OUT of scope: it builds the tree BESIDE
 # the warehouse and touched nothing under `config.root`. Gavin ruled that day
-# that a build run appends exactly two lines to logs/capture.jsonl, its start
-# and its run summary, so all three scheduled jobs are logged alike. Nothing
-# else under the warehouse changes (test_archive_cli.py pins that), and
-# `--verify` still writes nothing.
+# that a build run appends its start and its run summary to logs/capture.jsonl,
+# so all three scheduled jobs are logged alike (a folder held for repair adds
+# its older `writer-held` line between them). Nothing else under the warehouse
+# changes (test_archive_cli.py pins that), and `--verify` still writes nothing.
 # ---------------------------------------------------------------------------
 
 
@@ -421,6 +421,10 @@ def test_the_dated_line_is_melbourne_twelve_hour_time() -> None:
     assert dated_run_line(at, ZONE, "repair: x", 412) == "3:51 AM Sat 10 Oct: repair: x, took 0.4 s"
     assert dated_run_line(at, ZONE, "repair: x", 65_000).endswith("took 1 min 5 s")
     assert dated_run_line(at, ZONE, "repair: x", 12_300).endswith("took 12 s")
+    # Truncated, never rounded up across a boundary, and never negative.
+    assert dated_run_line(at, ZONE, "repair: x", 9_999).endswith("took 9.9 s")
+    assert dated_run_line(at, ZONE, "repair: x", 999).endswith("took 0.9 s")
+    assert dated_run_line(at, ZONE, "repair: x", -1_500).endswith("took 0.0 s")
 
 
 def test_a_failed_sweep_run_summary_appears_in_ccw_status(
@@ -444,3 +448,123 @@ def test_a_failed_sweep_run_summary_appears_in_ccw_status(
     assert result.code == 0, result.err
     assert "sweep: " in result.out
     assert "1 failed" in result.out
+
+
+# ---------------------------------------------------------------------------
+# Refused and crashed runs (review of 71d5aec, 2026-10-10; Gavin: "all three
+# jobs"). Every refusal leaves a start, a `refused: ` end and the dated line;
+# a Python error leaves a `crashed: ` end and still fails as before.
+# ---------------------------------------------------------------------------
+
+
+def _unmark(archive_root: Path) -> None:
+    (archive_root / archive.ROOT_MARKER).unlink()
+
+
+def _starts_and_ends(env: dict[str, str], verb: str) -> list[str]:
+    """The run's own lines, in order: 'start' or the end record's message."""
+    out: list[str] = []
+    for r in _log_records(env):
+        if r.get("status") == f"{verb}-started":
+            out.append("start")
+        elif verb == "repair" and r.get("status") == "repair-summary":
+            out.append(str(r["message"]))
+        elif verb != "repair" and str(r.get("message", "")).startswith(f"{verb}: "):
+            out.append(str(r["message"]))
+    return out
+
+
+def test_a_sweep_refused_for_a_missing_archive_logs_a_refusal_not_an_item_count(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """It ran nothing, so it must not read as a run that finished with one
+    failed item: that is what the start-up hook softens to a WARNING."""
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    write_transcript(ccw_env, basic_session(session_id=UUID_A), session_id=UUID_A)
+    _unmark(archive_root)
+
+    result = run_ccw(["sweep", "--quiet"], ccw_env)
+
+    assert result.code == 1
+    lines = _starts_and_ends(ccw_env, "sweep")
+    assert lines[0] == "start" and len(lines) == 2, lines
+    assert lines[1].startswith("sweep: refused: "), lines
+    assert the_dated_run_line(result.out, "sweep").startswith("sweep: refused: ")
+
+
+def test_a_sweep_lock_refusal_prints_its_dated_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    configure_archive(ccw_env, tmp_path / "archive")
+    with lock_held_elsewhere(warehouse_root(ccw_env), "sweep"):
+        result = run_ccw(["sweep", "--quiet"], ccw_env)
+    assert result.code == 2
+    assert the_dated_run_line(result.out, "sweep").startswith("sweep: refused: ")
+
+
+def test_a_repair_refused_for_a_missing_archive_leaves_a_start_an_end_and_a_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    configure_archive(ccw_env, archive_root)
+    _unmark(archive_root)
+
+    result = run_ccw(["repair", "--quiet"], ccw_env)
+
+    assert result.code == 1
+    lines = _starts_and_ends(ccw_env, "repair")
+    assert len(lines) == 2 and lines[0] == "start", lines
+    assert lines[1].startswith("repair: refused: ") and "open refusal(s)" in lines[1], lines
+    assert the_dated_run_line(result.out, "repair").startswith("repair: refused: ")
+
+
+def test_an_archive_refused_for_a_missing_marker_leaves_a_start_an_end_and_a_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    _archive_baseline(ccw_env, archive_root)
+    _unmark(archive_root)
+
+    result = run_ccw(["archive", "--to", str(archive_root)], ccw_env)
+
+    assert result.code == 1
+    lines = _starts_and_ends(ccw_env, "archive")
+    assert len(lines) == 2 and lines[0] == "start", lines
+    assert lines[1].startswith("archive: refused: "), lines
+    assert the_dated_run_line(result.out, "archive").startswith("archive: refused: ")
+
+
+def test_an_archive_lock_refusal_prints_its_dated_line(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archive"
+    _archive_baseline(ccw_env, archive_root)
+    with lock_held_elsewhere(warehouse_root(ccw_env), archive.ARCHIVE_LOCK):
+        result = run_ccw(["archive", "--to", str(archive_root)], ccw_env)
+    assert result.code == 1
+    assert the_dated_run_line(result.out, "archive").startswith("archive: refused: ")
+
+
+@pytest.mark.parametrize("verb", ["sweep", "repair", "archive"])
+def test_a_crash_mid_run_leaves_a_crashed_end_and_still_raises(
+    verb: str, ccw_env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cc_warehouse import doctor, sweep
+
+    archive_root = tmp_path / "archive"
+    _archive_baseline(ccw_env, archive_root)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated crash")
+
+    target = {"sweep": (sweep, "sweep"), "repair": (doctor, "desync_detail"),
+              "archive": (archive, "migrate")}[verb]
+    monkeypatch.setattr(*target, boom)
+    args = ["archive", "--to", str(archive_root)] if verb == "archive" else [verb]
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        run_cli(args)
+
+    lines = _starts_and_ends(ccw_env, verb)
+    assert lines[-2] == "start", lines
+    assert lines[-1].startswith(f"{verb}: crashed: RuntimeError: simulated crash"), lines

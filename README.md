@@ -86,8 +86,11 @@ timer:
 
 ```bash
 crontab -e
-# 0 * * * * $HOME/.local/bin/ccw sweep --quiet
+# 0 * * * * $HOME/.local/bin/ccw sweep --quiet >> $HOME/ccw-sweep.log 2>&1
 ```
+
+`--quiet` still prints one dated summary line per run, so send it to a log file as
+above, or cron mails you every run.
 
 Use the absolute path. A cron job does not load your shell profile, so a bare
 `ccw` will not be found.

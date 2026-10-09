@@ -74,11 +74,13 @@ Notes:
   untouched and counts it; see "What repair does with what it finds" below. **Its exit
   code is 1 only when repair itself failed** (a render failed, a catalog row is
   missing); a held folder exits 0 and is counted in a `repair-summary` line instead.
-- All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output;
-  `--quiet` means **no stdout on success, failures still print**, so an empty log file is
-  the expected healthy state, not evidence the job never ran. Check `launchctl list` for
-  a job's last exit status (the number after the PID column; `0` is success) rather than
-  trusting an empty log alone.
+- All four use `--quiet` (sweep, repair, ccstats-dashboard) or rely on `ccw archive`'s own default output.
+  For the three `ccw` jobs, since W-20261010-A12 every run ends with **one dated line**
+  (a run that worked, a refusal, or a Python crash alike), so a run with no new line was
+  killed or never started; `ccw doctor`'s `sweep`, `repair` and `archive` lines say which.
+  ccstats-dashboard keeps the older convention: `--quiet` means no stdout on success, so
+  its empty log is the healthy state. Check `launchctl list` for a job's last exit status
+  (the number after the PID column; `0` is success) rather than trusting a log alone.
 - `ccw-archive` has **no `--verify` flag** in its scheduled invocation. It rebuilds the
   archive tree incrementally; it does not re-check existing folders for integrity. The
   only full-tree integrity check (`ccw archive --to <dir> --verify`, which writes

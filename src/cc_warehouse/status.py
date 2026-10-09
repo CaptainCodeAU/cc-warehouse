@@ -506,7 +506,8 @@ def _recent_errors(config: Config, limit: int) -> list[tuple[str, str | None, st
     """Last `limit` error records from logs/capture.jsonl, newest first.
 
     DESIGN section 7's `ccw status` contract reads "catalog + log": every capture.jsonl
-    writer shares one six-field schema (`notify.append_log`), and an error record always
+    writer shares the same six core fields (`notify.append_log`; some records, such as
+    `repair-summary`, carry more), and an error record always
     carries `status: "error"` there, whichever of the several call sites wrote it
     (unreadable transcript, lock unavailable, a post-archive-write stage failure, a
     build/repair failure, ...). `catalog.record_event` is never called with

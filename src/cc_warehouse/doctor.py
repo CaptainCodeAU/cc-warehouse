@@ -24,7 +24,7 @@ import os
 import re
 import shutil
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -920,7 +920,7 @@ def _last_sweep_completed(config: Config) -> datetime | None:
 # W-20260930-A28: `cli._log_sweep_started` writes this just before `sweep.sweep`
 # takes its lock, so a start younger than this is not judged yet.
 _SWEEP_START_GRACE_SECONDS = 120
-_SWEEP_START_PID = re.compile(r"^sweep started \(pid (\d+)\)$")
+_START_PID = re.compile(r"^(?:sweep|repair|archive) started \(pid (\d+)\)$")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -949,6 +949,22 @@ def _sweep_unfinished(config: Config) -> tuple[bool, str]:
     NEVER BLOCKING, the `companions` posture (ticket 38 ruling (e)): the next sweep
     redoes the work, and `overdue` already fails when sessions stay uncaptured. This
     line says WHY beside it. Every cannot-answer state reads as ok."""
+    return _job_unfinished(
+        config, "sweep", lambda record, message: message.startswith("sweep: "), "sweep"
+    )
+
+
+def _job_unfinished(
+    config: Config,
+    verb: str,
+    closes: Callable[[dict[str, object], str], bool],
+    lock: str | None,
+) -> tuple[bool, str]:
+    """A scheduled job's run that wrote its `<verb>-started` line and never the
+    record that closes it (W-20260930-A28 for sweep; repair and archive since
+    the review of 71d5aec, 2026-10-10). `closes(record, message)` says which
+    record ends a run: any run summary, a refusal or a crash. Same pairing,
+    grace, pid and lock witnesses and never-blocking posture for every job."""
     try:
         text = (config.root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
     except OSError:
@@ -956,7 +972,7 @@ def _sweep_unfinished(config: Config) -> tuple[bool, str]:
     open_start: tuple[datetime, int | None] | None = None
     last_start: datetime | None = None
     for line in text.splitlines():
-        if '"sweep' not in line:
+        if f'"{verb}' not in line:
             continue
         try:
             record = cast("dict[str, object]", json.loads(line))
@@ -965,29 +981,31 @@ def _sweep_unfinished(config: Config) -> tuple[bool, str]:
         message = record.get("message")
         if not isinstance(message, str):
             continue
-        if record.get("status") == "sweep-started":
+        if record.get("status") == f"{verb}-started":
             at = record.get("at")
             moment = _moment(at if isinstance(at, str) else None)
             if moment is None:
                 continue
-            pid = _SWEEP_START_PID.match(message)
+            pid = _START_PID.match(message)
             open_start = (moment, int(pid.group(1)) if pid else None)
             last_start = moment
-        elif message.startswith("sweep: "):
+        elif closes(record, message):
             open_start = None
     if last_start is None:
-        return True, "no sweep start recorded yet"
+        return True, f"no {verb} start recorded yet"
     if open_start is None:
-        return True, f"last sweep started {last_start.isoformat()} and finished"
+        return True, f"last {verb} started {last_start.isoformat()} and finished"
     moment, pid = open_start
     if (datetime.now(UTC) - moment).total_seconds() < _SWEEP_START_GRACE_SECONDS:
-        return True, f"a sweep started {moment.isoformat()}, moments ago"
-    if (pid is not None and _pid_alive(pid)) or store.lock_is_held(config.root, "sweep"):
-        return True, f"a sweep is running, started {moment.isoformat()}"
+        return True, f"a {verb} started {moment.isoformat()}, moments ago"
+    held = lock is not None and store.lock_is_held(config.root, lock)
+    if (pid is not None and _pid_alive(pid)) or held:
+        return True, f"a {verb} is running, started {moment.isoformat()}"
+    lock_note = f", {lock} lock free" if lock is not None else ""
     return (
         False,
-        f"the last sweep started {moment.isoformat()} and never finished (no run summary,"
-        " process gone, sweep lock free: killed or crashed); the next ccw sweep redoes"
+        f"the last {verb} started {moment.isoformat()} and never finished (no run summary,"
+        f" process gone{lock_note}: killed or crashed); the next ccw {verb} redoes"
         " its work",
     )
 
@@ -1682,6 +1700,19 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     # a sweep that died mid-run. Never blocking, `overdue` owns the FAIL.
     sweep_ok, sweep_detail = _sweep_unfinished(config)
     checks.append(Check("sweep", sweep_ok, sweep_detail, blocking=False))
+    # The same for the other two scheduled jobs (review of 71d5aec, 2026-10-10):
+    # a repair or archive run that died. Never blocking: the next run redoes it.
+    repair_ok, repair_detail = _job_unfinished(
+        config, "repair", lambda record, _message: record.get("status") == "repair-summary", None
+    )
+    checks.append(Check("repair", repair_ok, repair_detail, blocking=False))
+    archive_ok, archive_detail = _job_unfinished(
+        config,
+        "archive",
+        lambda _record, message: message.startswith("archive: "),
+        archive.ARCHIVE_LOCK,
+    )
+    checks.append(Check("archive", archive_ok, archive_detail, blocking=False))
 
     # Ticket 42 #6. Same never-blocking posture as sidecars/history/prompts/
     # companions/reconcile below: whether Claude Code even DISPATCHED to our

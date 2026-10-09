@@ -2423,3 +2423,21 @@ makes them readable. (d) The start-up hook caps a sweep that FINISHED with faile
 WARNING, never spoken; a job that cannot run keeps the full ladder. Its job line names the
 log from `launchctl print`'s `stdout path`, never a fixed folder. (e) No version bump:
 `renderer_version` is the package version and a bump re-renders ~30k folders.
+
+**2026-10-10, W-20261010-A12 follow-up: what five reviewers found, and the rulings.**
+Five review agents probed 71d5aec in scratch copies. Decided (principal, same day): (a)
+the WARNING cap softens ONLY a sweep that really ran: exit 1, its newest run summary a
+finished run (never `sweep: refused: ...`, a `; stopped:` run or a crash), finished within
+26 h; while launchctl says the sweep is running, the last finished run still explains the
+previous exit code. A sweep refused for a missing archive root now logs
+`sweep: refused: ...`, not `1 items, 0 stored, 1 failed`, which had capped the likeliest
+real outage. (b) Every refused or crashed run of all three jobs leaves a start, a
+`refused: ` or `crashed: ` end record and the dated line; repair and archive now write
+their start BEFORE the archive-root check. A hard kill still leaves only the start. (c)
+`ccw doctor` gains never-blocking `repair` and `archive` lines from the same pairing as
+`sweep` (`doctor._job_unfinished`). CORRECTION to the entry above, item (b): an archive
+build run appends its start and summary, but it already appended a `writer-held` line per
+folder it holds for repair, and takes and removes its lock file under `locks/`; "exactly
+two lines" was wrong. Left open (open-items): doctor's pairing can read a killed run as
+finished when a refused run lands between its start and now; the companion repo's
+committed job logs now change every day.

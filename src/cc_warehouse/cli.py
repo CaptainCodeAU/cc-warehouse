@@ -8,6 +8,7 @@ handle and removes nothing itself: build.py owns projection removal and the stor
 owns the one write primitive (R2/R4 fences).
 """
 
+import contextlib
 import functools
 import json
 import os
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -801,15 +802,35 @@ def _run_sweep(args: Sequence[str]) -> int:
         return 1 if failures else 0
     started = time.monotonic()
     _log_sweep_started(config)
+    with _crash_logged(config, "sweep", started):
+        return _sweep_body(config, source, keep, limit, started)
+
+
+def _sweep_body(
+    config: Config,
+    source: Path | None,
+    keep: Callable[[str | None], bool] | None,
+    limit: int | None,
+    started: float,
+) -> int:
+    """`ccw sweep`'s run after its start line (see `_run_sweep`)."""
+    # A missing or unproven archive root refuses the whole run before any work
+    # (ticket 44a). Checked HERE as well as inside sweep.sweep so the run is
+    # logged as a refusal: as an item count ("1 items, 0 stored, 1 failed") it
+    # read as a run that finished with one failure, which the start-up hook
+    # softens to a WARNING (review of 71d5aec, 2026-10-10).
+    refused = archive.root_refusal(config)
+    if refused is not None:
+        detail = refused.outcomes[0].detail or "archive root refused"
+        print(f"sweep refused: {detail}", file=sys.stderr)
+        _end_refused(config, "sweep", detail, started)
+        return 1
     report = sweep.sweep(config, source, keep, limit=limit)
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         # Ticket 42 #2: a refusal that leaves no trace is exactly what ticket 41 had to
         # reconstruct by hand -- log it before returning, same as a real run below.
-        _log_run_summary(
-            config, "sweep", "error", "refused: lock held by a live holder",
-            _elapsed_since(started),
-        )
         print("sweep refused: lock held by a live holder", file=sys.stderr)
+        _end_refused(config, "sweep", "lock held by a live holder", started)
         return 2
     failures = report.failures
     for outcome in failures:
@@ -883,7 +904,7 @@ def _run_sweep(args: Sequence[str]) -> int:
     if lost:
         summary += "; stopped: " + "; ".join(o.detail for o in lost)
     # Ticket 42 #2: written REGARDLESS of --quiet, matching _log_repair_outcome's own
-    # contract -- --quiet drops the stdout line below only, never the durable record.
+    # contract -- --quiet never drops the durable record.
     elapsed = _elapsed_since(started)
     _log_run_summary(config, "sweep", "error" if failures or lost else "ok", summary, elapsed)
     # One dated line, printed even under --quiet (Gavin, 2026-10-10,
@@ -1041,9 +1062,10 @@ def _elapsed_since(started: float) -> int:
 
 def _took(elapsed_ms: int) -> str:
     """A run's length for a person: 0.4 s, 12 s, 1 min 5 s, 2 h 4 min."""
+    elapsed_ms = max(0, elapsed_ms)
     seconds = elapsed_ms // 1000
     if elapsed_ms < 10_000:
-        return f"{elapsed_ms / 1000:.1f} s"
+        return f"{elapsed_ms // 100 / 10:.1f} s"
     if seconds < 60:
         return f"{seconds} s"
     if seconds < 3600:
@@ -1062,6 +1084,33 @@ def dated_run_line(at: datetime, zone: str, message: str, elapsed_ms: int) -> st
 
 def _print_run_line(config: Config, message: str, elapsed_ms: int) -> None:
     print(dated_run_line(datetime.now(UTC), config.archive_timezone, message, elapsed_ms))
+
+
+def _end_refused(config: Config, verb: str, why: str, started: float) -> None:
+    """A run that refused before its work: the `<verb>: refused: ` run summary
+    that closes its start line, and its one dated line (review of 71d5aec)."""
+    elapsed = _elapsed_since(started)
+    _log_run_summary(config, verb, "error", f"refused: {why}", elapsed)
+    _print_run_line(config, f"{verb}: refused: {why}", elapsed)
+
+
+@contextlib.contextmanager
+def _crash_logged(config: Config, verb: str, started: float) -> Generator[None]:
+    """Close a job's start line when its run dies of a Python error (Gavin,
+    2026-10-10): a `<verb>: crashed: <error>` run summary and the dated line,
+    then the error goes on exactly as before. A hard kill still leaves only
+    the start line, which `ccw doctor` reports once the process is gone."""
+    try:
+        yield
+    except (Exception, KeyboardInterrupt) as exc:
+        why = f"crashed: {type(exc).__name__}: {exc}"
+        elapsed = _elapsed_since(started)
+        if verb == "repair":
+            _write_repair_summary(config, RepairCounts(0, 0, 0, 0, 0), elapsed, note=why)
+        else:
+            _log_run_summary(config, verb, "error", why, elapsed)
+        _print_run_line(config, f"{verb}: {why}", elapsed)
+        raise
 
 
 def _log_run_summary(
@@ -2194,6 +2243,14 @@ def _run_repair(rest: Sequence[str]) -> int:
     (tests/test_repair_refuses_unexplained.py, tests/test_repair_sendback.py)."""
     quiet = "--quiet" in rest
     config = _load(rest)
+    started = time.monotonic()
+    _log_job_started(config, "repair")
+    with _crash_logged(config, "repair", started):
+        return _repair_body(config, quiet, started)
+
+
+def _repair_body(config: Config, quiet: bool, started: float) -> int:
+    """`ccw repair`'s run after its start line (see `_run_repair`)."""
     # Ticket 44a: repair re-renders INTO the archive, so an unproven root is
     # refused before any work, named on stderr and logged like any repair failure.
     if config.archive_root is not None:
@@ -2204,9 +2261,12 @@ def _run_repair(rest: Sequence[str]) -> int:
         except archive.ArchiveRootRefused as exc:
             _log_repair_outcome(config, "error", None, str(exc))
             print(f"repair: {exc}", file=sys.stderr)
+            elapsed = _elapsed_since(started)
+            _open, summary = _write_repair_summary(
+                config, RepairCounts(0, 0, 0, 0, 0), elapsed, note=f"refused: {exc}"
+            )
+            _print_run_line(config, summary, elapsed)
             return 1
-    started = time.monotonic()
-    _log_job_started(config, "repair")
     reconcile_since = datetime.now(UTC) - reconcile.DEFAULT_WINDOW
     # One history.jsonl read, shared by the new-loss check and the retraction pass.
     history = reconcile.HistoryOnce(Path.home())
@@ -2424,7 +2484,7 @@ class RepairCounts:
 
 
 def _write_repair_summary(
-    config: Config, counts: RepairCounts, elapsed_ms: int
+    config: Config, counts: RepairCounts, elapsed_ms: int, note: str | None = None
 ) -> tuple[int, str]:
     """The ONE line per run the start-up hook reads (W-20260929-A82 item 6):
     how many refusals are open, counting EVERY session with an unresolved
@@ -2434,14 +2494,15 @@ def _write_repair_summary(
 
     W-20261010-A12: it also says what this run did (folders checked, fixed,
     still broken, held, pending) and how long it took, so it closes the
-    run's `repair-started` line the way a `sweep: ` summary closes a sweep's."""
+    run's `repair-started` line the way a `sweep: ` summary closes a sweep's.
+    `note` replaces the work counts for a run that refused or crashed."""
     state = reconcile.open_refusals(config)
     oldest = min((r.first_at for r in state.values() if r.first_at), default=None)
     work = (
         f"{counts.checked} checked, {counts.fixed} fixed, {counts.still_broken} still broken, "
         f"{counts.held} held, {counts.pending} pending"
     )
-    message = f"repair: {work}; {len(state)} open refusal(s)"
+    message = f"repair: {note or work}; {len(state)} open refusal(s)"
     try:
         notify.append_log(
             config,
@@ -2539,22 +2600,28 @@ def _run_archive(args: Sequence[str]) -> int:
         verb = "marked" if wrote else "already marked"
         print(f"archive: {target} {verb} as the archive root for {zone}")
         return 0
+    started = time.monotonic()
+    _log_job_started(config, "archive")
+    with _crash_logged(config, "archive", started):
+        return _archive_body(config, target, zone, "--rebuild" in args, started)
+
+
+def _archive_body(config: Config, target: Path, zone: str, rebuild: bool, started: float) -> int:
+    """`ccw archive`'s build run after its start line (see `_run_archive`)."""
     try:
         archive.require_root(target, zone, warehouse_root=config.root)
     except archive.ArchiveRootRefused as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        _end_refused(config, "archive", str(exc), started)
         return 1
-    rebuild = "--rebuild" in args
-    started = time.monotonic()
-    _log_job_started(config, "archive")
     report = archive.migrate(
         config.root, target, build.render_options(config), zone, rebuild=rebuild
     )
     if report.lock_held:
         # R14/R10: a refusal is named and exits non-zero, never counted as a
-        # run that wrote nothing successfully.
-        _log_run_summary(config, "archive", "error", report.summary(), _elapsed_since(started))
+        # run that wrote nothing successfully. report.summary() reads "refused: ...".
         print(f"archive: {report.summary()}", file=sys.stderr)
+        _end_refused(config, "archive", report.summary().removeprefix("refused: "), started)
         return 1
     # After the folders, because a project.json for a project with no surviving
     # session folder would describe nothing.
@@ -2565,10 +2632,11 @@ def _run_archive(args: Sequence[str]) -> int:
         print(f"archive: not a session (no sessionId) {hash_[:16]}", file=sys.stderr)
     # W-20261010-A12 (Gavin, 2026-10-10): logged like sweep and repair, a start
     # above and this run summary, so all three scheduled jobs leave the same
-    # record. These two lines are the ONLY warehouse write this verb makes;
-    # until that ruling it made none (the "build BESIDE" contract, which
-    # test_archive_cli.py still pins for everything else under config.root).
-    # `--verify` and `--init` return before either line and still write nothing.
+    # record. Its only other writes under config.root are older ones: a
+    # `writer-held` line per folder `migrate` holds for repair (archive.record_hold)
+    # and its batch lock file, created and removed. Everything else under the
+    # warehouse is untouched (test_archive_cli.py pins it). `--verify` and
+    # `--init` return before the start line and still write nothing.
     summary = f"{report.summary()}, {projects} project.json written"
     elapsed = _elapsed_since(started)
     _log_run_summary(config, "archive", "error" if report.failed else "ok", summary, elapsed)
@@ -2978,7 +3046,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
             ("--until DATE", "import only sessions up to DATE, inclusive"),
             ("--limit N", "consider at most N transcripts (exercise a slice)"),
             ("--dry-run", "name what a real run would import; writes NOTHING"),
-            ("--quiet", "no stdout; failures and the exit code are unaffected"),
+            ("--quiet", "stdout is one dated summary line; failures and exit code unaffected"),
         ),
         False,
     ),
@@ -3039,7 +3107,7 @@ _VERB_OPTIONS: dict[str, tuple[tuple[tuple[str, str], ...], bool]] = {
     "status": ((("(no options)", "recent captures, counts, store size, last errors"),), False),
     "doctor": ((("(no options)", "is capture working, and if not since when"),), False),
     "repair": (
-        (("--quiet", "no stdout on success; failures and the exit code are unaffected"),),
+        (("--quiet", "stdout is one dated summary line; failures and exit code unaffected"),),
         False,
     ),
     "reconcile": (

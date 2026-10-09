@@ -104,7 +104,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:  # POSIX only. Without it the check still runs, just unlocked.
@@ -235,7 +235,15 @@ _LAST_EXIT = re.compile(r"last exit code = (-?\d+)")
 # The same report's log line, e.g. "stdout path = /.../launch-agents/logs/ccw-sweep.log".
 # The jobs' logs moved out of ~/.claude/logs/ on 2026-10-10, so the hook reads
 # where each job really writes rather than naming a folder (W-20261010-A12).
-_LOG_PATH = re.compile(r"^\s*stdout path = (.+?)\s*$", re.MULTILINE)
+_LOG_PATH = re.compile(r"^\s*(stdout|stderr) path = (.+?)\s*$", re.MULTILINE)
+# The same report's top-level state, "state = running" while the job runs. A
+# running sweep still shows the PREVIOUS run's exit code, so the hook must not
+# read that code as today's run (review of 71d5aec, 2026-10-10).
+_STATE = re.compile(r"^\tstate = (.+?)\s*$", re.MULTILINE)
+
+# How recent a finished sweep must be to explain the job's exit code: one daily
+# run plus slack. Older, and the job has missed a run, so it is failing to run.
+_FINISHED_RUN_MAX_AGE = timedelta(hours=26)
 
 # Ticket 42 item #1: which statuses raise WHICH channel. Before this, only
 # "error" spoke at all and nothing ever raised a desktop notification, so the
@@ -575,15 +583,25 @@ def extract_last_exit(launchctl_output: str) -> int | None:
 
 
 def extract_log_path(launchctl_output: str) -> str | None:
-    """The job's stdout log path from a `launchctl print` report, or None
-    when the report names none."""
-    match = _LOG_PATH.search(launchctl_output)
-    return match.group(1) if match else None
+    """The job's log from a `launchctl print` report: its stdout path, else
+    its stderr path, never /dev/null; None when the report names neither."""
+    paths = {
+        kind: path
+        for kind, path in reversed(_LOG_PATH.findall(launchctl_output))
+        if path != "/dev/null"
+    }
+    return paths.get("stdout") or paths.get("stderr")
 
 
-def _job_report(label: str) -> tuple[int | None, str | None]:
-    """Ask launchctl about one job, best-effort: (last exit code, log path).
-    (None, None) on ANY failure to check at all (launchctl missing -- e.g. not
+def extract_running(launchctl_output: str) -> bool:
+    """True when a `launchctl print` report says the job is running now."""
+    match = _STATE.search(launchctl_output)
+    return match is not None and match.group(1) == "running"
+
+
+def _job_report(label: str) -> tuple[int | None, str | None, bool]:
+    """Ask launchctl about one job, best-effort: (last exit code, log path,
+    running now). (None, None, False) on ANY failure to check at all (launchctl missing -- e.g. not
     macOS, the job not loaded, a hung call) -- this must never block or fail
     session start, same posture as the `ccw doctor` subprocess call below."""
     try:
@@ -595,12 +613,13 @@ def _job_report(label: str) -> tuple[int | None, str | None]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return None, None
-    return extract_last_exit(result.stdout), extract_log_path(result.stdout)
+        return None, None, False
+    out = result.stdout
+    return extract_last_exit(out), extract_log_path(out), extract_running(out)
 
 
-def job_reports() -> dict[str, tuple[int | None, str | None]]:
-    """Each watched job's (last exit code, log path). The code is None where
+def job_reports() -> dict[str, tuple[int | None, str | None, bool]]:
+    """Each watched job's (last exit code, log path, running now). The code is None where
     launchctl could not say (never run, not loaded, not macOS, a hung call).
     Unknown is not the same as healthy, and not the same as failing either:
     callers leave a job's failure period untouched when its code is None."""
@@ -608,20 +627,31 @@ def job_reports() -> dict[str, tuple[int | None, str | None]]:
 
 
 # `cli._log_run_summary`'s completed-sweep line: "sweep: N items, ..., K failed".
+# A run that STOPPED (the archive root lost mid-run) adds "; stopped: ..." and
+# did not finish, so it never counts as a finished run.
 _SWEEP_SUMMARY = re.compile(r"^sweep: (\d+) items, .*?(\d+) failed")
 
 
-def latest_sweep_outcome(capture_log: Path) -> tuple[int, int, datetime] | None:
-    """(failed, items, finished_at) of the newest completed sweep, or None when
-    there is none, the log cannot be read, or a sweep has started since (so the
-    newest summary is the previous run's and cannot explain the current exit
-    code). Pairs lines in file order, as `ccw doctor` does: the log is
-    append-only (W-20261010-A02)."""
+def latest_sweep_outcome(
+    capture_log: Path, running: bool = False
+) -> tuple[int, int, datetime] | None:
+    """(failed, items, finished_at) of the newest sweep that ran to the end, or
+    None when there is none, the log cannot be read, the newest run summary is
+    not a finished run (a refusal, a crash, a stop), or a sweep has started
+    since (so the newest summary is the previous run's and cannot explain the
+    current exit code). Pairs lines in file order, as `ccw doctor` does: the
+    log is append-only (W-20261010-A02).
+
+    `running`: launchctl says the job is running now. Its exit code is then
+    the previous run's, so a start with no summary yet is THAT run, and the
+    outcome before it is the one that explains the code (review of 71d5aec)."""
     try:
         lines = capture_log.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
     outcome: tuple[int, int, datetime] | None = None
+    before_start: tuple[int, int, datetime] | None = None
+    open_start = False
     for line in lines:
         if '"sweep' not in line:
             continue
@@ -633,29 +663,50 @@ def latest_sweep_outcome(capture_log: Path) -> tuple[int, int, datetime] | None:
             continue
         message = record.get("message")
         if record.get("status") == "sweep-started":
-            outcome = None
+            before_start, outcome, open_start = outcome, None, True
             continue
-        match = _SWEEP_SUMMARY.match(message) if isinstance(message, str) else None
+        if not isinstance(message, str) or not message.startswith("sweep: "):
+            continue
+        open_start = False
+        match = _SWEEP_SUMMARY.match(message)
         at = _parse_ts(record.get("at"))
-        if match and at is not None:
+        outcome = None
+        if match is not None and at is not None and "; stopped:" not in message:
             outcome = (int(match.group(2)), int(match.group(1)), at)
+    if running and open_start:
+        return before_start
     return outcome
 
 
-def _finished_with_failures(label: str, outcome: tuple[int, int, datetime] | None) -> bool:
-    """The sweep's newest run finished and named failed items (W-20261010-A02)."""
-    return label.endswith("ccw-sweep") and outcome is not None and outcome[0] > 0
+def _finished_with_failures(
+    label: str,
+    code: int,
+    outcome: tuple[int, int, datetime] | None,
+    now: datetime | None = None,
+) -> bool:
+    """The sweep's exit code is explained by its newest run, which FINISHED
+    with failed items: exit 1 (ccw sweep's code for failed items; any other
+    code is the job itself failing), a finished run (never a refusal, a stop
+    or a crash; see latest_sweep_outcome), within a day (W-20261010-A02,
+    tightened after the review of 71d5aec)."""
+    if not label.endswith("ccw-sweep") or code != 1 or outcome is None or outcome[0] <= 0:
+        return False
+    return (now or _now()) - outcome[2] <= _FINISHED_RUN_MAX_AGE
 
 
 def job_tier(
-    label: str, broken_for_s: float, outcome: tuple[int, int, datetime] | None = None
+    label: str,
+    code: int,
+    broken_for_s: float,
+    outcome: tuple[int, int, datetime] | None = None,
+    now: datetime | None = None,
 ) -> int:
     """The job's tier on its clock. A sweep that FINISHED with failed items is
     capped at WARNING (Gavin, 2026-10-10, Q10: "Cap it at WARNING"): the next
     sweep retries those items, so it is never spoken. A job that cannot run
     keeps the full ladder."""
     tier = _tier(broken_for_s)
-    return min(tier, 1) if _finished_with_failures(label, outcome) else tier
+    return min(tier, 1) if _finished_with_failures(label, code, outcome, now) else tier
 
 
 def job_message(
@@ -665,6 +716,7 @@ def job_message(
     outcome: tuple[int, int, datetime] | None = None,
     capture_log: Path | None = None,
     log_path: str | None = None,
+    now: datetime | None = None,
 ) -> str:
     """The line for one failing scheduled job, tiered on how long it has been
     seen failing. `ccw doctor` does not check these jobs at all, so this is
@@ -684,9 +736,8 @@ def job_message(
     job, or says how to find it; it no longer names ~/.claude/logs/, which the
     jobs stopped writing to on 2026-10-10."""
     lasted = _duration(broken_for_s)
-    tier = job_tier(label, broken_for_s, outcome)
-    if _finished_with_failures(label, outcome):
-        assert outcome is not None
+    tier = job_tier(label, code, broken_for_s, outcome, now)
+    if outcome is not None and _finished_with_failures(label, code, outcome, now):
         failed, items, at = outcome
         when = at.astimezone().strftime("%-I:%M %p %a %-d %b")
         body = (
@@ -695,18 +746,14 @@ def job_message(
             f"{capture_log if capture_log is not None else 'capture.jsonl'}."
         )
         return ("cc-warehouse: ", "cc-warehouse: WARNING - ", "cc-warehouse: ALERT - ")[tier] + body
-    where = (
-        f"Check its log: {log_path}"
-        if log_path
-        else f"Its log is the stdout path in: launchctl print gui/$(id -u)/{label}"
-    )
+    target = log_path or f"the path named by launchctl print gui/$(id -u)/{label}"
     return (
         f"cc-warehouse: scheduled job failing: {label} (exit {code}), first seen "
-        f"{lasted} ago. {where}",
+        f"{lasted} ago. Check its log: {target}",
         f"cc-warehouse: WARNING - scheduled job {label} has been failing for "
-        f"{lasted} (exit {code}). {where}",
+        f"{lasted} (exit {code}). Check its log: {target}",
         f"cc-warehouse: ALERT - scheduled job {label} has been failing for "
-        f"{lasted} (exit {code}). {where} (now)",
+        f"{lasted} (exit {code}). Check its log now: {target}",
     )[tier]
 
 
@@ -1007,9 +1054,14 @@ def _job_lines(
         reports = job_reports()
     except Exception:  # noqa: BLE001 - must never fail session start
         reports = {}
-    codes = {label: code for label, (code, _log) in reports.items()}
+    codes = {label: code for label, (code, _log, _running) in reports.items()}
     capture_log = _warehouse_root(doctor_output) / "logs" / "capture.jsonl"
-    outcome = latest_sweep_outcome(capture_log) if any(codes.values()) else None
+    sweep_running = any(
+        running for label, (_c, _l, running) in reports.items() if label.endswith("ccw-sweep")
+    )
+    outcome = (
+        latest_sweep_outcome(capture_log, running=sweep_running) if any(codes.values()) else None
+    )
     old = prev.get("jobs")
     jobs: dict[str, object] = dict(old) if isinstance(old, dict) else {}
     lines: list[str] = []
@@ -1024,8 +1076,10 @@ def _job_lines(
         alerted = _alerted(entry) if since is not None else 0
         since = since or now
         broken_for = max(0.0, (now - since).total_seconds())
-        tier = job_tier(label, broken_for, outcome)
-        message = job_message(label, code, broken_for, outcome, capture_log, reports[label][1])
+        tier = job_tier(label, code, broken_for, outcome, now)
+        message = job_message(
+            label, code, broken_for, outcome, capture_log, reports[label][1], now
+        )
         _raise(tier, message, tier > alerted)
         jobs[label] = {"since": since.isoformat(), "exit": code, "alerted_tier": max(alerted, tier)}
         lines.append(message)

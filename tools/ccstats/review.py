@@ -343,9 +343,9 @@ def main(argv: list[str]) -> int:
             for field, p in all_dead
             if f"acknowledged_patterns:{field}:{p}" not in known_already
         ]
-        # Silence is the healthy state, matching ccw-sweep and this folder's
-        # other scheduled jobs. `refresh.py` shows the dialog line only when
-        # this prints something.
+        # Silence is the healthy state, matching this folder's other scheduled
+        # jobs (ccw-sweep stopped being silent on 2026-10-10, W-20261010-A12).
+        # `refresh.py` shows the dialog line only when this prints something.
         for label, win_n, all_n, _ in fresh:
             print(f"{win_n:>5} since / {all_n:>5} all   {label}")
         for field, p in rotted:

@@ -22,6 +22,10 @@ from conftest import load_hook_module
 SWEEP = "com.captaincodeau.ccw-sweep"
 _WARN = timedelta(minutes=31).total_seconds()
 _ALERT = timedelta(hours=4, minutes=11).total_seconds()
+# The session start the alert is computed at: 3 h 7 min after the 9 Oct run
+# finished, so within the day a finished run may explain the exit code. Fixed,
+# never the real clock, or these tests would fail a day after that date.
+_NOW = datetime(2026, 10, 9, 4, 0, 0, tzinfo=UTC)
 
 
 def _freshness() -> ModuleType:
@@ -83,7 +87,7 @@ def test_a_finished_run_with_failed_items_says_so_and_points_at_capture_log(
     freshness = _freshness()
     log = _real_9_oct(tmp_path)
     outcome = freshness.latest_sweep_outcome(log)
-    message = freshness.job_message(SWEEP, 1, _ALERT, outcome=outcome, capture_log=log)
+    message = freshness.job_message(SWEEP, 1, _ALERT, outcome=outcome, capture_log=log, now=_NOW)
     assert "has been failing for" not in message, message
     assert "1 of 30981 item(s) failed" in message, message
     assert str(log) in message, message
@@ -97,8 +101,8 @@ def test_the_tiers_still_apply_to_the_finished_run_wording(tmp_path: Path) -> No
     freshness = _freshness()
     log = _real_9_oct(tmp_path)
     outcome = freshness.latest_sweep_outcome(log)
-    mild = freshness.job_message(SWEEP, 1, 60.0, outcome=outcome, capture_log=log)
-    warn = freshness.job_message(SWEEP, 1, _WARN, outcome=outcome, capture_log=log)
+    mild = freshness.job_message(SWEEP, 1, 60.0, outcome=outcome, capture_log=log, now=_NOW)
+    warn = freshness.job_message(SWEEP, 1, _WARN, outcome=outcome, capture_log=log, now=_NOW)
     assert "WARNING" not in mild and "ALERT" not in mild
     assert warn.startswith("cc-warehouse: WARNING - ")
 
@@ -113,7 +117,7 @@ def test_no_failed_items_keeps_the_job_wording(tmp_path: Path) -> None:
                   "sweep: 30981 items, 7 stored, 30 with sidecars, 0 failed", "ok")],
     )
     outcome = freshness.latest_sweep_outcome(log)
-    message = freshness.job_message(SWEEP, 1, _ALERT, outcome=outcome, capture_log=log)
+    message = freshness.job_message(SWEEP, 1, _ALERT, outcome=outcome, capture_log=log, now=_NOW)
     assert "has been failing for" in message
 
 

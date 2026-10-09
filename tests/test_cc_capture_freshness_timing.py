@@ -93,6 +93,7 @@ def _drive(
     at: datetime,
     state_path: Path | None = None,
     jobs: dict[str, int] | None = None,
+    running: frozenset[str] = frozenset(),
 ) -> Run:
     run = Run()
     monkeypatch.setattr(freshness, "LOG", tmp_path / "ccw-hook.log")
@@ -108,8 +109,11 @@ def _drive(
             if isinstance(doctor, BaseException):
                 raise doctor
             return doctor
-        code = (jobs or {}).get(argv[-1].rsplit("/", 1)[-1], 0)
-        return subprocess.CompletedProcess(argv, 0, f"\tlast exit code = {code}\n", "")
+        label = argv[-1].rsplit("/", 1)[-1]
+        code = (jobs or {}).get(label, 0)
+        state = "running" if label in running else "not running"
+        out = f"\tstate = {state}\n\tlast exit code = {code}\n"
+        return subprocess.CompletedProcess(argv, 0, out, "")
 
     def fake_popen(argv: list[str], **_kwargs: Any) -> object:
         if argv[0] == "osascript":
@@ -464,8 +468,8 @@ def test_a_job_the_hook_could_not_ask_about_keeps_its_period(
     _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(0), T0, jobs={_REPAIR: 1})
     _drive(freshness, tmp_path, monkeypatch, capsys, _doctor(0), T0 + timedelta(minutes=31),
            jobs={_REPAIR: 1})
-    def unanswerable(_label: str) -> tuple[int | None, str | None]:
-        return None, None
+    def unanswerable(_label: str) -> tuple[int | None, str | None, bool]:
+        return None, None, False
 
     monkeypatch.setattr(freshness, "_job_report", unanswerable)
     capsys.readouterr()

@@ -35,10 +35,11 @@ its `load_default_filters`), so this script deliberately passes neither. Adding
 a copy of that logic here is exactly the drift that function was written to
 close.
 
-OUTPUT CONVENTION, matching the ccw-sweep / ccw-repair jobs: `--quiet` prints
-nothing when everything worked, and prints the full run on any failure. An empty
-log is therefore the healthy state, and a non-empty log always means something
-needs a look.
+OUTPUT CONVENTION: `--quiet` prints nothing when everything worked, and prints
+the full run on any failure. An empty log is therefore the healthy state, and a
+non-empty log always means something needs a look. (The three `ccw` jobs shared
+this convention until 2026-10-10; since W-20261010-A12 they print one dated line
+per run even under `--quiet`. This job keeps the empty-log convention.)
 
 THE DIALOG IS THE POINT OF A SCHEDULED JOB YOU CANNOT SEE. A `launchd` job
 leaves no trace on screen, and this one's healthy log is deliberately empty, so

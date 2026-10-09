@@ -181,8 +181,9 @@ It calls `collect.py --quiet` then `dashboard.py`, and nothing else. It passes n
 `/dashboard` page cannot drift apart. Editing that exclude list stays a human job
 (`/dashboard edit-list`, or edit the JSON by hand).
 
-`--quiet` prints nothing on success and the full run on any failure, matching the
-`ccw-sweep` / `ccw-repair` convention: an empty log is the healthy state. If the scan
+`--quiet` prints nothing on success and the full run on any failure: an empty log is
+the healthy state. (`ccw-sweep` / `ccw-repair` used the same convention until
+2026-10-10; they now print one dated line per run.) If the scan
 fails the page is still rebuilt from the existing database (stale beats absent) but the
 exit status is still 1. `--skip-collect` rebuilds the page from the existing database
 without rescanning, which takes about 3 seconds instead of 12.

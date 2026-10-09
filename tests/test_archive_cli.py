@@ -135,7 +135,8 @@ def test_archive_leaves_the_source_warehouse_byte_identical(
     ONE EXCEPTION, Gavin 2026-10-10 (W-20261010-A12): a build run appends its
     `archive-started` line and its `archive: ` run summary to logs/capture.jsonl,
     the only record the tools read. Nothing else under the warehouse changes,
-    and nothing already in the log is rewritten."""
+    and nothing already in the log is rewritten. (A folder held for repair adds
+    an older `writer-held` line too; this fixture holds none.)"""
     populated(ccw_env)
     before = tree_snapshot(warehouse_root(ccw_env))
     assert run_cli(["archive", "--to", str(tmp_path / "archive"), "--init"]).code == 0

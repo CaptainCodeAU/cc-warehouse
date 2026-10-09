@@ -75,8 +75,8 @@ Read it like this:
 | `"PID"` present | Still running. Usually the box is on screen waiting for you. |
 | No such job / nothing listed | The job is not loaded. See "Turn it off / back on". |
 
-An empty log is the healthy state on purpose, the same convention as the three
-`ccw` jobs. That is also why a box that fails to appear is forced into the log:
+An empty log is the healthy state on purpose. (The three `ccw` jobs used the same
+convention until 2026-10-10; they now print one dated line per run.) That is also why a box that fails to appear is forced into the log:
 otherwise "ran fine" and "never ran" would look identical.
 
 ## Open the page without waiting for the job
