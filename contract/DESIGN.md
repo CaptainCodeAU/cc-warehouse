@@ -2441,3 +2441,22 @@ folder it holds for repair, and takes and removes its lock file under `locks/`; 
 two lines" was wrong. Left open (open-items): doctor's pairing can read a killed run as
 finished when a refused run lands between its start and now; the companion repo's
 committed job logs now change every day.
+
+**2026-10-11, W-20260930-A59: what counts as a session, ruled again after a re-measure.**
+REPLACES the first half of the 2026-10-02 entry above ("user and assistant message
+lines"). A re-measure of the live source tree, through the sweep's own walk and with a
+known session and the 8 known `memory/` files as controls, found 27,085 files: 8,396 with
+user and assistant lines, 18,239 with user lines only, 430 stubs with neither, 8 under
+`memory/`, 12 with no session id. The user-only files were read on 2026-10-03 as sessions
+typed into and never answered; 18,019 of them are background `sdk-cli` calls from
+scripts and hooks, 220 are interactive. Decided (principal, cc-warehouse-main Q3 v2: 1):
+the test stays `archive.is_session` (a session id, not a sub-agent), and nothing under
+`<project-key>/memory/` is a session. Only the 8 change; everything archived today still
+is. Built as one prune in `sweep._walk_source` (`sweep.is_project_memory`, keyed on
+`sidecars.MEMORY_DIR`), so status, doctor and reconcile, which read the tree only
+through it, change with it; an oracle fence names every tree walk in `src/`.
+`ccw import` already classifies by `is_session` and walks an operator-named tree, so it
+needed no change. The 2026-09-30 guards (a) build-skip and (b) capture-refusal are
+dropped: (b) was withdrawn above, and (a) has no remaining trigger since W-20261001-A56.
+Not covered here: the sweep still catalogs a walked file with no session id (the
+workflow journals), which is W-20261001-A58.

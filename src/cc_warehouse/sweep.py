@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from cc_warehouse import capture, catalog, notify, parser, registry, store
+from cc_warehouse import capture, catalog, notify, parser, registry, sidecars, store
 from cc_warehouse.config import Config
 from cc_warehouse.reports import BatchReport, ItemOutcome
 
@@ -49,6 +49,21 @@ _AGENT_PREFIX = "agent-"
 
 # Claude Code transcripts and v1 store objects share this suffix (store.put default ext).
 _JSONL_SUFFIX = ".jsonl"
+
+
+def is_project_memory(walk_root: Path, directory: Path) -> bool:
+    """True for `<walk_root>/<project-key>/memory`, a project's memory folder.
+
+    W-20260930-A59 (Gavin's ruling 2026-10-11): nothing under it is a session, whatever
+    its content. pj keeps records there, including `claude -p` stream-json captures the
+    2026-09-30 sweep cataloged as sessions. Only a segment exactly `memory`, exactly one
+    level below the walk root, matches: a project key that is itself `memory`, a
+    `memory-tools` dir, or a deeper `memory` are all still walked."""
+    try:
+        parts = directory.relative_to(walk_root).parts
+    except ValueError:
+        return False
+    return len(parts) == 2 and parts[1] == sidecars.MEMORY_DIR
 
 
 def _default_source() -> Path:
@@ -86,8 +101,9 @@ def _walk_source(
         )
 
     found: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(walk_root, onerror=_on_error):
+    for dirpath, dirnames, filenames in os.walk(walk_root, onerror=_on_error):
         base = Path(dirpath)
+        dirnames[:] = [d for d in dirnames if not is_project_memory(walk_root, base / d)]
         for filename in filenames:
             if not filename.endswith(_JSONL_SUFFIX):
                 continue

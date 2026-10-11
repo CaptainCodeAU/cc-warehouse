@@ -22,6 +22,15 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**A project's `memory/` folder is never read as sessions (2026-10-11, W-20260930-A59).**
+`ccw sweep`, and the `status`, `doctor` and `reconcile` checks that share its walk, now skip
+`<project-key>/memory/` under the source tree. On 2026-09-30 the sweep cataloged 8
+`claude -p` stream-json captures kept there as sessions, and every build after that tried
+them. The session test itself is unchanged (`archive.is_session`), by the principal's
+2026-10-11 ruling after a re-measure: a stricter "user and assistant lines" test would
+have stopped archiving 18,239 one-sided files. The 8 existing rows and their archive
+folders stay.
+
 **A failed build names the frame that raised (2026-10-09, W-20261006-A43, `5faa141`).**
 The nightly sweep's own build failed one old session on 2026-10-06 and again on 2026-10-09
 with a bare `OSError: [Errno 22] Invalid argument`: no path and no call site, so the cause

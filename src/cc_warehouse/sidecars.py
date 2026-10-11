@@ -76,7 +76,8 @@ IGNORED = frozenset({".DS_Store"})
 # are still expected. `memory/` is Claude Code's per-project memory directory;
 # ticket 40 owns whether it gets archived, and until then reporting it as a
 # stranger every single run would be a permanent false positive.
-PROJECT_KNOWN = frozenset({"memory"})
+MEMORY_DIR = "memory"
+PROJECT_KNOWN = frozenset({MEMORY_DIR})
 
 _JSONL_SUFFIX = ".jsonl"
 
