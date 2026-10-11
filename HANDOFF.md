@@ -27,8 +27,6 @@ last line of `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw
 
 - W-20261009-A04: proxmox-expert reads the Samba log at the two Errno 22 times; warn first.
 - W-20260929-A28: deleting the local archive `~/cc-warehouse-archive` is his hand only.
-- Lesson record #1360 (offer to fix small review findings) is a draft until he runs
-  `engage-go record approve-ruling` on it.
 
 ## Left in place for Gavin (deletes are his call)
 
