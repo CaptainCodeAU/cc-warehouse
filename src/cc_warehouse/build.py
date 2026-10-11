@@ -203,7 +203,21 @@ def session_stem(session_uuid: str | None, short: str) -> str:
     uuid-less session in a label that started in the same second into ONE
     folder, and every uuid-less session anywhere under ONE session lock.
     """
-    return session_uuid or f"session-{short}"
+    return session_uuid or f"{_UUIDLESS_STEM_PREFIX}{short}"
+
+
+_UUIDLESS_STEM_PREFIX = "session-"
+
+
+def short_from_stem(stem: str) -> str | None:
+    """The short a uuid-less folder's stem names, or None for a uuid stem.
+
+    The inverse of `session_stem` for the uuid-less case, so a reader holding only
+    a folder name (`ccw repair`) resolves it the way the writer named it
+    (W-20261011-A02). A uuid never starts with `session-`."""
+    if stem.startswith(_UUIDLESS_STEM_PREFIX):
+        return stem[len(_UUIDLESS_STEM_PREFIX) :]
+    return None
 
 
 def _local_stamp(first_ts: str | None, timezone: str) -> str:

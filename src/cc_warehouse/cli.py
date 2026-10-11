@@ -2296,23 +2296,37 @@ def _repair_body(config: Config, quiet: bool, started: float) -> int:
             assert conn is not None
             session_uuid = folder.name.partition("_")[2]
             unresolved.add(session_uuid)
-            row = conn.execute(
-                "SELECT short FROM session WHERE session_uuid = ? "
-                "ORDER BY captured_at DESC LIMIT 1",
-                (session_uuid,),
-            ).fetchone()
+            # A uuid-less folder is named `session-<short>` (build.session_stem), so
+            # its stem is a short, not a uuid (W-20261011-A02). Such a payload has no
+            # versions, so its one row is its head.
+            stem_short = build.short_from_stem(session_uuid)
+            if stem_short is not None:
+                row = conn.execute(
+                    "SELECT short, hash FROM session "
+                    "WHERE short = ? AND session_uuid IS NULL",
+                    (stem_short,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT short FROM session WHERE session_uuid = ? "
+                    "ORDER BY captured_at DESC LIMIT 1",
+                    (session_uuid,),
+                ).fetchone()
             if row is None:
                 message = f"no catalog row for {session_uuid}"
                 still_broken.append(f"{folder.name}: {message}")
                 _log_repair_outcome(config, "error", None, message)
                 continue
             short = cast(str, row[0])
-            head = conn.execute(
-                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
-                + "SELECT hash FROM ranked WHERE rn = 1 AND session_uuid = ?",
-                (session_uuid,),
-            ).fetchone()
-            head_hash = cast(str, head[0]) if head is not None else None
+            if stem_short is not None:
+                head_hash = cast(str, row[1])
+            else:
+                head = conn.execute(
+                    build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                    + "SELECT hash FROM ranked WHERE rn = 1 AND session_uuid = ?",
+                    (session_uuid,),
+                ).fetchone()
+                head_hash = cast(str, head[0]) if head is not None else None
             copies_ok = any(
                 p.problem == "missing manifest.json" for p in problems
             ) and archive.copies_match_sources(folder, claude_home, session_uuid)

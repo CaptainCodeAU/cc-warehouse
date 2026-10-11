@@ -22,6 +22,14 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Three fixes from the memory/ skip's review (2026-10-11, W-20261011-A01/A02/A03).**
+`ccw sweep --source <one project dir>` no longer copies that project's own folders into
+`_not-sessions/stranded-sidecars/`, and `ccw status` counts stranded sidecars the same way
+(one shared helper). `ccw repair` now fixes a uuid-less `<stamp>_session-<short>` folder
+instead of reporting "no catalog row" and exiting 1. `ccw reconcile` (and `ccw repair`'s
+unrecoverable alert) counts a transcript still on disk under a project's `memory/` folder as
+present.
+
 **A project's `memory/` folder is never read as sessions (2026-10-11, W-20260930-A59).**
 `ccw sweep`, and the `status`, `doctor` and `reconcile` checks that share its walk, now skip
 `<project-key>/memory/` under the source tree, including under `--source` pointed at one

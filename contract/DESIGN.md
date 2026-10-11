@@ -2480,3 +2480,21 @@ it walks (W-20261001-A58). Filed, not fixed: the sidecar planner reads a `--sour
 walk root at another level as a projects tree; a uuid-named, `sessionId`-less file under
 `memory/` that was cataloged and then errored could read as unrecoverable; `ccw repair`
 mis-resolves a uuid-less `_session-<short>` folder.
+
+**2026-10-11, W-20261011-A01/A02/A03: the three side findings of the A59 review, fixed.**
+Built at the principal's word (cc-warehouse-main Q6: fix all three before pushing).
+(A01) The stranded-sidecar pass took the walk root's children as project dirs, so
+`ccw sweep --source <one project dir>` copied that project's own `memory/WORK` into
+`_not-sessions/stranded-sidecars/`, and `--source ~/.claude` planned every project dir as
+stranded. New `sweep.project_dirs` reads the root at its real level inside or above the
+default source tree, and the old way only for a tree elsewhere; `ccw status` lost its
+private copy and reads the same helper (R9). (A02) `ccw repair` read a uuid-less folder's
+`session-<short>` stem as a uuid, found no row and exited 1. New `build.short_from_stem`,
+the inverse of `build.session_stem`, lets it resolve such a folder through its short; a
+uuid-less payload has no versions, so its one row is its head. (A03) The memory/ skip
+answers "what is a session to capture", but reconcile asks "is this transcript still on
+disk". A cataloged, uuid-named file under `memory/` with a capture error naming it would
+have been announced unrecoverable while present. `sweep.source_transcripts` gains
+`include_project_memory`, which only reconcile passes; every capture path keeps the skip.
+Real data, read-only, after the change: 411 project dirs (identical), 42 stranded sidecar
+dirs (matching `ccw doctor`), 22 reconcile findings (identical).

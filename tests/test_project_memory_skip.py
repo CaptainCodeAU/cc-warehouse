@@ -19,11 +19,22 @@ Contract: DESIGN R5/F7 (conservative branch), R9 (one walk, one predicate).
 """
 
 import ast
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import archive, config, doctor, import_tree, migrate, status, sweep
+from cc_warehouse import (
+    archive,
+    capture,
+    config,
+    doctor,
+    import_tree,
+    migrate,
+    reconcile,
+    status,
+    sweep,
+)
 from conftest import (
     SRC_ROOT,
     entry,
@@ -38,6 +49,7 @@ ZONE = "UTC"
 UUID_A = "a5911111-2222-3333-4444-555555555551"
 UUID_B = "a5911111-2222-3333-4444-555555555552"
 UUID_MEM = "a5911111-2222-3333-4444-5555555555ee"
+UUID_STEM = "a5911111-2222-3333-4444-5555555555ff"
 CWD = "/home/alice/projects/widget"
 ENCODED = "-home-alice-projects-widget"
 
@@ -359,3 +371,41 @@ def test_every_consumer_of_the_source_tree_goes_through_one_walk() -> None:
         assert "sweep.source_transcripts(" in text, name
         assert not {s for s in _walk_sites() if s[0] == name}, name
 
+
+
+# ---------------------------------------------------------------------------
+# reconcile asks whether a file is still ON DISK, so memory/ counts as present
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_does_not_call_a_file_still_under_memory_unrecoverable(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """W-20261011-A03, found by the 2026-10-11 red-team review. The skip answers
+    "what is a session to capture"; reconcile asks "is this transcript gone from
+    disk", and a file under memory/ is not gone. A uuid-NAMED file there with no
+    `sessionId` inside, cataloged before the skip existed, plus a capture error
+    naming that uuid, would otherwise be announced as unrecoverable (desktop and
+    voice) while it sits on disk."""
+    cfg = configure(ccw_env, tmp_path / "archive", keep_objects=False)
+    path = put(ccw_env, f"{ENCODED}/memory/WORK/x/{UUID_STEM}.jsonl", stream_json("z"))
+    assert capture.capture_transcript(cfg, path, session_id=None, cwd=None).action == "stored"
+    log = warehouse_root(ccw_env) / "logs" / "capture.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    at = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    record = {
+        "at": at, "status": "error", "session": None, "project": None,
+        "session_uuid": UUID_STEM, "message": f"unreadable transcript {path.name}: boom",
+        "elapsed_ms": None,
+    }
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+    home = Path(ccw_env["HOME"])
+    assert reconcile.find_unrecoverable(cfg, source=projects(ccw_env), home=home) == ()
+
+
+def test_the_capture_walk_still_skips_it(ccw_env: dict[str, str]) -> None:
+    """The presence view widens reconcile only; the capture walk is unchanged."""
+    put(ccw_env, f"{ENCODED}/memory/WORK/x/{UUID_STEM}.jsonl", stream_json("z"))
+    assert sweep.source_transcripts(projects(ccw_env)) == ([], [])
+    assert len(sweep.source_transcripts(projects(ccw_env), include_project_memory=True)[0]) == 1

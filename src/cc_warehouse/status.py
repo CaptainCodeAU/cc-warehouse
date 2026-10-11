@@ -286,7 +286,7 @@ def sidecar_gap(config: Config, source: Path | None = None) -> SidecarGap:
     walk_root = source if source is not None else Path.home() / ".claude" / "projects"
     strangers: list[str] = []
     stranded = 0
-    for project_dir in _project_dirs(walk_root):
+    for project_dir in sweep.project_dirs(walk_root):
         strangers.extend(sidecars.scan_project_dir(project_dir))
         stranded += len(sidecars.stranded_dirs(project_dir))
     if config.archive_root is None or not config.archive_root.is_dir():
@@ -316,13 +316,6 @@ def sidecar_gap(config: Config, source: Path | None = None) -> SidecarGap:
         if first is None:
             first = f"{folder.parent.name}/{folder.name}: {', '.join(named)}"
     return SidecarGap(notices, stranded, first, tuple(sorted(strangers)), config.archive_root)
-
-
-def _project_dirs(walk_root: Path) -> list[Path]:
-    try:
-        return sorted(p for p in walk_root.iterdir() if p.is_dir())
-    except OSError:
-        return []
 
 
 def sidecar_line(gap: SidecarGap) -> str:

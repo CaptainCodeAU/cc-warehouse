@@ -83,7 +83,11 @@ def _default_source() -> Path:
 
 
 def _walk_source(
-    walk_root: Path, *, skip_agents: bool = True, limit: int | None = None
+    walk_root: Path,
+    *,
+    skip_agents: bool = True,
+    limit: int | None = None,
+    include_project_memory: bool = False,
 ) -> tuple[list[Path], list[ItemOutcome]]:
     """The jsonl transcripts under walk_root plus a NAMED error item per directory that
     could not be listed; both sorted for determinism, agent-* skipped.
@@ -100,7 +104,11 @@ def _walk_source(
     truncated, since a directory ccw could not list is worth reporting regardless of how
     small a slice was asked for. It is the walk-level knob for exercising a slice of a
     large source tree, not a promise about how many end up STORED - `already_known`
-    skips and window filtering still apply to whatever this returns."""
+    skips and window filtering still apply to whatever this returns.
+
+    `include_project_memory` keeps a project's `memory/` folder in the walk. Only a
+    PRESENCE question may ask for it (reconcile: is this transcript still on disk?);
+    every capture path keeps the default skip (W-20260930-A59, W-20261011-A03)."""
     if not walk_root.is_dir():
         return [], []
     errors: list[ItemOutcome] = []
@@ -114,7 +122,8 @@ def _walk_source(
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(walk_root, onerror=_on_error):
         base = Path(dirpath)
-        dirnames[:] = [d for d in dirnames if not is_project_memory(walk_root, base / d)]
+        if not include_project_memory:
+            dirnames[:] = [d for d in dirnames if not is_project_memory(walk_root, base / d)]
         for filename in filenames:
             if not filename.endswith(_JSONL_SUFFIX):
                 continue
@@ -416,17 +425,33 @@ SIDECAR_ARCHIVED_ACTIONS = frozenset({
 })
 
 
-def _project_dirs(walk_root: Path) -> list[Path]:
-    """The project directories directly under the source root.
+def project_dirs(walk_root: Path) -> list[Path]:
+    """The project directories a walk of `walk_root` covers.
 
     Derived from the ROOT rather than from `{p.parent for p in transcripts}`,
     which is the tempting shortcut and is wrong for exactly the case the stranded
     pass exists for: a project dir holding sidecar dirs and no transcript at all
     contributes no parent to that set, so it would be invisible to the one pass
     that was supposed to find it.
+
+    READ AT THE ROOT'S REAL LEVEL (W-20261011-A01). Inside or above the default
+    source tree the projects level is known: `--source ~/.claude` covers every
+    project, `--source <one project dir>` covers that one, and a root deeper than a
+    project dir covers none whole. Taking the root's children as projects there
+    planned a project's own `memory/WORK` as a stranded sidecar. Anywhere else (a
+    copied tree) nothing says which level is which, so the root is the projects
+    level, as before. `ccw status` reads this same helper (R9).
     """
+    default = Path(os.path.abspath(_default_source()))
+    root = Path(os.path.abspath(walk_root))
+    if root == default or default.is_relative_to(root):
+        listed = default
+    elif root.is_relative_to(default):
+        return [walk_root] if len(root.relative_to(default).parts) == 1 else []
+    else:
+        listed = walk_root
     try:
-        return sorted(p for p in walk_root.iterdir() if p.is_dir())
+        return sorted(p for p in listed.iterdir() if p.is_dir())
     except OSError:
         return []
 
@@ -868,7 +893,7 @@ def _archive_stranded(
         if config.archive_file_history
         else []
     )
-    dirs = [d for p in _project_dirs(walk_root) for d in sidecars.stranded_dirs(p)]
+    dirs = [d for p in project_dirs(walk_root) for d in sidecars.stranded_dirs(p)]
     total = len(history) + len(dirs)
     outcomes: list[ItemOutcome] = []
     for index, stranded in enumerate(history):
@@ -1171,7 +1196,7 @@ def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> lis
             outcomes.append(
                 ItemOutcome(path.name, "would-archive-sidecars", ", ".join(present))
             )
-    for project_dir in _project_dirs(walk_root):
+    for project_dir in project_dirs(walk_root):
         outcomes.extend(
             ItemOutcome(d.name, "would-archive-sidecars", "no transcript beside this dir")
             for d in sidecars.stranded_dirs(project_dir)
@@ -1196,7 +1221,9 @@ def _in_window(path: Path, keep: "Callable[[str | None], bool] | None") -> bool:
         return False
 
 
-def source_transcripts(walk_root: Path | None = None) -> tuple[list[Path], list[Path]]:
+def source_transcripts(
+    walk_root: Path | None = None, *, include_project_memory: bool = False
+) -> tuple[list[Path], list[Path]]:
     """(session transcripts, sub-agent transcripts) under the source tree.
 
     Filtering on the `agent-` prefix is legitimate HERE AND ONLY HERE. The F4
@@ -1211,7 +1238,9 @@ def source_transcripts(walk_root: Path | None = None) -> tuple[list[Path], list[
     overwritten (ticket 21a).
     """
     root = walk_root if walk_root is not None else _default_source()
-    found, _errors = _walk_source(root, skip_agents=False)
+    found, _errors = _walk_source(
+        root, skip_agents=False, include_project_memory=include_project_memory
+    )
     sessions = [p for p in found if not p.name.startswith(_AGENT_PREFIX)]
     subagents = [p for p in found if p.name.startswith(_AGENT_PREFIX)]
     return sessions, subagents

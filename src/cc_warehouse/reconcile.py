@@ -330,7 +330,11 @@ def find_unrecoverable(
         if source is not None
         else (home if home is not None else Path.home()) / ".claude" / "projects"
     )
-    session_paths, _subagent_paths = sweep.source_transcripts(walk_root)
+    # A PRESENCE question, so a project's memory/ folder counts: a file still on disk
+    # there is not unrecoverable (W-20261011-A03), though it is never a session to capture.
+    session_paths, _subagent_paths = sweep.source_transcripts(
+        walk_root, include_project_memory=True
+    )
     source_uuids = {
         path.name[: -len(".jsonl")] for path in session_paths if path.name.endswith(".jsonl")
     }
