@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import archive, config, doctor, status, sweep
+from cc_warehouse import archive, config, doctor, import_tree, migrate, status, sweep
 from conftest import (
     SRC_ROOT,
     entry,
@@ -208,6 +208,78 @@ def test_the_predicate_is_exact() -> None:
     assert not sweep.is_project_memory(root, root / "-proj" / "Memory")
 
 
+# The skip is anchored on the real source tree as well as the walk root, so a
+# `--source` pointed elsewhere in it still skips a project's memory/ (found by
+# the 2026-10-11 red-team review: depth was counted from the walk root only).
+
+
+def test_a_sweep_pointed_at_one_project_dir_still_skips_its_memory(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    cfg = configure(ccw_env, tmp_path / "archive", keep_objects=False)
+    memory_transcript(ccw_env)
+    write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
+    report = sweep.plan(cfg, projects(ccw_env) / ENCODED)
+    # Sessions only: the sidecar planner reads a walk root at another level
+    # differently (W-20261011-A01), which is not what this pins.
+    sessions = [o.item for o in report.outcomes if o.item.endswith(".jsonl")]
+    assert sessions == [f"{UUID_A}.jsonl"]
+
+
+def test_the_cli_source_flag_on_one_project_dir_skips_it_too(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    configure(ccw_env, tmp_path / "archive", keep_objects=False)
+    memory_transcript(ccw_env)
+    write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
+    result = run_ccw(["sweep", "--dry-run", "--source", str(projects(ccw_env) / ENCODED)], ccw_env)
+    assert result.code == 0, result.err
+    assert UUID_A in result.out
+    assert UUID_MEM not in result.out, result.out
+
+
+def test_a_sweep_pointed_at_dot_claude_still_skips_memory(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    cfg = configure(ccw_env, tmp_path / "archive", keep_objects=False)
+    memory_transcript(ccw_env)
+    write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
+    report = sweep.plan(cfg, projects(ccw_env).parent)
+    # Sessions only: the sidecar planner reads a walk root at another level
+    # differently (W-20261011-A01), which is not what this pins.
+    sessions = [o.item for o in report.outcomes if o.item.endswith(".jsonl")]
+    assert sessions == [f"{UUID_A}.jsonl"]
+
+
+# `ccw import` and `ccw migrate` walk an operator-named tree with their own
+# walk (`migrate.walk_jsonl`). Pointed at a Claude projects tree they must skip
+# memory/ the same way: the ruling says nothing under it is a session, for
+# every consumer.
+
+
+def test_import_does_not_read_a_project_memory_dir(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    cfg = configure(ccw_env, tmp_path / "archive", keep_objects=False)
+    memory_transcript(ccw_env)
+    write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
+    report = import_tree.plan(cfg, projects(ccw_env))
+    named = [o.item for o in report.outcomes if o.action != import_tree.SKIPPED_BRANCH_ACTION]
+    assert named == [f"{UUID_A}.jsonl"]
+    pruned = [o.item for o in report.outcomes if o.action == import_tree.SKIPPED_BRANCH_ACTION]
+    assert pruned == [str(projects(ccw_env) / ENCODED / "memory")]
+
+
+def test_migrate_does_not_capture_a_project_memory_dir(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    cfg = configure(ccw_env, tmp_path / "archive", keep_objects=True)
+    memory_transcript(ccw_env)
+    write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
+    migrate.migrate(cfg, projects(ccw_env))
+    assert uuids(ccw_env) == [UUID_A]
+
+
 # ---------------------------------------------------------------------------
 # THE FENCE: every tree walk in the product is named, with why it is safe
 # ---------------------------------------------------------------------------
@@ -218,7 +290,7 @@ def test_the_predicate_is_exact() -> None:
 # census behind this list was taken 2026-09-30 (W-20260930-A59).
 WALKERS: dict[tuple[str, str], str] = {
     ("sweep.py", "_walk_source"): "THE source-tree walk; prunes is_project_memory",
-    ("migrate.py", "walk_jsonl"): "an operator-named --from tree, classified by content",
+    ("migrate.py", "walk_jsonl"): "import/migrate's walk; prunes is_project_memory",
     ("relocate.py", "_scan_content"): "configured repo roots, rewriting paths, never transcripts",
     ("relocate.py", "_subdir_encodings"): "a repo's own directories, names only",
     ("sweep.py", "_orphan_object_paths"): "the vault's objects/, not the source tree",
@@ -231,6 +303,15 @@ WALKERS: dict[tuple[str, str], str] = {
 }
 
 _WALK_ATTRS = {"walk", "rglob"}
+# A `glob` is recursive only when its pattern holds `**`, so only those count.
+_GLOB_ATTRS = {"glob", "iglob"}
+
+
+def _is_recursive_glob(node: ast.Call) -> bool:
+    return any(
+        isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "**" in arg.value
+        for arg in node.args
+    )
 
 
 def _walk_sites() -> set[tuple[str, str]]:
@@ -246,7 +327,10 @@ def _walk_sites() -> set[tuple[str, str]]:
                 if (
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _WALK_ATTRS
+                    and (
+                        node.func.attr in _WALK_ATTRS
+                        or (node.func.attr in _GLOB_ATTRS and _is_recursive_glob(node))
+                    )
                     and not (isinstance(node.func.value, ast.Name) and node.func.value.id == "ast")
                 ):
                     sites.add((path.name, func.name))

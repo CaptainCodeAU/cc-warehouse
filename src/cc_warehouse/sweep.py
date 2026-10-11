@@ -57,13 +57,24 @@ def is_project_memory(walk_root: Path, directory: Path) -> bool:
     W-20260930-A59 (Gavin's ruling 2026-10-11): nothing under it is a session, whatever
     its content. pj keeps records there, including `claude -p` stream-json captures the
     2026-09-30 sweep cataloged as sessions. Only a segment exactly `memory`, exactly one
-    level below the walk root, matches: a project key that is itself `memory`, a
-    `memory-tools` dir, or a deeper `memory` are all still walked."""
-    try:
-        parts = directory.relative_to(walk_root).parts
-    except ValueError:
+    level below a project key, matches: a project key that is itself `memory`, a
+    `memory-tools` dir, or a deeper `memory` are all still walked.
+
+    The project key is counted from the walk root AND from the default source tree, so
+    `--source <one project dir>` or `--source ~/.claude` still skips it (2026-10-11
+    red-team review). A copied tree elsewhere, walked one project at a time, is not
+    recognised: nothing in a bare path says it is a project key."""
+    if directory.name != sidecars.MEMORY_DIR:
         return False
-    return len(parts) == 2 and parts[1] == sidecars.MEMORY_DIR
+    candidate = Path(os.path.abspath(directory))
+    for anchor in (walk_root, _default_source()):
+        try:
+            parts = candidate.relative_to(os.path.abspath(anchor)).parts
+        except ValueError:
+            continue
+        if len(parts) == 2:
+            return True
+    return False
 
 
 def _default_source() -> Path:

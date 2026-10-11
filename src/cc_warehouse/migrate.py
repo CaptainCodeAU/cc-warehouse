@@ -40,7 +40,10 @@ LOCK_HELD_ACTION = "lock-held"
 
 
 def walk_jsonl(
-    source_root: Path, *, skip_dirs: frozenset[str] = frozenset()
+    source_root: Path,
+    *,
+    skip_dirs: frozenset[str] = frozenset(),
+    skip_project_memory: bool = True,
 ) -> tuple[list[Path], list[ItemOutcome], list[Path]]:
     """The regular jsonl transcripts under source_root plus a NAMED error item per
     directory that could not be listed and per .jsonl dirent that is not a regular file;
@@ -64,7 +67,12 @@ def walk_jsonl(
     (F7/R10) and is NEVER handed to capture (reading a FIFO named *.jsonl would block
     migrate forever); a symlink that resolves to a real regular file still imports normally
     because is_file follows links. Unlike the sweep this keeps agent-* transcripts: the
-    manifest must account for every archive file (DESIGN section 10)."""
+    manifest must account for every archive file (DESIGN section 10).
+
+    Like the sweep, a project's `memory/` folder is pruned (`sweep.is_project_memory`,
+    W-20260930-A59: nothing under it is a session, for every consumer) and reported in
+    the third element; `skip_project_memory=False` turns that off."""
+    from cc_warehouse import sweep
     if not source_root.is_dir():
         return [], [], []
     errors: list[ItemOutcome] = []
@@ -79,10 +87,15 @@ def walk_jsonl(
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(source_root, onerror=_on_error):
         base = Path(dirpath)
-        if skip_dirs:
-            pruned = [name for name in dirnames if name in skip_dirs]
+        if skip_dirs or skip_project_memory:
+            pruned = [
+                name
+                for name in dirnames
+                if name in skip_dirs
+                or (skip_project_memory and sweep.is_project_memory(source_root, base / name))
+            ]
             skipped.extend(base / name for name in pruned)
-            dirnames[:] = [name for name in dirnames if name not in skip_dirs]
+            dirnames[:] = [name for name in dirnames if name not in pruned]
         for filename in filenames:
             if not filename.endswith(_JSONL_SUFFIX):
                 continue

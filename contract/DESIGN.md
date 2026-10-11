@@ -2460,3 +2460,23 @@ needed no change. The 2026-09-30 guards (a) build-skip and (b) capture-refusal a
 dropped: (b) was withdrawn above, and (a) has no remaining trigger since W-20261001-A56.
 Not covered here: the sweep still catalogs a walked file with no session id (the
 workflow journals), which is W-20261001-A58.
+
+**2026-10-11, W-20260930-A59 follow-up: what four red-team reviewers found.** Four
+review agents (contrarian, blast radius, edge cases, real data read-only) probed 23b3d47.
+Real data: only the 8 `memory/` paths leave the walk; every `ccw doctor` check and the
+reconcile result are identical old and new, so the 8 kept rows cannot trip `ccw repair`'s
+unrecoverable alert. Fixed: (a) the skip counted depth from the walk root only, so
+`ccw sweep --source <one project dir>` or `--source ~/.claude` walked `memory/` again;
+`sweep.is_project_memory` now also anchors on the default source tree. (b) CORRECTION to
+the entry above: `ccw import` and `ccw migrate` DID need a change. Their walk
+(`migrate.walk_jsonl`) now prunes the same folder and reports it as pruned; a
+`memory/` file carrying a `sessionId` would otherwise have imported as a session, and
+`ccw migrate` captures every walked file unclassified. (c) The fence now also catches a
+recursive `glob("**...")`; it still cannot see a hand-rolled `scandir`/`iterdir`
+recursion, so "names every tree walk" means every `walk`, `rglob` and `**` glob. Also
+clarified: the 8 carry snake-case `session_id`, so `archive.is_session` already says no
+to them; they were cataloged only because the sweep does not apply `is_session` to what
+it walks (W-20261001-A58). Filed, not fixed: the sidecar planner reads a `--source`
+walk root at another level as a projects tree; a uuid-named, `sessionId`-less file under
+`memory/` that was cataloged and then errored could read as unrecoverable; `ccw repair`
+mis-resolves a uuid-less `_session-<short>` folder.
