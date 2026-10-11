@@ -11,7 +11,8 @@ generated `HANDOFF.md` (rewritten by `/pj:wrap-up` each session). The priority l
 is the 2026-09-09 to 09-17 state, kept for its history. As of 2026-10-02: capture is
 healthy; W-20261001-A56 (uuid-less folder names, nightly sweep failing) and
 W-20261001-A65 (SessionEnd hook cut off at exit) are fixed and deployed, each open only
-for a last real-world proof; W-20260930-A59 carries the session-rule ruling to build.
+for a last real-world proof; W-20260930-A59 was re-ruled and built 2026-10-11 (see
+`HANDOFF.md`).
 
 **PRIORITY ORDER, set 2026-09-09, supersedes "nothing is queued" below until
 someone changes it.** Everything found during the 2026-09-09 capture-alert

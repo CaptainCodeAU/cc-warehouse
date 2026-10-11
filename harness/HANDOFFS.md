@@ -23,6 +23,42 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-seventh handoff, 2026-10-11 (A12 proven; a project's memory/ folder is never a session)
+
+Session ee86c1b6 (cc-warehouse-main).
+
+- W-20261010-A12 closed (Gavin Q1): the first real Sunday sweep and archive each left a start
+  record, a summary with `elapsed_ms` (sweep 13,332,631 ms, 0 failed; archive 12,257,366 ms,
+  0 failed) and a dated job-log line; installed `ccw doctor` showed all three jobs finished.
+- W-20260930-A59 re-measured (Gavin's 9 Oct "re-measure, then decide"): 27,085 files through
+  the sweep's own walk, controls passed (this session's transcript is a session under every
+  rule; the 8 known memory/ files under none). The 3 Oct reading of 18,245 "unanswered
+  sessions" was wrong: 18,019 of 18,239 user-only files are background `sdk-cli` calls, 220
+  interactive. Gavin re-ruled (Q3 v2: 1): the test stays `archive.is_session`, and
+  `<project-key>/memory/` is never a session. Evidence:
+  `CaptainCodeAU-isolinear/workbench/cc-warehouse-a59/2026-10-11/`.
+- `23b3d47`: the prune in `sweep._walk_source` (`sweep.is_project_memory`), WIP guards (a)/(b)
+  dropped, oracle tests kept for discovery plus the walker fence. Red-first 7, mutant 6.
+- Gavin asked for red-team review before shipping (Q5). Four agents: contrarian, blast
+  radius, edge cases, real data read-only (no writes, proved by before/after listings).
+  Real data: only the 8 memory/ paths leave the walk; every doctor check and the reconcile
+  result identical, so the 8 kept rows cannot trip repair's alert.
+- `6ec753a`: the two gaps they found, `--source <project dir>`/`~/.claude` depth and the
+  import/migrate walk; the fence also catches a recursive glob.
+- Gavin: "Why would you not offer fixing those minor issues?" (Q5 v2), then Q6 "fix all
+  three". `320daab`: W-20261011-A01 (`sweep.project_dirs` reads a `--source` root at its real
+  level; `ccw status` shares it), A02 (`ccw repair` resolves `session-<short>` folders via
+  `build.short_from_stem`), A03 (reconcile walks with `include_project_memory=True`). Lesson
+  filed in the global area as #1360 (draft).
+- A slip, fixed: a stale backup restored an old `sweep.py` mid-mutant; the hook refused
+  `git checkout`, so the file went to `git stash@{0}` (still there) and the changes were
+  re-applied and re-verified; the redone mutant used a uniquely named backup.
+- Gavin Q7: pushed `02f9c33..320daab`; `ccw` reinstalled frozen 0.1.4, 26 installed modules
+  byte-identical to the repo; doctor "capture is working". Gates: ruff clean, pyright 0,
+  pytest 2159 passed.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-sixth handoff, 2026-10-10 (every scheduled job logs its start, end, time and work)
 
 Session ac12d9f5 built W-20261010-A12 test-first, on Gavin's rulings Q9-Q11 plus six more
