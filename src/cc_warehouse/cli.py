@@ -54,7 +54,7 @@ from cc_warehouse.config import (
     word_problem,
 )
 from cc_warehouse.render import RenderOptions
-from cc_warehouse.reports import ItemOutcome
+from cc_warehouse.reports import BatchReport, ItemOutcome
 
 # The v1 verb table (DESIGN section 7). The order is the help listing order;
 # every name here must appear in `ccw -h` (test_help_lists_every_v1_verb).
@@ -785,7 +785,13 @@ def _run_sweep(args: Sequence[str]) -> int:
         # A rehearsal, not a run. sweep.plan takes no lock and opens the catalog
         # read-only, so a dry-run on a warehouse that does not exist yet leaves
         # it that way (ticket 23; test_dry_run_on_a_fresh_root_creates_no_warehouse).
-        planned = sweep.plan(config, source, keep, limit=limit)
+        planned = BatchReport(
+            tuple(
+                outcome
+                for walk in _sweep_walks(config, source)
+                for outcome in sweep.plan(config, walk, keep, limit=limit).outcomes
+            )
+        )
         failures = planned.failures
         for outcome in failures:
             detail = outcome.detail or outcome.action
@@ -804,6 +810,17 @@ def _run_sweep(args: Sequence[str]) -> int:
     _log_sweep_started(config)
     with _crash_logged(config, "sweep", started):
         return _sweep_body(config, source, keep, limit, started)
+
+
+def _sweep_walks(config: Config, source: Path | None) -> list[Path | None]:
+    """The projects folders one `ccw sweep` walks, in order.
+
+    An explicit `--source` is exactly that folder. Otherwise the default
+    (`None`, meaning `~/.claude/projects`) and then each `extra_sources` folder
+    (W-20261015-A01). A listed folder that does not exist walks as empty (R5)."""
+    if source is not None:
+        return [source]
+    return [None, *config.extra_sources]
 
 
 def _sweep_body(
@@ -825,7 +842,17 @@ def _sweep_body(
         print(f"sweep refused: {detail}", file=sys.stderr)
         _end_refused(config, "sweep", detail, started)
         return 1
-    report = sweep.sweep(config, source, keep, limit=limit)
+    # One sweep per projects folder, then ONE build below: the build's check of
+    # every archive folder is most of a night's cost on the share, so a second
+    # home must not pay for it twice (W-20261015-A01). A refusal or a lost root
+    # ends the walk; the next night picks up whatever it left.
+    outcomes: list[ItemOutcome] = []
+    for walk in _sweep_walks(config, source):
+        part = sweep.sweep(config, walk, keep, limit=limit)
+        outcomes.extend(part.outcomes)
+        if any(o.action in (sweep.LOCK_HELD_ACTION, archive.ROOT_LOST) for o in part.outcomes):
+            break
+    report = BatchReport(tuple(outcomes))
     if any(outcome.action == sweep.LOCK_HELD_ACTION for outcome in report.outcomes):
         # Ticket 42 #2: a refusal that leaves no trace is exactly what ticket 41 had to
         # reconstruct by hand -- log it before returning, same as a real run below.

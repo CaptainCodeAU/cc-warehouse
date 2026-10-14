@@ -7,7 +7,8 @@ The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for 
 render toggles): top-level `root`, `archive_root`, `archive_timezone`,
 `keep_projections`, `keep_objects`, `archive_subagents`, `archive_tool_results`,
 `archive_file_history` and `archive_history_prompts` (the `archive_*` keys were
-missing from this list entirely until 2026-09-08, ticket 38);
+missing from this list entirely until 2026-09-08, ticket 38), and `extra_sources`
+(W-20261015-A01, 2026-10-15);
 [notify] voice_url voice_id open_folder desktop_alerts;
 [render] breadcrumbs reminders_full reminders_compact subagents attachments commands
 extras tool_output, plus the v1.1 per-variant matrix keys (2026-08-01) subagents_compact
@@ -198,6 +199,14 @@ class Config:
     # prompts - see CLAUDE.md's ticket 39 paragraph for the naming note. DEFAULTS
     # ON, same reasoning as `archive_file_history` above.
     archive_history_prompts: bool = True
+    # More Claude Code projects folders a plain `ccw sweep` walks after
+    # `~/.claude/projects` (W-20261015-A01, Gavin's ruling 2026-10-15). A second
+    # Claude home (`CLAUDE_CONFIG_DIR`, e.g. `~/.claude_v2`) writes its own
+    # `projects/`, which the nightly sweep never saw: 59 sessions had no archived
+    # copy until a hand-run `--source`. An explicit `--source` still means only
+    # that folder. Each folder's own home (its parent) supplies its history and
+    # file-history, exactly as `--source` already does.
+    extra_sources: tuple[Path, ...] = ()
     voice_url: str | None = None
     voice_id: str | None = None
     open_folder: bool = False
@@ -586,6 +595,15 @@ def load_config(
         Path(str(p)) for p in cast(list[object], relocate.get("roots", []))
         if isinstance(relocate.get("roots"), list)
     )
+    # Same rule as `[relocate].roots`: a bare string must not silently mean "none".
+    extra_raw = merged.get("extra_sources")
+    if extra_raw is not None and not isinstance(extra_raw, list):
+        problems.append("extra_sources is not a list")
+    extra_sources = (
+        tuple(Path(str(p)).expanduser() for p in cast(list[object], extra_raw))
+        if isinstance(extra_raw, list)
+        else ()
+    )
     inbox_raw = _str_or_none(imp.get("inbox"))
     archive_raw = _str_or_none(merged.get("archive_root"))
     archive_root = Path(archive_raw).expanduser() if archive_raw else None
@@ -609,6 +627,7 @@ def load_config(
         archive_tool_results=_bool(merged.get("archive_tool_results"), True),
         archive_file_history=_bool(merged.get("archive_file_history"), True),
         archive_history_prompts=_bool(merged.get("archive_history_prompts"), True),
+        extra_sources=extra_sources,
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,
         voice_id=voice_id,

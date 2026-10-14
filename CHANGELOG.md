@@ -22,6 +22,13 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw sweep` can walk more than one Claude home (2026-10-15, W-20261015-A01).** New
+top-level config key `extra_sources`: a list of Claude Code projects folders a plain
+`ccw sweep` (and `--dry-run`) walks after `~/.claude/projects`, for a second home set with
+`CLAUDE_CONFIG_DIR`. The build after the sweep still runs once. `--source` is unchanged. A
+listed folder that does not exist is skipped, not a failure. See
+`docs/reference-config.toml`.
+
 **Three fixes from the memory/ skip's review (2026-10-11, W-20261011-A01/A02/A03).**
 `ccw sweep --source <one project dir>` no longer copies that project's own folders into
 `_not-sessions/stranded-sidecars/`, and `ccw status` counts stranded sidecars the same way

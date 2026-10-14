@@ -2498,3 +2498,20 @@ have been announced unrecoverable while present. `sweep.source_transcripts` gain
 `include_project_memory`, which only reconcile passes; every capture path keeps the skip.
 Real data, read-only, after the change: 411 project dirs (identical), 42 stranded sidecar
 dirs (matching `ccw doctor`), 22 reconcile findings (identical).
+
+**2026-10-15, W-20261015-A01 (engage #1470): `ccw sweep` walks a list of Claude homes.**
+Decided (principal, cc-warehouse-main Q2: 1). A second Claude Code home (`CLAUDE_CONFIG_DIR`,
+on this machine `~/.claude_v2`, makeitso's) writes its own `projects/`. The hook is not
+registered there and the sweep walked only `~/.claude/projects`, so 0 of its 59 sessions
+were cataloged (control-proven) until a hand-run `ccw sweep --source ~/.claude_v2/projects`
+on 2026-10-14 (59 stored, 0 failed, 51 min; 21 hidden by design). The frozen key map gains
+one top-level key, `extra_sources`, a list of projects folders a plain `ccw sweep` (and
+`--dry-run`) walks after the default; `--source` still means one folder. Each folder is a
+full `sweep.sweep` under its own lock (its parent supplies history and file-history, as
+`--source` already did), and the sweep-triggered build runs ONCE after all of them,
+because the build's check of every archive folder is most of a night's cost on the share.
+A lock refusal or a lost root ends the walk. Rejected: a second nightly job (that build
+cost twice a night), a weekly sweep (a week's lag), and the capture plugin in the second
+home (it conflicts with makeitso's clean-start rule, per engage-main). Not covered, and
+left open under #1470: ccstats and cc-push, which also read only `~/.claude/projects`;
+and `ccw doctor`'s `Uncaptured` count, which still counts the default home only.

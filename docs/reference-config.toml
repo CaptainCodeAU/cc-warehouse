@@ -72,6 +72,14 @@
 # copy exists only in ~/.claude. One switch for the hook and the sweep alike.
 # archive_tool_results = true
 
+# More Claude Code projects folders a plain `ccw sweep` walks after
+# ~/.claude/projects. Use it for a second Claude home (CLAUDE_CONFIG_DIR), whose
+# sessions the capture hook and the default sweep never see. Each folder's parent
+# is that home, read for its history and file-history the same way. A folder that
+# does not exist is skipped, not a failure. `--source` still means one folder only.
+# Default: none.
+# extra_sources = ["/home/you/.claude_v2/projects"]
+
 [notify]
 # Endpoint and voice for spoken failure alerts, if you run one. Default: unset.
 # voice_url = "http://localhost:8888/notify"
