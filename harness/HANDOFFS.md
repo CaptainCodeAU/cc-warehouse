@@ -23,6 +23,31 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-eighth handoff, 2026-10-15 (the sweep also reads a second Claude home)
+
+Session c11e283f (cc-warehouse-main), 14 Oct 11:08 PM to 15 Oct about 1:30 AM.
+
+- W-20260930-A59 checked: the Mon 12, Tue 13 and Wed 14 Oct sweeps each 0 failed with no
+  error lines; 0 of 75 catalog rows added since the fix lack a session uuid. Gavin (Q1: 2)
+  chose to close it after the Sunday 18 Oct archive run; its next step says so.
+- engage #1463 (from engage-main): makeitso's Claude home `~/.claude_v2` was never archived.
+  Its retention half was already fixed (`cleanupPeriodDays` 1825, set 10:24 PM 14 Oct). 0 of
+  its 59 sessions were in the catalog (control row hit). A dry run, then a real
+  `ccw sweep --source ~/.claude_v2/projects`: 125 items, 59 stored, 0 failed, 51 min 18 s.
+  All 59 folders written; 38 rendered, the other 21 exactly the catalog's `hidden=1` rows.
+  Most of the 51 minutes was the sweep-triggered build's check of every share folder.
+- Gavin (Q2: 1) chose "ccw sweeps a list of homes"; engage-main confirmed it is the only
+  option that leaves makeitso untouched. `c459e97`: config key `extra_sources`, one
+  `sweep.sweep` per folder, then one build. 7 oracle tests, 5 red first for the right
+  reason. DESIGN 15 entry "2026-10-15, W-20261015-A01". Frozen reinstall (all modules
+  identical to the repo), live config line added, pushed (Gavin Q3: 1).
+- Dry run with the live config: 4,113 would-store, of which 4,105 are sub-agent files the
+  plan always counts as new; filed as W-20261015-A02. Doctor's Uncaptured count still covers
+  the main home only: W-20261015-A03. ccstats and cc-push stay under engage #1470.
+- Gates at `c459e97`: ruff clean, pyright 0 errors, pytest 2166 passed.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-seventh handoff, 2026-10-11 (A12 proven; a project's memory/ folder is never a session)
 
 Session ee86c1b6 (cc-warehouse-main).
