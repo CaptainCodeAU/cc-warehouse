@@ -23,6 +23,31 @@ session) and the open-items drawer (`open-items`), not this file; since 2026-10-
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Fifty-ninth handoff, 2026-10-17 (cc-capture installed in makeitso, proven on a real session)
+
+Session 1dd06ab4 (cc-warehouse-main), 17 Oct about 12:10 AM to 2:40 AM. No code changed.
+
+- W-20261015-A01 checked (engage #1707, already closed): the Thu 15 and Fri 16 Oct sweeps
+  each 0 failed; 25 of the 28 new `~/.claude_v2` transcripts since 15 Oct 1:00 AM were in
+  the catalog by Sat 12:14 AM (the other 3 likely newer than Friday's run); sweep time
+  4 h 15 min Thu, 2 h 40 min Fri, against 2 h 59 min to 3 h 42 min before, so no steady rise.
+- cc-capture installed in makeitso (`CLAUDE_CONFIG_DIR=~/.claude_v2`), asked by
+  engage-maker. Read first: `ccw hook` takes `transcript_path` from the payload, and
+  `external.home_for_transcript` finds every companion store from the transcript's own
+  home, so nothing assumes `~/.claude`. Only the two hook scripts' log and state paths are
+  fixed to `~/.claude/logs/`, and doctor reads only the main home (engage #1709, #1705).
+  makeitso-1 checked `ccw` resolves there (frozen 0.1.4). Gavin ran
+  `/plugin marketplace add` then `/plugin install cc-capture@cc-warehouse` inside makeitso;
+  the cached hooks are identical to `plugins/cc-capture/hooks/`.
+- Proof on a real session (makeitso-1, f9cbe776): `ccw-hook.log` "started" then
+  "ok: captured" at 2:09 AM; one catalog row; archive folder under
+  `CaptainCodeAU-v2-makeitso/` holds the transcript, markdown, HTML and manifest; `cmp` of
+  the archived jsonl against the source: identical.
+- Filed engage #2103: whether to push the unstamped master commit `3d70505` (wrap-up
+  hands over to /session-end), which no session's trailer claims.
+
+Next: see `HANDOFF.md`.
+
 ### Fifty-eighth handoff, 2026-10-15 (the sweep also reads a second Claude home)
 
 Session c11e283f (cc-warehouse-main), 14 Oct 11:08 PM to 15 Oct about 1:30 AM.

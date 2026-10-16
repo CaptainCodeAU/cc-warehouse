@@ -18,10 +18,11 @@
 
 ## Literal next step
 
-Read the 2:00 AM Thu 15 Oct sweep (last line of
-`~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-sweep.log`): 0 failed,
-any new `~/.claude_v2` session now in the catalog, and how many minutes it added (against
-W-20261002-A74, proxmox-expert's no-reboot window). Then close W-20261015-A01.
+DONE 17 Oct (session 1dd06ab4): Thu and Fri sweeps 0 failed, 25 of 28 new `~/.claude_v2`
+sessions cataloged, no steady rise in sweep time; W-20261015-A01 (engage #1707) is closed.
+cc-capture is also installed in makeitso and proven on a real session (`harness/HANDOFFS.md`,
+fifty-ninth entry). Next: read the Sunday 18 Oct 5:00 AM archive run, then close
+W-20260930-A59. The live queue is engage (`engage-go handoff`).
 
 ## Decisions waiting on Gavin
 
