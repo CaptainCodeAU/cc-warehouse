@@ -1,11 +1,13 @@
-"""The /wrap-up command hands over to /pj:wrap-up and runs its steps only from there.
+"""The /wrap-up command runs its steps only from /session-end, never on its own.
 
-Gavin's picks, 2026-10-05 (engage #1014): /pj:wrap-up runs a project's own wrap-up
-itself, and a project wrap-up typed on its own hands over to /pj:wrap-up. One path,
-always marked. So `.claude/commands/wrap-up.md` must open with a handover step, must
-be invocable by the model (no `disable-model-invocation`), must never mark the session
-itself (`pj-wrap done` belongs to /pj:wrap-up), and must read the session id under
-either name, since engage sessions set only `CLAUDE_CODE_SESSION_ID`.
+Gavin's picks, 2026-10-05 (engage #1014): one path closes a session, always marked.
+That path was /pj:wrap-up until Gavin retired it (engage-main Q5 (v4): 1, 15 Oct 2026);
+it is now /session-end, which runs this file in its middle with `from-pj-wrap-up`.
+So `.claude/commands/wrap-up.md` must open with a step that checks for that argument,
+must send a bare `/wrap-up` to /session-end and never to /pj:wrap-up, must be
+invocable by the model (no `disable-model-invocation`), must never mark the session
+itself (`pj-wrap done`), and must read the session id under either name, since engage
+sessions set only `CLAUDE_CODE_SESSION_ID`.
 
 These are text checks: the command is prose a model follows, so the words are the
 contract. Each check has a control below it that proves it can fail.
@@ -44,11 +46,16 @@ def _handover_problems(text: str) -> list[str]:
     for needed, why in (
         ("from-pj-wrap-up", "the first step does not check for the from-pj-wrap-up arg"),
         (HANDOVER_LINE, "the first step does not name the exact handover line"),
-        ("~/.claude/pj/skills/wrap-up/SKILL.md", "the first step does not read /pj:wrap-up"),
-        ("Handing over to /pj:wrap-up", "the first step does not say it is handing over"),
+        ("Type /session-end instead", "the first step does not send a bare run to /session-end"),
         ("`check`", "the first step does not say whether check mode hands over"),
     ):
         if needed not in first:
+            problems.append(why)
+    for retired, why in (
+        ("~/.claude/pj/skills/wrap-up/SKILL.md", "the first step still reads /pj:wrap-up"),
+        ("Handing over to /pj:wrap-up", "the first step still hands over to /pj:wrap-up"),
+    ):
+        if retired in first:
             problems.append(why)
     for line in text.splitlines():
         if "pj-wrap done" in line and "never" not in line.lower():
@@ -66,7 +73,7 @@ def _session_id_problems(text: str) -> list[str]:
     ]
 
 
-def test_the_command_hands_over_to_pj_wrap_up_first() -> None:
+def test_the_command_runs_only_from_session_end() -> None:
     assert _handover_problems(COMMAND.read_text(encoding="utf-8")) == []
 
 
@@ -81,6 +88,21 @@ def test_the_handover_check_rejects_the_old_manual_only_command() -> None:
     assert any("frontmatter" in problem for problem in problems)
     assert any("from-pj-wrap-up" in problem for problem in problems)
     assert any("pj-wrap done" in problem for problem in problems)
+
+
+def test_the_handover_check_rejects_the_retired_pj_wrap_up_handover() -> None:
+    """Control: the 2026-10-05 Step H, which sent a bare /wrap-up to /pj:wrap-up."""
+    old = (
+        "---\nname: wrap-up\n---\n\n"
+        "## Step H - hand over to /pj:wrap-up, unless it sent you\n\n"
+        f"Carry on with `from-pj-wrap-up`, or after the line `{HANDOVER_LINE}`, or in `check`.\n"
+        'Otherwise say "Handing over to /pj:wrap-up; it runs these steps at its project step."\n'
+        "Then Read `~/.claude/pj/skills/wrap-up/SKILL.md` and follow it.\n"
+    )
+    problems = _handover_problems(old)
+    assert any("/session-end" in problem for problem in problems)
+    assert any("still reads /pj:wrap-up" in problem for problem in problems)
+    assert any("still hands over to /pj:wrap-up" in problem for problem in problems)
 
 
 def test_the_session_id_is_read_under_both_names() -> None:

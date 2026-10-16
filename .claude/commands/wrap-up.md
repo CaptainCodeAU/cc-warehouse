@@ -49,10 +49,10 @@ engage #1014): /pj:wrap-up runs this command at its project step, after it has r
   deliver or mark; it runs direct, at any time. Every other mode hands over.
 
 **Otherwise** (typed alone as `/wrap-up` or `/wrap-up all`, or started by the model): stop, and
-say "cc-warehouse has not moved to engage yet, so it has no end-of-session ritual: /pj:wrap-up is
-retired (Gavin, 15 Oct 2026) and /session-end arrives with the move." Never read /pj:wrap-up's
-skill file. Once cc-warehouse moves, /session-end runs this file in its middle with
-`from-pj-wrap-up`.
+say "Type /session-end instead: it runs this file in its middle. /pj:wrap-up is retired (Gavin,
+15 Oct 2026)." Never read /pj:wrap-up's skill file. cc-warehouse moved to engage on 16 Oct
+2026, so /session-end runs this file with `from-pj-wrap-up`, after printing
+`session-end hands over to /wrap-up`.
 
 This command never runs `pj-wrap done`: /pj:wrap-up marks the session.
 
