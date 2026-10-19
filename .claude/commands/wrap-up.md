@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from the session-start commit (HEAD's reflog at the time this session's transcript began) rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), uses the handoff lines /pj:wrap-up hands it (HANDOFF.md) and adds the dated record to `harness/HANDOFFS.md`, sends loose ends to the open-items drawer, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - after it stages by name and commits and before it pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Typed alone it hands over to /pj:wrap-up, which runs it at its project step; `check` runs direct. Model: invoke it only from /pj:wrap-up's project step, never on your own.
+description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from the session-start commit (HEAD's reflog at the time this session's transcript began) rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), uses the handoff lines /pj:wrap-up hands it (HANDOFF.md) and adds the dated record to `harness/HANDOFFS.md`, files loose ends with `engage-go add`, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - after it stages by name and commits and before it pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Typed alone it hands over to /pj:wrap-up, which runs it at its project step; `check` runs direct. Model: invoke it only from /pj:wrap-up's project step, never on your own.
 argument-hint: "[all(default) | check(report-only) | from-pj-wrap-up <handoff lines>]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
 ---
@@ -277,8 +277,8 @@ Four files, four jobs. Never write the same thing into two of them:
   `harness/HANDOFFS.md`.** Record what happened and its evidence (commits, measurements,
   rulings). Do not copy the next step, the waiting decisions or the hazards from the handoff
   lines: write "Next: see `HANDOFF.md`" instead, so the two never drift apart.
-- **`OPENING-PROMPT.md` is not the queue.** Its "Next task" section says so itself: since
-  2026-10-02 the live queue is the open-items drawer and `HANDOFF.md`. Do not add a queue, a
+- **`OPENING-PROMPT.md` is not the queue.** Its "Next task" section says so itself: the
+  live queue is this project's engage to-dos (the engage pane) and the handoff. Do not add a queue, a
   next step or a narrative to it; fix it only where it now says something false. That narrating
   habit is what grew it to 1,930 lines before the 2026-08-27 split.
 
@@ -292,16 +292,15 @@ not fix either here uninvited.
 
 Also re-read the session for anything raised in prose as "worth doing later" / "still open" /
 "not done yet" that has no home yet. Give it one: the ticket's own open list when it belongs to
-a ticket this session worked, otherwise the drawer, from this checkout:
+a ticket this session worked, otherwise an engage to-do, from this checkout:
 
 ```bash
-open-items --grep "<a few words>"          # already there? /pj:wrap-up step 4 may have filed it
-open-items add "<title>" --done-when "<how we will know it is done>"
+engage-go view --search "<a few words>"          # already there? /pj:wrap-up step 4 may have filed it
+engage-go add --done-when "<how we will know it is done>" -- "<title>"
 ```
 
 Never a memory file: memory is frozen (D-20260929-A01) and edits under
-`~/.claude/projects/*/memory` are denied; `open-items` is the one sanctioned writer of the
-drawer that lives there. A caveat that only exists in this transcript dies with it.
+`~/.claude/projects/*/memory` are denied; `engage-go add` is where a loose end goes. A caveat that only exists in this transcript dies with it.
 
 ---
 
@@ -443,7 +442,7 @@ milestone if this session's work amounts to one (see Step 3 for the release-tag 
 ## Step 8 - memory: nothing to write
 
 Memory is frozen (D-20260929-A01): this command writes no memory file. A durable fact this
-session surfaced goes to the drawer or `harness/GOTCHAS.md` (Step 5). Reading memory, as
+session surfaced goes to an engage to-do or `harness/GOTCHAS.md` (Step 5). Reading memory, as
 Step 3 does, is fine.
 
 ---
@@ -463,7 +462,7 @@ Cover: who started this run (Step H: from /pj:wrap-up, or `check` direct); Step 
 SESSION_START_REF and how Step 1 found it (or NOT MEASURED and why); the guard totals verbatim;
 the release-tag check and what (if anything) was pushed; which ticket/decision files gained
 entries; any line of `HANDOFF.md` this run corrected; whether `OPENING-PROMPT.md` needed a
-correction, and both line counts; each item added to the drawer, by id; the CHANGELOG entry if
+correction, and both line counts; each item added to engage, by id; the CHANGELOG entry if
 one was written; the `--control`
 result AND the secrets scan's own summary line (both quoted, not summarized as "clean"); commit
 + push confirmation and the tag name if any; anything still open with its trigger; anything that

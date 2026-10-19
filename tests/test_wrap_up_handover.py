@@ -116,10 +116,11 @@ def test_the_session_id_check_rejects_a_bare_name() -> None:
     assert _session_id_problems(f'case "$f" in *"{SESSION_ID}"*) continue;; esac') == []
 
 
-def test_loose_ends_go_to_the_drawer_not_memory() -> None:
-    """Memory is frozen under engage (D-20260929-A01); the queue is the drawer."""
+def test_loose_ends_go_to_engage_not_memory() -> None:
+    """Memory is frozen under engage (D-20260929-A01); the queue is engage's to-dos."""
     text = COMMAND.read_text(encoding="utf-8")
-    assert "open-items add" in text
+    assert "engage-go add" in text
+    assert "open-items" not in text
     assert "HANDOFF.md" in text
     assert "MemoryCuration" not in text
     assert "a memory file if it's a fact" not in text
