@@ -18,10 +18,35 @@ Two things to know before reading:
   28.9" section. It is reconstructed here in its rightful place in the sequence.
 
 For live "what to do next" state, read `HANDOFF.md` (rewritten by `/pj:wrap-up` each
-session) and the open-items drawer (`open-items`), not this file; since 2026-10-02
+session) and this project's engage to-dos (the engage pane), not this file; since 2026-10-02
 `OPENING-PROMPT.md` is orientation, not the queue. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
+
+### Sixtieth handoff, 2026-10-19 (wean-off-pj B6 part 4a: wrap-up and refresh stop reading the drawer)
+
+Session 53bb3ca4 (e-cw4a), 19 Oct about 1:20 PM to 1:40 PM, started by e-conductor for
+B6 part 4a ("readers before files"), from its list for cc-warehouse.
+
+- `.claude/commands/wrap-up.md` files loose ends with `engage-go add` (search first with
+  `engage-go view --search`), never the retired drawer. One line beyond the list: the
+  memory-is-frozen sentence no longer names the old per-project memory path, which is what
+  kept the wean check's row 43 red; it now passes.
+- `.claude/commands/refresh.md`'s memory scope, index-parity probe and path line read the
+  companion's byte copy (`cc-warehouse-isolinear/workbench/pj-drawer/pj-memory`), read only.
+  Its fix phase no longer edits memory: memory is frozen (D-20260929-A01), so a stale memory
+  is reported, never edited.
+- `tests/test_wrap_up_handover.py` pinned `open-items add`; it now pins `engage-go add`
+  present and `open-items` absent.
+- This file's header pointed readers at the drawer; it now points at engage's to-dos.
+- Evidence: census over the two command files, control `engage-go add` 3 hits; `open-items`,
+  `the drawer`, `memory/WORK` and the old memory path all 0 (the path had 2 hits in
+  `refresh.md` before). Gates: 2167 passed, ruff clean, pyright 0 errors. Commits `a2eba9e`,
+  `b37e4e5`. Report sent to e-conductor.
+- Found, not acted on: the byte copy's `MEMORY.md` indexes 23 of its 30 topic files. Frozen,
+  so reported only. cc-warehouse has no `LANE.md` (engage #3407).
+
+Next: see the captain's log entry (`engage-go handoff`); `HANDOFF.md` is being retired (engage #3344).
 
 ### Fifty-ninth handoff, 2026-10-17 (cc-capture installed in makeitso, proven on a real session)
 
