@@ -1,3 +1,7 @@
+> **History since 2026-10-19 (engage #3344). The handoff is the captain's log entry that
+> /session-end writes; read it with `engage-go handoff`. The live queue is this project's engage
+> to-dos.** Where this file names `HANDOFF.md` or the open-items drawer as live, that is stale.
+
 # Opening prompt for a fresh session
 
 Read this whole file - it is short on purpose (restructured 2026-08-27, see "About this

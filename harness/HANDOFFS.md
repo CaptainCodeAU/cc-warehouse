@@ -1,4 +1,9 @@
-# Session handoff log
+# Session evidence log
+
+**This is not the handoff** (relabelled 2026-10-19, engage #3344). The handoff is the
+captain's log entry that /session-end writes; read it with `engage-go handoff`. This file is
+the evidence: what each session did, and the proof. The entry headings below still say
+"handoff" because that is what they were called when written.
 
 Dated, chronological account of what each past session on this repo actually did - one
 entry per handoff, **newest first**. Split out of `OPENING-PROMPT.md` on 2026-08-27,
@@ -17,9 +22,9 @@ Two things to know before reading:
   only as a condensed status block inside `OPENING-PROMPT.md`'s old "ACTIVE TASK: ticket
   28.9" section. It is reconstructed here in its rightful place in the sequence.
 
-For live "what to do next" state, read `HANDOFF.md` (rewritten by `/pj:wrap-up` each
-session) and this project's engage to-dos (the engage pane), not this file; since 2026-10-02
-`OPENING-PROMPT.md` is orientation, not the queue. For
+For live "what to do next" state, read the captain's log (`engage-go handoff`) and this
+project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen since
+2026-10-19, and `OPENING-PROMPT.md` is history, not the queue. For
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 

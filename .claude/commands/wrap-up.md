@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from the session-start commit (HEAD's reflog at the time this session's transcript began) rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), uses the handoff lines /pj:wrap-up hands it (HANDOFF.md) and adds the dated record to `harness/HANDOFFS.md`, files loose ends with `engage-go add`, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - after it stages by name and commits and before it pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Typed alone it hands over to /pj:wrap-up, which runs it at its project step; `check` runs direct. Model: invoke it only from /pj:wrap-up's project step, never on your own.
+description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from the session-start commit (HEAD's reflog at the time this session's transcript began) rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), uses the handoff lines /session-end hands it (the captain's log entry is the handoff) and adds the dated evidence record to `harness/HANDOFFS.md`, files loose ends with `engage-go add`, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - after it stages by name and commits and before it pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Typed alone it sends you to /session-end, which runs it at its Step 4; `check` runs direct. Model: invoke it only from /session-end's Step 4, never on your own.
 argument-hint: "[all(default) | check(report-only) | from-pj-wrap-up <handoff lines>]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
 ---
@@ -33,13 +33,13 @@ version bump looks undeliberate rather than routine.
 ## Step H - hand over to /pj:wrap-up, unless it sent you
 
 Before anything else. One path closes a session, and it is always marked (Gavin, 2026-10-05,
-engage #1014): /pj:wrap-up runs this command at its project step, after it has rewritten
-`HANDOFF.md` and before its tidy, delivery and push, and it marks the session itself.
+engage #1014): /session-end runs this command at its Step 4, after it has drafted the handoff lines and
+before it commits, writes the captain's log entry and pushes.
 
 **Carry on to Step 0** when any one of these holds:
 
-- The arguments start with `from-pj-wrap-up`. Everything after that word is /pj:wrap-up's
-  step 5 handoff lines: keep them for Step 5. The mode is `all`.
+- The arguments start with `from-pj-wrap-up`. Everything after that word is the handoff
+  lines (/session-end's Step 3): keep them for Step 5. The mode is `all`.
 - The line `pj:wrap-up hands over to /wrap-up` appears in this conversation after the user's
   last message. Take the handoff lines it gave with it, if any.
 - An older /pj:wrap-up (before 2026-10-05) prints no handover line: its step 9 asked "run
@@ -96,7 +96,7 @@ say so.
 A marker proves the command was typed, not that it finished - a session can be cut off mid-tool-
 call. `marked=yes` is stronger: /pj:wrap-up's last step wrote it. If the most recent real session
 shows a marker, confirm it actually produced something (a commit that session, a `HANDOFFS.md`
-entry or a `HANDOFF.md` dated that day). No marker, or a marker with nothing behind it, is a
+entry or a captain's log entry dated that day). No marker, or a marker with nothing behind it, is a
 gap: name the session (date + first user message) and fold anything it left genuinely undone
 into this run rather than opening a second ritual.
 
@@ -170,8 +170,7 @@ conversation are the real touched set for every step below. Commits you didn't -
 concurrent session's own, already committed and pushed - are not yours to fold in or
 re-document; identify whose they look like (a commit message, a same-day `HANDOFFS.md`
 entry) and say so plainly in Step 9 rather than silently absorbing or silently ignoring them.
-Never substitute "what I remember editing" for what git actually shows. `HANDOFF.md`, when
-/pj:wrap-up's step 5 rewrote it in this conversation, is this session's own: Step 7 commits it.
+Never substitute "what I remember editing" for what git actually shows.
 
 🛑 **Uncommitted changes you don't recognise as your own work are a STOP.** Say so and ask;
 do not fold them into your commit and do not route around them. A concurrent session's own
@@ -254,41 +253,45 @@ says nothing.
 
 ---
 
-## Step 5 - the handoff, the session log, and anything with no home
+## Step 5 - the session log, and anything with no home
 
-Four files, four jobs. Never write the same thing into two of them:
+**The handoff is the captain's log entry**, and only that (engage #3344, 2026-10-19).
+/session-end writes it at its Step 6 from the handoff lines it gave you, and `engage-go handoff`
+draws it for the next session. Where things stand, the literal next step, the decisions waiting
+and the hazards live there and nowhere in this repo.
+
+Three files here, three jobs. Never write the same thing into two of them:
 
 | File | Holds | Written by |
 |---|---|---|
-| `HANDOFF.md` | the live snapshot: where things stand, the literal next step, decisions waiting, hazards | /pj:wrap-up, rewritten whole at its step 5 (named by `.claude/pj-homes`) |
-| `harness/HANDOFFS.md` | the dated session log, newest first: what happened and the evidence | this step |
-| `OPENING-PROMPT.md` | hand-written orientation for a fresh session; NOT the queue since 2026-10-02 | by hand only |
+| `harness/HANDOFFS.md` | the dated evidence log, newest first: what happened and the proof. Not the handoff | this step |
+| `OPENING-PROMPT.md` | hand-written orientation for a fresh session, kept as history; NOT the queue | by hand only |
 | `harness/GOTCHAS.md` | task-independent environment gotchas | this step, when one is new |
 
-- **`HANDOFF.md`: use the lines /pj:wrap-up handed over** (the arguments after
-  `from-pj-wrap-up`, or the lines given with its handover line). It wrote that file moments ago;
-  do not rewrite it. If nothing was handed over, read the file instead. If this run found
-  something that makes a line false (a gate failed, a push did not land), fix that line in place
-  and keep the first line exactly `<!-- generated by /pj:wrap-up -->`: without it /pj:wrap-up
-  treats the file as hand-written and stops writing it. If the file has lost that marker,
-  /pj:wrap-up skipped its step 5 and handed you its proposed lines instead: write them as the
-  whole file, first line the marker, at most 60 lines.
+`HANDOFF.md` is frozen: nothing writes it since 2026-10-19 and its first lines say so. Do not
+edit it, and never put the old generated marker back: an old /pj:wrap-up that still honours the
+marker would start rewriting it.
+
+- **Use the handoff lines /session-end handed over** (the arguments after `from-pj-wrap-up`).
+  Do not write them into any file here. If this run found something that makes a line false (a
+  gate failed, a push did not land), say which line and why in the report, so /session-end
+  writes the entry true.
 - **If today's work is worth a dated record, add a new entry to the TOP of
   `harness/HANDOFFS.md`.** Record what happened and its evidence (commits, measurements,
   rulings). Do not copy the next step, the waiting decisions or the hazards from the handoff
-  lines: write "Next: see `HANDOFF.md`" instead, so the two never drift apart.
-- **`OPENING-PROMPT.md` is not the queue.** Its "Next task" section says so itself: the
-  live queue is this project's engage to-dos (the engage pane) and the handoff. Do not add a queue, a
+  lines: write "Next: see the captain's log (`engage-go handoff`)" instead, so the two never
+  drift apart.
+- **`OPENING-PROMPT.md` is not the queue.** Its first line says so itself: the live queue is
+  this project's engage to-dos (the engage pane) and the captain's log. Do not add a queue, a
   next step or a narrative to it; fix it only where it now says something false. That narrating
   habit is what grew it to 1,930 lines before the 2026-08-27 split.
 
 ```bash
-wc -l OPENING-PROMPT.md HANDOFF.md
+wc -l OPENING-PROMPT.md
 ```
 
-Say both line counts in the report. If `OPENING-PROMPT.md` has crept past roughly 150-200 lines,
-say a trim may be due; if `HANDOFF.md` is over 60 lines, say /pj:wrap-up's limit is broken. Do
-not fix either here uninvited.
+Say its line count in the report. If it has crept past roughly 150-200 lines, say a trim may be
+due. Do not fix it here uninvited.
 
 Also re-read the session for anything raised in prose as "worth doing later" / "still open" /
 "not done yet" that has no home yet. Give it one: the ticket's own open list when it belongs to
@@ -426,8 +429,7 @@ inside test fixtures, per `CLAUDE.md`) - it never matches the `/Users/...` patte
 needs no exception. Anything that DOES match the checks above is a real leak - fix the source
 line, never strip it from the diff after the fact.
 
-**Stage by name** (this is the commit the order above puts first; include `HANDOFF.md` when
-/pj:wrap-up rewrote it this session). Never `git add -A` or `git add .` - another session may share this tree.
+**Stage by name** (this is the commit the order above puts first). Never `git add -A` or `git add .` - another session may share this tree.
 Commit with the project's identity override
 (`git -c user.name='CaptainCodeAU' -c user.email='69835039+CaptainCodeAU@users.noreply.github.com'
 commit ...`, or rely on the repo's local config if it's already set - check with
@@ -462,8 +464,8 @@ for anything that could otherwise read as a silent pass:
 Cover: who started this run (Step H: from /pj:wrap-up, or `check` direct); Step 0's result;
 SESSION_START_REF and how Step 1 found it (or NOT MEASURED and why); the guard totals verbatim;
 the release-tag check and what (if anything) was pushed; which ticket/decision files gained
-entries; any line of `HANDOFF.md` this run corrected; whether `OPENING-PROMPT.md` needed a
-correction, and both line counts; each item added to engage, by id; the CHANGELOG entry if
+entries; any handoff line this run found false; whether `OPENING-PROMPT.md` needed a
+correction, and its line count; each item added to engage, by id; the CHANGELOG entry if
 one was written; the `--control`
 result AND the secrets scan's own summary line (both quoted, not summarized as "clean"); commit
 + push confirmation and the tag name if any; anything still open with its trigger; anything that
