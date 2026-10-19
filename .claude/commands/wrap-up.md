@@ -20,7 +20,7 @@ get written down, gated, and pushed?**
 
 **Modes.** No arg or `all` = do the checks below AND the writes/commit/push/tag. `check` = run
 every check and report, change nothing. `from-pj-wrap-up <handoff lines>` = mode `all`, started
-by /pj:wrap-up (Step H).
+by /session-end (Step H). The argument keeps its old name because /session-end passes it.
 
 **Autonomy.** Mode `all` does the additive, reversible parts without asking - a ticket status
 line, a `HANDOFFS.md` entry, a commit, a push. It still asks before anything the standing rules
@@ -30,40 +30,37 @@ version bump looks undeliberate rather than routine.
 
 ---
 
-## Step H - hand over to /pj:wrap-up, unless it sent you
+## Step H - hand over to /session-end, unless it sent you
 
-Before anything else. One path closes a session, and it is always marked (Gavin, 2026-10-05,
-engage #1014): /session-end runs this command at its Step 4, after it has drafted the handoff lines and
-before it commits, writes the captain's log entry and pushes.
+Before anything else. One path closes a session (Gavin, 2026-10-05, engage #1014): /session-end
+runs this command at its Step 4, after it has drafted the handoff lines and before it commits,
+writes the captain's log entry and pushes. cc-warehouse moved to engage on 16 Oct 2026.
 
 **Carry on to Step 0** when any one of these holds:
 
 - The arguments start with `from-pj-wrap-up`. Everything after that word is the handoff
   lines (/session-end's Step 3): keep them for Step 5. The mode is `all`.
-- The line `pj:wrap-up hands over to /wrap-up` appears in this conversation after the user's
-  last message. Take the handoff lines it gave with it, if any.
-- An older /pj:wrap-up (before 2026-10-05) prints no handover line: its step 9 asked "run
-  /wrap-up now, or not now" and the user's last message answered now. Never hand back to the
-  skill that called you: that is a loop.
-- The mode is `check`. It reports and writes nothing, so there is nothing for /pj:wrap-up to
-  deliver or mark; it runs direct, at any time. Every other mode hands over.
+- The line `session-end hands over to /wrap-up` appears in this conversation after the user's
+  last message. Take the handoff lines it gave with it, if any. Never hand back to the
+  command that called you: that is a loop.
+- The mode is `check`. It reports and writes nothing, so there is nothing for /session-end to
+  commit or write; it runs direct, at any time. Every other mode hands over.
 
 **Otherwise** (typed alone as `/wrap-up` or `/wrap-up all`, or started by the model): stop, and
 say "Type /session-end instead: it runs this file in its middle. /pj:wrap-up is retired (Gavin,
-15 Oct 2026)." Never read /pj:wrap-up's skill file. cc-warehouse moved to engage on 16 Oct
-2026, so /session-end runs this file with `from-pj-wrap-up`, after printing
-`session-end hands over to /wrap-up`.
+15 Oct 2026)." Never read /pj:wrap-up's skill file.
 
-This command never runs `pj-wrap done`: /pj:wrap-up marks the session.
+This command never runs `pj-wrap done` and never writes the captain's log entry: /session-end
+writes that entry at its Step 6, and it is the record that the session closed.
 
 ---
 
 ## Step 0 - did the last session actually close out?
 
 Cheap, so always run it. Find the most recent OTHER session transcripts for this project and
-check whether a wrap-up ran near their end. Since 2026-09-29 a session closes with
-`/pj:wrap-up` (which runs this command at its project step), so count both, and read pj's own
-mark, which /pj:wrap-up's last step leaves only when it finished:
+check whether a wrap-up ran near their end. Since 16 Oct 2026 a session closes with
+`/session-end` (which runs this command at its Step 4), so count both, and look for that
+session's captain's log entry, which /session-end's Step 6 writes only when it got that far:
 
 ```bash
 # Never hardcode this slug (it encodes the real machine path/username) - derive it fresh,
@@ -79,10 +76,11 @@ sort -rn | cut -d' ' -f2- | while IFS= read -r f; do
   [ -n "$SID" ] && case "$f" in *"$SID"*) continue;; esac
   n=$(wc -l < "$f" | tr -d ' '); [ "$n" -lt 50 ] && continue   # companion/remote-control stubs
   id=$(basename "$f" .jsonl)
-  printf '%s  lines=%-6s wrap-up=%s pj:wrap-up=%s marked=%s  %s\n' "$(printf '%s' "$id" | cut -c1-8)" "$n" \
+  short=$(printf '%s' "$id" | cut -c1-8)
+  printf '%s  lines=%-6s wrap-up=%s session-end=%s entry=%s  %s\n' "$short" "$n" \
     "$(grep -cE '"content":"<command-(message|name)>/?wrap-up</command-' "$f")" \
-    "$(grep -cE '"content":"<command-(message|name)>/?pj:wrap-up</command-' "$f")" \
-    "$([ -e "$HOME/.local/state/pj/wrapped/$id" ] && echo yes || echo no)" \
+    "$(grep -cE '"content":"<command-(message|name)>/?session-end</command-' "$f")" \
+    "$(ls "$MAIN-isolinear"/captains-log/*/*-"$short".md >/dev/null 2>&1 && echo yes || echo no)" \
     "$(stat -f '%Sm' -t '%F %R' "$f")"
 done | head -3
 ```
@@ -94,13 +92,14 @@ row is probably this session: skip it when its first user message is this conver
 say so.
 
 A marker proves the command was typed, not that it finished - a session can be cut off mid-tool-
-call. `marked=yes` is stronger: /pj:wrap-up's last step wrote it. If the most recent real session
+call. `entry=yes` is stronger: /session-end's Step 6 wrote that session's captain's log entry
+(the companion folder beside the main checkout holds it). If the most recent real session
 shows a marker, confirm it actually produced something (a commit that session, a `HANDOFFS.md`
 entry or a captain's log entry dated that day). No marker, or a marker with nothing behind it, is a
 gap: name the session (date + first user message) and fold anything it left genuinely undone
 into this run rather than opening a second ritual.
 
-**This command did not exist before 2026-09-06, and `/pj:wrap-up` not before 2026-09-29.** A run
+**This command did not exist before 2026-09-06, and `/session-end` not before 2026-10-16.** A run
 that walks back past those dates and finds nothing is expected, not a finding - do not report it
 as one.
 
@@ -298,7 +297,7 @@ Also re-read the session for anything raised in prose as "worth doing later" / "
 a ticket this session worked, otherwise an engage to-do, from this checkout:
 
 ```bash
-engage-go view --search "<a few words>"          # already there? /pj:wrap-up step 4 may have filed it
+engage-go view --search "<a few words>"          # already there? /session-end Step 2 may have filed it
 engage-go add --done-when "<how we will know it is done>" -- "<title>"
 ```
 
@@ -461,7 +460,7 @@ for anything that could otherwise read as a silent pass:
 | **NOT APPLICABLE** | The precondition is false by construction (e.g. no version bump this session) | "n/a" with no reason given |
 | **NOT MEASURED** | Couldn't actually run it (tool missing, command failed) | "skipped", or silence |
 
-Cover: who started this run (Step H: from /pj:wrap-up, or `check` direct); Step 0's result;
+Cover: who started this run (Step H: from /session-end, or `check` direct); Step 0's result;
 SESSION_START_REF and how Step 1 found it (or NOT MEASURED and why); the guard totals verbatim;
 the release-tag check and what (if anything) was pushed; which ticket/decision files gained
 entries; any handoff line this run found false; whether `OPENING-PROMPT.md` needed a
@@ -474,6 +473,5 @@ clean, or it explicitly is not and why.
 
 In `check` mode, report the same list as findings and stop - nothing gets written.
 
-When /pj:wrap-up started this run, the report goes back to it and it carries on with whatever
-of its steps remain (since 2026-10-05: tidy, delivery check, push, then the session mark; an
-older /pj:wrap-up has only the mark left).
+When /session-end started this run, the report goes back to it and it carries on at its
+Step 5: it commits its own writes, writes the captain's log entry, then pushes.

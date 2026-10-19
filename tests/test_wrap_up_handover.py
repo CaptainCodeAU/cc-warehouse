@@ -27,7 +27,8 @@ COMMAND = ROOT / ".claude" / "commands" / "wrap-up.md"
 PJ_HOMES = ROOT / ".claude" / "pj-homes"
 HANDOFF = ROOT / "HANDOFF.md"
 
-HANDOVER_LINE = "pj:wrap-up hands over to /wrap-up"
+HANDOVER_LINE = "session-end hands over to /wrap-up"
+RETIRED_HANDOVER_LINE = "pj:wrap-up hands over to /wrap-up"
 SESSION_ID = "${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 
 
@@ -58,6 +59,8 @@ def _handover_problems(text: str) -> list[str]:
     for retired, why in (
         ("~/.claude/pj/skills/wrap-up/SKILL.md", "the first step still reads /pj:wrap-up"),
         ("Handing over to /pj:wrap-up", "the first step still hands over to /pj:wrap-up"),
+        (RETIRED_HANDOVER_LINE, "the first step still waits for /pj:wrap-up's handover line"),
+        ("Step H - hand over to /pj:wrap-up", "the first step's title still names /pj:wrap-up"),
     ):
         if retired in first:
             problems.append(why)
@@ -99,7 +102,8 @@ def test_the_handover_check_rejects_the_retired_pj_wrap_up_handover() -> None:
     old = (
         "---\nname: wrap-up\n---\n\n"
         "## Step H - hand over to /pj:wrap-up, unless it sent you\n\n"
-        f"Carry on with `from-pj-wrap-up`, or after the line `{HANDOVER_LINE}`, or in `check`.\n"
+        f"Carry on with `from-pj-wrap-up`, or after the line `{RETIRED_HANDOVER_LINE}`,"
+        " or in `check`.\n"
         'Otherwise say "Handing over to /pj:wrap-up; it runs these steps at its project step."\n'
         "Then Read `~/.claude/pj/skills/wrap-up/SKILL.md` and follow it.\n"
     )
@@ -107,6 +111,56 @@ def test_the_handover_check_rejects_the_retired_pj_wrap_up_handover() -> None:
     assert any("/session-end" in problem for problem in problems)
     assert any("still reads /pj:wrap-up" in problem for problem in problems)
     assert any("still hands over to /pj:wrap-up" in problem for problem in problems)
+    assert any("handover line" in problem for problem in problems)
+    assert any("title still names" in problem for problem in problems)
+
+
+RETIRED_CALLER = (
+    "started by /pj:wrap-up",
+    "/pj:wrap-up marks the session",
+    "/pj:wrap-up step 4 may have filed it",
+    "from /pj:wrap-up, or `check` direct",
+    "When /pj:wrap-up started this run",
+)
+
+
+def _caller_problems(text: str) -> list[str]:
+    """Why the command still names /pj:wrap-up as its caller; empty when it names /session-end.
+
+    Engage #3436. Whitespace is folded first, so a phrase broken across lines still counts.
+    Step 0 must count /session-end and look for the captain's log entry, not pj's mark.
+    """
+    flat = " ".join(text.split())
+    problems = [f"still says: {phrase}" for phrase in RETIRED_CALLER if phrase in flat]
+    step0 = next((step for step in _steps(text) if step.startswith("Step 0 ")), "")
+    if "session-end" not in step0:
+        problems.append("Step 0 does not count /session-end")
+    if "captains-log" not in step0:
+        problems.append("Step 0 does not look for the captain's log entry")
+    if ".local/state/pj/wrapped" in step0:
+        problems.append("Step 0 still reads pj's wrapped mark")
+    return problems
+
+
+def test_the_command_names_session_end_as_its_caller() -> None:
+    assert _caller_problems(COMMAND.read_text(encoding="utf-8")) == []
+
+
+def test_the_caller_check_rejects_the_pj_wrap_up_wording() -> None:
+    """Control: the 2026-10-19 wording, before engage #3436."""
+    old = (
+        "`from-pj-wrap-up <handoff lines>` = mode `all`, started\nby /pj:wrap-up (Step H).\n"
+        "## Step 0 - did the last session actually close out?\n\n"
+        "Since 2026-09-29 a session closes with `/pj:wrap-up`, so count both:\n"
+        '[ -e "$HOME/.local/state/pj/wrapped/$id" ]\n'
+        "## Step 9 - report\n\nWhen /pj:wrap-up started this run, the report goes back to it.\n"
+    )
+    problems = _caller_problems(old)
+    assert any("started by /pj:wrap-up" in problem for problem in problems)
+    assert any("When /pj:wrap-up started" in problem for problem in problems)
+    assert any("count /session-end" in problem for problem in problems)
+    assert any("captain's log entry" in problem for problem in problems)
+    assert any("wrapped mark" in problem for problem in problems)
 
 
 def test_the_session_id_is_read_under_both_names() -> None:
