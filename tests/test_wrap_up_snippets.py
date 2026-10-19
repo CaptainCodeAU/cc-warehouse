@@ -180,14 +180,14 @@ def test_step_0_counts_both_wrap_ups_and_skips_this_session(
     home, main, _, _ = repo
     slug = re.sub(r"[^a-zA-Z0-9]", "-", str(main))
     projects = home / ".claude" / "projects"
-    pj_closed = "aaaaaaaa-0000-0000-0000-000000000000"
+    closed = "aaaaaaaa-0000-0000-0000-000000000000"
     typed_alone = "bbbbbbbb-0000-0000-0000-000000000000"
     quote = json.dumps(
-        {"type": "user", "message": {"content": "see <command-name>/pj:wrap-up</command-name>"}},
+        {"type": "user", "message": {"content": "see <command-name>/session-end</command-name>"}},
         separators=(",", ":"),
     )
     _write_session(projects / slug, SID, [], B_TIME + 900)
-    _write_session(projects / slug, pj_closed, [quote, _typed("pj:wrap-up")], B_TIME + 800)
+    _write_session(projects / slug, closed, [quote, _typed("session-end")], B_TIME + 800)
     _write_session(projects / f"{slug}--worktree-w", typed_alone, [_typed("wrap-up")], B_TIME + 700)
     stub = projects / slug / "cccccccc-0000-0000-0000-000000000000.jsonl"
     stub.write_text(_typed("wrap-up") + "\n")
@@ -195,15 +195,19 @@ def test_step_0_counts_both_wrap_ups_and_skips_this_session(
     _write_session(
         projects / "some-other-project", "dddddddd-0000-0000-0000-000000000000", [], B_TIME + 860
     )
+    log = Path(f"{main}-isolinear") / "captains-log" / "2026-10"
+    log.mkdir(parents=True)
+    (log / "2026-10-19-aaaaaaaa.md").write_text("## Note\n")
+    # Control: pj's old wrapped mark no longer counts as a closed session (engage #3436).
     wrapped = home / ".local" / "state" / "pj" / "wrapped"
     wrapped.mkdir(parents=True)
-    (wrapped / pj_closed).write_text("")
+    (wrapped / typed_alone).write_text("")
 
     rows = _run(shell, _snippet("## Step 0"), main, _env(home, {"CLAUDE_CODE_SESSION_ID": SID}))
     lines = rows.strip().splitlines()
     assert [line[:8] for line in lines] == ["aaaaaaaa", "bbbbbbbb"]
-    assert "wrap-up=0 pj:wrap-up=1 marked=yes" in lines[0]
-    assert "wrap-up=1 pj:wrap-up=0 marked=no" in lines[1]
+    assert "wrap-up=0 session-end=1 entry=yes" in lines[0]
+    assert "wrap-up=1 session-end=0 entry=no" in lines[1]
 
     alone = _run(shell, _snippet("## Step 0"), main, _env(home, {}))
     assert "no session id" in alone
