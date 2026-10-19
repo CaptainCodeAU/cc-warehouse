@@ -299,8 +299,9 @@ engage-go view --search "<a few words>"          # already there? /pj:wrap-up st
 engage-go add --done-when "<how we will know it is done>" -- "<title>"
 ```
 
-Never a memory file: memory is frozen (D-20260929-A01) and edits under
-`~/.claude/projects/*/memory` are denied; `engage-go add` is where a loose end goes. A caveat that only exists in this transcript dies with it.
+Never a memory file: memory is frozen (D-20260929-A01) and edits to it are denied;
+`engage-go add` is where a loose end goes. A caveat that only exists in this transcript dies
+with it.
 
 ---
 
