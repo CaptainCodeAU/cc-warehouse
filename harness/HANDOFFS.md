@@ -28,6 +28,35 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-first handoff, 2026-10-19 (one handoff; /wrap-up names /session-end; A59 leftovers retired)
+
+Session e3a29a14 (cc-warehouse-main), 19 Oct about 1:57 PM to 9:10 PM.
+
+- engage #3344 closed: the captain's log entry is the one handoff. `.claude/pj-homes` lost its
+  `handoff` key (engage's audit only checks it names no drawer); `/wrap-up` Step 5 writes no
+  handoff file; `HANDOFF.md` is frozen with a pointer header and without the generated
+  marker; this file is relabelled the evidence log; `OPENING-PROMPT.md` has a history line.
+  Commit `9ea1d9b`.
+- engage #3436 closed (Gavin, cc-warehouse-main Q1: 1, test first): Step H, Step 0, the Modes
+  line and the report name /session-end. Step 0 now looks for the captain's log entry
+  (`<main>-isolinear/captains-log/*/*-<sid8>.md`) instead of pj's wrapped mark; run live, it
+  found the entry for each of the last three sessions. Commits `458e933`, `0629822`.
+- Process lesson: `458e933` was pushed after only the two related test files ran (low disk).
+  The full suite then failed 2 in `tests/test_wrap_up_snippets.py`, which pins Step 0's
+  output and is skipped off macOS, so GitHub CI stayed green. Fixed in `0629822`; engage
+  #3479 asks for CI coverage of it. Run the full suite before pushing a command-text change.
+- Q2: 1: `HANDOFF.md` stays frozen in the repo. Q3: 1: the 11 Oct A59 worker leftovers are in
+  `~/RETIRED/2026-10-19-cc-warehouse-a59-leftovers/` (uncommitted sweep.py diff, already on
+  master as `is_project_memory`; the probe test; the branch as a bundle and format-patch,
+  whose one unmerged commit is the WIP no-bytes guards Gavin dropped on 11 Oct). Worktree to
+  the Trash; local branches deleted; `origin/a59-no-bytes-rows` deleted through dotfiles'
+  new bundle route (dotfiles `34e88a3`, Gavin's Q84: 1; engage #3460 closed).
+- No decision for `contract/DESIGN.md` section 15: the handoff change is process, not `ccw`'s
+  design. No ticket touched. No version bump (0.1.4, tag `v0.1.4` exists).
+- Gates: ruff clean, pyright 0 errors, pytest 2171 passed.
+
+Next: see the captain's log entry (`engage-go handoff`).
+
 ### Sixtieth handoff, 2026-10-19 (wean-off-pj B6 part 4a: wrap-up and refresh stop reading the drawer)
 
 Session 53bb3ca4 (e-cw4a), 19 Oct about 1:20 PM to 1:40 PM, started by e-conductor for
