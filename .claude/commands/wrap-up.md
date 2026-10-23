@@ -47,8 +47,8 @@ writes the captain's log entry and pushes. cc-warehouse moved to engage on 16 Oc
   commit or write; it runs direct, at any time. Every other mode hands over.
 
 **Otherwise** (typed alone as `/wrap-up` or `/wrap-up all`, or started by the model): stop, and
-say "Type /session-end instead: it runs this file in its middle. /pj:wrap-up is retired (Gavin,
-15 Oct 2026)." Never read /pj:wrap-up's skill file.
+say "Type /session-end instead: it runs this file in its middle. The old pj close is retired (Gavin,
+15 Oct 2026)." Never read the old pj close's skill file.
 
 This command never runs `pj-wrap done` and never writes the captain's log entry: /session-end
 writes that entry at its Step 6, and it is the record that the session closed.
@@ -268,8 +268,8 @@ Three files here, three jobs. Never write the same thing into two of them:
 | `harness/GOTCHAS.md` | task-independent environment gotchas | this step, when one is new |
 
 `HANDOFF.md` is frozen: nothing writes it since 2026-10-19 and its first lines say so. Do not
-edit it, and never put the old generated marker back: an old /pj:wrap-up that still honours the
-marker would start rewriting it.
+edit it, and never put the old generated marker back: the old pj close honoured that marker, and
+would start rewriting the file if it ever ran again.
 
 - **Use the handoff lines /session-end handed over** (the arguments after `from-pj-wrap-up`).
   Do not write them into any file here. If this run found something that makes a line false (a
