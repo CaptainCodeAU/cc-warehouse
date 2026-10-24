@@ -28,6 +28,28 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-second handoff, 2026-10-24 (engage list 09: `.claude/pj-homes` retired, mode renamed)
+
+Session f3c4faec (cc-warehouse-main), 24 Oct about 3:45 PM to 4:15 PM.
+
+- engage #3818 (Gavin's design, e-conductor Q42 (v2) to Q45), list 09 item 1:
+  `.claude/pj-homes` is retired. Its one line, `wrap-up: /wrap-up`, is the default
+  /session-end already uses, so nothing carried over and no companion `config/project.txt`
+  was made. The file went into `~/RETIRED/2026-10-23-homes-files/` with a manifest line,
+  using e-conductor's exact command.
+- List 09 item 2 (Gavin's Q47: 1): `/wrap-up`'s hand-over mode is renamed
+  `from-pj-wrap-up` -> `from-session-end` in its 4 lines; the sentence saying the old name
+  had to stay is gone. /session-end still accepts the old name.
+- `tests/test_wrap_up_handover.py`: the pj-homes reader became a check that the file stays
+  retired, the handover check needs the new name, and a new control proves a Step H naming
+  only the old mode fails. Full suite `2172 passed`; ruff and pyright clean.
+- Commit `7c84b83`, pushed on Gavin's yes (cc-warehouse-main Q1: 1). e-conductor verified
+  the retired copy against `7c84b83^` and asks nothing more for list 09.
+- Found in passing: `ccw doctor`'s sidecars line names a new Claude Code sibling,
+  `auto-mode-classifier-error.txt`, beside 2 transcripts; filed as engage #3874.
+
+Next: see the captain's log (`engage-go handoff`).
+
 ### Sixty-first handoff, 2026-10-19 (one handoff; /wrap-up names /session-end; A59 leftovers retired)
 
 Session e3a29a14 (cc-warehouse-main), 19 Oct about 1:57 PM to 9:10 PM.
