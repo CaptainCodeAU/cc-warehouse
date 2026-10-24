@@ -1,7 +1,7 @@
 ---
 name: wrap-up
 description: End-of-session close-out for cc-warehouse - the "did I actually close this out" pass. Derives this session's real touched set from git, scoped from the session-start commit (HEAD's reflog at the time this session's transcript began) rather than the upstream comparison alone (this machine runs concurrent sessions against the same checkout, which can make "unpushed since upstream" read empty even after real work), runs the three guards (ruff, pyright, pytest) and quotes their real totals, checks whether a `pyproject.toml` version bump has a matching PUSHED `vX.Y.Z` tag (the exact way a release silently never reaches PyPI - discovered live 2026-09-06), checks a touched `harness/tickets/*.md` carries a dated status update and that `contract/DESIGN.md`/`HARNESS.md` picked up any decision or retro this session owes them (or plainly says neither fits and why), uses the handoff lines /session-end hands it (the captain's log entry is the handoff) and adds the dated evidence record to `harness/HANDOFFS.md`, files loose ends with `engage-go add`, runs `git-leak-scan --since <session-start-ref>` - this machine's real leak scanner, already wired into the pre-commit hook, over this session's actual commits rather than whatever happens to be staged (this project commits continuously, so staging is usually empty by the time this runs) - after it stages by name and commits and before it pushes, and tags only what the standing rules already authorize. Not a substitute for `/refresh` (that's the estate-wide ccstats/architecture sweep); this is scoped to THIS session's own work. Typed alone it sends you to /session-end, which runs it at its Step 4; `check` runs direct. Model: invoke it only from /session-end's Step 4, never on your own.
-argument-hint: "[all(default) | check(report-only) | from-pj-wrap-up <handoff lines>]"
+argument-hint: "[all(default) | check(report-only) | from-session-end <handoff lines>]"
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
 ---
 
@@ -19,8 +19,8 @@ live ground truth and is expensive. This asks one smaller question: **did THIS s
 get written down, gated, and pushed?**
 
 **Modes.** No arg or `all` = do the checks below AND the writes/commit/push/tag. `check` = run
-every check and report, change nothing. `from-pj-wrap-up <handoff lines>` = mode `all`, started
-by /session-end (Step H). The argument keeps its old name because /session-end passes it.
+every check and report, change nothing. `from-session-end <handoff lines>` = mode `all`, started
+by /session-end (Step H).
 
 **Autonomy.** Mode `all` does the additive, reversible parts without asking - a ticket status
 line, a `HANDOFFS.md` entry, a commit, a push. It still asks before anything the standing rules
@@ -38,7 +38,7 @@ writes the captain's log entry and pushes. cc-warehouse moved to engage on 16 Oc
 
 **Carry on to Step 0** when any one of these holds:
 
-- The arguments start with `from-pj-wrap-up`. Everything after that word is the handoff
+- The arguments start with `from-session-end`. Everything after that word is the handoff
   lines (/session-end's Step 3): keep them for Step 5. The mode is `all`.
 - The line `session-end hands over to /wrap-up` appears in this conversation after the user's
   last message. Take the handoff lines it gave with it, if any. Never hand back to the
@@ -271,7 +271,7 @@ Three files here, three jobs. Never write the same thing into two of them:
 edit it, and never put the old generated marker back: the old pj close honoured that marker, and
 would start rewriting the file if it ever ran again.
 
-- **Use the handoff lines /session-end handed over** (the arguments after `from-pj-wrap-up`).
+- **Use the handoff lines /session-end handed over** (the arguments after `from-session-end`).
   Do not write them into any file here. If this run found something that makes a line false (a
   gate failed, a push did not land), say which line and why in the report, so /session-end
   writes the entry true.

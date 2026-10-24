@@ -1,9 +1,0 @@
-# pj-homes: where this project's records live (D-20260920-06). Root markers only:
-# repo: (this repo's root), drawer: (the folder `open-items --where` names), ~/ (home).
-# Every key is optional; missing keys take the D-20260920-06 defaults.
-# wrap-up names this project's own close command (.claude/commands/wrap-up.md);
-# /session-end runs it at its Step 4 and hands it the handoff lines.
-# No handoff key since 2026-10-19 (engage #3344): the handoff is the captain's log entry
-# /session-end writes, so HANDOFF.md is frozen and nothing may rewrite it.
-# harness/HANDOFFS.md is the dated evidence log /wrap-up adds to; OPENING-PROMPT.md is history.
-wrap-up: /wrap-up

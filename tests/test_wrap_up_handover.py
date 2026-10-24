@@ -2,7 +2,8 @@
 
 Gavin's picks, 2026-10-05 (engage #1014): one path closes a session, always marked.
 That path was /pj:wrap-up until Gavin retired it (engage-main Q5 (v4): 1, 15 Oct 2026);
-it is now /session-end, which runs this file in its middle with `from-pj-wrap-up`.
+it is now /session-end, which runs this file in its middle with `from-session-end`
+(the mode's old name, `from-pj-wrap-up`, was renamed on Gavin's Q47: 1, engage #3818).
 So `.claude/commands/wrap-up.md` must open with a step that checks for that argument,
 must send a bare `/wrap-up` to /session-end and never to /pj:wrap-up, must be
 invocable by the model (no `disable-model-invocation`), must never mark the session
@@ -10,8 +11,11 @@ itself (`pj-wrap done`), and must read the session id under either name, since e
 sessions set only `CLAUDE_CODE_SESSION_ID`.
 
 Since 2026-10-19 (engage #3344) the captain's log entry /session-end writes is the one
-handoff: `HANDOFF.md` is frozen, `.claude/pj-homes` names no handoff, and /wrap-up's
-Step 5 writes no handoff file of its own.
+handoff: `HANDOFF.md` is frozen, and /wrap-up's Step 5 writes no handoff file of its own.
+
+Since 2026-10-24 (engage #3818) the old `.claude/pj-homes` is retired: its one line,
+`wrap-up: /wrap-up`, is the default /session-end already uses, so nothing carried over
+and no `config/project.txt` is needed in the companion.
 
 These are text checks: the command is prose a model follows, so the words are the
 contract. Each check has a control below it that proves it can fail.
@@ -49,7 +53,7 @@ def _handover_problems(text: str) -> list[str]:
     steps = _steps(text)
     first = steps[0] if steps else ""
     for needed, why in (
-        ("from-pj-wrap-up", "the first step does not check for the from-pj-wrap-up arg"),
+        ("from-session-end", "the first step does not check for the from-session-end arg"),
         (HANDOVER_LINE, "the first step does not name the exact handover line"),
         ("Type /session-end instead", "the first step does not send a bare run to /session-end"),
         ("`check`", "the first step does not say whether check mode hands over"),
@@ -93,7 +97,7 @@ def test_the_handover_check_rejects_the_old_manual_only_command() -> None:
     )
     problems = _handover_problems(old)
     assert any("frontmatter" in problem for problem in problems)
-    assert any("from-pj-wrap-up" in problem for problem in problems)
+    assert any("from-session-end" in problem for problem in problems)
     assert any("pj-wrap done" in problem for problem in problems)
 
 
@@ -223,17 +227,16 @@ def test_the_step5_check_rejects_the_pj_wrap_up_handoff_step() -> None:
     assert any("measures HANDOFF.md" in problem for problem in problems)
 
 
-def test_pj_homes_names_this_command_and_no_handoff() -> None:
-    homes = {
-        key.strip(): value.strip()
-        for key, value in (
-            line.split(":", 1)
-            for line in PJ_HOMES.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.startswith("#")
-        )
-    }
-    assert homes["wrap-up"] == "/wrap-up"
-    assert "handoff" not in homes
+def test_the_old_pj_homes_file_stays_retired() -> None:
+    """Engage #3818: the settings moved to the companion; this repo carries none."""
+    assert not PJ_HOMES.exists()
+
+
+def test_the_first_step_rejects_the_old_mode_name_alone() -> None:
+    """Control: a Step H that still checks only for `from-pj-wrap-up` must fail."""
+    text = COMMAND.read_text(encoding="utf-8").replace("from-session-end", "from-pj-wrap-up")
+    problems = _handover_problems(text)
+    assert any("from-session-end" in problem for problem in problems)
 
 
 def test_handoff_md_is_frozen_without_the_generated_marker() -> None:
