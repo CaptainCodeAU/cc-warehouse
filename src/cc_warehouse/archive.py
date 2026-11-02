@@ -1258,14 +1258,18 @@ def memory_files(memory_dir: Path) -> list[Path]:
     ]
 
 
-def _memory_version(label_dir: Path, rel: Path, data: bytes) -> tuple[bool, str | None]:
+MEMORY_NOT_SESSIONS_DIR = "memory"
+MEMORY_SHARED_PREFIX = "_from-"
+
+
+def _memory_version(base: Path, rel: Path, data: bytes) -> tuple[bool, str | None]:
     """Keep these bytes as one version: `_memory-history/<rel>/<sha12><suffix>`.
 
     Content-addressed and `write_if_absent`, so a version once kept is never
     rewritten. A `refused` here means two different payloads hashed to one short
     name, which is reported, never resolved by overwriting (R5)."""
     name = store.sha256_hex(data)[:_MEMORY_VERSION_HEX] + rel.suffix
-    target = label_dir / MEMORY_HISTORY_DIR / rel / name
+    target = base / MEMORY_HISTORY_DIR / rel / name
     target.parent.mkdir(parents=True, exist_ok=True)
     outcome = store.write_if_absent(target, data)
     if outcome == "refused":
@@ -1273,8 +1277,27 @@ def _memory_version(label_dir: Path, rel: Path, data: bytes) -> tuple[bool, str 
     return outcome == "wrote", None
 
 
-def archive_project_memory(archive_root: Path, label: str, memory_dir: Path) -> MemoryCopy:
-    """Copy one project's Claude Code memory into its label folder.
+def memory_base(archive_root: Path, label: str | None, source_dir_name: str) -> Path:
+    """The folder that holds a project's `_memory/` and `_memory-history/`.
+
+    Its label folder when the catalog names one. Otherwise
+    `_not-sessions/memory/<source dir name>/`: never a guessed label (R5), and
+    never left uncopied either, since the memory may be the only copy."""
+    if label is None:
+        return (
+            archive_root
+            / NOT_SESSIONS_LABEL
+            / MEMORY_NOT_SESSIONS_DIR
+            / build.component(source_dir_name)
+        )
+    return archive_root / build.component(label)
+
+
+def archive_project_memory(base: Path, memory_dir: Path, sub: str = "") -> MemoryCopy:
+    """Copy one project's Claude Code memory under `base` (see `memory_base`).
+
+    `sub` nests this source under `_memory/<sub>/` and `_memory-history/<sub>/`,
+    for a second project dir that shares the label (`MEMORY_SHARED_PREFIX`).
 
     THE RULING (principal, 2026-11-02, Q4 option 1): keep the latest copy AND
     every version ever seen, and never remove anything from the archive when a
@@ -1284,24 +1307,23 @@ def archive_project_memory(archive_root: Path, label: str, memory_dir: Path) -> 
     safe in the history, so even a latest copy whose version was never recorded
     cannot be the thing that loses one.
     """
-    label_dir = archive_root / build.component(label)
     written = versions = 0
     errors: list[str] = []
     for source in memory_files(memory_dir):
-        rel = source.relative_to(memory_dir)
+        rel = Path(sub) / source.relative_to(memory_dir) if sub else source.relative_to(memory_dir)
         try:
             data = source.read_bytes()
-            latest = label_dir / MEMORY_LATEST_DIR / rel
+            latest = base / MEMORY_LATEST_DIR / rel
             if latest.is_file():
                 current = latest.read_bytes()
                 if current == data:
                     continue
-                added, problem = _memory_version(label_dir, rel, current)
+                added, problem = _memory_version(base, rel, current)
                 versions += added
                 if problem:
                     errors.append(problem)
                     continue
-            added, problem = _memory_version(label_dir, rel, data)
+            added, problem = _memory_version(base, rel, data)
             versions += added
             if problem:
                 errors.append(problem)

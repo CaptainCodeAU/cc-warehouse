@@ -290,20 +290,82 @@ def test_the_switch_off_copies_no_memory(ccw_env: dict[str, str], tmp_path: Path
     assert not (label_dir / "_memory").exists()
 
 
-def test_a_project_with_no_captured_session_gets_no_invented_folder(
+def test_a_project_unknown_to_the_catalog_is_kept_under_not_sessions(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
-    """No catalog row says which label this project has, so the files stay
-    where they are rather than land in a guessed folder (R5); the first sweep
-    after a session of that project is captured copies them."""
+    """No catalog row names this project's label, so its memory is NOT guessed
+    into a label folder (R5) and NOT left uncopied either: it goes under
+    `_not-sessions/memory/<source dir name>/`, the drawer for things with no
+    session to belong to."""
     archive_root = tmp_path / "archive"
     configure(ccw_env, archive_root)
     plant_memory(ccw_env)
     sweep(ccw_env)
     assert not list(archive_root.glob("*/_memory"))
+    kept = archive_root / "_not-sessions" / "memory" / ENCODED / "_memory"
+    assert (kept / "MEMORY.md").read_bytes() == INDEX
+
+
+def test_a_project_whose_transcripts_are_gone_is_found_by_its_working_folder(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Measured 2026-11-02: 5 real projects hold memory and no transcript at
+    all. The catalog still records each session's working folder, and Claude
+    Code's project dir name is that folder with every non-alphanumeric
+    character made a dash, so the label is still knowable."""
+    archive_root = tmp_path / "archive"
     label_dir = captured(ccw_env, archive_root)
+    (project_dir(ccw_env) / f"{PARENT}.jsonl").unlink()
+    plant_memory(ccw_env)
     sweep(ccw_env)
     assert (label_dir / "_memory" / "MEMORY.md").read_bytes() == INDEX
+
+
+OTHER = "-home-alice-projects-widget-old"
+OTHER_UUID = "d3111111-2222-3333-4444-555555555552"
+THIRD_UUID = "d3111111-2222-3333-4444-555555555553"
+
+
+def test_two_project_dirs_sharing_one_label_never_overwrite_each_other(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Measured 2026-11-02: two real project dirs map to one label (a renamed
+    project). One `_memory/` for both made their same-named files overwrite
+    each other's latest copy on every sweep. The dir with the most sessions
+    keeps the plain `_memory/`; each other one gets `_memory/_from-<dir>/`."""
+    archive_root = tmp_path / "archive"
+    label_dir = captured(ccw_env, archive_root)
+    for uuid, encoded in ((THIRD_UUID, ENCODED), (OTHER_UUID, OTHER)):
+        transcript = write_transcript(
+            ccw_env, basic_session(session_id=uuid), session_id=uuid, encoded_dir=encoded
+        )
+        result = run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript, session_id=uuid))
+        assert result.code == 0, result.err
+    settle_companions(ccw_env)
+    plant_memory(ccw_env, NOTES_A)
+    other_mem = project_dir(ccw_env).parent / OTHER / "memory"
+    other_mem.mkdir(parents=True)
+    (other_mem / "notes.md").write_bytes(NOTES_B)
+    sweep(ccw_env)
+    assert (label_dir / "_memory" / "notes.md").read_bytes() == NOTES_A
+    assert (label_dir / "_memory" / f"_from-{OTHER}" / "notes.md").read_bytes() == NOTES_B
+    before = {p: p.stat().st_mtime_ns for p in label_dir.rglob("*") if "_memory" in p.parts}
+    sweep(ccw_env)
+    after = {p: p.stat().st_mtime_ns for p in label_dir.rglob("*") if "_memory" in p.parts}
+    assert before == after
+
+
+def test_a_memory_file_whose_name_starts_with_an_underscore_is_copied(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Found on the real share: 11 files named `_index-*.md` failed, because the
+    temp file became `._index-...` and Samba refuses names starting `._`."""
+    archive_root = tmp_path / "archive"
+    label_dir = captured(ccw_env, archive_root)
+    plant_memory(ccw_env)
+    (memory_dir(ccw_env) / "_index-boxes.md").write_bytes(b"boxes\n")
+    sweep(ccw_env)
+    assert (label_dir / "_memory" / "_index-boxes.md").read_bytes() == b"boxes\n"
 
 
 def test_a_dry_run_names_the_memory_it_would_copy_and_writes_nothing(

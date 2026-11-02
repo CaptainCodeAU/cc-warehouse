@@ -27,8 +27,11 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 the latest copy of each file under `<label>/_memory/`, and every version it has seen under
 `<label>/_memory-history/<path>/<sha256-12><suffix>`. Nothing is removed from either when a
 file or the whole memory folder is deleted at the source (principal's ruling). The label
-comes from the catalog rows of the project's own sessions; a project with none yet is
-copied by the first sweep after one is captured. Both names are reserved inside a label
+comes from the catalog rows of the project's own sessions, or, when its transcripts are
+gone, from the working folder the catalog recorded; a project the catalog does not know
+at all goes under `_not-sessions/memory/<dir>/`. When two project dirs share one label,
+the one with the most sessions keeps `_memory/` and each other gets
+`_memory/_from-<dir>/`, so they never overwrite each other. Both names are reserved inside a label
 folder, so no walker reads them as sessions. New config key `archive_project_memory`,
 default on. `--dry-run` lists the projects as `would-archive-memory`.
 

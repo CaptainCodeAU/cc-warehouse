@@ -1512,70 +1512,113 @@ def sweep(
 _MEMORY_UNCHANGED = "unchanged-memory"
 
 
-def _memory_label(config: Config, project_dir: Path) -> str | None:
-    """The archive label of this project dir's sessions, from the catalog.
+def _encoded_project_name(cwd: str) -> str:
+    """Claude Code's project dir name for a working folder: every character
+    that is not a letter or digit becomes a dash (measured on this machine's
+    tree, e.g. `.../COWORK/workos_talk` -> `...-COWORK-workos-talk`)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd)
 
-    Never derived from the dir's encoded name, which maps to a different label
-    entirely (measured 2026-11-02: 42 of 43). The file stem is used only to FIND
-    catalog rows, and the label is the one most of them carry, so a project
-    whose sessions sit under two labels still lands in one, deterministically.
+
+def _memory_labels(
+    config: Config, memory_dirs: "list[Path]"
+) -> dict[Path, tuple[str, int]]:
+    """Each project dir's archive label and how many catalog sessions back it.
+
+    FIRST by the transcripts in the dir: their file stems FIND catalog rows
+    (the label itself is the catalog's, never derived from the dir's encoded
+    name, which gives a different label for 42 of 43). THEN, for a dir whose
+    transcripts are all gone (5 real ones on 2026-11-02), by the working folder
+    the catalog recorded for each session. The label most rows carry wins, ties
+    by name, so a dir whose sessions sit under two labels still lands in one.
     """
-    stems = [p.stem for p in project_dir.glob("*.jsonl")]
-    if not stems:
-        return None
+    out: dict[Path, tuple[str, int]] = {}
+    if not memory_dirs:
+        return out
     conn = catalog.open_catalog(config.root)
-    counts: dict[str, int] = {}
     try:
-        for start in range(0, len(stems), 500):
-            chunk = stems[start : start + 500]
-            marks = ",".join("?" * len(chunk))
-            rows = cast(
-                list[tuple[object, ...]],
-                conn.execute(
-                    "SELECT p.label, COUNT(*) FROM session s JOIN project p"
-                    f" ON p.id = s.project_id WHERE s.session_uuid IN ({marks})"
-                    " GROUP BY p.label",
-                    chunk,
-                ).fetchall(),
-            )
-            for label, count in rows:
-                counts[str(label)] = counts.get(str(label), 0) + cast(int, count)
+        by_cwd: dict[str, dict[str, int]] = {}
+        cwd_rows = cast(
+            list[tuple[object, ...]],
+            conn.execute(
+                "SELECT s.cwd, p.label, COUNT(*) FROM session s JOIN project p"
+                " ON p.id = s.project_id WHERE s.cwd IS NOT NULL GROUP BY s.cwd, p.label"
+            ).fetchall(),
+        )
+        for cwd, label, count in cwd_rows:
+            slot = by_cwd.setdefault(_encoded_project_name(str(cwd)), {})
+            slot[str(label)] = slot.get(str(label), 0) + cast(int, count)
+        for project_dir in memory_dirs:
+            counts: dict[str, int] = {}
+            stems = [p.stem for p in project_dir.glob("*.jsonl")]
+            for start in range(0, len(stems), 500):
+                chunk = stems[start : start + 500]
+                marks = ",".join("?" * len(chunk))
+                rows = cast(
+                    list[tuple[object, ...]],
+                    conn.execute(
+                        "SELECT p.label, COUNT(*) FROM session s JOIN project p"
+                        f" ON p.id = s.project_id WHERE s.session_uuid IN ({marks})"
+                        " GROUP BY p.label",
+                        chunk,
+                    ).fetchall(),
+                )
+                for label, count in rows:
+                    counts[str(label)] = counts.get(str(label), 0) + cast(int, count)
+            if not counts:
+                counts = dict(by_cwd.get(project_dir.name, {}))
+            if counts:
+                out[project_dir] = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
     finally:
         conn.close()
-    if not counts:
-        return None
-    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    return out
 
 
 def _archive_memory(
     config: Config, walk_root: Path, guard: "archive.RootGuard"
 ) -> list[ItemOutcome]:
-    """Copy each project's Claude Code memory into its archive label folder.
+    """Copy each project's Claude Code memory into the archive.
 
-    One outcome per project with anything new. A project whose sessions are not
-    in the catalog yet is left where it is (R5): its memory is copied by the
-    first sweep after one is captured. Never deletes (the 2026-11-02 ruling).
+    One outcome per project with anything new. Never deletes (the 2026-11-02
+    ruling). Where it goes:
+
+      a label the catalog knows      <label>/_memory/
+      a second dir with that label   <label>/_memory/_from-<dir>/   (the dir
+                                     with the most sessions keeps the plain
+                                     path, so no two overwrite each other)
+      no label at all                _not-sessions/memory/<dir>/_memory/
     """
     from cc_warehouse import archive
 
     if config.archive_root is None or not config.archive_project_memory:
         return []
     archive_root = config.archive_root
+    memory_dirs = [
+        d for d in project_dirs(walk_root) if archive.memory_files(d / sidecars.MEMORY_DIR)
+    ]
+    try:
+        labels = _memory_labels(config, memory_dirs)
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return [ItemOutcome("memory", "error", f"memory labels: {exc}")]
+    owner: dict[str, Path] = {}
+    for project_dir, (label, _count) in sorted(
+        labels.items(), key=lambda kv: (-kv[1][1], kv[0].name)
+    ):
+        owner.setdefault(label, project_dir)
     outcomes: list[ItemOutcome] = []
-    for project_dir in project_dirs(walk_root):
-        memory_dir = project_dir / sidecars.MEMORY_DIR
-        if not archive.memory_files(memory_dir):
-            continue
-        try:
-            label = _memory_label(config, project_dir)
-        except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
-            outcomes.append(ItemOutcome(project_dir.name, "error", f"memory label: {exc}"))
-            continue
-        if label is None:
-            continue
+    for project_dir in memory_dirs:
+        found = labels.get(project_dir)
+        label = found[0] if found else None
+        sub = (
+            ""
+            if label is None or owner.get(label) == project_dir
+            else f"{archive.MEMORY_SHARED_PREFIX}{project_dir.name}"
+        )
+        base = archive.memory_base(archive_root, label, project_dir.name)
         outcome = guard.run(
             project_dir.name,
-            functools.partial(_copy_memory, archive_root, label, memory_dir, project_dir.name),
+            functools.partial(
+                _copy_memory, base, project_dir / sidecars.MEMORY_DIR, sub, project_dir.name
+            ),
             _is_error,
         )
         if outcome.action != _MEMORY_UNCHANGED:
@@ -1583,16 +1626,17 @@ def _archive_memory(
     return outcomes
 
 
-def _copy_memory(archive_root: Path, label: str, memory_dir: Path, item: str) -> ItemOutcome:
+def _copy_memory(base: Path, memory_dir: Path, sub: str, item: str) -> ItemOutcome:
     from cc_warehouse import archive
 
-    done = archive.archive_project_memory(archive_root, label, memory_dir)
+    done = archive.archive_project_memory(base, memory_dir, sub)
     if done.errors:
         return ItemOutcome(item, "error", "; ".join(done.errors))
     if not done.written and not done.versions:
         return ItemOutcome(item, _MEMORY_UNCHANGED, "")
+    where = f"{base.name}/{sub}" if sub else base.name
     return ItemOutcome(
-        item, "archived-memory", f"{done.written} latest, {done.versions} version(s) -> {label}"
+        item, "archived-memory", f"{done.written} latest, {done.versions} version(s) -> {where}"
     )
 
 
