@@ -60,12 +60,23 @@ WORKFLOWS_DIR = "workflows"
 # `archive.write_custom_title`), never `copy_companion_dir`, because that
 # copier mirrors a directory tree and this is one small file.
 CUSTOM_TITLE_FILE = "custom-title.json"
+# Found 2026-10-24 and taken in 2026-11-02, again by the level-A notice: the
+# debug report Claude Code writes when auto mode's safety check fails (the time,
+# the model, token counts, and the messages the check was reading). One flat
+# file, rewritten in place when the check fails again. Unlike the title it has
+# NO manifest key: it is kept, not shown, so it must not make every folder's
+# manifest stale. `archive.write_session_file` copies it.
+CLASSIFIER_ERROR_FILE = "auto-mode-classifier-error.txt"
+# Flat files copied verbatim into the session folder with no manifest record.
+PLAIN_FILES = frozenset({CLASSIFIER_ERROR_FILE})
 
 # Measured 2026-09-06 over all 1,196 real `<uuid>/` dirs: these three plus
 # `.DS_Store` were the only children that existed THEN. `CUSTOM_TITLE_FILE`
 # is a fourth, confirmed real on 2026-09-10 - the measurement above is
 # historical, not a claim that nothing has been added since.
-SESSION_SIDECARS = frozenset({SUBAGENTS_DIR, TOOL_RESULTS_DIR, WORKFLOWS_DIR, CUSTOM_TITLE_FILE})
+SESSION_SIDECARS = frozenset(
+    {SUBAGENTS_DIR, TOOL_RESULTS_DIR, WORKFLOWS_DIR, CUSTOM_TITLE_FILE, *PLAIN_FILES}
+)
 
 # Skipped at EVERY depth, by the scan and by the copier alike. Finder writes one
 # of these into any folder a human browses, and the archive already holds 125 of
@@ -83,7 +94,10 @@ _JSONL_SUFFIX = ".jsonl"
 
 # What Claude Code really writes inside `subagents/`, measured 2026-09-06: the
 # transcripts, their `.meta.json`, the two forked-skill companions, and a
-# `workflows/` dir holding Workflow-tool sub-agents.
+# `workflows/` dir holding Workflow-tool sub-agents. `.prefix.json` joined them
+# on 2026-11-02 (first seen 2026-10-28): how the sub-agent started, the model,
+# its tool names, feature flags and an outline of its instructions. It travels
+# with its sub-agent like the forked-skill pair (`capture.subagent_companions`).
 #
 # F4 NOTE, because this looks like the banned shape and is not. The fence
 # `test_no_module_identifies_a_subagent_by_filename` rejects the exact string
@@ -93,7 +107,7 @@ _JSONL_SUFFIX = ".jsonl"
 # stays `archive.is_subagent`, reading content. If the fence's rule is ever
 # widened to patterns, exempt this module by name on that ground.
 _SUBAGENT_CHILD_RE = re.compile(
-    r"^agent-[A-Za-z0-9_.-]+\.(?:jsonl|meta\.json|forked-skill(?:\.marker)?\.json)$"
+    r"^agent-[A-Za-z0-9_.-]+\.(?:jsonl|meta\.json|prefix\.json|forked-skill(?:\.marker)?\.json)$"
     rf"|^{WORKFLOWS_DIR}$"
 )
 

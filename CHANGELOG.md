@@ -22,6 +22,14 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Two new files Claude Code writes are now archived (2026-11-02, #3874, #4517).**
+`<uuid>/auto-mode-classifier-error.txt` (auto mode's safety-check error report) is copied
+into the session folder by the hook and by the sweep, as a plain file with no manifest key,
+so no re-render is needed. `subagents/agent-<id>.prefix.json` (how a sub-agent started)
+travels into the sub-agent's own folder beside `meta.json`. Both stop appearing in
+`ccw doctor`'s sidecars line. `capture.forked_skill_companions` is renamed
+`subagent_companions`.
+
 **`ccw sweep` can walk more than one Claude home (2026-10-15, W-20261015-A01).** New
 top-level config key `extra_sources`: a list of Claude Code projects folders a plain
 `ccw sweep` (and `--dry-run`) walks after `~/.claude/projects`, for a second home set with

@@ -377,7 +377,7 @@ def _archive_subagent(config: Config, path: Path) -> ItemOutcome | None:
             data,
             config.archive_timezone,
             meta=meta,
-            companions=capture.forked_skill_companions(path),
+            companions=capture.subagent_companions(path),
             render_options=(
                 build.render_options(config) if config.render_subagent_projections else None
             ),
@@ -700,6 +700,17 @@ def _archive_sidecars(config: Config, path: Path) -> ItemOutcome | None:
                     capture.log_sidecar_trouble(
                         config, parsed.session_uuid, "error", archive.CUSTOM_TITLE_FILE, str(exc)
                     )
+            for plain in sorted(sidecars.PLAIN_FILES):
+                plain_file = directory / plain
+                if not plain_file.is_file():
+                    continue
+                try:
+                    if archive.write_session_file(folder, plain, plain_file.read_bytes()):
+                        written += 1
+                except OSError as exc:
+                    capture.log_sidecar_trouble(
+                        config, parsed.session_uuid, "error", plain, str(exc)
+                    )
         changed = archive.write_sidecar_notice(folder, scan, refused)
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"{type(exc).__name__}: {exc}")
@@ -938,6 +949,12 @@ def _archive_one_stranded(
                 folder, title_file.read_bytes()
             ):
                 written += 1
+            for plain in sorted(sidecars.PLAIN_FILES):
+                plain_file = stranded / plain
+                if plain_file.is_file() and archive.write_session_file(
+                    folder, plain, plain_file.read_bytes()
+                ):
+                    written += 1
             if written:
                 return ItemOutcome(
                     stranded.name, "archived-sidecars", f"{written} file(s) -> {folder}"
@@ -1188,10 +1205,10 @@ def _plan_sidecars(config: Config, walk_root: Path, wanted: "list[Path]") -> lis
         if not _sidecar_candidate(path, names, keyed):
             continue
         directory = path.parent / (path.stem if path.stem in names else path.name.split(".", 1)[0])
-        dir_names = sidecars.SESSION_SIDECARS - {"subagents", sidecars.CUSTOM_TITLE_FILE}
+        file_names = {sidecars.CUSTOM_TITLE_FILE, *sidecars.PLAIN_FILES}
+        dir_names = sidecars.SESSION_SIDECARS - {"subagents"} - file_names
         present = [name for name in sorted(dir_names) if (directory / name).is_dir()]
-        if (directory / sidecars.CUSTOM_TITLE_FILE).is_file():
-            present.append(sidecars.CUSTOM_TITLE_FILE)
+        present.extend(name for name in sorted(file_names) if (directory / name).is_file())
         if present:
             outcomes.append(
                 ItemOutcome(path.name, "would-archive-sidecars", ", ".join(present))

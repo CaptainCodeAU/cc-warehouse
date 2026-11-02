@@ -45,10 +45,17 @@ def test_the_known_sidecar_names_are_the_ones_measured_plus_custom_title() -> No
     """A census of all 1,196 real `<uuid>/` dirs on 2026-09-06 found exactly four
     child names: three of these plus `.DS_Store`. `custom-title.json` is a
     fourth name, confirmed real 2026-09-10 when it fired the level-A anomaly
-    alert this module exists to raise. The list is the product decision, so it
-    is asserted rather than left implicit."""
+    alert this module exists to raise. `auto-mode-classifier-error.txt` is a
+    fifth, seen 2026-10-24 and taken in 2026-11-02 the same way. The list is the
+    product decision, so it is asserted rather than left implicit."""
     assert sidecars.SESSION_SIDECARS == frozenset(
-        {"subagents", "tool-results", "workflows", "custom-title.json"}
+        {
+            "subagents",
+            "tool-results",
+            "workflows",
+            "custom-title.json",
+            "auto-mode-classifier-error.txt",
+        }
     )
 
 

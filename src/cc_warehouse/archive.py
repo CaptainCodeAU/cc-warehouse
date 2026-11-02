@@ -205,6 +205,7 @@ SUBAGENTS_DIR = sidecars.SUBAGENTS_DIR
 TOOL_RESULTS_DIR = sidecars.TOOL_RESULTS_DIR
 WORKFLOWS_DIR = sidecars.WORKFLOWS_DIR
 CUSTOM_TITLE_FILE = sidecars.CUSTOM_TITLE_FILE
+CLASSIFIER_ERROR_FILE = sidecars.CLASSIFIER_ERROR_FILE
 _META = "meta.json"
 
 # The per-session anomaly record (ticket 38), and it is a NOTICE FILE rather
@@ -275,6 +276,7 @@ COPIERS = {
     TOOL_RESULTS_DIR: "copy_companion_dir",
     WORKFLOWS_DIR: "copy_companion_dir",
     CUSTOM_TITLE_FILE: "write_custom_title",
+    CLASSIFIER_ERROR_FILE: "write_session_file",
 }
 
 # Where a payload that is NOT a session lives (ticket 25.6). Reserved in
@@ -1223,6 +1225,21 @@ def write_custom_title(session_dir: Path, data: bytes) -> bool:
     already use - it is one small file per session, never a subfolder.
     """
     return store.write_if_changed(session_dir / CUSTOM_TITLE_FILE, data)
+
+
+def write_session_file(session_dir: Path, name: str, data: bytes) -> bool:
+    """Copy one of `sidecars.PLAIN_FILES` into this session's archive folder.
+
+    `store.write_if_changed`, the same reasoning as `write_custom_title`:
+    Claude Code rewrites these in place, so the archive keeps the latest. No
+    manifest record, so `verify_folder` never checks it and the rebuilder never
+    deletes it (it is not in GENERATED_NAMES, R4). The name must be on the list,
+    which keeps this from ever becoming a way to overwrite the manifest, the
+    payload or anything outside the folder.
+    """
+    if name not in sidecars.PLAIN_FILES:
+        raise ValueError(f"{name!r} is not a plain-file sidecar")
+    return store.write_if_changed(session_dir / name, data)
 
 
 def custom_title_record(session_dir: Path) -> dict[str, object]:

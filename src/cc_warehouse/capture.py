@@ -516,24 +516,25 @@ def _archive_subagents_of(
                 payload,
                 config.archive_timezone,
                 meta=meta_path.read_bytes() if meta_path.is_file() else None,
-                companions=forked_skill_companions(child),
+                companions=subagent_companions(child),
                 render_options=render_opts,
             )
         except Exception:  # noqa: BLE001, PERF203 - one bad sub-agent never costs the capture
             continue
 
 
-def forked_skill_companions(transcript: Path) -> tuple[tuple[str, bytes], ...]:
+def subagent_companions(transcript: Path) -> tuple[tuple[str, bytes], ...]:
     """The `.forked-skill.json` / `.forked-skill.marker.json` files beside one
     sub-agent transcript (ticket 38; 10 of each in the live tree, copied by
-    nothing until now).
+    nothing until now), and since 2026-11-02 its `.prefix.json` (how the
+    sub-agent started; 3 of its 13 long text pieces are in no transcript).
 
     Same argument as `meta.json`: they are the only record of what the agent was
     set up to be. An unreadable one is skipped rather than raised - a companion is
     an extra, and losing it must not cost the transcript itself (R5).
     """
     out: list[tuple[str, bytes]] = []
-    for suffix in (".forked-skill.json", ".forked-skill.marker.json"):
+    for suffix in (".prefix.json", ".forked-skill.json", ".forked-skill.marker.json"):
         path = transcript.parent / f"{transcript.stem}{suffix}"
         try:
             out.append((path.name, path.read_bytes()))
@@ -590,6 +591,14 @@ def _archive_sidecars_of(
             log_sidecar_trouble(config, session_uuid, "refused", name, item)
         for item in copied.errors:
             log_sidecar_trouble(config, session_uuid, "error", name, item)
+    for name in sorted(sidecars.PLAIN_FILES):
+        source = directory / name
+        if not source.is_file():
+            continue
+        try:
+            archive.write_session_file(parent, name, source.read_bytes())
+        except OSError as exc:
+            log_sidecar_trouble(config, session_uuid, "error", name, str(exc))
     return tuple(refused)
 
 
