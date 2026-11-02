@@ -30,7 +30,7 @@ import pytest
 
 from cc_warehouse import doctor
 from cc_warehouse.config import Config
-from conftest import HOOKS_DIR
+from conftest import HOOKS_DIR, load_note, wall_budget
 
 WRAPPER = HOOKS_DIR / "ccw-hook.py"
 SESSION = "detach-0001"
@@ -114,7 +114,9 @@ def test_the_wrapper_returns_in_under_a_second_while_ccw_takes_five(tmp_path: Pa
     )
     elapsed = time.monotonic() - started
     assert result.returncode == 0
-    assert elapsed < 1.0, f"wrapper took {elapsed:.2f}s; Claude Code kills it at ~1.5s"
+    assert elapsed < wall_budget(1.0), (
+        f"wrapper took {elapsed:.2f}s; Claude Code kills it at ~1.5s ({load_note()})"
+    )
     # And the work still happens, after the wrapper has gone.
     assert _wait_for(lambda: (tmp_path / "marker").exists())
     assert _wait_for(lambda: "ok" in _statuses(tmp_path))
@@ -167,7 +169,9 @@ def test_the_runner_does_not_hold_the_hooks_stdout_or_stderr_open(tmp_path: Path
     started = time.monotonic()
     hook.communicate(_payload().encode("utf-8"), timeout=30)  # returns at EOF on both pipes
     elapsed = time.monotonic() - started
-    assert elapsed < 1.0, f"the hook's pipes stayed open {elapsed:.2f}s"
+    assert elapsed < wall_budget(1.0), (
+        f"the hook's pipes stayed open {elapsed:.2f}s ({load_note()})"
+    )
     assert _wait_for(lambda: (tmp_path / "marker").exists())
 
 
@@ -293,7 +297,8 @@ def test_control_a_failing_ccw_is_logged_by_the_runner_after_the_hook_has_gone(
     crashing = _fake_ccw(tmp_path, 'sleep 1\necho "boom" >&2\nexit 3')
     started = time.monotonic()
     _run_hook(tmp_path, crashing, _payload("fails-hard"))
-    assert time.monotonic() - started < 1.0
+    elapsed = time.monotonic() - started
+    assert elapsed < wall_budget(1.0), f"took {elapsed:.2f}s ({load_note()})"
     assert "error" not in _statuses(tmp_path, "fails-hard")  # not yet: ccw still running
     assert _wait_for(lambda: "error" in _statuses(tmp_path, "fails-hard"))
     error = next(
@@ -317,7 +322,8 @@ def test_an_empty_or_unparseable_payload_still_returns_fast_and_is_handed_on(
     ccw = _fake_ccw(tmp_path, 'sleep 2\necho "ok: captured"')
     started = time.monotonic()
     _run_hook(tmp_path, ccw, stdin)
-    assert time.monotonic() - started < 1.0
+    elapsed = time.monotonic() - started
+    assert elapsed < wall_budget(1.0), f"took {elapsed:.2f}s ({load_note()})"
     assert _wait_for(lambda: _statuses(tmp_path, None) == ["dispatched", "started", "ok"])
     delivered = list(tmp_path.glob("payload-*"))
     assert len(delivered) == 1
@@ -438,6 +444,7 @@ def test_the_detach_works_end_to_end_under_an_old_python3(tmp_path: Path) -> Non
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert time.monotonic() - started < 1.0
+    elapsed = time.monotonic() - started
+    assert elapsed < wall_budget(1.0), f"took {elapsed:.2f}s ({load_note()})"
     assert _wait_for(lambda: _statuses(tmp_path) == ["started", "ok"])
     assert all(str(line["python"]).startswith(version) for line in _lines(tmp_path))

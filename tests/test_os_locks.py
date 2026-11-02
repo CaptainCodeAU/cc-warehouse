@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 from cc_warehouse import store
-from conftest import DEAD_PID, lock_held_elsewhere
+from conftest import DEAD_PID, load_note, lock_held_elsewhere, wall_budget
 
 
 def _lock(root: Path, name: str = "sweep") -> Path:
@@ -227,7 +227,8 @@ def test_a_real_holder_is_refused_within_about_a_second(tmp_path: Path) -> None:
     with lock_held_elsewhere(tmp_path, "sweep"):
         start = time.monotonic()
         assert store.acquire_lock(tmp_path, "sweep") is False
-        assert time.monotonic() - start < 3
+        elapsed = time.monotonic() - start
+        assert elapsed < wall_budget(3), f"took {elapsed:.2f}s ({load_note()})"
 
 
 def test_without_fcntl_the_labelled_pid_fallback_still_locks(

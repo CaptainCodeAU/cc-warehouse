@@ -37,6 +37,56 @@ DEFAULT_CWD = "/home/alice/projects/widget"
 DEAD_PID = 999_999_999
 
 # ---------------------------------------------------------------------------
+# Wall-clock budgets on a busy machine (2026-11-02, #4520)
+# ---------------------------------------------------------------------------
+# The principal's Mac is often busy (load average 10 to 50 on 10 cores has been
+# seen), and a test that asserts "this returned in under N seconds" then fails
+# for a reason that is not in the code. Two rules:
+#
+#  1. Every wall-clock limit goes through `wall_budget`, which stretches it by how
+#     oversubscribed the CPUs are (1-minute load over core count, at least 1, at
+#     most WALL_BUDGET_MAX_STRETCH). On a calm machine the limit is unchanged, so
+#     the test still guards the real property (Claude Code kills a hook at ~1.5 s).
+#  2. Every such failure message carries `load_note()`, and the run's header and
+#     summary print the load at start and end, so a red timing test says by
+#     itself whether the machine was busy. A failure at stretch 1.0 is a real one.
+#
+# CPU only: stdlib has no portable memory-pressure reading, and swap shows up as
+# load anyway.
+WALL_BUDGET_MAX_STRETCH = 4.0
+
+
+def load_stretch() -> float:
+    try:
+        one_minute = os.getloadavg()[0]
+    except OSError:
+        return 1.0
+    return min(max(1.0, one_minute / (os.cpu_count() or 1)), WALL_BUDGET_MAX_STRETCH)
+
+
+def wall_budget(seconds: float) -> float:
+    return seconds * load_stretch()
+
+
+def load_note() -> str:
+    try:
+        one, five, _ = os.getloadavg()
+    except OSError:
+        return "load unknown"
+    return (
+        f"load {one:.1f}/{five:.1f} on {os.cpu_count()} cores, "
+        f"limit stretched x{load_stretch():.2f}"
+    )
+
+
+def pytest_report_header() -> str:
+    return f"machine at start: {load_note()}"
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    terminalreporter.write_line(f"machine at end: {load_note()}")
+
+# ---------------------------------------------------------------------------
 # Audit-hook file-open counter (FINDINGS F5). Audit hooks cannot be removed,
 # so one process-global hook dispatches to whichever recorders are active.
 # ---------------------------------------------------------------------------

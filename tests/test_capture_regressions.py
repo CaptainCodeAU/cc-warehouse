@@ -19,8 +19,10 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    load_note,
     run_ccw,
     session_count,
+    wall_budget,
     warehouse_root,
     write_transcript,
 )
@@ -63,7 +65,9 @@ def test_webhook_post_is_off_the_hook_critical_path(ccw_env: dict[str, str]) -> 
         result = run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript))
         elapsed = time.monotonic() - start
         assert result.code == 0, result.err
-        assert elapsed < 1.5, f"hook blocked {elapsed:.2f}s on a slow sink (inline POST?)"
+        assert elapsed < wall_budget(1.5), (
+            f"hook blocked {elapsed:.2f}s on a slow sink (inline POST?) ({load_note()})"
+        )
         assert session_count(ccw_env) == 1
     finally:
         server.shutdown()

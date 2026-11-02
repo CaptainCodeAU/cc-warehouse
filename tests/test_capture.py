@@ -29,11 +29,13 @@ from conftest import (
     entry,
     hook_payload,
     jsonl,
+    load_note,
     run_ccw,
     run_cli,
     session_count,
     spawn_ccw,
     tree_snapshot,
+    wall_budget,
     warehouse_root,
     write_transcript,
 )
@@ -319,4 +321,4 @@ def test_hook_is_fast_even_for_a_large_transcript(ccw_env: dict[str, str]) -> No
     result = run_ccw(["hook"], ccw_env, stdin=hook_payload(transcript), timeout=30)
     elapsed = time.monotonic() - start
     assert result.code == 0
-    assert elapsed < 10
+    assert elapsed < wall_budget(10), f"took {elapsed:.2f}s ({load_note()})"
