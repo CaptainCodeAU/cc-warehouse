@@ -52,6 +52,11 @@ GUARANTEE_WORDS = ("atomic", "identical", "byte-equal", "byte for byte", "never 
 GUARANTEE_PROOFS: dict[tuple[str, str], str] = {
     ("store.py", "atomic"): "test_interrupted_write_leaves_no_partial_final_file",
     ("relocate.py", "atomic"): "test_interrupted_write_leaves_no_partial_final_file",
+    # The memory pass (2026-11-02) never deletes from the archive, on the
+    # principal's ruling; the whole-folder deletion test is what proves it.
+    ("sweep.py", "never delete"): (
+        "test_a_whole_memory_folder_deleted_at_the_source_stays_in_the_archive"
+    ),
     # render.py's compact-variant note claims the DEFAULT wording is unchanged
     # from v1. The slice-14 regression anchor is what proves it: it renders with
     # default options and compares all four files against bytes captured from the

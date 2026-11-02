@@ -72,6 +72,13 @@
 # copy exists only in ~/.claude. One switch for the hook and the sweep alike.
 # archive_tool_results = true
 
+# Whether each project's Claude Code memory (~/.claude/projects/<dir>/memory/)
+# is kept in the archive, by `ccw sweep`: the latest copy of every file under
+# <label>/_memory/ and every version ever seen under <label>/_memory-history/.
+# Nothing is ever removed from either when a file, or the whole memory folder,
+# is deleted at the source. Default: true.
+# archive_project_memory = true
+
 # More Claude Code projects folders a plain `ccw sweep` walks after
 # ~/.claude/projects. Use it for a second Claude home (CLAUDE_CONFIG_DIR), whose
 # sessions the capture hook and the default sweep never see. Each folder's parent

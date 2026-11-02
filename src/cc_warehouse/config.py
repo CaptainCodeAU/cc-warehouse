@@ -199,6 +199,12 @@ class Config:
     # prompts - see CLAUDE.md's ticket 39 paragraph for the naming note. DEFAULTS
     # ON, same reasoning as `archive_file_history` above.
     archive_history_prompts: bool = True
+    # Whether each project's Claude Code memory (`~/.claude/projects/<dir>/memory/`)
+    # is kept in the archive, under `<label>/_memory/` (latest) and
+    # `<label>/_memory-history/` (every version). Added 2026-11-02 on the
+    # principal's ruling: 1,200 files across 43 projects had no other copy.
+    # DEFAULTS ON, same reasoning as the keys above.
+    archive_project_memory: bool = True
     # More Claude Code projects folders a plain `ccw sweep` walks after
     # `~/.claude/projects` (W-20261015-A01, Gavin's ruling 2026-10-15). A second
     # Claude home (`CLAUDE_CONFIG_DIR`, e.g. `~/.claude_v2`) writes its own
@@ -627,6 +633,7 @@ def load_config(
         archive_tool_results=_bool(merged.get("archive_tool_results"), True),
         archive_file_history=_bool(merged.get("archive_file_history"), True),
         archive_history_prompts=_bool(merged.get("archive_history_prompts"), True),
+        archive_project_memory=_bool(merged.get("archive_project_memory"), True),
         extra_sources=extra_sources,
         skip_hook=resolved_env.get("CCW_SKIP_HOOK") == "1",
         voice_url=voice_url,

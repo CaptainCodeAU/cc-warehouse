@@ -158,6 +158,12 @@ RESERVED_LABELS = frozenset(
     }
 )
 
+# Names reserved one level DOWN, inside a label folder (2026-11-02). Every
+# plain folder there is read as a session folder, so the project's memory copy
+# carries an underscore name and every walker skips it. archive.py owns the
+# writer; the names live here because build is the module every walker imports.
+RESERVED_IN_LABEL = frozenset({"_memory", "_memory-history"})
+
 _UNDATED = "undated"
 
 

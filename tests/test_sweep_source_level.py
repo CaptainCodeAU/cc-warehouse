@@ -78,7 +78,14 @@ def test_a_real_sweep_of_one_project_dir_never_copies_its_own_folders(
     configure(ccw_env, archive_root, keep_objects=False)
     result = run_ccw(["sweep", "--source", str(projects(ccw_env) / ENCODED)], ccw_env)
     assert result.code == 0, result.err
-    names = {p.name for p in archive_root.rglob("*")}
+    # The project's memory/ is now copied, as memory, under <label>/_memory and
+    # <label>/_memory-history (2026-11-02). What this test guards is that it
+    # never lands anywhere ELSE, such as `_not-sessions/stranded-sidecars/`.
+    names = {
+        p.name
+        for p in archive_root.rglob("*")
+        if not {"_memory", "_memory-history"} & set(p.relative_to(archive_root).parts)
+    }
     assert UUID_STRANDED in names
     assert "WORK" not in names
     assert "memory" not in names

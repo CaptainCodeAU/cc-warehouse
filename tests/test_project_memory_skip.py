@@ -154,7 +154,10 @@ def test_the_dry_run_does_not_list_it(ccw_env: dict[str, str], tmp_path: Path) -
     memory_transcript(ccw_env)
     write_transcript(ccw_env, session(UUID_A), session_id=UUID_A)
     report = sweep.plan(cfg, projects(ccw_env))
-    assert [o.item for o in report.outcomes] == [f"{UUID_A}.jsonl"]
+    # Since 2026-11-02 the memory folder IS planned, but only as memory: one
+    # `would-archive-memory` line for the project, never a transcript line.
+    sessions = [o.item for o in report.outcomes if o.action != "would-archive-memory"]
+    assert sessions == [f"{UUID_A}.jsonl"]
 
 
 def test_source_transcripts_does_not_list_it(ccw_env: dict[str, str]) -> None:
@@ -312,6 +315,9 @@ WALKERS: dict[tuple[str, str], str] = {
     ("archive.py", "_companion_files"): "one companion dir inside an archive folder",
     ("archive.py", "stray_temp_files"): "a folder inside the archive",
     ("archive.py", "_files"): "one session's own <uuid>/ dirs and stores",
+    ("archive.py", "memory_files"): (
+        "one project's memory/ dir, copied as memory into <label>/_memory, never as sessions"
+    ),
 }
 
 _WALK_ATTRS = {"walk", "rglob"}

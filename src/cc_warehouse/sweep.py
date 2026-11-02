@@ -517,6 +517,8 @@ def _archived_session_folders(archive_root: Path) -> dict[str, Path]:
         except OSError:  # noqa: PERF203 - one unreadable label never costs the rest
             continue
         for folder in folders:
+            if folder.name in build.RESERVED_IN_LABEL:
+                continue
             _stamp, _sep, tail = folder.name.partition("_")
             if tail:
                 out.setdefault(tail, folder)
@@ -1336,6 +1338,7 @@ def plan(
         outcomes.append(ItemOutcome(path.name, action, str(path)))
     outcomes.extend(_plan_sidecars(config, walk_root, wanted))
     outcomes.extend(_plan_history(config, walk_root))
+    outcomes.extend(_plan_memory(config, walk_root))
     outcomes.extend(
         ItemOutcome(path.name, "would-store", str(path))
         for path in _orphan_object_paths(config.root, already)
@@ -1486,6 +1489,8 @@ def sweep(
             # has somewhere to write.
             progress.at("history", 0, 0)
             outcomes.extend(_process_history(config, walk_root, known, guard, progress))
+            progress.at("memory", 0, 0)
+            outcomes.extend(_archive_memory(config, walk_root, guard))
             progress.at("orphans", 0, 0)
             orphans = _orphan_object_paths(config.root, _cataloged_hashes(config.root))
             for index, path in enumerate(orphans):
@@ -1502,6 +1507,111 @@ def sweep(
         return BatchReport(tuple(outcomes))
     finally:
         store.release_lock(config.root, _SWEEP_LOCK)
+
+
+_MEMORY_UNCHANGED = "unchanged-memory"
+
+
+def _memory_label(config: Config, project_dir: Path) -> str | None:
+    """The archive label of this project dir's sessions, from the catalog.
+
+    Never derived from the dir's encoded name, which maps to a different label
+    entirely (measured 2026-11-02: 42 of 43). The file stem is used only to FIND
+    catalog rows, and the label is the one most of them carry, so a project
+    whose sessions sit under two labels still lands in one, deterministically.
+    """
+    stems = [p.stem for p in project_dir.glob("*.jsonl")]
+    if not stems:
+        return None
+    conn = catalog.open_catalog(config.root)
+    counts: dict[str, int] = {}
+    try:
+        for start in range(0, len(stems), 500):
+            chunk = stems[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = cast(
+                list[tuple[object, ...]],
+                conn.execute(
+                    "SELECT p.label, COUNT(*) FROM session s JOIN project p"
+                    f" ON p.id = s.project_id WHERE s.session_uuid IN ({marks})"
+                    " GROUP BY p.label",
+                    chunk,
+                ).fetchall(),
+            )
+            for label, count in rows:
+                counts[str(label)] = counts.get(str(label), 0) + cast(int, count)
+    finally:
+        conn.close()
+    if not counts:
+        return None
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+def _archive_memory(
+    config: Config, walk_root: Path, guard: "archive.RootGuard"
+) -> list[ItemOutcome]:
+    """Copy each project's Claude Code memory into its archive label folder.
+
+    One outcome per project with anything new. A project whose sessions are not
+    in the catalog yet is left where it is (R5): its memory is copied by the
+    first sweep after one is captured. Never deletes (the 2026-11-02 ruling).
+    """
+    from cc_warehouse import archive
+
+    if config.archive_root is None or not config.archive_project_memory:
+        return []
+    archive_root = config.archive_root
+    outcomes: list[ItemOutcome] = []
+    for project_dir in project_dirs(walk_root):
+        memory_dir = project_dir / sidecars.MEMORY_DIR
+        if not archive.memory_files(memory_dir):
+            continue
+        try:
+            label = _memory_label(config, project_dir)
+        except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+            outcomes.append(ItemOutcome(project_dir.name, "error", f"memory label: {exc}"))
+            continue
+        if label is None:
+            continue
+        outcome = guard.run(
+            project_dir.name,
+            functools.partial(_copy_memory, archive_root, label, memory_dir, project_dir.name),
+            _is_error,
+        )
+        if outcome.action != _MEMORY_UNCHANGED:
+            outcomes.append(outcome)
+    return outcomes
+
+
+def _copy_memory(archive_root: Path, label: str, memory_dir: Path, item: str) -> ItemOutcome:
+    from cc_warehouse import archive
+
+    done = archive.archive_project_memory(archive_root, label, memory_dir)
+    if done.errors:
+        return ItemOutcome(item, "error", "; ".join(done.errors))
+    if not done.written and not done.versions:
+        return ItemOutcome(item, _MEMORY_UNCHANGED, "")
+    return ItemOutcome(
+        item, "archived-memory", f"{done.written} latest, {done.versions} version(s) -> {label}"
+    )
+
+
+def _plan_memory(config: Config, walk_root: Path) -> list[ItemOutcome]:
+    """What the memory pass WOULD look at (`--dry-run`): the projects whose
+    `memory/` holds files. Reads directory entries only; the label needs the
+    catalog, so the plan names the source dir, not the archive folder."""
+    from cc_warehouse import archive
+
+    if config.archive_root is None or not config.archive_project_memory:
+        return []
+    out: list[ItemOutcome] = []
+    for project_dir in project_dirs(walk_root):
+        files = archive.memory_files(project_dir / sidecars.MEMORY_DIR)
+        if files:
+            out.append(
+                ItemOutcome(project_dir.name, "would-archive-memory", f"{len(files)} file(s)")
+            )
+    return out
 
 
 def _subagent_failed(result: tuple[ItemOutcome, bool]) -> bool:

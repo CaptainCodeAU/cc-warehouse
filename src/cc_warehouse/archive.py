@@ -1227,6 +1227,92 @@ def write_custom_title(session_dir: Path, data: bytes) -> bool:
     return store.write_if_changed(session_dir / CUSTOM_TITLE_FILE, data)
 
 
+MEMORY_LATEST_DIR = "_memory"
+MEMORY_HISTORY_DIR = "_memory-history"
+_MEMORY_VERSION_HEX = 12
+
+
+@dataclass(frozen=True)
+class MemoryCopy:
+    """What one project's memory pass did: latest copies written, history
+    versions added, and any file it could not read or keep (F6)."""
+
+    written: int
+    versions: int
+    errors: tuple[str, ...]
+
+
+def memory_files(memory_dir: Path) -> list[Path]:
+    """Every regular file under a project's `memory/`, Finder files and links
+    skipped. An unreadable or missing dir is an empty list (DESIGN 12)."""
+    try:
+        found = sorted(memory_dir.rglob("*"))
+    except OSError:
+        return []
+    return [
+        p
+        for p in found
+        if p.is_file()
+        and not p.is_symlink()
+        and not any(part in sidecars.IGNORED for part in p.relative_to(memory_dir).parts)
+    ]
+
+
+def _memory_version(label_dir: Path, rel: Path, data: bytes) -> tuple[bool, str | None]:
+    """Keep these bytes as one version: `_memory-history/<rel>/<sha12><suffix>`.
+
+    Content-addressed and `write_if_absent`, so a version once kept is never
+    rewritten. A `refused` here means two different payloads hashed to one short
+    name, which is reported, never resolved by overwriting (R5)."""
+    name = store.sha256_hex(data)[:_MEMORY_VERSION_HEX] + rel.suffix
+    target = label_dir / MEMORY_HISTORY_DIR / rel / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    outcome = store.write_if_absent(target, data)
+    if outcome == "refused":
+        return False, f"{rel}: history version {name} holds different bytes"
+    return outcome == "wrote", None
+
+
+def archive_project_memory(archive_root: Path, label: str, memory_dir: Path) -> MemoryCopy:
+    """Copy one project's Claude Code memory into its label folder.
+
+    THE RULING (principal, 2026-11-02, Q4 option 1): keep the latest copy AND
+    every version ever seen, and never remove anything from the archive when a
+    file or the whole `memory/` folder is deleted at the source. So this only
+    ever adds: nothing here deletes, and a missing source file is simply not
+    visited. The latest copy is overwritten only AFTER the bytes it holds are
+    safe in the history, so even a latest copy whose version was never recorded
+    cannot be the thing that loses one.
+    """
+    label_dir = archive_root / build.component(label)
+    written = versions = 0
+    errors: list[str] = []
+    for source in memory_files(memory_dir):
+        rel = source.relative_to(memory_dir)
+        try:
+            data = source.read_bytes()
+            latest = label_dir / MEMORY_LATEST_DIR / rel
+            if latest.is_file():
+                current = latest.read_bytes()
+                if current == data:
+                    continue
+                added, problem = _memory_version(label_dir, rel, current)
+                versions += added
+                if problem:
+                    errors.append(problem)
+                    continue
+            added, problem = _memory_version(label_dir, rel, data)
+            versions += added
+            if problem:
+                errors.append(problem)
+                continue
+            latest.parent.mkdir(parents=True, exist_ok=True)
+            written += store.write_if_changed(latest, data)
+        except OSError as exc:  # noqa: PERF203 - one bad file never costs the rest
+            errors.append(f"{rel}: {exc}")
+    return MemoryCopy(written, versions, tuple(errors))
+
+
 def write_session_file(session_dir: Path, name: str, data: bytes) -> bool:
     """Copy one of `sidecars.PLAIN_FILES` into this session's archive folder.
 
@@ -2447,7 +2533,11 @@ def walk_folders(archive_root: Path) -> Iterator[Path]:
     for label_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
         if label_dir.name in build.RESERVED_LABELS:
             continue
-        yield from sorted(p for p in label_dir.iterdir() if p.is_dir())
+        yield from sorted(
+            p
+            for p in label_dir.iterdir()
+            if p.is_dir() and p.name not in build.RESERVED_IN_LABEL
+        )
 
 
 # ---------------------------------------------------------------------------

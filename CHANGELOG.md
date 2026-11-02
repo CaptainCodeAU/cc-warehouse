@@ -22,6 +22,16 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Each project's Claude Code memory is now kept in the archive (2026-11-02).**
+`ccw sweep` copies `~/.claude/projects/<dir>/memory/` into the project's archive folder:
+the latest copy of each file under `<label>/_memory/`, and every version it has seen under
+`<label>/_memory-history/<path>/<sha256-12><suffix>`. Nothing is removed from either when a
+file or the whole memory folder is deleted at the source (principal's ruling). The label
+comes from the catalog rows of the project's own sessions; a project with none yet is
+copied by the first sweep after one is captured. Both names are reserved inside a label
+folder, so no walker reads them as sessions. New config key `archive_project_memory`,
+default on. `--dry-run` lists the projects as `would-archive-memory`.
+
 **Two new files Claude Code writes are now archived (2026-11-02, #3874, #4517).**
 `<uuid>/auto-mode-classifier-error.txt` (auto mode's safety-check error report) is copied
 into the session folder by the hook and by the sweep, as a plain file with no manifest key,
