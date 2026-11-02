@@ -244,3 +244,31 @@ def test_concurrent_puts_of_same_payload_never_tear(tmp_path: Path) -> None:
         p for p in (tmp_path / "objects").rglob("*") if p.is_file() and p.suffix != ".jsonl"
     ]
     assert not litter
+
+
+def test_a_temp_file_never_starts_with_dot_underscore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found 2026-11-02 on the network share: Samba refuses to create any name
+    starting with `._` (it keeps that namespace for macOS metadata), so writing
+    `_index.md` failed with EACCES on its temp file `._index.md.<rand>.tmp`.
+    The temp name must stay `atomic_write`'s own shape (`is_temp_name`) and
+    must never begin with `._`."""
+    import tempfile
+
+    seen: list[str] = []
+    real = tempfile.mkstemp
+
+    def spy(*, dir: Path, prefix: str, suffix: str) -> tuple[int, str]:  # noqa: A002
+        fd, name = real(dir=dir, prefix=prefix, suffix=suffix)
+        seen.append(Path(name).name)
+        return fd, name
+
+    monkeypatch.setattr(tempfile, "mkstemp", spy)
+    store.atomic_write(tmp_path / "_index.md", b"x\n")
+    store.atomic_write(tmp_path / "plain.md", b"y\n")
+    assert (tmp_path / "_index.md").read_bytes() == b"x\n"
+    assert len(seen) == 2
+    for name in seen:
+        assert not name.startswith("._"), name
+        assert store.is_temp_name(name), name

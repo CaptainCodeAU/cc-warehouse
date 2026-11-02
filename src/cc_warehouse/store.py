@@ -77,7 +77,11 @@ def atomic_write(path: Path, data: bytes) -> None:
     group-readable memory file became owner-only). A brand-new file keeps mkstemp's
     restrictive default; only an existing target's mode is carried over.
     """
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    # Never `._...`: Samba on the archive share refuses any name starting with
+    # `._` (macOS metadata), so `_index.md` failed with EACCES (2026-11-02). The
+    # extra `ccw` keeps the shape `is_temp_name` knows.
+    lead = ".ccw" if path.name.startswith("_") else "."
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{lead}{path.name}.", suffix=".tmp")
     with os.fdopen(fd, "wb") as fh:
         fh.write(data)
         fh.flush()
