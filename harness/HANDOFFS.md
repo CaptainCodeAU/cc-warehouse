@@ -28,6 +28,32 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-third handoff, 2026-11-02 (local archive gone, two sidecars, project memory archived)
+
+Session 2447f275 (cc-warehouse-main), 2 Nov about 11:15 AM to 4:00 PM.
+
+- The principal deleted the frozen local archive `~/cc-warehouse-archive` by hand after
+  checking it himself (engage #1665 closed). Before that, a count by month showed the share
+  holding at least as many transcripts in every month (local 13,409, share 32,826), and a
+  census found 0 runnable references to the old path in the installed `ccw`, the live
+  plugin, the config, the launchd jobs or the dotfiles installer. Text that still named it as
+  current was fixed (`42290b6`; #1702 closed). His ruling, recorded on #1665 and #1680: the
+  main Mac drive holds no cc-warehouse backup; backing up the share is a separate topic.
+- `auto-mode-classifier-error.txt` and `subagents/agent-<id>.prefix.json` are archived
+  (`f7ec9f3`, 17 oracle tests, 15 red before). Real back-fill: the 4 prefix files and the one
+  error report match their originals by sha256. #3874 and #4517 stay open until tonight's sweep
+  refreshes doctor's sidecars figure.
+- Timing tests stretch by load (`da761c1`): `conftest.wall_budget()`, `load_note()` in every
+  timing failure, load printed at run start and end. The old-python3 detach test fails alone
+  at stretch 1.00 and passed in two full runs at x1.27 and x1.83 (#4520).
+- Project memory archived (`a8438f6`, `f5e9173`, `f44b8aa`; DESIGN 15 "2026-11-02 - project
+  memory"). 18 oracle tests. Real back-fill: 1,203 of 1,203 memory files match their latest
+  copy and each has its history version; 0 subfolders exist inside any memory folder today
+  (control: the same walk finds all 122 memory folders), and the copier recurses (tested with
+  a nested file). Frozen reinstall confirmed by `direct_url.json` `"dir_info":{}`.
+- Guards on HEAD `f44b8aa`: ruff clean, pyright 0 errors, pytest `2208 passed in 1877.48s`.
+- Next: see the captain's log (`engage-go handoff`).
+
 ### Sixty-second handoff, 2026-10-24 (engage list 09: `.claude/pj-homes` retired, mode renamed)
 
 Session f3c4faec (cc-warehouse-main), 24 Oct about 3:45 PM to 4:15 PM.

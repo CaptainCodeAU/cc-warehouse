@@ -2201,6 +2201,40 @@ sweep/doctor backstop is not catching a real miss in practice, re-open
 option A with that evidence in hand rather than building it speculatively
 now.
 
+### 2026-11-02 - project memory is archived, and the archive never forgets it
+
+`~/.claude/projects/<dir>/memory/` (Claude Code's per-project memory, 1,203
+files across 43 projects, no other copy on the machine) had been skipped on
+purpose since 2026-09-30 (W-20260930-A59) and copied by nothing. Asked to
+back it up, the principal ruled (cc-warehouse-main Q4, option 1, plus his own
+words): keep the latest copy AND every version ever seen, and "if ever a memory
+file is deleted, then it should not be removed from the archive. Or for that
+matter, if the entire memory folder were to be deleted, it should not be deleted
+from the archive."
+
+Layout, per project label folder: `_memory/<path>` holds the latest copy;
+`_memory-history/<path>/<sha256-12><suffix>` holds every version,
+content-addressed and `write_if_absent`. The latest copy is overwritten only
+after the bytes it holds are in the history, and nothing deletes either tree
+(R4 unchanged). Underscore names because every plain folder inside a label
+folder is read as a session; `build.RESERVED_IN_LABEL` makes every walker skip
+them. The sweep's memory pass is a separate pass; the source-tree walk still
+prunes `memory/`, so nothing in it is ever read as a session.
+
+The label comes from the catalog, never from the dir's encoded name (which
+derives a wrong label for 42 of 43): first the rows found by the dir's
+transcript stems, then, for a dir whose transcripts are gone, the rows whose
+recorded `cwd` encodes to the dir name. A dir the catalog does not know goes
+under `_not-sessions/memory/<dir>/`, never a guessed label (R5). Two dirs that
+share a label (a renamed project) would overwrite each other's latest copy, so
+the one with the most sessions keeps `_memory/` and each other gets
+`_memory/_from-<dir>/`. Config key `archive_project_memory`, default on.
+
+Found by the first real back-fill and fixed the same day: `store.atomic_write`
+named a temp file `.<name>.<rand>.tmp`, so a target named `_index.md` got
+`._index.md...`, a name Samba on the archive share refuses (it keeps `._` for
+macOS metadata). A name starting with `_` now gets `.ccw` in front.
+
 ## 16. Version cut (from BRAINSTORM, restated as the build order)
 
 v1: store + catalog + registry, hook + sweep, 4-file render, notify (+webhooks),

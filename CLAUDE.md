@@ -720,6 +720,15 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   go-ahead at the moment of running** and were deliberately NOT done as part of this
   paperwork slice.
 
+- **2026-11-02: project memory is archived, and two more sidecars are known.** Each
+  project's `~/.claude/projects/<dir>/memory/` is copied by `ccw sweep` into its label
+  folder: `_memory/` (latest) and `_memory-history/` (every version), never removed when the
+  source is deleted (principal's ruling; DESIGN 15 "2026-11-02 - project memory"). The
+  source-tree walk still skips `memory/` as sessions. `auto-mode-classifier-error.txt` and
+  `subagents/agent-<id>.prefix.json` are archived too. `store.atomic_write` no longer makes a
+  temp name starting `._`, which the Samba share refuses. Evidence: `harness/HANDOFFS.md`,
+  sixty-third entry.
+
 ## Standing lessons (full form in HARNESS section 8)
 
 - **Slice completeness is not contract completeness.** The oracle suite was written from the
