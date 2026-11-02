@@ -15,8 +15,9 @@ Read that one for the long history; read this one for where things stand tonight
 - **`ccw` is frozen at 0.1.4 with the ticket 44 code** (no version bump, by ruling: a
   bump re-renders 31k folders). Tag `ticket-44-code`. Every writer now refuses an
   archive root without `_archive-root.json`; `ccw archive --to DIR --init` creates it.
-- **`~/cc-warehouse-archive` is a frozen copy** (state of 2026-09-28 21:49). It stays
-  until Gavin deletes it himself (open item). No agent touches it.
+- **`~/cc-warehouse-archive` is GONE: deleted by the principal 2026-11-02**, after he
+  checked it himself. It was the frozen pre-ticket-44 copy (state of 2026-09-28 21:49).
+  The network share is the one archive; this Mac's main drive holds no cc-warehouse backup.
 - **Doctor no longer walks the archive** (292,286 calls became 1,080); the `sidecars`
   and `prompts` figures come from `ccw sweep` via `logs/coverage.json`.
 - Jobs: sweep 12:30 daily, repair moved to 15:30 (2026-09-29), archive Sunday 03:00

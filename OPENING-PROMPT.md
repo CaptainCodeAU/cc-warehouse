@@ -78,7 +78,7 @@ with existing open tickets, so those are merged in rather than duplicated:
    pushed, frozen `ccw` reinstalled, plugin updated and verified (operator
    go-ahead given).** Verified live: a real `ccw sweep` wrote a
    `"sweep: 28128 items, 15 stored, 12 with sidecars, 0 failed"` record to
-   `capture.jsonl`; `ccw archive --to ~/cc-warehouse-archive --verify`
+   `capture.jsonl`; `ccw archive --to ~/cc-warehouse-archive --verify` (the old local archive, retired by ticket 44 and deleted by the principal 2026-11-02)
    reported 0 problems across 29721 folders AND left the warehouse's own log
    untouched (792 lines before and after); a direct `ccw hook` probe against
    a missing transcript printed `"error: unreadable transcript ..."` and
@@ -154,7 +154,7 @@ including the operator-gated reinstall and back-fill. `ccw` on this machine is t
 frozen `0.1.4` (confirmed both by `ccw doctor`'s `install` line and PEP 610's
 `direct_url.json`), a real `ccw sweep` ran against the real archive
 (`31031 items, 16 stored, 3344 with sidecars, 0 failed`) and triggered a clean
-full-corpus re-render, and `ccw archive --to ~/cc-warehouse-archive --verify`
+full-corpus re-render, and `ccw archive --to ~/cc-warehouse-archive --verify` (the old local archive, retired by ticket 44 and deleted by the principal 2026-11-02)
 reports `29593 folders checked, 0 problems`. Real post-run numbers:
 `Prompts: 1489/28940 session(s) have prompts.jsonl, 649 reference paste-cache
 files`. Full account: `harness/tickets/39-archive-what-a-session-points-at.md`'s

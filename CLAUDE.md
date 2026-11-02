@@ -361,7 +361,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   containing the substring `ccw`. Separately, a weekly `launchd` job,
   `com.captaincodeau.ccw-archive`, now runs `ccw archive --to /Volumes/mac/cc-warehouse-archive`
   (Sunday 05:00; it targeted `~/cc-warehouse-archive` at 03:00 until ticket 44 moved the
-  archive to the network drive, 2026-09-29; the local tree is frozen since) beside the pre-existing daily `com.captaincodeau.ccw-sweep`; see ticket 30
+  archive to the network drive, 2026-09-29; the local tree was frozen from then and deleted by the principal 2026-11-02) beside the pre-existing daily `com.captaincodeau.ccw-sweep`; see ticket 30
   for the incremental-rebuild work that job's cost motivated. And the competing exporter
   this repo used to run alongside (`export_transcript.sh` -> a separate, unrelated
   `claude-code-transcripts` tool, writing a second copy of every session) is retired as of
@@ -498,7 +498,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   is still absent from `~/.claude/settings.json`, and that is CORRECT rather than a gap:
   it is registered by the `claude-transcript-exporter` plugin's `hooks.json`, so grepping
   settings.json alone reports a false 0. The plugin wrapper is the instrument to read.
-  **RUN AT SCALE:** `~/cc-warehouse-archive` holds 13,829 folders + 57 `project.json`,
+  **RUN AT SCALE:** `~/cc-warehouse-archive` (the old local archive, retired by ticket 44 and deleted by the principal 2026-11-02) held 13,829 folders + 57 `project.json`,
   built in 6 minutes with 0 failures and verified with 0 problems, twice (the second run
   proved idempotence). **NOTHING HAS BEEN SWAPPED**: `~/cc-warehouse-data` is untouched
   and still the live warehouse; hook, sweep and build still write there. The swap is an
@@ -628,7 +628,7 @@ but had never made it here at all). Nothing was lost; the detail lives at:
   on this machine (confirmed via `ccw doctor`'s `install` line and PEP 610's
   `direct_url.json`), a real `ccw sweep` against the real archive reported
   `31031 items, 16 stored, 3344 with sidecars, 0 failed` and triggered a clean
-  full-corpus re-render, and `ccw archive --to ~/cc-warehouse-archive --verify`
+  full-corpus re-render, and `ccw archive --to ~/cc-warehouse-archive --verify` (the old local archive, retired by ticket 44 and deleted by the principal 2026-11-02)
   reports `29593 folders checked, 0 problems`. Real post-run coverage:
   `Prompts: 1489/28940 session(s) have prompts.jsonl, 649 reference paste-cache
   files`. Full account: the ticket's "TICKET 39 IS SHIPPED AND LIVE" block at its

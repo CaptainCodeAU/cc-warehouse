@@ -125,7 +125,7 @@ machines runs today - so don't treat "no config" as broken. It just means nobody
 
 - Does the operator want an archive-first layout (a second, human-readable copy of every
   session, kept current automatically) on this machine? If yes, ask what path
-  (`~/cc-warehouse-archive` is this project's own convention on its other machines, but
+  (this project's own machine keeps it on a network share, off the main drive, but
   don't assume - ask).
 - If they say yes, write (creating the file and its parent directory if needed, merging
   rather than overwriting if the file already exists):

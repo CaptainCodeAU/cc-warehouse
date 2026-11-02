@@ -358,7 +358,7 @@ def _provenance_section() -> list[str]:
     add = L.append
     add("## Where the numbers came from, and how they were checked")
     add("")
-    add("Sources: `~/.claude/projects` (the live tree) and `~/cc-warehouse-archive` (which holds sessions already deleted from the live tree). Both were read, then deduplicated by keeping the largest payload per session, because a short capture of a session is a byte prefix of the long one.")
+    add("Sources: `~/.claude/projects` (the live tree) and the archive at ccw's configured `archive_root` (which holds sessions already deleted from the live tree). Both were read, then deduplicated by keeping the largest payload per session, because a short capture of a session is a byte prefix of the long one.")
     add("")
     add("Checks that ran on this exact dataset, all passing:")
     add("")

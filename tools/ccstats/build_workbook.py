@@ -71,7 +71,7 @@ def _sheet_readme(conn: sqlite3.Connection, w: Window, f: dict[str, object], met
         ["WHAT THIS IS", "Claude Code usage statistics for one machine, pre-aggregated for charting."],
         ["GENERATED", datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")],
         ["PERIOD", f"{f['span_lo']} to {f['span_hi']} ({f['active_days']:,} days with activity)"],
-        ["SOURCE", "Every session transcript in ~/.claude/projects and ~/cc-warehouse-archive, deduplicated."],
+        ["SOURCE", "Every session transcript in ~/.claude/projects and the archive at ccw's configured archive_root, deduplicated."],
         ["TIMEZONE", f"local_* columns use {meta.get('local_timezone', '(unknown)')}, DST-aware. Raw timestamps are UTC."],
         ["TIMEZONE SOURCE", f"{meta.get('local_timezone_source', '(unknown)')}. The cc-warehouse config pins the zone, so these statistics and the archive folder names are always rendered in the same time. Any chart or page built from this workbook must state this zone."],
         ["", ""],
