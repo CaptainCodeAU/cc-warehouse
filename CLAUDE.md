@@ -188,8 +188,10 @@ edits to the principal instead.
   project was found genuinely blocked waiting on it - see harness/HANDOFFS.md);
   install and quickstart guides are still NAMED HERE BUT DO NOT EXIST,
   corrected 2026-08-02 after this line claimed four for weeks) | `harness/prompts/` role
-  prompts | `harness/tickets/` slice tickets (filled in Phase 2) | `temp/` scratch
-  (gitignored once git init lands) | `tools/` tracked scratch tooling that is
+  prompts | `harness/tickets/` slice tickets (filled in Phase 2) | session scratch
+  and working notes: not in this repo; where they go is
+  ~/CODE/CaptainCodeAU/CaptainCodeAU-isolinear/reference/companion/COMPANION.md (the old
+  git-ignored `temp/` moved to the companion 2026-11-15) | `tools/` tracked scratch tooling that is
   NOT part of `ccw`: outside `src/`, so not subject to pyright strict, the oracle
   suite or the packaging test (both `pyproject.toml`'s sdist `exclude` and
   `tests/test_packaging.py`'s `FORBIDDEN_DIRS` name it explicitly). Added
