@@ -201,6 +201,17 @@ edits to the principal instead.
   CLAUDE.md stays at repo root: Claude Code only auto-loads it from here.
 - Warehouse DATA lives outside this repo (default `~/cc-warehouse-data`); code and
   data never share a directory.
+- **The principal's names for the folders (his words, 2026-10-09; carried here 2026-11-22,
+  cc-warehouse-main Q13: A). Use these names, each with its path, never "share archive"
+  or "PADD archive". "CCW" is optional.**
+  - Network drive: `/Volumes/mac`
+  - CCW Archive folder on the network drive: `/Volumes/mac/cc-warehouse-archive`
+  - CCW Data folder on the network drive: `/Volumes/mac/cc-warehouse-data` (not there
+    as of 2026-11-22; the live data folder is the local one)
+  - CCW Archive folder on the local machine: `~/cc-warehouse-archive` (deleted by the
+    principal 2026-11-02; gone)
+  - CCW Data folder on the local machine: `~/cc-warehouse-data`
+  Label a comparison by direction: which side is missing what.
 
 ## Current phase
 

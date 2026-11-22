@@ -430,8 +430,10 @@ repaired by renaming their containers, never by editing their contents.
 `notify` module, all sinks best-effort and non-blocking (specimen posture): desktop
 (osascript/notify-send via fire-and-forget Popen, directly from the hook), voice and
 webhook POSTs (stdlib urllib, ALWAYS from a detached process, never the hook's
-critical path: on new captures the render child sends them before rendering; on the
-skip path the hook spawns a tiny detached notify-only helper), open-folder,
+critical path: on every path the hook spawns a tiny detached notify-only helper,
+`ccw notify --record`, that sends them; the render child reports only its own
+errors, the same way. Amended 2026-11-22 to match the code, by the principal's word,
+cc-warehouse-main Q10: A; record #1669), open-folder,
 JSONL audit log, and webhook sinks: `[[notify.webhook]]` config entries (name, url,
 template, events) POSTed per their `events` list, defaulting to `["ok", "error"]`
 (skipped/unchanged silent by default; decided 2026-07-17); Telegram is just a webhook

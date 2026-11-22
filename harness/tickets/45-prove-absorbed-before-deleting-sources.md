@@ -105,6 +105,10 @@ verify are green.
   control) is a decision this ticket must carry: it means the pre-filter
   keys on "folder present", not "hash cataloged", and costs one stat per
   candidate on the share.
+  **RULED 2026-11-22 (principal, cc-warehouse-main Q9: B; record #1666): keep it loud.**
+  A deleted archive folder does NOT self-heal silently: `ccw doctor` names it and the
+  daily `ccw repair` job is what rebuilds it, so the deletion stays visible. The
+  pre-filter keeps keying on "hash cataloged".
 - What the OPERATOR loses outside this product when he deletes sources, stated
   so nobody is surprised: `claude --resume` / `--continue` for those sessions,
   Claude Code's own file-history restore, dangling `history.jsonl` rows.
