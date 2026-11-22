@@ -1,7 +1,5 @@
 # cc-warehouse
 
-Read ~/CODE/CaptainCodeAU/cc-warehouse-isolinear/LANE.md first.
-
 Content-addressed, immutable warehouse for AI conversation sessions (Claude Code,
 claude.ai exports, future sources), projected into uniform markdown/HTML files.
 CLI: `ccw`. Successor to `claude-code-transcripts` (that repo is the frozen SPECIMEN;
