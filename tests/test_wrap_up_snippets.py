@@ -19,7 +19,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -172,7 +171,6 @@ def _write_session(folder: Path, sid: str, lines: list[str], mtime: int) -> None
     os.utime(path, (mtime, mtime))
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="Step 0 uses macOS stat -f")
 @pytest.mark.parametrize("shell", SHELLS)
 def test_step_0_counts_both_wrap_ups_and_skips_this_session(
     repo: tuple[Path, Path, str, str], shell: str

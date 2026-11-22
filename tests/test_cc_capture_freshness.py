@@ -35,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from conftest import HOOKS_DIR, UrlopenStub, load_hook_module
+from conftest import HOOKS_DIR, UrlopenStub, load_hook_module, old_python3
 
 
 @pytest.fixture(autouse=True)
@@ -787,26 +787,9 @@ def test_no_hook_uses_syntax_no_future_import_can_defer() -> None:
 
 def _oldest_python() -> tuple[str, tuple[int, int]] | None:
     """A python3 on this box older than the hooks' floor, or None. macOS always
-    has /usr/bin/python3 and it is usually years behind."""
-    for path in ("/usr/bin/python3", "/usr/local/bin/python3"):
-        if not Path(path).is_file():
-            continue
-        probe = subprocess.run(
-            [path, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if probe.returncode != 0:
-            continue
-        try:
-            major, minor = (int(n) for n in probe.stdout.split())
-        except ValueError:
-            continue
-        if (major, minor) < (3, 10):
-            return path, (major, minor)
-    return None
+    has /usr/bin/python3 and it is usually years behind; off the Mac, a 3.9 on
+    PATH or known to uv (conftest.old_python3)."""
+    return old_python3()
 
 
 def test_every_hook_imports_cleanly_under_an_old_python3() -> None:

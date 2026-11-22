@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -891,3 +892,46 @@ def lock_held_elsewhere(root: Path, name: str) -> Generator[subprocess.Popen[str
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
+
+
+def old_python3() -> tuple[str, tuple[int, int]] | None:
+    """A python3 older than the cc-capture hooks' floor (3.10), or None.
+
+    The hooks run under a bare `python3`, which on a stock Mac is Apple's 3.9.
+    Looked for in this order: the system paths (a Mac's /usr/bin/python3), a
+    `python3.9` on PATH (the 3090 gold image's /usr/local/bin/python3.9), then
+    whatever 3.9 uv already knows (`uv python find`, never a download), so the
+    old-interpreter tests run off the Mac too wherever a 3.9 exists."""
+    candidates = ["/usr/bin/python3", "/usr/local/bin/python3"]
+    on_path = shutil.which("python3.9")
+    if on_path:
+        candidates.append(on_path)
+    if shutil.which("uv"):
+        found = subprocess.run(
+            ["uv", "python", "find", "--no-python-downloads", "3.9"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if found.returncode == 0 and found.stdout.strip():
+            candidates.append(found.stdout.strip())
+    for path in candidates:
+        if not Path(path).is_file():
+            continue
+        probe = subprocess.run(
+            [path, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if probe.returncode != 0:
+            continue
+        try:
+            major, minor = (int(n) for n in probe.stdout.split())
+        except ValueError:
+            continue
+        if (major, minor) < (3, 10):
+            return path, (major, minor)
+    return None

@@ -71,7 +71,8 @@ SLUG=$(printf '%s' "$MAIN" | sed 's/[^a-zA-Z0-9]/-/g')
 SID="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 [ -n "$SID" ] || echo "no session id: this session's own transcript is not skipped"
 find "$HOME/.claude/projects" -maxdepth 2 -name '*.jsonl' \
-  \( -path "*/$SLUG/*" -o -path "*/$SLUG--worktree-*/*" \) -exec stat -f '%m %N' {} + 2>/dev/null |
+  \( -path "*/$SLUG/*" -o -path "*/$SLUG--worktree-*/*" \) 2>/dev/null |
+while IFS= read -r f; do printf '%s %s\n' "$(date -r "$f" +%s)" "$f"; done |
 sort -rn | cut -d' ' -f2- | while IFS= read -r f; do
   [ -n "$SID" ] && case "$f" in *"$SID"*) continue;; esac
   n=$(wc -l < "$f" | tr -d ' '); [ "$n" -lt 50 ] && continue   # companion/remote-control stubs
@@ -81,13 +82,14 @@ sort -rn | cut -d' ' -f2- | while IFS= read -r f; do
     "$(grep -cE '"content":"<command-(message|name)>/?wrap-up</command-' "$f")" \
     "$(grep -cE '"content":"<command-(message|name)>/?session-end</command-' "$f")" \
     "$(ls "$MAIN-isolinear"/captains-log/*/*-"$short".md >/dev/null 2>&1 && echo yes || echo no)" \
-    "$(stat -f '%Sm' -t '%F %R' "$f")"
+    "$(date -r "$f" '+%F %R')"
 done | head -3
 ```
 
 The two greps are anchored on `"content":"<command-`, the shape a typed command leaves; a plain
 grep for the tag also counts every quote of it (this file being read, an agent prompt) and
-overcounted 11 to 2 on 2026-10-05. `stat -f` is the macOS form. With no session id the newest
+overcounted 11 to 2 on 2026-10-05. `date -r FILE` reads a file's time the same way on macOS
+and Linux (`stat -f` was macOS only, so the oracle test could not run off the Mac). With no session id the newest
 row is probably this session: skip it when its first user message is this conversation's, and
 say so.
 

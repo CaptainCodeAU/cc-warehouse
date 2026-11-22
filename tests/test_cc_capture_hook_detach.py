@@ -30,7 +30,7 @@ import pytest
 
 from cc_warehouse import doctor
 from cc_warehouse.config import Config
-from conftest import HOOKS_DIR, load_note, wall_budget
+from conftest import HOOKS_DIR, load_note, old_python3, wall_budget
 
 WRAPPER = HOOKS_DIR / "ccw-hook.py"
 SESSION = "detach-0001"
@@ -409,22 +409,13 @@ def test_a_runner_that_crashes_still_logs_why(tmp_path: Path) -> None:
 
 def _old_python() -> tuple[str, str] | None:
     """macOS's /usr/bin/python3 (3.9 on the author's Mac) when it is older than
-    3.10: hooks.json runs a bare `python3`, so the runner may run under it."""
-    path = "/usr/bin/python3"
-    if not Path(path).is_file():
+    3.10: hooks.json runs a bare `python3`, so the runner may run under it. Off
+    the Mac, a 3.9 on PATH or known to uv (conftest.old_python3)."""
+    found = old_python3()
+    if found is None:
         return None
-    probe = subprocess.run(
-        [path, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    try:
-        major, minor = (int(n) for n in probe.stdout.split())
-    except ValueError:
-        return None
-    return (path, f"{major}.{minor}.") if (major, minor) < (3, 10) else None
+    path, (major, minor) = found
+    return path, f"{major}.{minor}."
 
 
 def test_the_detach_works_end_to_end_under_an_old_python3(tmp_path: Path) -> None:
