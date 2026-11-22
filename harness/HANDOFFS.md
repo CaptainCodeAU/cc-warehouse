@@ -28,6 +28,17 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-fifth handoff, 2026-11-22 (main session: CI red since 14 Nov fixed, every test runs on Mac, GitHub and the 3090)
+
+Session cc-warehouse-main 8653e196, 12:30 PM to about 11:40 PM. Next: see the captain's log (`engage-go handoff`).
+
+- **Gates had been red on master since 14 Nov, and the start card said green.** Cause: GitHub's runner uses its system Python 3.14.4, whose `json.loads` decodes deeply nested JSON that 3.12 refuses, so `parser._scrub_surrogates` then raised `RecursionError` outside any catch. Fixed test-first in `95b63d3` (a depth-5000 oracle test, red on 3.14, green after): such an entry is dropped and counted into `skipped_lines`. The false green was ci-watch reading the newest run of any workflow (Dependabot's); dotfiles-main fixed it (dotfiles `5a5b068`).
+- **The four Mac-only tests now run everywhere** (Gavin's Q2: B, Q3: A). `dfce853`: `/wrap-up` Step 0 reads file times with `date -r FILE` (works on BSD and GNU), and `conftest.old_python3` finds a Python 3.9 on PATH or via `uv python find --no-python-downloads`. `a46b72f` (pushed by Gavin over SSH; workflow files need it, Network_Plan D-042): the gates install Python 3.9 and checksum-pinned gitleaks 8.30.1. Evidence: gates `2204 passed`, 0 skipped; 3090 run `20261122-0617-6ec00adb` 5 passed after test-runner-3090 added CPython 3.9 to its gold image.
+- **The 3090 runs the whole suite clean.** `ae0768c` skips `test_every_shipped_file_is_tracked_by_git` only where the copy has no `.git` (the run box ships none by design, test-runner-3090 #5778). Run `20261122-0859-2ca461c2`: 2208 passed, 1 skipped, 891.9 s. ruff on the 3090 passed after test-runner-3090's venv fix (`20261122-1052-2483bbb4`). `tools/ccstats/tests` still cannot run there: `common.py` reads the real ccw config at import (#8025).
+- **Rulings carried out** (Gavin's questions page, Q4 to Q14): DESIGN 12's webhook sentence matches the code (Q10: A); ticket 45 keeps a deleted folder loud (Q9: B); CLAUDE.md carries his folder names (Q13: A); session trailers back on (`trailers.disable` unset, Q1: A). Q4, Q8 and Q14 by the job session, in the sixty-fourth entry below.
+- **Records:** closed #5916, #5539, #5556, #5986, #5543, #1655, #1652, #1666, #1669, #1680, #1685, #1699, #1703 and five false-alarm document records (#8055 to #8059, now listed in the companion's `config/documents-elsewhere.txt`); 12 unsorted records sorted (8 closed, 4 sorted). Filed #8025, #8051 (move `tests/` to the 3090, Gavin's yes) and #8065 (one full redraw, or not).
+- **Housekeeping:** the 18 migrated plan-mode files retired to `~/RETIRED` (companion `beddb38`); both merged worktrees trashed after dotfiles-main fixed trash-guard (`7c2283d`); the 7 plist `.bak` files trashed after a companion copy; the two stray share `.tmp` files (byte-identical to their saved `.jsonl`) moved to `~/RETIRED`, since the share has no Trash.
+
 ### Sixty-fourth handoff, 2026-11-22 (job session: SMB probe, page-drawing version, zero-history count)
 
 A job session started by cc-warehouse-main carried out three answers from the principal's
