@@ -144,11 +144,10 @@ edits to the principal instead.
     the file sits four levels down under a version-stamped `.dist-info`, and a glob that
     misses prints NOTHING, which reads as "no editable flag" and therefore as frozen. That
     is the dangerous wrong answer, silently. I shipped exactly that bug here on 2026-08-03.
-- `~/cc-warehouse-journals/` holds the 7 workflow journals (409,059 bytes), the only
-  vault objects with no byte-identical archive copy (they carry no `sessionId`, so
-  ruling (a) excludes them). Copied there 2026-08-03 with every sha256 re-verified on
-  arrival, originals untouched; see its `PROVENANCE.json`. Ticket 25.7 gives them a
-  reserved home inside the archive, after which this folder is the principal's to remove.
+- The 7 workflow journals (409,059 bytes; they carry no `sessionId`, so ruling (a)
+  keeps them out of session folders) live in the archive at
+  `<archive>/_not-sessions/journals/` (ticket 25, hash-verified). The interim copy
+  `~/cc-warehouse-journals/` (2026-08-03) is gone from this Mac (checked 2026-11-22).
 - Public repo: commit as the GitHub noreply
   (`git -c user.name='CaptainCodeAU' -c user.email='69835039+CaptainCodeAU@users.noreply.github.com'`);
   never commit personal data (real username, machine names, personal paths); tests
