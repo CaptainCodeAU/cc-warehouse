@@ -28,6 +28,24 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-fourth handoff, 2026-11-22 (job session: SMB probe, page-drawing version, zero-history count)
+
+A job session started by cc-warehouse-main carried out three answers from the principal's
+22 Nov questions page, plus one follow-up.
+- **Q4: A (record #1648):** a 20 s probe on the network drive, one writer doing tmp + fsync +
+  `os.replace` and one reader. 37 replaces, 223 reads, 0 torn, 0 errors, 0 temp files left.
+  Writer and reader were on the same Mac; a reader on another machine was not tested. The drive
+  has no Trash, so the scratch folder was moved into `~/RETIRED/` rather than deleted.
+- **Q8: A (record #1646), `58e1df0`:** `render_version.RENDER_VERSION` replaces `__version__`
+  as the manifest's `renderer_version`, starting at "0.1.4" so no live folder redraws. Fence:
+  `tests/test_render_version.py`. DESIGN 15 entry written. `tr-run --mac`, five related test
+  files: 147 passed. ruff clean, pyright 0 errors.
+- **Q11: A, then Q14: A (record #1678), `7a3b858`:** measured read-only, 557 sessions match
+  the zero-history signature and 351 of them did real work, but 0 reach the arm because of
+  the three-miss gate. The arm decides 45 sessions today. The reconcile.py comment now says
+  this. Comment-only change, AST-compared.
+Next: see the captain's log (`engage-go handoff`).
+
 ### Sixty-third handoff, 2026-11-02 (local archive gone, two sidecars, project memory archived)
 
 Session 2447f275 (cc-warehouse-main), 2 Nov about 11:15 AM to 4:00 PM.
