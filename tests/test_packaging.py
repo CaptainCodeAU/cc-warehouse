@@ -174,7 +174,13 @@ def test_every_shipped_file_is_tracked_by_git(sdist_members: dict[str, str]) -> 
     This is the assertion that would have caught the MEMORY/ escape. It does not
     enumerate what is forbidden, it requires everything present to be accounted
     for, so a category nobody thought of still fails.
+
+    It needs the git history to know what is tracked. A copy of the repo with no
+    `.git` (the 3090's run box ships none, by design; test-runner-3090 #5778)
+    cannot answer that, so it skips there and still runs on the Mac and on GitHub.
     """
+    if not (REPO_ROOT / ".git").exists():
+        pytest.skip("no .git in this copy of the repo, so git cannot say what is tracked")
     tracked = tracked_files()
     unexpected = sorted(set(sdist_members) - tracked - GENERATED_MEMBERS)
     assert unexpected == [], f"sdist ships files git does not track: {unexpected}"
