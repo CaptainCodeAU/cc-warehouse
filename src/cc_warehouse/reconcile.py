@@ -93,10 +93,18 @@ DEFAULT_WINDOW = timedelta(days=14)
 #   - every history row for the session is exactly `/quit` or `/exit` (surrounding
 #     whitespace stripped, case kept: " /quit" is a real row, "/QUIT" is not in the
 #     ruling) with no pasted content -> empty;
-#   - ZERO rows -> empty ONLY when `~/.claude/session-env/<uuid>` is a directory.
-#     Zero rows alone proves nothing: measured 2026-09-29, 3,550 real September
-#     headless (`sdk-cli`) sessions with typed prompts had no history rows at all,
-#     while 763 of 770 interactive sessions had a session-env dir.
+#   - ZERO rows -> treated as empty when `~/.claude/session-env/<uuid>` is a
+#     directory. THIS SIGNATURE IS NOT EVIDENCE OF EMPTINESS, and the arm is kept
+#     for a different reason (record #1678; ruling: Gavin, 2026-11-22, "Q14: A").
+#     Measured 2026-11-22, read-only: 557 sessions had zero history rows and a
+#     session-env dir, and 351 of them (63%) did real work. Zero rows alone proves
+#     nothing either: 2026-09-29, 3,550 real headless (`sdk-cli`) sessions with
+#     typed prompts had no history rows at all. The REAL protection is the earlier
+#     gate in `find_unrecoverable`: this arm is only reached by a session missing
+#     from ALL THREE of the source tree, the archive and the catalog, and 0 of those
+#     351 real sessions reached it. What the arm still does is stop sessions with no
+#     transcript anywhere (45 on 2026-11-22) from being announced as losses, which
+#     the 2026-09-29 ruling (option B) asked for.
 # Every doubt fails toward ALERTING (a false alarm beats a silent real loss): no
 # history file, an unreadable one, a history whose oldest row is not older than the
 # error (rows for this session may have been cut), or a session-env that is not a
@@ -158,8 +166,11 @@ class HistoryOnce:
 
 
 def _said_nothing(history: _History | None, home: Path, finding: "Finding") -> bool:
-    """Whether the session a finding names provably said nothing (the ruling above).
-    False whenever the evidence is missing or doubtful."""
+    """Whether the session a finding names is judged to have said nothing (the
+    ruling above). The `/quit`-or-`/exit` arm is evidence; the zero-history arm is
+    NOT, and is safe only because `find_unrecoverable` calls this after the
+    three-miss gate (#1678, "Q14: A"). False whenever the evidence is missing or
+    doubtful."""
     if history is None:
         return False
     lines = history.by_session.get(finding.session_uuid)
@@ -305,9 +316,11 @@ def find_unrecoverable(
     filed under a folder name that differs from its legacy identity still has a
     catalog row, so the catalog check alone can save it from a false alarm.
 
-    A session that misses all three but provably SAID NOTHING (`_said_nothing`, the
-    2026-09-29 ruling above `Finding`) is dropped too: no transcript was ever
-    written, so nothing was lost. `history.jsonl` is read at most once per call,
+    A session that misses all three and `_said_nothing` judges empty (the
+    2026-09-29 ruling above `Finding`) is dropped too. The three-miss gate is what
+    protects real work here, not `_said_nothing`'s zero-history arm, whose
+    signature 63% of real sessions share (#1678, "Q14: A"); call it only after
+    the gate. `history.jsonl` is read at most once per call,
     and only when some candidate has already missed all three instruments; a
     caller passing its own `history` shares that one read with other checks.
 
