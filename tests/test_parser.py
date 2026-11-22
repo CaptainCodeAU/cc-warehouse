@@ -202,6 +202,19 @@ def test_deeply_nested_json_does_not_crash_the_parser() -> None:
     assert parsed.skipped_lines >= 1
 
 
+def test_nesting_json_accepts_but_the_scrub_cannot_walk_is_skipped() -> None:
+    """F6/R5: on Python 3.14, json.loads guards the C stack rather than the
+    recursion limit, so a line nested a few thousand deep DECODES, and the
+    recursive surrogate scrub then overflows. That line must be counted as
+    skipped like any other unparseable line, never raise. On 3.12 the same
+    line already fails in json.loads; both paths must land on 'skipped'."""
+    deep = '{"a":' * 5000 + "1" + "}" * 5000
+    payload = jsonl(entry("user", "kept", "2026-01-05T10:00:00.000Z"), deep)
+    parsed = parser.parse_session(payload)  # must not raise
+    assert parsed.skipped_lines >= 1
+    assert parsed.summary == "kept"
+
+
 def test_bom_prefixed_loglines_payload_is_not_misrouted() -> None:
     """F6: a UTF-8 BOM must not knock a `loglines` payload out of its branch into
     the JSONL path, which would silently lose the whole session."""

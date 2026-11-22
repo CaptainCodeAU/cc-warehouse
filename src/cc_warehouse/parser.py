@@ -256,29 +256,39 @@ def _extract_entries(data: bytes) -> tuple[list[dict[str, object]], int, int, in
         if isinstance(raw_loglines, list):
             raw_entries = cast(list[object], raw_loglines)
             entries, skipped_lines = _entries_from_loglines(raw_entries)
-            entries, unencodable = _scrubbed_entries(entries)
-            return entries, len(raw_entries), skipped_lines, unencodable
+            entries, unencodable, too_deep = _scrubbed_entries(entries)
+            return entries, len(raw_entries), skipped_lines + too_deep, unencodable
         # Present but not a list: a malformed payload, not an empty one. Counted
         # so it is never indistinguishable from a genuinely empty session (F6).
         return [], 1, 1, 0
 
     entries, skipped_lines = _entries_from_jsonl(text)
-    entries, unencodable = _scrubbed_entries(entries)
-    return entries, len(text.splitlines()), skipped_lines, unencodable
+    entries, unencodable, too_deep = _scrubbed_entries(entries)
+    return entries, len(text.splitlines()), skipped_lines + too_deep, unencodable
 
 
 def _scrubbed_entries(
     entries: list[dict[str, object]],
-) -> tuple[list[dict[str, object]], int]:
+) -> tuple[list[dict[str, object]], int, int]:
     """Scrub every entry, summing what was replaced. One call site per routing
-    branch, so both parse_session and build_conversation inherit it (R9)."""
+    branch, so both parse_session and build_conversation inherit it (R9).
+
+    Returns (entries, replaced, too_deep). An entry nested deeper than the
+    recursive scrub can walk is dropped and counted in too_deep, which callers
+    add to skipped_lines (F6): on Python 3.14 json.loads guards the C stack,
+    not the recursion limit, so such a line can DECODE and only fail here."""
     out: list[dict[str, object]] = []
     total = 0
+    too_deep = 0
     for item in entries:
-        scrubbed, count = _scrub_surrogates(item)
+        try:
+            scrubbed, count = _scrub_surrogates(item)
+        except RecursionError:
+            too_deep += 1
+            continue
         out.append(cast(dict[str, object], scrubbed))
         total += count
-    return out, total
+    return out, total, too_deep
 
 
 def entries_of(data: bytes) -> list[dict[str, object]]:
