@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import __version__, build, catalog, external, parser, render, sidecars, store
+from cc_warehouse import build, catalog, external, parser, render, render_version, sidecars, store
 from cc_warehouse.config import Config, layout_problem
 from cc_warehouse.parser import parse_session
 from cc_warehouse.reports import BatchReport, ItemOutcome
@@ -1418,9 +1418,12 @@ def _current_manifest(
         own test run, 2026-08-18 - not reasoned out in advance).
       - `source_hash`: the payload itself has not changed.
       - `config`: the RenderOptions used have not changed.
-      - `renderer_version`: the code that produced these pages has not changed
-        (added by ticket 30 - without it, a `ccw` upgrade would leave every
-        existing folder frozen at the old format forever).
+      - `renderer_version`: the page drawing that produced these pages has not
+        changed (added by ticket 30 - without it, a `ccw` upgrade would leave
+        every existing folder frozen at the old format forever). It is
+        `render_version.RENDER_VERSION`, not the package version, since the
+        2026-11-22 ruling (Q8: A): a release that draws the same pages redraws
+        nothing.
     """
     if not all((directory / name).exists() for name in GENERATED_NAMES):
         return None
@@ -1433,7 +1436,7 @@ def _current_manifest(
         return None
     if manifest.get("config") != asdict(options):
         return None
-    if manifest.get("renderer_version") != __version__:
+    if manifest.get("renderer_version") != render_version.RENDER_VERSION:
         return None
     return manifest
 

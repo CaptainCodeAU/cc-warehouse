@@ -2551,3 +2551,25 @@ cost twice a night), a weekly sweep (a week's lag), and the capture plugin in th
 home (it conflicts with makeitso's clean-start rule, per engage-main). Not covered, and
 left open under #1470: ccstats and cc-push, which also read only `~/.claude/projects`;
 and `ccw doctor`'s `Uncaptured` count, which still counts the default home only.
+
+**2026-11-22, record #1646: page drawing gets its own version.** Decided (principal,
+cc-warehouse-main Q8: A: "Give page drawing its own version number, changed only when pages
+change; a new release then redraws nothing."). Ticket 30 stamped each manifest's
+`renderer_version` with `cc_warehouse.__version__`, chosen then because a stamp nobody has
+to bump cannot be forgotten. The cost: every release made every archive folder stale, and
+on the network drive a full redraw is most of a night. The stamp is now
+`render_version.RENDER_VERSION`, a literal in its own leaf module, read by
+`render.build_manifest` and compared by `archive.folder_is_current`/`pages_are_current`.
+The manifest key keeps its name, so no format change. It starts at "0.1.4": the installed
+frozen `ccw` is 0.1.4 and its `render.py` is byte-identical to master's (diffed
+2026-11-22), so every live folder's stamp still matches and nothing redraws. The
+forgetting risk ticket 30 avoided is handled by a fence, `tests/test_render_version.py`:
+a pinned sha256 over the matrix anchor's four files plus its manifest minus
+`renderer_version`, recorded with the number; output moving while the number stays fails
+the suite. Built on the existing anchor rather than a second golden (cc-warehouse-main's
+review), so there is one place to re-record. Limit: the fence sees only what the anchor
+exercises at default options; manifest keys `archive.py` adds (sub-agents, sidecars,
+prompts) are outside it and still need a hand bump. `__version__` stays for
+`ccw --version` only. KNOWN, NOT CHANGED: commits after v0.1.4 that changed page output
+(for example ticket 28.11's opt-in sub-agent pages) never triggered a redraw, because the
+package version did not move. The new number keeps that state; it does not fix past drift.

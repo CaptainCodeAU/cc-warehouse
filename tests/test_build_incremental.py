@@ -30,7 +30,7 @@ from typing import cast
 
 import pytest
 
-from cc_warehouse import __version__, archive
+from cc_warehouse import archive, render_version
 from cc_warehouse.render import RenderOptions
 from conftest import (
     basic_session,
@@ -207,13 +207,13 @@ def test_a_renderer_version_change_forces_a_rebuild_through_the_new_path(
     assert run_cli(["build"]).code == 0
     directory = projection_dirs(ccw_env)[0]
     manifest = manifest_of(directory)
-    assert manifest["renderer_version"] == __version__
+    assert manifest["renderer_version"] == render_version.RENDER_VERSION
     manifest["renderer_version"] = "0.0.0-older"
     write_manifest(directory, manifest)
 
     result = run_cli(["build"])
     assert result.code == 0, result.err
-    assert manifest_of(directory)["renderer_version"] == __version__
+    assert manifest_of(directory)["renderer_version"] == render_version.RENDER_VERSION
 
 
 def test_a_render_config_change_forces_a_rebuild_through_the_new_path(

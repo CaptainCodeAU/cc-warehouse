@@ -22,6 +22,15 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**Page drawing has its own version number; a release no longer redraws every folder (2026-11-22).**
+Each archive folder's `manifest.json` stamps `renderer_version`, and a folder whose stamp
+differs is redrawn. That stamp was the package version, so every release redrew all
+30,000-odd folders even when pages were drawn the same. It is now
+`cc_warehouse.render_version.RENDER_VERSION`, bumped by hand only when page output changes
+(principal's ruling, cc-warehouse-main Q8: A). It starts at "0.1.4", the stamp every live
+folder already carries, so this change redraws nothing. `tests/test_render_version.py`
+fails when the matrix anchor's pages or manifest move while the number does not.
+
 **Each project's Claude Code memory is now kept in the archive (2026-11-02).**
 `ccw sweep` copies `~/.claude/projects/<dir>/memory/` into the project's archive folder:
 the latest copy of each file under `<label>/_memory/`, and every version it has seen under

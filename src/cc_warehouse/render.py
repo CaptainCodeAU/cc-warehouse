@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import __version__
+from cc_warehouse import render_version
 from cc_warehouse.parser import (
     Block,
     Conversation,
@@ -2323,12 +2323,14 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
     `renderer_version` is a TOP-LEVEL key, added by ticket 30 (2026-08-18) so an
     incremental rebuild can tell "this folder's pages were built by an OLDER
     renderer" apart from "the payload and config haven't changed" - a distinction
-    `source_hash` and `config` alone cannot make. It is `cc_warehouse.__version__`,
-    which moves on every release, chosen over a hand-maintained format counter
-    because a stamp nobody has to remember to bump cannot be forgotten. It reads
-    `"0+unknown"` when running from an unpackaged source tree (`__init__.py`),
-    which is fine: that value still changes nothing between two dev runs of the
-    SAME checkout, and a real release is what the weekly job actually installs.
+    `source_hash` and `config` alone cannot make. Since 2026-11-22 (principal's
+    ruling, cc-warehouse-main Q8: A) it is `render_version.RENDER_VERSION`, a
+    number of its own that moves only when page output changes, so a release that
+    draws the same pages redraws no folder. Until then it was
+    `cc_warehouse.__version__`, which moved on every release and redrew every
+    folder each time. `tests/test_render_version.py` fails when the pinned page
+    output moves and the number does not, so the hand-set number cannot be
+    forgotten silently, within what that test's fixture exercises.
     """
     conv = build_conversation(data)
     truncated_blocks, truncated_chars = _truncation_loss(conv, options)
@@ -2352,6 +2354,6 @@ def build_manifest(data: bytes, options: RenderOptions) -> dict[str, object]:
         # because what the emitters draw is a choice and the count is a fact.
         "withheld": {"thinking_blocks": conv.withheld_thinking},
         "config": asdict(options),
-        "renderer_version": __version__,
+        "renderer_version": render_version.RENDER_VERSION,
     }
     return manifest

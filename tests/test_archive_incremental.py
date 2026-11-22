@@ -32,7 +32,7 @@ import json
 from pathlib import Path
 from typing import cast
 
-from cc_warehouse import __version__, archive, build, store
+from cc_warehouse import archive, build, render_version, store
 from cc_warehouse.render import RenderOptions
 from conftest import (
     DEFAULT_UUID,
@@ -131,7 +131,7 @@ def test_folder_is_current_false_on_a_renderer_version_mismatch(tmp_path: Path) 
         fallback_stem="session",
     )
     manifest = manifest_of(result.directory)
-    assert manifest["renderer_version"] == __version__  # the fixture assumption
+    assert manifest["renderer_version"] == render_version.RENDER_VERSION  # the fixture assumption
     manifest["renderer_version"] = "0.0.0-older"
     (result.directory / _MANIFEST).write_text(
         json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
