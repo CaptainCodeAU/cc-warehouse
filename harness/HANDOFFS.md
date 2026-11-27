@@ -28,6 +28,14 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-sixth handoff, 2026-11-27 (job session: ccstats tests off the Mac, the suite split into shards)
+
+Session cc-warehouse-main-split-suites 5fe57edc, a job of cc-warehouse-main, 9:43 PM to about 10:30 PM. Next: see the captain's log (`engage-go handoff`).
+
+- **ccstats tests run anywhere now** (#8025 closed). `7b2a787`: the ccstats conftest writes a throwaway ccw config in pytest's own temp folder at configure time and refuses to run unless the resolved `root` and `archive_root` sit inside it; the fence test that hard-coded the default data folder uses `common.DATA_ROOT`. Evidence: 322 passed on the Mac and on the 3090 (run `20261127-1046-0767935d`, 0 skipped). The companion's `test-runner-mac` pin is gone, so no test is pinned to the Mac (#8378).
+- **`pytest tests/ --shard I/N`** (`37ddfc6`): files dealt by measured seconds in `tests/shard-times.json` (3090 timing run `20261127-1044-26afd555`: 2214 passed, 1 skipped, 480 s); the two 100 MB archive tests (#5840) always share one shard. `tests/test_shards.py` guards coverage; a deliberately broken filter failed it (6690 collected against 2230). `/wrap-up` Step 2 sends 4 separate tr-run calls and calls green only when all 4 pass; CI keeps plain pytest.
+- **Proof:** 4 shards, runs `20261127-1106-*`: 253 + 572 + 821 + 583 passed, 1 skipped = 2230, 117 to 123 s each. Peak memory (cgroup `memory.peak`): 5.8, 0.20, 0.71, 0.20 GB. test-runner-3090 then gave the 3 light shards 4 GB boxes (their `27e0b17`, #8483), and runs `20261127-1116-*` ran side by side with no big-box wait, each exit 0. The 3090's disk gate disregarded that round (disk 82 to 89% busy, limit 50), which is test-runner-3090's to weigh; passed on through cc-warehouse-main.
+
 ### Sixty-fifth handoff, 2026-11-22 (main session: CI red since 14 Nov fixed, every test runs on Mac, GitHub and the 3090)
 
 Session cc-warehouse-main 8653e196, 12:30 PM to about 11:40 PM. Next: see the captain's log (`engage-go handoff`).
