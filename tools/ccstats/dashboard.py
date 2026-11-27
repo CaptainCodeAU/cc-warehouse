@@ -305,7 +305,9 @@ def build_payload(
     overlap = [list(r) for r in overlap_rows]
 
     meta = read_meta(conn)
-    dates = [row[1] for row in session_rows]
+    # A real session with no timestamps has a NULL local_date (4 of 17,978 on
+    # 2026-11-27); min() over None crashed the daily job, so the range skips them.
+    dates = [row[1] for row in session_rows if row[1] is not None]
     unticked, unmatched = resolve_unticked(projects.values, include or [], exclude or [])
     payload = {
         # `rows`: `window.session` is `is_real = 1` plus the date bounds, and the

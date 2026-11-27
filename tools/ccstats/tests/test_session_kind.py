@@ -128,3 +128,33 @@ def test_payload_carries_one_kind_column_and_a_kinds_lookup() -> None:
     assert KIND_NAMES[got["sub-1"]] == KIND_SUBAGENT
     assert KIND_NAMES[got["auto-1"]] == KIND_AUTOMATED
     assert KIND_NAMES[got["old-1"]] == KIND_MINE
+
+
+def test_payload_survives_real_sessions_with_no_date() -> None:
+    """Real corpus fact (sessions.sqlite, 2026-11-27): 4 of 17,978 real
+    sessions have no timestamps, so `local_date` is NULL. `min(dates)` then
+    compared None with None and the daily dashboard job exited 1. The date
+    range must come from the sessions that have a date."""
+    conn = _make_db()
+    _insert(conn, "dated-1", 0, "cli")
+    _insert(conn, "undated-1", 0, "cli")
+    _insert(conn, "undated-2", 0, "cli")
+    conn.execute("UPDATE session SET local_date = NULL WHERE key LIKE 'undated-%'")
+    conn.commit()
+
+    payload, _ = dashboard.build_payload(conn, Window())
+
+    assert payload["min_date"] == "2026-06-10"
+    assert payload["max_date"] == "2026-06-10"
+
+
+def test_payload_with_only_undated_sessions_has_empty_range() -> None:
+    conn = _make_db()
+    _insert(conn, "undated-1", 0, "cli")
+    conn.execute("UPDATE session SET local_date = NULL")
+    conn.commit()
+
+    payload, _ = dashboard.build_payload(conn, Window())
+
+    assert payload["min_date"] == ""
+    assert payload["max_date"] == ""
