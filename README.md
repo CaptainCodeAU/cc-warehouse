@@ -276,6 +276,7 @@ cd cc-warehouse
 uv sync
 
 uv run pytest          # oracle suite
+uv run pytest tests/ --shard 2/4   # one quarter of it, balanced by tests/shard-times.json
 uv run pyright         # strict mode
 uv run ruff check
 ```

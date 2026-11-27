@@ -87,6 +87,108 @@ def pytest_report_header() -> str:
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     terminalreporter.write_line(f"machine at end: {load_note()}")
 
+
+# ---------------------------------------------------------------------------
+# Shards (#8378): `pytest tests/ --shard I/N` runs only shard I of N.
+# ---------------------------------------------------------------------------
+# The whole suite takes about 8 minutes. The 3090 runs separate tr-run calls side
+# by side (32 slots) but the suites inside one call one after another, so the
+# split is N separate calls, one per shard. Files are dealt out by their measured
+# seconds in tests/shard-times.json (largest first, each to the lightest shard);
+# a file the table does not know counts UNKNOWN_FILE_SECONDS. Every shard process
+# sees the same file list, so all N agree on the deal without talking. Without
+# --shard nothing changes: plain `pytest` still runs everything.
+
+SHARD_TIMES = TESTS_ROOT / "shard-times.json"
+UNKNOWN_FILE_SECONDS = 1.0
+_SHARD_PLAN: pytest.StashKey[tuple[int, dict[str, int]]] = pytest.StashKey()
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--shard",
+        default=None,
+        metavar="I/N",
+        help="run only shard I of N of tests/ (balanced by tests/shard-times.json)",
+    )
+
+
+def parse_shard(value: str) -> tuple[int, int]:
+    """'2/4' -> (2, 4); anything else is a usage error."""
+    match = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", value)
+    if match is None:
+        raise pytest.UsageError(f"--shard wants I/N, such as 2/4; got {value!r}")
+    index, count = int(match.group(1)), int(match.group(2))
+    if not 1 <= index <= count:
+        raise pytest.UsageError(f"--shard {value}: I must be between 1 and N")
+    return index, count
+
+
+def shard_plan(
+    files: Sequence[str],
+    seconds: Mapping[str, float],
+    together: Sequence[Sequence[str]],
+    count: int,
+) -> dict[str, int]:
+    """Deal every name in `files` to exactly one shard, 1..count.
+
+    Files in one `together` group travel as one unit. Units go largest first
+    (ties by name) to the shard with the least load so far (ties to the lowest
+    number), so the deal depends only on its inputs."""
+    present = set(files)
+    grouped: set[str] = set()
+    units: list[list[str]] = []
+    for group in together:
+        members = sorted(name for name in group if name in present and name not in grouped)
+        if members:
+            units.append(members)
+            grouped.update(members)
+    units.extend([name] for name in sorted(present - grouped))
+
+    def weight(unit: list[str]) -> float:
+        return sum(seconds.get(name, UNKNOWN_FILE_SECONDS) for name in unit)
+
+    units.sort(key=lambda unit: (-weight(unit), unit[0]))
+    loads = [0.0] * count
+    plan: dict[str, int] = {}
+    for unit in units:
+        lightest = min(range(count), key=lambda i: (loads[i], i))
+        loads[lightest] += weight(unit)
+        for name in unit:
+            plan[name] = lightest + 1
+    return plan
+
+
+def load_shard_times() -> tuple[dict[str, float], list[list[str]]]:
+    data = cast(dict[str, object], json.loads(SHARD_TIMES.read_text()))
+    seconds = cast(dict[str, float], data.get("seconds", {}))
+    together = cast(list[list[str]], data.get("together", []))
+    return seconds, together
+
+
+def suite_files() -> list[str]:
+    return sorted(path.name for path in TESTS_ROOT.glob("test_*.py"))
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    value = cast(str | None, config.getoption("--shard"))
+    if value is None:
+        return
+    index, count = parse_shard(value)
+    seconds, together = load_shard_times()
+    config.stash[_SHARD_PLAN] = (index, shard_plan(suite_files(), seconds, together, count))
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """Skip, before import, every top-level test file another shard owns."""
+    if _SHARD_PLAN not in config.stash or collection_path.resolve().parent != TESTS_ROOT:
+        return None
+    index, plan = config.stash[_SHARD_PLAN]
+    owner = plan.get(collection_path.name)
+    if owner is None or owner == index:
+        return None
+    return True
+
 # ---------------------------------------------------------------------------
 # Audit-hook file-open counter (FINDINGS F5). Audit hooks cannot be removed,
 # so one process-global hook dispatches to whichever recorders are active.

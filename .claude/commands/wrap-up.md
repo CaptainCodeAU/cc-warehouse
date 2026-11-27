@@ -185,12 +185,22 @@ something to name correctly in the report instead of claiming or re-doing it.
 ```bash
 uv run ruff check
 uv run pyright
-uv run pytest -q
+# The suite runs as 4 shards, 4 SEPARATE tr-run calls, so the 3090 runs them side by side
+# (about 2 minutes instead of 8; #8378). `--shard I/N` lives in tests/conftest.py.
+for i in 1 2 3 4; do
+  tr-run -- uv run pytest -q tests/ --shard "$i/4" > "$TMPDIR/wrapup-shard-$i.out" 2>&1 &
+done
+wait
+for i in 1 2 3 4; do grep -E '(passed|failed|error)' "$TMPDIR/wrapup-shard-$i.out" | tail -1; done
 ```
 
 All three are merge gates per `CLAUDE.md`, so this should be a formality - if it isn't, stop and
-fix the cause before anything else here. **Quote pytest's own final line** ("1222 passed"), never
-"tests pass". `tests/test_packaging.py` runs inside that suite and is the one that most often
+fix the cause before anything else here. **Quote each shard's own final line** ("612 passed")
+and their sum, never "tests pass". **Green means all 4 shards passed**: a total from fewer than
+4 is never quoted as green. A shard tr-run refused (the Mac's memory "not now", exit 78 or 79)
+did not run: retry that shard alone (`tr-run --wait-hold` for a hold, never `--past-hold`) and
+add its line once it has run. Plain `uv run pytest -q` still runs the whole suite in one
+process (CI does that). `tests/test_packaging.py` runs inside that suite and is the one that most often
 catches something real: it builds an actual sdist and fails on a file git doesn't track, a real
 home directory, or a secret shape.
 
