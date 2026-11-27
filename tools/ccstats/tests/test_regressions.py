@@ -364,7 +364,7 @@ def test_every_out_path_sits_under_the_resolved_root(tmp_path) -> None:
         str(common.HOME / ".claude" / "projects"),
         str(common.ARCHIVE),
         str(common.ARCHIVE / "some-project"),
-        str(common.HOME / "cc-warehouse-data"),
+        str(common.DATA_ROOT),
         str(common.REPO_ROOT),
     ],
 )

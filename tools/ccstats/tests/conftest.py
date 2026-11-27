@@ -10,12 +10,49 @@ and the 1,112-test contract suite is unaffected. Run them with:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 CCSTATS = Path(__file__).resolve().parent.parent
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Point ccw's config at a throwaway one before any test imports `common`.
+
+    `common.py` reads ccw's config AT IMPORT and stops when it names no
+    archive_root (#8025). Left alone, that made this suite read the real
+    machine's config: it could not start in a test box that has none, and on a
+    machine that has one it pointed ARCHIVE/DATA_ROOT at real data. Configure
+    runs before collection, so every module sees the throwaway config.
+
+    The folder comes from pytest's own temp factory (its basetemp inside
+    TMPDIR), so pytest removes it with its other numbered folders; this file
+    deletes nothing. The run refuses to start unless the paths ccw resolves sit
+    inside that folder."""
+    factory: pytest.TempPathFactory = config._tmp_path_factory  # type: ignore[attr-defined]
+    sandbox = factory.mktemp("ccstats-cfg").resolve()
+    data_root, archive_root, xdg = sandbox / "data", sandbox / "archive", sandbox / "xdg"
+    for folder in (data_root, archive_root, xdg / "cc-warehouse"):
+        folder.mkdir(parents=True)
+    (xdg / "cc-warehouse" / "config.toml").write_text(
+        f"root = {json.dumps(str(data_root))}\narchive_root = {json.dumps(str(archive_root))}\n"
+    )
+    os.environ["XDG_CONFIG_HOME"] = str(xdg)
+    os.environ["CCW_ROOT"] = str(data_root)
+
+    from cc_warehouse.config import load_config
+
+    resolved = load_config()
+    for name, path in (("root", resolved.root), ("archive_root", resolved.archive_root)):
+        if path is None or not Path(path).resolve().is_relative_to(sandbox):
+            raise pytest.UsageError(
+                f"ccstats tests: ccw's {name} resolved to {path}, outside the throwaway "
+                f"config {sandbox}; refusing to run against a real warehouse"
+            )
 if str(CCSTATS) not in sys.path:
     sys.path.insert(0, str(CCSTATS))
 
