@@ -28,6 +28,15 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-seventh handoff, 2026-11-27 (main session: ccstats dashboard job fixed, shards counted side by side)
+
+Session cc-warehouse-main 28947065, 9:30 PM to about 11:30 PM; the starter of the sixty-sixth. Next: see the captain's log (`engage-go handoff`).
+
+- **The daily `com.captaincodeau.ccstats-dashboard` job exited 1.** Cause: 4 of 17,978 real sessions in `sessions.sqlite` have no timestamps, so `local_date` is NULL and `min(dates)` in `dashboard.build_payload` raised `TypeError`. `7813321` keeps only dated sessions for the range; 2 oracle tests in `tools/ccstats/tests/test_session_kind.py`, red on the old file, green on the new. Checked read-only on the real database: 17,978 rows, 2026-02-14 to 2026-11-27. In use only once the 28 Nov run exits 0. The 4 undated sessions (2 with test-fixture-looking ids) are #8474.
+- **Q1 (#8065): B.** Old archive folders keep their drawing; `RENDER_VERSION` stays 0.1.4.
+- **The shards count side by side now.** test-runner-3090's group rule (their `58c37f4`, #8486) judges overlapping runs of one project and session as one run: shards 2/4 to 4/4 sent together (runs `20261127-1134-b65a27ef`, `-4ef1e01a`, `-2db4211e`) each passed and read "group of 3 ... counted". This session's /wrap-up ran all 4 shards: 253 + 572 + 821 + 583 passed, 1 skipped.
+- **pyright broke on this Mac** when its cached node env was rebuilt: nodeenv's latest is Node 27.0.0-alpha, with no prebuilt binary. Rebuilt once with `PYRIGHT_PYTHON_NODE_VERSION=lts`; plain pyright is 0 errors again. The lasting fix is dotfiles' (#8499).
+
 ### Sixty-sixth handoff, 2026-11-27 (job session: ccstats tests off the Mac, the suite split into shards)
 
 Session cc-warehouse-main-split-suites 5fe57edc, a job of cc-warehouse-main, 9:43 PM to about 10:30 PM. Next: see the captain's log (`engage-go handoff`).
