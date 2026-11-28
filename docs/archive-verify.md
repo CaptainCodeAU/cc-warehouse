@@ -106,4 +106,11 @@ To show the archive holds what the machine holds, a check would compare the loca
 catalog's heads (each session uuid and its payload sha256) with the archive: one folder
 per head, and each folder's `source_hash` equal to the head's sha256. It would report
 heads with no folder and folders whose hash differs. Nothing in `ccw` does this whole-tree
-comparison today.
+comparison today. Coming in the next release, not current yet: the heartbeat file a good
+sweep writes will carry an `unfiled` count, the catalog heads with no archive folder
+(plan `ccw-share-sweep-side`). That covers the missing-folder half; the hash half stays
+unbuilt.
+
+On a machine whose archive is a share folder mounted only during its sweep, `--verify`
+can run only while the share is mounted, so it belongs inside the same scheduled unit
+as the sweep (`docs/agent-setup-contract.md`, Step 2b).

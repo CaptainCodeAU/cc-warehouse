@@ -89,11 +89,12 @@ Notes:
   ccstats-dashboard keeps the older convention: `--quiet` means no stdout on success, so
   its empty log is the healthy state. Check `launchctl list` for a job's last exit status
   (the number after the PID column; `0` is success) rather than trusting a log alone.
-- `ccw-archive` has **no `--verify` flag** in its scheduled invocation. It rebuilds the
-  archive tree incrementally; it does not re-check existing folders for integrity. The
-  only full-tree integrity check (`ccw archive --to <dir> --verify`, which writes
-  nothing) was run BY HAND until 2026-11-28, when it was chained after the weekly job (above). As of 2026-09-01 this had apparently not been run in
-  an unknown amount of time before that day.
+- `ccw-archive` first rebuilds the archive tree incrementally, then, only if that exits
+  0, runs the full-tree integrity check `ccw archive --to <dir> --verify` (which writes
+  nothing), chained since 2026-11-28 (the table above). Before that day the check was run
+  only by hand; as of 2026-09-01 it had not been run for an unknown length of time. What
+  that check proves, and what it does not (it never compares the archive with the local
+  catalog or vault): `docs/archive-verify.md`.
 - **`ccstats-dashboard` is not part of `ccw` and does not touch the warehouse.** Its
   day to day commands are collected in `tools/ccstats/CHEATSHEET.md`, beside the script. It runs
   `tools/ccstats/refresh.py` (added 2026-09-04), which calls `collect.py`, then

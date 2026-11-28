@@ -178,8 +178,19 @@ The layout, one archive root per machine:
 - On this machine it appears at a local mount point, written here as `<mount-point>`.
 - The catalog, the vault (`objects/`) and the locks stay on the local disk.
 
+**The minimum is a build that has the archive root marker (ticket 44a).** The 0.1.4
+release does not have it, so on that release no writer checks that the archive root is
+the real, mounted share before writing under it. The version number cannot tell you
+which build you have: a build with the marker was installed in place at 0.1.4 on this
+project's own machine, so `ccw --version` printed 0.1.4 either way. Check for the
+feature instead: `ccw archive --help` lists `--init` only on a build with the marker. If
+it does not, stop and tell the human that this machine needs the first release after
+0.1.4.
+
 **The config file**: `~/.config/cc-warehouse/config.toml`, for the user the sweep runs
-as. These three top-level keys, exactly:
+as (or `$XDG_CONFIG_HOME/cc-warehouse/config.toml` when that variable is set,
+`config.load_config`). To point a run at a different config, set `XDG_CONFIG_HOME`; do
+not use `--config`, which most verbs ignore today. These three top-level keys, exactly:
 
 ```toml
 archive_root = "<mount-point>"
@@ -254,7 +265,9 @@ the refusal lines in `<root>/logs/capture.jsonl` and `ccw doctor`'s `desync` lin
 **Coming in the next release, not current yet** (do not configure for them): a marker
 check before each project folder during a sweep, not once per run (plan
 `ccw-share-sweep-side`); a heartbeat file after each good sweep, `heartbeat.json` in
-`root` and `_heartbeat.json` in `archive_root` (same plan); and `ccw doctor` reporting
+`root` and `_heartbeat.json` in `archive_root`, carrying an `unfiled` count of catalog
+heads with no archive folder, which is the comparison `--verify` does not make (same
+plan); and `ccw doctor` reporting
 "share away" as normal on such a machine instead of failing (plan `ccw-share-away`).
 Until that last one lands, expect `ccw doctor` to fail both its `archive root` and its
 `desync` lines between sweeps on this machine (the empty mount point holds none of the

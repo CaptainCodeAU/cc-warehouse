@@ -20,8 +20,12 @@
 #   CCW_VOICE_URL      -> [notify].voice_url
 #   CCW_VOICE_ID       -> [notify].voice_id
 #   CCW_OPEN_FOLDER=1  -> [notify].open_folder
-# That is the COMPLETE list. `archive_root`, `archive_timezone`, `keep_objects`,
-# `keep_projections`, `archive_subagents`, `archive_tool_results`, and every
+#   CCW_DESKTOP_ALERTS -> [notify].desktop_alerts ("1" on, anything else off)
+# That is the COMPLETE list of variables that are read (config.py's ENV_VARS also
+# names CCW_WEBHOOKS, which nothing reads; see below). Re-checked 2026-11-28.
+# `archive_root`, `archive_timezone`, `keep_objects`, `keep_projections`,
+# `archive_subagents`, `archive_tool_results`, `archive_file_history`,
+# `archive_history_prompts`, `archive_project_memory`, `extra_sources`, and every
 # [render]/[share]/[relocate]/
 # [import] key have NO environment-variable equivalent - they can only be set in a
 # config.toml file (or a [project.<id>.*] override inside one). An installer that
@@ -71,6 +75,16 @@
 # `tool-results/` holds appears in no transcript at all, so anything this does not
 # copy exists only in ~/.claude. One switch for the hook and the sweep alike.
 # archive_tool_results = true
+
+# Whether the stores keyed by session id rather than by location are archived:
+# ~/.claude/file-history/<uuid>/ and ~/.claude/todos/. One switch for both, for the
+# hook and the sweep alike. Default: true.
+# archive_file_history = true
+
+# Whether `ccw sweep`'s one pass over ~/.claude/history.jsonl runs: a whole-file
+# snapshot under _not-sessions/, each session's prompts.jsonl, and the paste-cache
+# files those prompts point at (pastes/). Default: true.
+# archive_history_prompts = true
 
 # Whether each project's Claude Code memory (~/.claude/projects/<dir>/memory/)
 # is kept in the archive, by `ccw sweep`: the latest copy of every file under
@@ -132,6 +146,12 @@
 # commands_compact = false
 # extras_compact = false
 # tool_output_compact = false
+
+# Whether each archived sub-agent ALSO gets its own 4 rendered files beside its
+# agent-<id>.jsonl. A different question from `subagents` above, which is the inline
+# summary inside the parent session's pages. Default: false (sub-agents are
+# archived, not rendered).
+# subagent_projections = false
 
 # HTML chrome - the initial state a freshly opened page renders in. A reader can
 # always change these in their own browser; these only set the starting point.
