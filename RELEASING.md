@@ -124,7 +124,12 @@ CLAUDE.md). Other machines get ccw from the estate's machine installer, which
 pins a lowest version and only reports newer releases, so a new release reaches
 them only after the installer's owner raises that pin and re-applies each
 machine. Ask for it at once, with the version and its changelog lines, and wait
-for each machine's `ccw --version` to be confirmed. The exact commands and
+for each machine's `ccw --version` to be confirmed. The other machines' scheduled
+sweeps also run on a config and a lowest-version file kept by the network's
+owner. So when a release changes config keys, the archive layout or marker,
+`ccw sweep`'s flags or exit codes, or the heartbeat file's fields, tell that
+owner in the same step. A release that changes none of those needs nothing
+from it. The exact commands and
 owners are in the private companion's `workbench/release-rollout.md`.
 
 ## One-time setup for Trusted Publishing
