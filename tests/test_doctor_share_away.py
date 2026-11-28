@@ -748,3 +748,29 @@ def test_no_doctor_log_reader_raises_on_a_line_that_is_not_an_object(tmp_path: P
         logs.mkdir(parents=True)
         (logs / "capture.jsonl").write_text(junk, encoding="utf-8")
         doctor.report_text(diagnose(tmp_path, config))
+
+
+def test_doctor_reads_the_real_heartbeat_the_sweep_writes(tmp_path: Path) -> None:
+    """The contract end to end: `sweep.write_heartbeat` with the share mounted,
+    then an unmounted sweep's heartbeat (share unreachable), then doctor on
+    the empty mount point. The carried `share_written_at` keeps it ok."""
+    from dataclasses import replace
+
+    from cc_warehouse import sweep
+
+    mounted = tmp_path / "mounted"
+    mounted.mkdir()
+    (mounted / MARKER).write_text(
+        json.dumps({"cc_warehouse": "archive_root", "archive_timezone": ZONE}),
+        encoding="utf-8",
+    )
+    config = config_for(tmp_path, mounted)
+    assert sweep.write_heartbeat(config, items=1, stored=1, failed=0, unfiled=0) == "written"
+    away = replace(config, archive_root=mount_point(tmp_path))
+    assert sweep.write_heartbeat(away, items=0, stored=0, failed=0, unfiled=None) == "unreachable"
+    capture_refused(tmp_path / "home", away)
+    report = diagnose(tmp_path, away)
+    line = check(report, "archive root")
+    assert line.ok, line.detail
+    assert "1 capture(s) refused" in line.detail
+    assert report.ok, doctor.report_text(report)

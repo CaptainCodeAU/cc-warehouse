@@ -47,6 +47,9 @@ whose archive folder is mounted for the sweep alone and is an empty folder in be
   and never fails the sweep. A sweep refused at its start, or one that lost its root,
   writes no heartbeat.
 
+**`ccw doctor` reads a share mounted only for its sweep as "share away", not broken (2026-11-28).**
+On a machine whose `archive_root` is a share mounted only while its sweep runs, the root between sweeps is an empty mount point with no marker. The hook keeps each session in the vault and the next sweep files it, but doctor failed `archive root`, `desync` and `unreadable` at every session start. Now, with `keep_objects = true`, no marker, and the root absent or empty, `archive root` is an ok "share away" line naming the captures refused since the last share write, and `desync` and `unreadable` are not checked. It turns FAIL once the local `heartbeat.json` shows no share write for `share_away_days` (new config key, default 3), or holds no proof the share was ever written; that line never suggests `--init`. Every other refusal keeps its FAIL, and the Mac is unchanged. The detached render child on an away share writes the local projection, skips the archive mirror, logs one info line and exits 0, with no error notification. Every capture.jsonl reader in doctor now skips a line that is not a JSON object instead of raising. See docs/operations.md, "share away".
+
 **Page drawing has its own version number; a release no longer redraws every folder (2026-11-22).**
 Each archive folder's `manifest.json` stamps `renderer_version`, and a folder whose stamp
 differs is redrawn. That stamp was the package version, so every release redrew all
