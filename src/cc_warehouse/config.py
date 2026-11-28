@@ -5,7 +5,8 @@ CCW_* environment variables -> CLI flags. Slice 13.
 
 The TOML key map is frozen (Phase 2, expanded 2026-07-23 with the principal for the
 render toggles): top-level `root`, `archive_root`, `archive_timezone`,
-`keep_projections`, `keep_objects`, `archive_subagents`, `archive_tool_results`,
+`keep_projections`, `keep_objects`, `share_away_days` (2026-11-28),
+`archive_subagents`, `archive_tool_results`,
 `archive_file_history` and `archive_history_prompts` (the `archive_*` keys were
 missing from this list entirely until 2026-09-08, ticket 38), and `extra_sources`
 (W-20261015-A01, 2026-10-15);
@@ -167,6 +168,14 @@ class Config:
     # survivable, because a swallowed one would mean the hook reporting success
     # while nothing holds the session.
     keep_objects: bool = True
+    # How long a machine whose share is mounted only for its sweep may go with
+    # no sweep writing the share before `ccw doctor`'s `archive root` line FAILs
+    # (2026-11-28, Network_Plan's every-machine design, item 5). Between sweeps
+    # such a machine refuses its empty mount point and keeps each session in the
+    # vault, which is "share away", not broken. 3 days is two missed daily
+    # sweeps of slack; a laptop that waits at home while its owner travels sets
+    # a longer one. A whole number of days, at least 1.
+    share_away_days: int = 3
     # Whether sub-agent transcripts are archived AT ALL (ticket 21d). One switch
     # for one thing: it governs the sweep's walk AND the capture path, because a
     # key that turned them off in one and on in the other would be a setting
@@ -440,6 +449,21 @@ def layout_problem(archive_root: Path, warehouse_root: Path) -> str | None:
     return None
 
 
+def _share_away_days(merged: Mapping[str, object], problems: list[str]) -> int:
+    """`share_away_days`: a whole number of days, at least 1. An illegal value
+    is recorded and the default kept (R5), so a typo can never stop a capture."""
+    raw = merged.get("share_away_days")
+    if raw is None:
+        return 3
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        problems.append(
+            f"share_away_days must be a whole number of days, at least 1, not {raw!r};"
+            " using 3"
+        )
+        return 3
+    return raw
+
+
 def _keep_objects(merged: Mapping[str, object], problems: list[str]) -> bool:
     """Whether the content-addressed vault is still written (slice 19m).
 
@@ -629,6 +653,7 @@ def load_config(
         archive_root=archive_root,
         keep_projections=_keep_projections(merged, problems),
         keep_objects=_keep_objects(merged, problems),
+        share_away_days=_share_away_days(merged, problems),
         archive_subagents=_bool(merged.get("archive_subagents"), True),
         archive_tool_results=_bool(merged.get("archive_tool_results"), True),
         archive_file_history=_bool(merged.get("archive_file_history"), True),

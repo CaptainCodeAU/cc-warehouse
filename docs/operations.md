@@ -418,6 +418,45 @@ launchctl kickstart gui/$(id -u)/com.captaincodeau.ccw-repair
 Pinned by `tests/test_writers_keep_evidence.py`, `tests/test_repair_refuses_unexplained.py`
 and `tests/test_repair_sendback.py`.
 
+## "share away": a share mounted only for the sweep (2026-11-28)
+
+On a machine whose `archive_root` is a share mounted only while its sweep runs
+(Network_Plan's every-machine design, item 5), the root between sweeps is an empty
+mount point with no marker. The SessionEnd hook refuses it and, with `keep_objects =
+true`, keeps the session in the vault; the next sweep files it. `ccw doctor` reads that
+state as "share away", not broken:
+
+```
+  ok   desync      share away: not checked, the archive is not mounted
+  ok   unreadable  share away: not checked, the archive is not mounted
+  ok   archive root share away: 2 session(s) refused at capture and kept locally since <time>; last share write <time> (<machine>); FAILs after 3 days with no share write
+  FAIL archive root share away for 5 days: 2 session(s) refused at capture, kept only on this machine; last share write <time> (<machine>), more than 3 days ago (share_away_days = 3); MISSING at <root>: the share is not mounted here ...
+```
+
+- **When it applies:** `archive_root` set, `keep_objects = true`, no marker, and the root
+  absent or an EMPTY folder. Anything else keeps the ordinary `archive root` FAIL: the
+  vault off (nothing else holds the sessions), an unmarked folder with content (a real
+  tree that needs `--init`), a bad marker, or a warehouse overlap. The Mac, whose share is
+  mounted all the time and which runs `keep_objects = false`, is unchanged.
+- **The clock:** the LOCAL `heartbeat.json` in the warehouse root, written by the sweep;
+  never the share's copy. The last share write is its `share_written_at`, else `at` when
+  `share` is "written". No heartbeat, an unreadable one, or no proof the share was ever
+  written is a FAIL. The threshold is `share_away_days` (default 3; see
+  `docs/reference-config.toml`); a laptop that stays home while its owner travels sets it
+  longer.
+- **The count** is of sessions refused AT CAPTURE since the last share write, from
+  `capture.jsonl`'s "archive write refused" lines, plus the heartbeat's `unfiled` when non
+  zero. Nothing can look at the share while it is away.
+- **The FAIL line never carries the `--init` hint**, because adopting an empty mount point
+  as an archive would fork the tree.
+- **The render child** writes the local projection, skips the archive mirror, logs one
+  `info` line ("render: share away, local projection only ...") and exits 0, with no
+  error notification. The next sweep's build files the archive copy.
+- **The consumers:** the exit code is 0 while share away is ok, so `ccw-freshness-check.py`
+  stays silent; the `Uncaptured: <N> session` line is unchanged.
+
+Pinned by `tests/test_doctor_share_away.py`.
+
 ## The `sidecars` line, and the alert that is not a banner (ticket 38, 2026-09-08)
 
 `ccw doctor` gained a THIRD kind of line in 0.1.3, and its whole design is about not

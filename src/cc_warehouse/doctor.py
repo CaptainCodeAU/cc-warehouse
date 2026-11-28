@@ -32,7 +32,7 @@ from typing import cast
 
 import cc_warehouse
 from cc_warehouse import archive, build, parallel, parser, reconcile, registry, status, store, sweep
-from cc_warehouse.config import Config
+from cc_warehouse.config import Config, layout_problem
 
 # How far behind the rest of the corpus a session may fall before it counts as
 # missed rather than merely pending.
@@ -1661,6 +1661,187 @@ def _archive_root_check(config: Config) -> tuple[bool, str]:
     return True, f"marker present at {marker}, zone {config.archive_timezone}"
 
 
+# 2026-11-28, Network_Plan's every-machine design (close.md item 5): what the
+# two lines that cannot be checked say while the share is away.
+SHARE_AWAY_SKIPPED = "share away: not checked, the archive is not mounted"
+HEARTBEAT_FILE = "heartbeat.json"
+_REFUSAL_PREFIX = "archive write refused"
+
+
+def is_share_away(config: Config) -> bool:
+    """True when this machine's share is simply not mounted right now.
+
+    The shape a sweep-only mount leaves between sweeps: `archive_root` set,
+    `keep_objects` true (the vault holds every refused session), no marker, and
+    the root either absent (a laptop's mount point under /Volumes vanishes) or
+    an EMPTY folder (a box's root-owned 0555 mount point). Anything else that
+    `root_problem` refuses keeps its FAIL: without the vault nothing holds the
+    sessions, a non-empty unmarked folder is a real tree waiting for `--init`,
+    and a bad marker or a warehouse overlap is a misconfiguration.
+
+    Read-only and never raises: any OSError means "not share away", and the
+    ordinary `archive root` FAIL then names it.
+    """
+    target = config.archive_root
+    if target is None or not config.keep_objects:
+        return False
+    if archive.root_problem(target, config.archive_timezone, warehouse_root=config.root) is None:
+        return False
+    if layout_problem(target, config.root) is not None:
+        return False
+    try:
+        if not target.exists() and not target.is_symlink():
+            return True
+        if not target.is_dir():
+            return False
+        marker = target / archive.ROOT_MARKER
+        if marker.exists() or marker.is_symlink():
+            return False
+        with os.scandir(target) as entries:
+            return next(entries, None) is None
+    except OSError:
+        return False
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def _age(seconds: float) -> str:
+    hours = int(max(0.0, seconds) // 3600)
+    if hours < 48:
+        return _plural(hours, "hour")
+    return _plural(hours // 24, "day")
+
+
+def _last_share_write(config: Config) -> tuple[datetime | None, str, str]:
+    """(when a sweep last wrote the share, which machine, why None) from the
+    LOCAL heartbeat the sweep leaves in `config.root`, never the share's copy.
+
+    `share_written_at` when present (the sweep carries it forward through
+    sweeps that could not reach the share); else `at` when that sweep's
+    `share` is "written"; else no proof the share was ever written."""
+    path = config.root / HEARTBEAT_FILE
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None, "", f"no heartbeat at {path}: no sweep has written the share from here"
+    except OSError as exc:
+        return None, "", f"heartbeat unreadable at {path}: {exc}"
+    try:
+        loaded: object = json.loads(raw)
+    except ValueError as exc:
+        return None, "", f"heartbeat unreadable at {path}: {exc}"
+    if not isinstance(loaded, dict):
+        return None, "", f"heartbeat unreadable at {path}: not a JSON object"
+    beat = cast("dict[str, object]", loaded)
+    machine = beat.get("machine")
+    name = machine if isinstance(machine, str) else "this machine"
+    carried, at, share = beat.get("share_written_at"), beat.get("at"), beat.get("share")
+    if isinstance(carried, str) and (moment := _moment(carried)) is not None:
+        return moment, name, ""
+    if share == "written" and isinstance(at, str) and (moment := _moment(at)) is not None:
+        return moment, name, ""
+    return (
+        None,
+        name,
+        f"the last sweep ({at if isinstance(at, str) else 'time unknown'}) could not reach"
+        " the share, and the heartbeat holds no proof the share was ever written",
+    )
+
+
+def _heartbeat_unfiled(config: Config) -> int | None:
+    """The heartbeat's `unfiled`: catalog heads whose archive folder was not
+    current after the last sweep's build (red-team R1, written by the sweep).
+    None when absent or unreadable; never raises."""
+    try:
+        loaded: object = json.loads((config.root / HEARTBEAT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    value = cast("dict[str, object]", loaded).get("unfiled")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _refused_since(config: Config, since: datetime | None) -> tuple[int, datetime | None]:
+    """(distinct sessions refused at capture after `since`, the first such
+    refusal) from capture.jsonl's `_log_root_refusal` lines. Counts refusals,
+    not what a later sweep filed: the share is not mounted, so nothing here can
+    look. Read only in the share-away state, so the Mac never pays for it."""
+    try:
+        text = (config.root / "logs" / "capture.jsonl").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return 0, None
+    sessions: set[str] = set()
+    first: datetime | None = None
+    for line in text.splitlines():
+        if _REFUSAL_PREFIX not in line:
+            continue
+        try:
+            record = cast("dict[str, object]", json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        message, at, session = record.get("message"), record.get("at"), record.get("session")
+        if not isinstance(message, str) or not message.startswith(_REFUSAL_PREFIX):
+            continue
+        moment = _moment(at if isinstance(at, str) else None)
+        if moment is None or (since is not None and moment <= since):
+            continue
+        sessions.add(session if isinstance(session, str) else line)
+        if first is None or moment < first:
+            first = moment
+    return len(sessions), first
+
+
+def _share_away_check(config: Config, now: datetime | None = None) -> tuple[bool, str]:
+    """The `archive root` line while the share is away (see `is_share_away`).
+
+    ok while a sweep wrote the share within `share_away_days`; a blocking FAIL
+    once it has not, or when nothing proves it ever did. The count is of
+    sessions REFUSED AT CAPTURE since that write, the only thing visible from
+    here while nothing is mounted."""
+    moment = now if now is not None else datetime.now(UTC)
+    days = config.share_away_days
+    limit = _plural(days, "day")
+    written, machine, reason = _last_share_write(config)
+    count, first = _refused_since(config, written)
+    unfiled = _heartbeat_unfiled(config)
+    kept = f"{count} session(s) refused at capture"
+    if unfiled:
+        kept += f" and {unfiled} the last sweep left unfiled"
+    # A FAIL names the path. NOT root_problem's sentence: its "adopt it with
+    # `ccw archive --init`" hint is right for a real unmarked tree and wrong
+    # here, where an agent following it would mark the empty mount point as an
+    # archive and fork the tree (red-team R9, 28 Nov).
+    refusal = (
+        f"MISSING at {config.archive_root}: the share is not mounted here (no marker,"
+        " nothing inside); mount it and let the sweep run, and never adopt an empty"
+        " mount point as an archive"
+    )
+    if written is None:
+        return False, (
+            f"share away with no proof the share was ever written: {reason}; {kept},"
+            f" kept only on this machine (share_away_days = {days}); {refusal}"
+        )
+    since = (first or written).isoformat()
+    age = (moment - written).total_seconds()
+    if age > days * 86400:
+        return False, (
+            f"share away for {_age(age)}: {kept}, kept only on this machine; last share"
+            f" write {written.isoformat()} ({machine}), more than {limit} ago"
+            f" (share_away_days = {days}); {refusal}"
+        )
+    return True, (
+        f"share away: {kept} and kept locally since {since}; last share write"
+        f" {written.isoformat()} ({machine}); FAILs after {limit} with no share write"
+    )
+
+
 def diagnose(config: Config, home: Path | None = None, source: Path | None = None) -> Report:
     """Every check, in the order an operator would ask them."""
     where = home if home is not None else Path.home()
@@ -1760,9 +1941,15 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
         Check("hook runs", hook_runs_ok, hook_runs_detail, blocking=hook_runs_blocking)
     )
 
-    checked, problems, pending, first_problem = _desync(config)
+    # 2026-11-28: a sweep-only share that is simply not mounted. `desync` and
+    # `unreadable` read folders on the share, so they cannot be checked and
+    # would FAIL on every one; the `archive root` line owns the verdict.
+    away = is_share_away(config)
+    checked, problems, pending, first_problem = (0, 0, 0, None) if away else _desync(config)
     pending_suffix = f", {pending} pending render(s)" if pending else ""
-    if config.archive_root is None:
+    if away:
+        desync_detail = SHARE_AWAY_SKIPPED
+    elif config.archive_root is None:
         desync_detail = "no archive configured"
     elif checked == 0:
         desync_detail = "no archived sessions yet"
@@ -1783,11 +1970,15 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     # returns to 0, so it cannot become a permanent banner. A missing HIDDEN
     # head is never read by build and can be permanent (two data files that
     # once shared one bare `session` folder), so it is reported only.
-    checked_uuidless, visible_missing, hidden_missing, example = _unreadable(config)
+    checked_uuidless, visible_missing, hidden_missing, example = (
+        (0, 0, 0, None) if away else _unreadable(config)
+    )
     hidden_note = (
         f"; {hidden_missing} hidden (never built, reported only)" if hidden_missing else ""
     )
-    if visible_missing:
+    if away:
+        unreadable_detail = SHARE_AWAY_SKIPPED
+    elif visible_missing:
         unreadable_detail = (
             f"{visible_missing} visible session(s) not at their archive path, so ccw build"
             f" fails on each, e.g. {example}{hidden_note}"
@@ -1870,7 +2061,7 @@ def diagnose(config: Config, home: Path | None = None, source: Path | None = Non
     checks.append(Check("reconcile", True, reconcile_detail, blocking=False))
 
     # Ticket 44a. BLOCKING: see `_archive_root_check`.
-    root_ok, root_detail = _archive_root_check(config)
+    root_ok, root_detail = _share_away_check(config) if away else _archive_root_check(config)
     checks.append(Check("archive root", root_ok, root_detail))
 
     module = Path(cc_warehouse.__file__).parent

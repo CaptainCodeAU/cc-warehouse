@@ -66,6 +66,16 @@
 # this is a two-stage migration, never a first-day setting.
 # keep_objects = true
 
+# For a machine whose archive_root is a share mounted only while its sweep runs.
+# Between sweeps the mount point is an empty folder with no marker, the hook
+# keeps each session in the vault (keep_objects must be true), and `ccw doctor`
+# reports "share away" instead of failing. It FAILs once the last sweep that
+# wrote the share (read from the local heartbeat.json in root) is older than
+# this many days. Default: 3 (two missed daily sweeps). A whole number, at
+# least 1; anything else is recorded as a config problem and 3 is used. A
+# laptop that stays home while its owner travels sets it longer, e.g. 21.
+# share_away_days = 3
+
 # Whether sub-agent transcripts are archived at all. Default: true.
 # archive_subagents = true
 

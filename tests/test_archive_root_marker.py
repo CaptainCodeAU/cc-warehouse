@@ -589,14 +589,26 @@ def test_build_refuses_to_mirror_into_an_unmarked_root(
 def test_render_session_refuses_to_mirror_into_an_unmarked_root(
     ccw_env: dict[str, str], tmp_path: Path
 ) -> None:
+    """An EMPTY unmarked root with the vault on is "share away" since
+    2026-11-28 (red-team R2) and renders locally with exit 0, pinned in
+    tests/test_doctor_share_away.py. The refusal stays for the two shapes that
+    are not: the vault off, and an unmarked tree that already holds folders."""
     _vault_only_capture(ccw_env, tmp_path)
     target = tmp_path / "archive"
     target.mkdir()
-    configure(ccw_env, target, keep_objects=True)
+    configure(ccw_env, target, keep_objects=False)
     short = str(catalog_rows(ccw_env, "SELECT short FROM session")[0][0])  # type: ignore[index]
     result = run_cli(["render", "--session", f"s:{short}"])
     assert result.code != 0
     assert tree_snapshot(target) == {}
+
+    populated = tmp_path / "populated"
+    stale_tree(populated)
+    before = tree_snapshot(populated)
+    configure(ccw_env, populated, keep_objects=True)
+    result = run_cli(["render", "--session", f"s:{short}"])
+    assert result.code != 0
+    assert tree_snapshot(populated) == before
 
 
 def test_import_refuses_before_any_write(ccw_env: dict[str, str], tmp_path: Path) -> None:

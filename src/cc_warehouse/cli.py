@@ -1311,6 +1311,29 @@ def _log_companions(
         return
 
 
+def _log_render_share_away(config: Config, short: str) -> None:
+    """One `info` capture.jsonl line for a render whose archive mirror waited
+    because the share is away (2026-11-28, red-team R2). `append_log` only, so
+    no webhook, voice or desktop alert fires; best-effort like its siblings."""
+    try:
+        notify.append_log(
+            config,
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "status": "info",
+                "session": short,
+                "project": None,
+                "message": (
+                    "render: share away, local projection only; the next sweep files"
+                    " the archive copy"
+                ),
+                "elapsed_ms": None,
+            },
+        )
+    except Exception:
+        return
+
+
 def _log_render_done(config: Config, short: str, elapsed_ms: int | None) -> None:
     """One `render-done` capture.jsonl record when a session render finishes
     (W-20260929-A62; ruling: Gavin, 2026-09-29, option 2). The end of the
@@ -1611,14 +1634,27 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
     directory = build.projection_dir(
         config.root / "projections", head.label, head.first_ts, head.slug, head.short
     )
+    share_away = False
     try:
         # Ticket 44a: the mirror below writes into the archive, so an unproven
         # root is refused here, before anything is written, and reported through
         # the same error path as any other render failure.
+        #
+        # ONE EXCEPTION, 2026-11-28 (red-team R2): a sweep-only share that is
+        # simply not mounted (`doctor.is_share_away`: the vault holds the
+        # session, the root is absent or an empty mount point). That is every
+        # session end on such a machine, not a failure, so the local projection
+        # is still written, the archive mirror is skipped (the next sweep's
+        # build files it), one info line is logged, and no error is notified.
         if config.archive_root is not None:
-            archive.require_root(
-                config.archive_root, config.archive_timezone, warehouse_root=config.root
-            )
+            try:
+                archive.require_root(
+                    config.archive_root, config.archive_timezone, warehouse_root=config.root
+                )
+            except archive.ArchiveRootRefused:
+                if not doctor.is_share_away(config):
+                    raise
+                share_away = True
         data = archive.read_payload(
             config,
             label=head.label,
@@ -1629,15 +1665,18 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
         )
         if config.keep_projections:
             build.write_projection(directory, data, build.render_options(config), force=False)
-        _mirror_to_archive(
-            config, head.label, build.session_stem(head.session_uuid, head.short), data
-        )
+        if not share_away:
+            _mirror_to_archive(
+                config, head.label, build.session_stem(head.session_uuid, head.short), data
+            )
     except Exception as exc:  # the detached child's only surviving signal (DESIGN 4)
         try:
             notify.report(config, notify.NotifyEvent("error", short, None, repr(exc), None))
         except Exception:
             pass
         return 1
+    if share_away:
+        _log_render_share_away(config, head.short)
     _log_render_done(config, head.short, max(0, int((time.monotonic() - start) * 1000)))
     if config.open_folder:
         try:
