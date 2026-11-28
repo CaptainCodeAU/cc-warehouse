@@ -116,6 +116,17 @@ Note the PyPI JSON API is CDN-cached, so the top-level endpoint can lag by a few
 minutes while `/pypi/cc-warehouse/<version>/json` and the simple index are already
 correct. A stale top-level response is not a failed upload.
 
+### 7. Roll it out to every machine
+
+A release on PyPI is not yet on any machine. This machine's frozen install is
+refreshed by hand (`uv_tool_reinstall_current_project --no-extras`, see
+CLAUDE.md). Other machines get ccw from the estate's machine installer, which
+pins a lowest version and only reports newer releases, so a new release reaches
+them only after the installer's owner raises that pin and re-applies each
+machine. Ask for it at once, with the version and its changelog lines, and wait
+for each machine's `ccw --version` to be confirmed. The exact commands and
+owners are in the private companion's `workbench/release-rollout.md`.
+
 ## One-time setup for Trusted Publishing
 
 Done once per project, on the PyPI side, by an account with owner rights.

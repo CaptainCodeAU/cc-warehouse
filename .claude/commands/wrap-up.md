@@ -232,6 +232,12 @@ git tag -l "v$(grep '^version = ' pyproject.toml | sed -E 's/.*"(.+)".*/\1/')"
   the publish step can still fail for a reason git had nothing to do with (PyPI's trusted-
   publisher link, an account-side setting - see the `pypi-trusted-publisher-recovery` memory).
 
+- **Roll-out check, every wrap-up, even with no bump this session:** run the read-only check
+  in the companion's `workbench/release-rollout.md`. It compares the newest pushed `vX.Y.Z` tag
+  with the version the machine installer pins. If the release is newer and no roll-out
+  message has gone to the installer's owner, send it now (RELEASING.md step 7). Name the
+  result in the report either way. A release left above the pin on purpose is said so.
+
 **Never confuse a release tag with a milestone tag.** `slice-NN` / `ticket-NN` / an ad hoc
 descriptive tag record how the software was built and are free to create any time (the standing
 cadence rule says tag generously). A `vX.Y.Z` tag publishes a real, irreversible PyPI release the
