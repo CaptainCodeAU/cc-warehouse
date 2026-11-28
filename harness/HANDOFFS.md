@@ -28,6 +28,15 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-eighth handoff, 2026-11-28 (job session: ccw sweep side for a share mounted only for the sweep)
+
+Session cc-warehouse-main-sweep-side 89288135, a job of cc-warehouse-main, 7:47 PM to about 9:30 PM. Next: see the captain's log (`engage-go handoff`).
+
+- **Landed `3f53551`** (one squash commit): `archive.make_folder` / `make_below` re-check the root's marker when each folder is made and never recreate the root; owed builds (`archive-owed.json`, `archive-built.json`) so a session the archive refused at session end reaches it at the next sweep, sub-agents under their parent; the heartbeat (`_heartbeat.json` on the share, `heartbeat.json` locally) for `ccw doctor`. Decision record: `contract/DESIGN.md` section 15, "2026-11-28".
+- **Tests:** `tests/test_sweep_share_side.py`, 36 tests. Mutants: plain `mkdir(parents=True)` fails 5 in-flight tests; no owed-head pass fails the owed-parent test. Full suite on the 3090 in 4 shards before landing: 279 + 484 + 714 + 789 = 2,266 passed, 1 skipped.
+- **Independent review** (a fresh-context sub-agent given the diff, the design and DESIGN section 14): 7 findings, none losing data. Fixed: a CHANGELOG paragraph with no code on this branch (moved to the share-away job's own landing), the companions child skipping the folder check, a lock-held build recorded as built, the owed record written before the catalog row, a failing head keeping every night owed, and a read-max-replace race on the owed record. Deferred: owed hidden sessions are filed only from their source (engage #8561).
+- **Not done here, by plan:** no version bump, tag, PyPI release or frozen reinstall; cc-warehouse-main does those. The first sweep after the reinstall builds the whole archive once (no build record yet). Also open: engage #8565 (a manual `ccw build` does not write the build record).
+
 ### Sixty-seventh handoff, 2026-11-27 (main session: ccstats dashboard job fixed, shards counted side by side)
 
 Session cc-warehouse-main 28947065, 9:30 PM to about 11:30 PM; the starter of the sixty-sixth. Next: see the captain's log (`engage-go handoff`).

@@ -2573,3 +2573,42 @@ prompts) are outside it and still need a hand bump. `__version__` stays for
 `ccw --version` only. KNOWN, NOT CHANGED: commits after v0.1.4 that changed page output
 (for example ticket 28.11's opt-in sub-agent pages) never triggered a redraw, because the
 package version did not move. The new number keeps that state; it does not fix past drift.
+
+### 2026-11-28 - a share mounted only for the sweep: marker per folder, owed builds, heartbeat
+
+Context: the design for running `ccw` on every machine (one archive root per machine
+on a network share, mounted only while its sweep runs, an empty mount point in
+between). Three decisions, made by the job that built them and agreed with the
+principal's main session before the build; the principal's standing instruction for
+the evening was to take the recommended option.
+
+1. **The marker is re-checked when each folder is made, not only once per item.**
+   `RootGuard` already checked before every writing item; the gap was the item in
+   flight, because every writer used `mkdir(parents=True)` and so could recreate a
+   vanished root or write into a bare mount point. All archive writers now make folders
+   through `archive.make_folder` / `make_below`. The check applies to a root that
+   `root_problem` has passed in this process; every writing entry point passes one first
+   (`require_root`, the companions child's own check, `RootGuard`), so production is
+   covered and unit callers on bare temp folders keep the old behaviour. Rejected:
+   checking every caller unconditionally, which would have meant marking roots in 24
+   test files for no change in production.
+2. **A refused hook capture is owed to the archive, and the sweep pays it.** Two local
+   files with one writer each: `archive-owed.json` (the newest refusal, written by the
+   capture path after its catalog row exists, under a short lock, max of old and new)
+   and `archive-built.json` (the start of the last sweep build that ran and kept its
+   root). Owed while the newest refusal is later, or while no build was ever recorded,
+   so a catalog filled before this existed is filed once. The sweep files each owed
+   head's JSONL during its session pass so sub-agents nest under their parent. Rejected:
+   building on every sweep with an archive (the build's walk of every folder is most of a
+   night's cost on the share), and scanning `capture.jsonl` for refusals (large, parsed
+   every night). A build with a failed head is still recorded: the failure is counted in
+   the heartbeat's `unfiled` and retried by `ccw repair`, so one bad head cannot make
+   every night an owed night.
+3. **A heartbeat after every sweep that kept its root**, on the share and locally, with
+   a key set fixed as a contract with `ccw doctor` (CHANGELOG, Unreleased). The share
+   copy is written only while the marker is there; a failed share write never fails the
+   sweep. `machine` is the host name because no config key names a machine.
+
+Evidence: `tests/test_sweep_share_side.py` (36 tests; the in-flight and owed-parent tests
+fail against a mutant with the old `mkdir`); full suite on the 3090, 4 shards. An
+independent review found 7 issues, 6 fixed before landing, 1 deferred as an engage idea.
