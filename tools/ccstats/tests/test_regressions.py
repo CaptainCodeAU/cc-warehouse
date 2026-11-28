@@ -377,3 +377,27 @@ def test_out_accepts_an_ordinary_directory(tmp_path) -> None:
     """The control case for the fence: an unrelated directory must NOT trip it."""
     target = tmp_path / "ccstats-probe"
     assert resolve_out(["--out", str(target)]).root == target.resolve()
+
+
+# ------------------------------------------------------------------ #8474
+# A real Claude Code transcript stamps every entry. 4 rows in the real
+# sessions.sqlite (27 Nov 2026) had an assistant reply and no timestamp at all,
+# and all 4 were test fixtures (engage's gaps_test.go writing into a real
+# ~/.claude/projects/-demo, then swept into the archive). They counted as real
+# sessions and crashed the dashboard's date range (7813321).
+
+
+def test_a_session_with_no_timestamp_is_not_real(scan, tmp_path) -> None:
+    line = json.dumps(
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "All quiet."}]}}
+    )
+    result = scan(payload(line), tmp_path)
+    assert result.session["n_assistant_turns"] == 1
+    assert result.session["first_ts"] is None
+    assert result.session["is_real"] == 0
+
+
+def test_a_stamped_session_with_a_reply_is_real(scan, tmp_path) -> None:
+    """The control: the same shape with a timestamp stays real."""
+    result = scan(payload(assistant("2026-06-10T01:00:00.000Z", out=10)), tmp_path)
+    assert result.session["is_real"] == 1

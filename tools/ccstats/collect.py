@@ -119,7 +119,7 @@ KNOWN_FREE = {"<synthetic>"}
 # cache invalidation; `PRICES_READ_ON` and the detected local timezone are the
 # automatic half (see `_cache_fingerprint` below) because those two change the
 # meaning of an old row WITHOUT anyone touching this function.
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3  # 3: is_real needs a timestamp (#8474)
 
 _UNPRICED: Counter[str] = Counter()
 _PRICE_CACHE: dict[tuple[str, str], tuple[float, float] | None] = {}
@@ -878,7 +878,9 @@ def scan_transcript(
         "user_type": user_type,
         "is_sidechain": is_sidechain,
         "cc_version": version,
-        "is_real": int(n_assistant > 0),
+        # #8474: a real transcript stamps its entries; an assistant reply with no
+        # timestamp anywhere was only ever a test fixture (4 of 17,978 on 27 Nov).
+        "is_real": int(n_assistant > 0 and first_ts_raw is not None),
         "has_usage": int(tok_in + tok_out + tok_cw5 + tok_cw1h + tok_cr > 0),
         "n_api_errors": n_api_err,
         "n_interrupts": n_interrupt,
