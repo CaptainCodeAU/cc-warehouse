@@ -34,6 +34,13 @@ names each job's log as its `stdout path`.
 
 Notes:
 
+- **Every job runs under `/usr/bin/caffeinate -i -s` since 2026-11-28** (record #1698):
+  the plist's `ProgramArguments` start with it, and the commands above follow it.
+  It keeps the Mac awake only while the job runs, and passes the job's exit code on.
+  It does not wake the Mac to start a job. Why: on 2026-11-28 the Mac slept 149 times
+  during the sweep, which crept forward in short dark wakes and ran 15 hours or more
+  (`pmset -g log`), and a sweep that sleeps mid-read is the likely source of its
+  occasional `Errno 22` line.
 - **Sweep moved to 02:00 and the archive to Sunday 05:00 on 2026-09-30**, operator's
   choice, dated `.bak` beside each plist. The operator chose NO scheduled wake
   (`pmset`), so `StartCalendarInterval` fires at the first wake after 02:00 when the
