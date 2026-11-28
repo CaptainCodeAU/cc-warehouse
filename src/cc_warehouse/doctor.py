@@ -1711,7 +1711,8 @@ def _age(seconds: float) -> str:
     hours = int(max(0.0, seconds) // 3600)
     if hours < 48:
         return _plural(hours, "hour")
-    return _plural(hours // 24, "day")
+    days, rest = divmod(hours, 24)
+    return _plural(days, "day") + (f" {_plural(rest, 'hour')}" if rest else "")
 
 
 def _last_share_write(config: Config) -> tuple[datetime | None, str, str]:
@@ -1726,7 +1727,7 @@ def _last_share_write(config: Config) -> tuple[datetime | None, str, str]:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None, "", f"no heartbeat at {path}: no sweep has written the share from here"
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: not UTF-8
         return None, "", f"heartbeat unreadable at {path}: {exc}"
     try:
         loaded: object = json.loads(raw)
@@ -1767,8 +1768,9 @@ def _heartbeat_unfiled(config: Config) -> int | None:
 
 
 def _refused_since(config: Config, since: datetime | None) -> tuple[int, datetime | None]:
-    """(distinct sessions refused at capture after `since`, the first such
-    refusal) from capture.jsonl's `_log_root_refusal` lines. Counts refusals,
+    """(distinct captures refused after `since`, keyed by payload hash, so a
+    session that ends twice counts twice; the first such refusal) from
+    capture.jsonl's `_log_root_refusal` lines. Counts refusals,
     not what a later sweep filed: the share is not mounted, so nothing here can
     look. Read only in the share-away state, so the Mac never pays for it."""
     try:
@@ -1783,9 +1785,12 @@ def _refused_since(config: Config, since: datetime | None) -> tuple[int, datetim
         if _REFUSAL_PREFIX not in line:
             continue
         try:
-            record = cast("dict[str, object]", json.loads(line))
+            loaded: object = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
+        if not isinstance(loaded, dict):
+            continue
+        record = cast("dict[str, object]", loaded)
         message, at, session = record.get("message"), record.get("at"), record.get("session")
         if not isinstance(message, str) or not message.startswith(_REFUSAL_PREFIX):
             continue
@@ -1803,7 +1808,7 @@ def _share_away_check(config: Config, now: datetime | None = None) -> tuple[bool
 
     ok while a sweep wrote the share within `share_away_days`; a blocking FAIL
     once it has not, or when nothing proves it ever did. The count is of
-    sessions REFUSED AT CAPTURE since that write, the only thing visible from
+    captures REFUSED since that write, the only thing visible from
     here while nothing is mounted."""
     moment = now if now is not None else datetime.now(UTC)
     days = config.share_away_days
@@ -1811,7 +1816,7 @@ def _share_away_check(config: Config, now: datetime | None = None) -> tuple[bool
     written, machine, reason = _last_share_write(config)
     count, first = _refused_since(config, written)
     unfiled = _heartbeat_unfiled(config)
-    kept = f"{count} session(s) refused at capture"
+    kept = f"{count} capture(s) refused"
     if unfiled:
         kept += f" and {unfiled} the last sweep left unfiled"
     # A FAIL names the path. NOT root_problem's sentence: its "adopt it with

@@ -12,7 +12,7 @@ The states, agreed with cc-warehouse-main (268e2629) on 2026-11-28:
 
 1. SHARE AWAY: archive_root set, keep_objects true, no marker, and the root is
    absent or an EMPTY folder. `archive root` is an ok line naming how many
-   sessions were refused at capture since the last share write; `desync` and
+   captures were refused since the last share write; `desync` and
    `unreadable` are not checked, because nothing is mounted to check.
 2. AWAY TOO LONG: as 1, but the local heartbeat is missing, unreadable, or its
    last share write is more than 3 days old. `archive root` is a blocking FAIL.
@@ -193,7 +193,7 @@ def test_share_away_with_a_fresh_heartbeat_is_ok_and_says_so(tmp_path: Path) -> 
     assert line.ok, line.detail
     assert line.blocking
     assert line.detail.startswith("share away:"), line.detail
-    assert "1 session(s) refused at capture" in line.detail
+    assert "1 capture(s) refused" in line.detail
     assert "kept locally" in line.detail
     assert "last share write" in line.detail
     assert report.ok, doctor.report_text(report)
@@ -237,7 +237,7 @@ def test_refusals_before_the_last_share_write_are_not_counted(tmp_path: Path) ->
     heartbeat(config, at=NOW - timedelta(days=1))
     line = check(diagnose(tmp_path, config), "archive root")
     assert line.ok, line.detail
-    assert "1 session(s) refused at capture" in line.detail
+    assert "1 capture(s) refused" in line.detail
 
 
 def test_share_away_with_nothing_refused_yet_says_zero(tmp_path: Path) -> None:
@@ -245,7 +245,7 @@ def test_share_away_with_nothing_refused_yet_says_zero(tmp_path: Path) -> None:
     heartbeat(config, at=NOW - timedelta(hours=1))
     line = check(diagnose(tmp_path, config), "archive root")
     assert line.ok, line.detail
-    assert "0 session(s) refused at capture" in line.detail
+    assert "0 capture(s) refused" in line.detail
 
 
 def test_an_unreachable_sweep_reads_the_carried_share_write(tmp_path: Path) -> None:
@@ -284,7 +284,7 @@ def test_a_share_write_more_than_3_days_old_fails(tmp_path: Path) -> None:
 
 def test_just_inside_3_days_is_still_ok(tmp_path: Path) -> None:
     config = config_for(tmp_path, mount_point(tmp_path))
-    heartbeat(config, at=NOW - timedelta(days=3) + timedelta(minutes=5))
+    heartbeat(config, at=NOW - timedelta(days=3) + timedelta(hours=1))
     assert check(diagnose(tmp_path, config), "archive root").ok
 
 
@@ -661,3 +661,60 @@ def test_the_heartbeat_unfiled_figure_is_named_when_non_zero(tmp_path: Path) -> 
     line = check(diagnose(tmp_path, config), "archive root")
     assert line.ok, line.detail
     assert "4 the last sweep left unfiled" in line.detail
+
+
+# ---------------------------------------------------------------------------
+# From the independent review of the first cut (28 Nov)
+# ---------------------------------------------------------------------------
+
+
+def test_a_heartbeat_that_is_not_utf8_fails_and_does_not_raise(tmp_path: Path) -> None:
+    config = config_for(tmp_path, mount_point(tmp_path))
+    config.root.mkdir(parents=True)
+    (config.root / "heartbeat.json").write_bytes(b"\xff\xfe\x00not utf-8")
+    line = check(diagnose(tmp_path, config), "archive root")
+    assert not line.ok
+    assert "heartbeat unreadable" in line.detail
+
+
+def test_a_capture_log_line_that_is_not_an_object_is_skipped(tmp_path: Path) -> None:
+    config = config_for(tmp_path, mount_point(tmp_path))
+    heartbeat(config, at=NOW - timedelta(days=1))
+    logs = config.root / "logs"
+    logs.mkdir(parents=True)
+    (logs / "capture.jsonl").write_text(
+        json.dumps("archive write refused, a bare string") + "\n"
+        + json.dumps(["archive write refused"]) + "\n",
+        encoding="utf-8",
+    )
+    line = check(diagnose(tmp_path, config), "archive root")
+    assert line.ok, line.detail
+    assert "0 capture(s) refused" in line.detail
+
+
+def test_the_fail_line_gives_days_and_hours(tmp_path: Path) -> None:
+    config = config_for(tmp_path, mount_point(tmp_path))
+    heartbeat(config, at=NOW - timedelta(days=3, hours=20, minutes=10))
+    line = check(diagnose(tmp_path, config), "archive root")
+    assert not line.ok
+    assert "share away for 3 days 20 hours" in line.detail, line.detail
+
+
+def test_with_no_projections_a_share_away_render_claims_no_render(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    """keep_projections = false and the share away: nothing is rendered anywhere,
+    so no `render-done` (doctor reads it as the pipeline finishing)."""
+    from conftest import run_cli
+
+    short = _stored_then_away(ccw_env, tmp_path, keep_objects=True)
+    cfg = Path(ccw_env["XDG_CONFIG_HOME"]) / "cc-warehouse" / "config.toml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + "keep_projections = false\n", encoding="utf-8"
+    )
+    before = len(_log(ccw_env))
+    result = run_cli(["render", "--session", f"s:{short}"])
+    assert result.code == 0, result.err
+    new = _log(ccw_env)[before:]
+    assert not [r for r in new if r.get("status") in ("error", "render-done")], new
+    assert any("nothing rendered here" in str(r.get("message")) for r in new), new

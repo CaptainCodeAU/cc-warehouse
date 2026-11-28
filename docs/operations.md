@@ -429,8 +429,8 @@ state as "share away", not broken:
 ```
   ok   desync      share away: not checked, the archive is not mounted
   ok   unreadable  share away: not checked, the archive is not mounted
-  ok   archive root share away: 2 session(s) refused at capture and kept locally since <time>; last share write <time> (<machine>); FAILs after 3 days with no share write
-  FAIL archive root share away for 5 days: 2 session(s) refused at capture, kept only on this machine; last share write <time> (<machine>), more than 3 days ago (share_away_days = 3); MISSING at <root>: the share is not mounted here ...
+  ok   archive root share away: 2 capture(s) refused and kept locally since <time>; last share write <time> (<machine>); FAILs after 3 days with no share write
+  FAIL archive root share away for 5 days: 2 capture(s) refused, kept only on this machine; last share write <time> (<machine>), more than 3 days ago (share_away_days = 3); MISSING at <root>: the share is not mounted here ...
 ```
 
 - **When it applies:** `archive_root` set, `keep_objects = true`, no marker, and the root
@@ -444,7 +444,7 @@ state as "share away", not broken:
   written is a FAIL. The threshold is `share_away_days` (default 3; see
   `docs/reference-config.toml`); a laptop that stays home while its owner travels sets it
   longer.
-- **The count** is of sessions refused AT CAPTURE since the last share write, from
+- **The count** is of captures refused since the last share write (a session that ends twice counts twice), from
   `capture.jsonl`'s "archive write refused" lines, plus the heartbeat's `unfiled` when non
   zero. Nothing can look at the share while it is away.
 - **The FAIL line never carries the `--init` hint**, because adopting an empty mount point

@@ -1311,10 +1311,15 @@ def _log_companions(
         return
 
 
-def _log_render_share_away(config: Config, short: str) -> None:
+def _log_render_share_away(config: Config, short: str, *, projected: bool) -> None:
     """One `info` capture.jsonl line for a render whose archive mirror waited
     because the share is away (2026-11-28, red-team R2). `append_log` only, so
     no webhook, voice or desktop alert fires; best-effort like its siblings."""
+    what = (
+        "local projection only"
+        if projected
+        else "nothing rendered here (keep_projections = false)"
+    )
     try:
         notify.append_log(
             config,
@@ -1324,8 +1329,7 @@ def _log_render_share_away(config: Config, short: str) -> None:
                 "session": short,
                 "project": None,
                 "message": (
-                    "render: share away, local projection only; the next sweep files"
-                    " the archive copy"
+                    f"render: share away, {what}; the next sweep files the archive copy"
                 ),
                 "elapsed_ms": None,
             },
@@ -1676,7 +1680,11 @@ def _render_session(session_key: str, rest: Sequence[str], *, open_flag: bool = 
             pass
         return 1
     if share_away:
-        _log_render_share_away(config, head.short)
+        _log_render_share_away(config, head.short, projected=config.keep_projections)
+        if not config.keep_projections:
+            # Nothing was rendered anywhere, so no `render-done`: doctor reads
+            # that line as "this capture's pipeline finished" (review, 28 Nov).
+            return 0
     _log_render_done(config, head.short, max(0, int((time.monotonic() - start) * 1000)))
     if config.open_folder:
         try:
