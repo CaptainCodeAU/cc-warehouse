@@ -28,6 +28,16 @@ project's engage to-dos (the engage pane), not this file. `HANDOFF.md` is frozen
 recurring environment gotchas, read `harness/GOTCHAS.md`. For a closed ticket's full
 technical account, read its file in `harness/tickets/`.
 
+### Sixty-ninth handoff, 2026-11-28 (job session: "share away" in ccw doctor)
+
+Session cc-warehouse-main-share-away 546edfc3, a job of cc-warehouse-main, 7:46 PM to about 9:40 PM. Next: see the captain's log (`engage-go handoff`).
+
+- **Landed `959051e`, `f63c7ec`, `79691e4`, `35868c8`** on top of the sweep side's `3f53551`: `ccw doctor` reads an empty or absent unmarked root with the vault on as "share away" (ok while the local heartbeat's last share write is within `share_away_days`, default 3; FAIL after, or with no proof; never the `--init` hint); `desync` and `unreadable` are not checked then; the render child on an away share writes local pages and exits 0 with no error alert. Decision record: `contract/DESIGN.md` section 15, "2026-11-28 - share away".
+- **Tests:** `tests/test_doctor_share_away.py` (new), red on the 3090 before the build; `tests/test_archive_root_marker.py`'s empty-root render test now uses `keep_objects = false`, plus a populated-root case. Full suite on the 3090 in 4 shards after the rebase onto `3f53551` and again at `beef483`: 362 + 569 + 718 + 655 = 2,304 passed, 1 skipped. ruff clean, pyright 0 errors.
+- **Independent review** (a fresh-context sub-agent given the diff, close.md, both plans and the doctor contract test): 0 serious, 6 smaller, all fixed (a non-UTF-8 heartbeat and a non-object log line could make doctor raise; the count said sessions but counts captures; "for 3 days ... more than 3 days" read as a contradiction; a no-projections render logged `render-done`; a test with a 5-minute margin). The non-object test then found the same raise in 6 older doctor readers of `capture.jsonl`; one helper, `_json_object`, fixes the class.
+- **Leak scan:** `git-leak-scan --range 3f53551..35868c8` exit 0, "scanned 4 commit(s), 1168 added line(s)"; commit-message scan with gitleaks exit 0 after a random-token control that fired.
+- **Not done here, by plan:** the version bump, release and reinstall (cc-warehouse-main released 0.1.5 at `9ecc4a0`). Loose end: engage #8568 (the mousetrap logged `OPENING-PROMPT.md` in a /wrap-up command).
+
 ### Sixty-eighth handoff, 2026-11-28 (job session: ccw sweep side for a share mounted only for the sweep)
 
 Session cc-warehouse-main-sweep-side 89288135, a job of cc-warehouse-main, 7:47 PM to about 9:30 PM. Next: see the captain's log (`engage-go handoff`).

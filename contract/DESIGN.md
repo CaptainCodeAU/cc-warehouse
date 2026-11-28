@@ -2612,3 +2612,45 @@ the evening was to take the recommended option.
 Evidence: `tests/test_sweep_share_side.py` (36 tests; the in-flight and owed-parent tests
 fail against a mutant with the old `mkdir`); full suite on the 3090, 4 shards. An
 independent review found 7 issues, 6 fixed before landing, 1 deferred as an engage idea.
+
+### 2026-11-28 - "share away" in `ccw doctor`, and the render child on an away share
+
+Context: the same every-machine design. Between sweeps a box's archive root is an empty
+mount point with no marker; the hook keeps each session in the vault and the next sweep
+files it. Before this, doctor failed three blocking lines (`archive root`, `desync`,
+`unreadable`) at every session start there, and the render child notified an error and
+wrote no local pages at every session end. Decided by the job that built it
+(cc-warehouse-main-share-away), agreed with the principal's main session before the
+build; red-team points R2, R8, R9 and R20 folded in; the principal's standing instruction
+for the evening was to take the recommended option.
+
+1. **"Share away" is one narrow shape**, `doctor.is_share_away`: `archive_root` set,
+   `keep_objects` true, no marker, and the root absent or an EMPTY folder. Everything else
+   `root_problem` refuses keeps its FAIL: the vault off (nothing else holds the sessions),
+   a non-empty unmarked folder (a real tree that needs `--init`), a bad marker or zone,
+   and a warehouse overlap. The render child shares the same predicate (R9 of section 14:
+   one function for the diagnosis and the behaviour). Rejected: treating every refusal
+   with the vault on as share away, which would have silenced a wrong-zone marker.
+2. **The clock is the last share write, read from the LOCAL heartbeat**:
+   `share_written_at` when present, else `at` when `share` is "written"; no heartbeat or
+   no proof is a FAIL. The threshold is a config key, `share_away_days`, default 3 (two
+   missed daily sweeps; well inside the 7-day soak and the 14-day snapshot keep), because a
+   laptop that waits at home while its owner travels is away for longer. Rejected: a fixed
+   3 days (cc-warehouse-main, relaying the principal's "home only" answer for the laptop).
+3. **What doctor says while away:** an ok line naming the captures refused since the last
+   share write (keyed by payload hash, so it says "capture(s)", not sessions) and the
+   heartbeat's `unfiled`, which never changes the verdict; `desync` and `unreadable` are
+   not checked, since nothing is mounted to check. The FAIL line never carries
+   `root_problem`'s `--init` hint (R9 of the red team): an agent following it would adopt
+   the empty mount point as an archive and fork the tree.
+4. **The render child on an away share** writes the local projection, skips the archive
+   mirror, logs one `info` line and exits 0 with no error notification (red-team R2). With
+   `keep_projections` false it writes nothing and logs no `render-done`, since doctor
+   reads that line as the pipeline finishing. The next sweep's build files the archive
+   copy (`build._head_is_current` is false for a missing folder).
+
+Evidence: `tests/test_doctor_share_away.py`, including the real hook's `main()` fed a
+real share-away report, and the real `sweep.write_heartbeat` mounted then unreachable.
+Full suite on the 3090, 4 shards. An independent review found 0 serious and 6 smaller
+issues, all fixed; its test for a non-object log line found the same defect in 6 older
+doctor readers, now one helper (`_json_object`).
