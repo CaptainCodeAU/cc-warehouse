@@ -22,6 +22,12 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+Nothing yet.
+
+### 0.1.5 - 2026-11-28
+
+Everything from here down to 0.1.4 ships in 0.1.5, including the entries marked "Earlier, also in 0.1.5". It is the minimum for a machine whose archive is a share mounted only for its sweep: 0.1.4 on PyPI has no archive marker check at all. Page drawing has its own version number since 2026-11-22, so this release does not redraw every folder; the first sweep after upgrading still builds the whole archive once (no build record yet).
+
 **`ccw sweep` is safe on a share mounted only while it runs (2026-11-28).** For machines
 whose archive folder is mounted for the sweep alone and is an empty folder in between
 (Network_Plan's design for every engage machine, items 5, 6 and 8). Three changes:
@@ -642,7 +648,7 @@ rendered byte. Same reasoning as the ticket 42 entry that follows.
 - `pyproject.toml` sdist exclude gained `.worktree`: a worker's git worktree inside the
   repo rode into the sdist (217 members) until the packaging test caught it.
 
-### Earlier, still unreleased (2026-09-09)
+#### Earlier, also in 0.1.5 (2026-09-09)
 
 Logging-only fixes, deliberately shipped WITHOUT a version bump (2026-09-09, ticket
 42 items #2/#3/#7). `render.py`'s `renderer_version` is `__version__`, so bumping the
