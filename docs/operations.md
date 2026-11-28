@@ -29,7 +29,7 @@ names each job's log as its `stdout path`.
 |---|---|---|---|
 | `com.captaincodeau.ccw-sweep` | daily 02:00 (was 12:30 until 2026-09-30); no scheduled wake, so on a sleeping Mac it runs at the first wake after 02:00 | `ccw sweep --quiet` | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-sweep.log` |
 | `com.captaincodeau.ccw-repair` | daily 15:30 (was 12:45 until 2026-09-29, ticket 44) | `ccw repair --quiet` | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-repair.log` |
-| `com.captaincodeau.ccw-archive` | weekly, Sunday 05:00 (was 03:00 until 2026-09-30, moved clear of the 02:00 sweep) | `ccw archive --to /Volumes/mac/cc-warehouse-archive` (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-archive.log` |
+| `com.captaincodeau.ccw-archive` | weekly, Sunday 05:00 (was 03:00 until 2026-09-30, moved clear of the 02:00 sweep) | `ccw archive --to /Volumes/mac/cc-warehouse-archive`, then, only if that exits 0, `ccw archive --to /Volumes/mac/cc-warehouse-archive --verify` and one dated `weekly live verify ... exit N` line; the job's exit code is the verify's (since 2026-11-28, Gavin's Network_Plan Q23: A, "weekly archive check"; #8532) (was `~/cc-warehouse-archive` until 2026-09-29, ticket 44) | `~/CODE/CaptainCodeAU/cc-warehouse-isolinear/launch-agents/logs/ccw-archive.log` |
 | `com.captaincodeau.ccstats-dashboard` | daily 13:00 | `.venv/bin/python3 tools/ccstats/refresh.py --quiet` | `~/.claude/logs/ccstats-dashboard.log` |
 
 Notes:
@@ -91,7 +91,7 @@ Notes:
 - `ccw-archive` has **no `--verify` flag** in its scheduled invocation. It rebuilds the
   archive tree incrementally; it does not re-check existing folders for integrity. The
   only full-tree integrity check (`ccw archive --to <dir> --verify`, which writes
-  nothing) is currently run BY HAND. As of 2026-09-01 this had apparently not been run in
+  nothing) was run BY HAND until 2026-11-28, when it was chained after the weekly job (above). As of 2026-09-01 this had apparently not been run in
   an unknown amount of time before that day.
 - **`ccstats-dashboard` is not part of `ccw` and does not touch the warehouse.** Its
   day to day commands are collected in `tools/ccstats/CHEATSHEET.md`, beside the script. It runs
