@@ -158,6 +158,108 @@ machines runs today - so don't treat "no config" as broken. It just means nobody
 - If they say no (or you're not sure), leave the file absent or unchanged, and tell the
   human that's a supported choice, not a gap.
 
+### Step 2b: a machine whose archive is a share folder mounted only during its sweep
+
+Some operators run `ccw` on several machines, each writing its own sessions into its own
+folder on a network share. That folder is mounted only while that machine's scheduled
+sweep runs, by a unit the operator's system setup owns, not by `ccw` and not by you.
+Between sweeps the mount point is an empty, read-only local folder. Use this step only
+when the operator has told you this machine is set up that way; otherwise Step 2 above
+applies.
+
+The layout, one archive root per machine:
+
+- The share folder for this machine is `<archive-share>/<machine>-archive`: a sibling of
+  every other machine's folder, never nested inside another machine's archive root, and
+  never shared with another machine. Two machines writing one tree would overwrite each
+  other's `project.json` (it is rewritten whole from the local catalog,
+  `archive.write_project_files`), and the locks that keep two writers apart are local
+  files (`store.acquire_lock` under `<root>/locks`), invisible to another machine.
+- On this machine it appears at a local mount point, written here as `<mount-point>`.
+- The catalog, the vault (`objects/`) and the locks stay on the local disk.
+
+**The config file**: `~/.config/cc-warehouse/config.toml`, for the user the sweep runs
+as. These three top-level keys, exactly:
+
+```toml
+archive_root = "<mount-point>"
+archive_timezone = "<zone>"
+keep_objects = true
+```
+
+| Key | Value | Same on every machine? | Why |
+|---|---|---|---|
+| `archive_root` | this machine's own `<mount-point>` | No, one per machine | Where this machine's archive is written. Never another machine's folder, and never inside `root` (refused by `config.layout_problem`). |
+| `archive_timezone` | `"<zone>"`: one IANA zone name the operator picks for every machine, such as `"Europe/Berlin"` | Yes | Folder names are made in this zone (`build.archive_folder_name`). The root's marker records the zone and every writer refuses a marker that names another (`archive.root_problem`), so set this BEFORE the `--init` below. The default is `"UTC"`; leaving it there on one machine gives that machine's folders different names from the others'. |
+| `keep_objects` | `true` | Yes | It is the default, but write it explicitly. While the share is not mounted, the capture hook finds no marker; with `keep_objects = true` it logs the refusal and the session stays in the local vault (`capture._archive_source`, the `ArchiveRootRefused` branch). With `false` that same refusal is raised and the capture fails. Never copy `keep_objects = false` from another machine. |
+
+Leave every other key unset, so it takes its default (`docs/reference-config.toml` lists
+them): `root` (`$HOME/cc-warehouse-data`, on the local disk), `keep_projections`
+(`true`; never copy `false` from another machine), `archive_subagents`,
+`archive_tool_results`, `archive_file_history`, `archive_history_prompts` and
+`archive_project_memory` (all `true`). Leave `extra_sources` unset too when the sweep unit
+runs one `ccw sweep --source <claude-config-dir>/projects` per Claude configuration folder
+on the machine; the operator's setup owns that list.
+
+**Mark the root once**, while the share is mounted and after the config file is written:
+
+```
+ccw archive --to <mount-point> --init
+```
+
+It writes only `_archive-root.json` (`archive.init_root`). Never run it against the
+empty mount point while the share is NOT mounted: that would mark the local folder, and
+the guard that keeps an unmounted share from becoming a second archive would no longer
+hold. On a machine set up as described, the unmounted mount point is read-only to the
+sweep's user, so `--init` fails there, with a Python `PermissionError` traceback and
+exit 1 rather than a one-line refusal; if it fails, check whether the share is mounted
+before anything else, and tell the human.
+
+**What the sweep unit should run, until a code change lands.** A session that ends while
+the share is away is stored in the local vault and cataloged, but its archive folder is
+not written (`capture._archive_source`). A later `ccw sweep` finds that payload hash
+already cataloged and skips it (`sweep.sweep`'s pre-filter, `digest in already_known`).
+The sweep then runs its own build, which writes every catalog head whose folder is not
+current, only when that sweep stored something new or did one of the actions in
+`sweep.SIDECAR_ARCHIVED_ACTIONS` (sidecars, prompts, pastes, stranded files, a head
+repair) (`cli._run_sweep`, the `if not lost and (stored or archived_sidecars)` line). On
+most nights one of those happens and the sessions are filed; on a night with nothing new
+they are not, and that build never writes hidden sessions. So do not rely on the sweep
+alone. Within the mounted window, after the sweep, run:
+
+```
+ccw archive --to <mount-point>
+```
+
+It is incremental: it writes every cataloged session, hidden ones included, whose folder
+is missing or out of date, reading the payload from the local vault, and skips the rest
+(`archive.migrate`, called from `cli._archive_body`). Then check the result with
+`ccw archive --to <mount-point> --verify`, and read `docs/archive-verify.md` for what
+that check does and does not prove.
+
+Everything that writes to or reads the archive belongs inside the mounted window:
+
+- `ccw archive --to` does not pause and wait when the share drops mid-run, as the sweep
+  does; its items fail instead. Its whole run must fit inside the window.
+- A scheduled `ccw repair` refuses to run whenever the share is not mounted
+  (`archive.require_root`), so schedule it inside the window too, if at all.
+- `--verify` reads and hashes every recorded file over the share. On a large tree it is
+  slow; allow for it in the window, or run it less often than the sweep.
+
+Neither `ccw status` nor `ccw doctor`'s `Uncaptured:` figure shows sessions that are in
+the vault but not yet in the archive: that figure compares the source folder with the
+catalog, not with the archive (`status.uncaptured_gap`). The signs of such sessions are
+the refusal lines in `<root>/logs/capture.jsonl` and `ccw doctor`'s `desync` line.
+
+**Coming in the next release, not current yet** (do not configure for them): a marker
+check before each project folder during a sweep, not once per run (plan
+`ccw-share-sweep-side`); a heartbeat file after each good sweep, `heartbeat.json` in
+`root` and `_heartbeat.json` in `archive_root` (same plan); and `ccw doctor` reporting
+"share away" as normal on such a machine instead of failing (plan `ccw-share-away`).
+Until that last one lands, expect `ccw doctor` to fail both its `archive root` and its
+`desync` lines between sweeps on this machine (the empty mount point holds none of the
+folders the catalog names); tell the human it is expected rather than "fixing" it.
+
 ## Step 3: a plugin update that needs a human on the accept
 
 If `ccw doctor` or the installer flagged the plugin as installed but many commits behind
