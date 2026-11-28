@@ -209,6 +209,73 @@ def test_doctor_uses_the_same_lock_rule(ccw_env: dict[str, str], tmp_path: Path)
     assert (problems, pending) == (1, 0), "damage older than the lock was excused"
 
 
+def open_sweep_start(config: Config, hours_ago: float, pid: int) -> None:
+    """A `sweep-started` record with no run summary after it, as `cli._log_sweep_started`
+    writes it, `hours_ago` in the past."""
+    at = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - hours_ago * 3600))
+    record = {
+        "at": at,
+        "status": "sweep-started",
+        "session": None,
+        "project": None,
+        "message": f"sweep started (pid {pid})",
+        "elapsed_ms": None,
+    }
+    with (config.root / "logs" / "capture.jsonl").open("a", encoding="utf-8") as log:
+        log.write(json.dumps(record) + "\n")
+
+
+def dead_pid() -> int:
+    """A pid no process holds: a child that has already exited and been reaped."""
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0)  # pyright: ignore[reportPrivateUsage]
+    os.waitpid(pid, 0)
+    return pid
+
+
+def prompts_written_by_the_sweep(
+    ccw_env: dict[str, str], tmp_path: Path, sweep_pid: int
+) -> tuple[int, int]:
+    """#8524, seen live 2026-11-28: the sweep started 5 h ago, split prompts.jsonl
+    4 h ago, released locks/sweep, and its sweep-triggered build took locks/build
+    3 h ago. The prompts file is newer than its manifest and was written by the
+    running batch, but before the build lock's own start."""
+    config, folder = rich_folder(ccw_env, tmp_path)
+    prompts = folder / "prompts.jsonl"
+    prompts.write_bytes(prompts.read_bytes() + b'{"display": "one more"}\n')
+    age(folder / "manifest.json", 6)
+    age(prompts, 4)
+    open_sweep_start(config, 5, sweep_pid)
+    assert store.acquire_lock(config.root, "build")
+    try:
+        age(config.root / "locks" / "build", 3)
+        _c, problems, pending, _f = doctor._desync(config)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        store.release_lock(config.root, "build")
+    return problems, pending
+
+
+def test_a_file_the_running_sweep_wrote_before_its_build_is_pending(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    assert prompts_written_by_the_sweep(ccw_env, tmp_path, os.getpid()) == (0, 1)
+
+
+def test_a_dead_sweeps_start_never_excuses_a_file(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    assert prompts_written_by_the_sweep(ccw_env, tmp_path, dead_pid()) == (1, 0)
+
+
+def test_an_open_sweep_start_with_no_lock_held_is_no_batch(
+    ccw_env: dict[str, str], tmp_path: Path
+) -> None:
+    config, _folder = rich_folder(ccw_env, tmp_path)
+    open_sweep_start(config, 5, os.getpid())
+    assert doctor.batch_started_at(config.root) is None
+
+
 # ---------------------------------------------------------------------------
 # 3. the two back doors
 # ---------------------------------------------------------------------------

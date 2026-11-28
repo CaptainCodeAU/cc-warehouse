@@ -965,10 +965,39 @@ def _job_unfinished(
     the review of 71d5aec, 2026-10-10). `closes(record, message)` says which
     record ends a run: any run summary, a refusal or a crash. Same pairing,
     grace, pid and lock witnesses and never-blocking posture for every job."""
-    try:
-        text = (config.root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
-    except OSError:
+    read = _job_starts(config.root, verb, closes)
+    if read is None:
         return True, "no capture.jsonl on this machine yet"
+    open_start, last_start = read
+    if last_start is None:
+        return True, f"no {verb} start recorded yet"
+    if open_start is None:
+        return True, f"last {verb} started {last_start.isoformat()} and finished"
+    moment, pid = open_start
+    if (datetime.now(UTC) - moment).total_seconds() < _SWEEP_START_GRACE_SECONDS:
+        return True, f"a {verb} started {moment.isoformat()}, moments ago"
+    held = lock is not None and store.lock_is_held(config.root, lock)
+    if (pid is not None and _pid_alive(pid)) or held:
+        return True, f"a {verb} is running, started {moment.isoformat()}"
+    lock_note = f", {lock} lock free" if lock is not None else ""
+    return (
+        False,
+        f"the last {verb} started {moment.isoformat()} and never finished (no run summary,"
+        f" process gone{lock_note}: killed or crashed); the next ccw {verb} redoes"
+        " its work",
+    )
+
+
+def _job_starts(
+    root: Path, verb: str, closes: Callable[[dict[str, object], str], bool]
+) -> tuple[tuple[datetime, int | None] | None, datetime | None] | None:
+    """capture.jsonl read for one job: (its open start and recorded pid, or None
+    when every start has its closing record; its latest start, or None when none
+    was ever recorded). None when capture.jsonl cannot be read."""
+    try:
+        text = (root / "logs" / "capture.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return None
     open_start: tuple[datetime, int | None] | None = None
     last_start: datetime | None = None
     for line in text.splitlines():
@@ -991,23 +1020,7 @@ def _job_unfinished(
             last_start = moment
         elif closes(record, message):
             open_start = None
-    if last_start is None:
-        return True, f"no {verb} start recorded yet"
-    if open_start is None:
-        return True, f"last {verb} started {last_start.isoformat()} and finished"
-    moment, pid = open_start
-    if (datetime.now(UTC) - moment).total_seconds() < _SWEEP_START_GRACE_SECONDS:
-        return True, f"a {verb} started {moment.isoformat()}, moments ago"
-    held = lock is not None and store.lock_is_held(config.root, lock)
-    if (pid is not None and _pid_alive(pid)) or held:
-        return True, f"a {verb} is running, started {moment.isoformat()}"
-    lock_note = f", {lock} lock free" if lock is not None else ""
-    return (
-        False,
-        f"the last {verb} started {moment.isoformat()} and never finished (no run summary,"
-        f" process gone{lock_note}: killed or crashed); the next ccw {verb} redoes"
-        " its work",
-    )
+    return open_start, last_start
 
 
 def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str, bool]:
@@ -1123,13 +1136,31 @@ def batch_started_at(root: Path) -> float | None:
     was not written by any running batch, so the lock never excuses it: a
     15:30 repair inside a 12:30 sweep's lock must still refuse damage made at
     11:00 (tests/test_repair_sendback.py::
-    test_damage_older_than_the_lock_is_refused_on_day_one)."""
+    test_damage_older_than_the_lock_is_refused_on_day_one).
+
+    #8524 (2026-11-28): a sweep is ONE batch under TWO locks. `sweep.sweep`
+    releases locks/sweep before `cli._run_sweep` runs the sweep-triggered build
+    under locks/build, so for the build's whole tail the held lock's start was
+    hours after the files the sweep itself wrote (prompts.jsonl, payloads), and
+    doctor FAILed on folders that were only queued. So while any batch lock is
+    held, an open `sweep-started` record (no run summary after it) whose
+    recorded pid is alive moves the start back to the sweep's own start. No
+    lock held means no batch, whatever capture.jsonl says, and a dead sweep's
+    start never excuses anything
+    (tests/test_repair_sendback.py::test_a_dead_sweeps_start_never_excuses_a_file)."""
     starts = [
         taken
         for name in _BATCH_LOCK_NAMES
         if (taken := store.lock_acquired_at(root, name)) is not None
     ]
-    return min(starts) if starts else None
+    if not starts:
+        return None
+    read = _job_starts(root, "sweep", lambda _record, message: message.startswith("sweep: "))
+    if read is not None and read[0] is not None:
+        moment, pid = read[0]
+        if pid is not None and _pid_alive(pid):
+            starts.append(moment.timestamp())
+    return min(starts)
 
 
 def _written_after_manifest(
