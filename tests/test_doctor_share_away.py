@@ -718,3 +718,33 @@ def test_with_no_projections_a_share_away_render_claims_no_render(
     new = _log(ccw_env)[before:]
     assert not [r for r in new if r.get("status") in ("error", "render-done")], new
     assert any("nothing rendered here" in str(r.get("message")) for r in new), new
+
+
+def test_no_doctor_log_reader_raises_on_a_line_that_is_not_an_object(tmp_path: Path) -> None:
+    """The class, not the instance: every capture.jsonl reader in doctor, on
+    the Mac shape (marked root) and the share-away shape, with lines that
+    parse as strings and lists and carry each reader's filter token."""
+    tokens = [
+        '"sweep: 1 items',
+        '"sweep',
+        '"repair',
+        '"archive',
+        '"render-done',
+        '"companions: ',
+        "archive write refused",
+    ]
+    junk = "".join(json.dumps(token) + "\n" + json.dumps([token]) + "\n" for token in tokens)
+    marked = tmp_path / "marked"
+    marked.mkdir()
+    (marked / MARKER).write_text(
+        json.dumps({"cc_warehouse": "archive_root", "archive_timezone": ZONE}),
+        encoding="utf-8",
+    )
+    for config in (
+        config_for(tmp_path / "a", marked, keep_objects=False),
+        config_for(tmp_path / "b", mount_point(tmp_path / "b")),
+    ):
+        logs = config.root / "logs"
+        logs.mkdir(parents=True)
+        (logs / "capture.jsonl").write_text(junk, encoding="utf-8")
+        doctor.report_text(diagnose(tmp_path, config))

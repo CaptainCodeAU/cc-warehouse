@@ -389,6 +389,19 @@ def _last_activity(path: Path) -> str | None:
         return None
 
 
+def _json_object(line: str) -> dict[str, object] | None:
+    """One capture.jsonl line as a JSON object, or None when it is not one.
+
+    Every log reader here goes through this: a line that parses as a string or
+    a list used to reach `record.get` and make doctor raise (found 2026-11-28 by
+    the share-away tests, in 6 readers at once)."""
+    try:
+        loaded: object = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return cast("dict[str, object]", loaded) if isinstance(loaded, dict) else None
+
+
 def _moment(stamp: str | None) -> datetime | None:
     """An ISO payload timestamp as an aware datetime, or None if unusable."""
     if not stamp:
@@ -709,9 +722,8 @@ def _companions_stalled(config: Config) -> tuple[bool, str]:
     finished: set[str] = set()
     done_count = 0
     for line in text.splitlines():
-        try:
-            record = cast("dict[str, object]", json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
         status = record.get("status")
         session = record.get("session")
@@ -801,9 +813,8 @@ def _dispatch_gap(config: Config, walk_root: Path, home: Path) -> tuple[bool, st
     cutoff = now - _DISPATCH_WINDOW
     started: set[str] = set()
     for line in text.splitlines():
-        try:
-            record = cast("dict[str, object]", json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
         if record.get("status") != "started":
             continue
@@ -904,9 +915,8 @@ def _last_sweep_completed(config: Config) -> datetime | None:
     for line in text.splitlines():
         if '"sweep: ' not in line:
             continue
-        try:
-            record = cast("dict[str, object]", json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
         message, at = record.get("message"), record.get("at")
         if not isinstance(message, str) or not _SWEEP_DONE.match(message):
@@ -1003,9 +1013,8 @@ def _job_starts(
     for line in text.splitlines():
         if f'"{verb}' not in line:
             continue
-        try:
-            record = cast("dict[str, object]", json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
         message = record.get("message")
         if not isinstance(message, str):
@@ -1053,9 +1062,8 @@ def _hook_unfinished(config: Config, home: Path) -> tuple[bool, str, bool]:
     cutoff = now - _DISPATCH_WINDOW
     pending: dict[str, tuple[datetime, str]] = {}
     for line in text.splitlines():
-        try:
-            record = cast("dict[str, object]", json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
         if record.get("source", "ccw-hook") != "ccw-hook":
             continue
@@ -1321,9 +1329,8 @@ def _pipeline_in_flight(config: Config, shorts: set[str], now: datetime) -> dict
     for line in text.splitlines():
         if not any(short in line for short in shorts):
             continue
-        try:
-            record = cast("dict[str, object]", json.loads(line))
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
         session = record.get("session")
         status_value = record.get("status")
@@ -1784,13 +1791,9 @@ def _refused_since(config: Config, since: datetime | None) -> tuple[int, datetim
     for line in text.splitlines():
         if _REFUSAL_PREFIX not in line:
             continue
-        try:
-            loaded: object = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        record = _json_object(line)
+        if record is None:
             continue
-        if not isinstance(loaded, dict):
-            continue
-        record = cast("dict[str, object]", loaded)
         message, at, session = record.get("message"), record.get("at"), record.get("session")
         if not isinstance(message, str) or not message.startswith(_REFUSAL_PREFIX):
             continue
