@@ -208,16 +208,40 @@ Leave every other key unset, so it takes its default (`docs/reference-config.tom
 them): `root` (`$HOME/cc-warehouse-data`, on the local disk), `keep_projections`
 (`true`; never copy `false` from another machine), `archive_subagents`,
 `archive_tool_results`, `archive_file_history`, `archive_history_prompts` and
-`archive_project_memory` (all `true`). Leave `extra_sources` unset too when the sweep unit
-runs one `ccw sweep --source <claude-config-dir>/projects` per Claude configuration folder
-on the machine; the operator's setup owns that list.
+`archive_project_memory` (all `true`).
 
-**Mark the root once**, while the share is mounted and after the config file is written:
+**A machine with more than one Claude configuration folder** (a second Claude home, set
+with `CLAUDE_CONFIG_DIR`) adds a fourth key, listing every one except the default:
+
+```toml
+extra_sources = ["<other-claude-home>/projects"]
+```
+
+and the sweep unit then runs ONE plain `ccw sweep`, never one `ccw sweep --source ...` per
+folder. A plain sweep walks the default folder and each extra source, then runs ONE build
+(`cli._run_sweep`, "One sweep per projects folder, then ONE build"); a `--source` run walks
+only its folder and builds on its own, so several of them pay for the build's check of
+every archive folder once each, which is most of a night's cost on a share. The
+operator's setup owns the list of folders.
+
+**Mark the root once**, while the share is mounted and after the config file is written.
+`--init` freezes the zone into the marker, and changing it later makes every writer
+refuse the whole tree, so first read the zone back from the config and confirm it is the
+operator's zone, not the default `UTC`:
 
 ```
-ccw archive --to <mount-point> --init
+grep -n '^archive_timezone' ~/.config/cc-warehouse/config.toml
 ```
 
+If that prints nothing, or a zone other than the operator's, stop and fix the config
+first. Then name the zone on the command line too, so the marker cannot silently take
+the default:
+
+```
+ccw archive --to <mount-point> --init --zone <zone>
+```
+
+Afterwards `<mount-point>/_archive-root.json` must show `"archive_timezone": "<zone>"`.
 It writes only `_archive-root.json` (`archive.init_root`). Never run it against the
 empty mount point while the share is NOT mounted: that would mark the local folder, and
 the guard that keeps an unmounted share from becoming a second archive would no longer
@@ -236,17 +260,37 @@ current, only when that sweep stored something new or did one of the actions in
 repair) (`cli._run_sweep`, the `if not lost and (stored or archived_sidecars)` line). On
 most nights one of those happens and the sessions are filed; on a night with nothing new
 they are not, and that build never writes hidden sessions. So do not rely on the sweep
-alone. Within the mounted window, after the sweep, run:
+alone.
+
+There is a second reason to file those sessions BEFORE the sweep, not only after it.
+During the sweep, a sub-agent whose parent session has no archive folder yet is written
+to `_orphaned-subagents/<label>/` at the archive root instead of beside its parent
+(`archive.write_subagent`). That copy is never moved or removed. A later sweep, run after
+the parent is filed, writes a second copy beside the parent, so the tree then holds that
+transcript twice. Filing owed sessions BEFORE the sweep avoids both. So, until the release after 0.1.4
+(where the sweep files owed sessions first, plan `ccw-share-sweep-side`), the sweep unit
+runs, within the mounted window, in this order:
 
 ```
 ccw archive --to <mount-point>
+ccw sweep
+ccw archive --to <mount-point>
+ccw archive --to <mount-point> --verify
 ```
 
-It is incremental: it writes every cataloged session, hidden ones included, whose folder
+`ccw archive --to` is incremental: it writes every cataloged session, hidden ones included, whose folder
 is missing or out of date, reading the payload from the local vault, and skips the rest
-(`archive.migrate`, called from `cli._archive_body`). Then check the result with
-`ccw archive --to <mount-point> --verify`, and read `docs/archive-verify.md` for what
-that check does and does not prove.
+(`archive.migrate`, called from `cli._archive_body`). The last line checks the result;
+read `docs/archive-verify.md` for what that check does and does not prove.
+
+**Never run `ccw reindex` on such a machine.** It has no marker check, and with no `--to`
+it rebuilds the LIVE local catalog from whatever the archive root holds
+(`cli._run_reindex`: the target defaults to `root`). Between sweeps the mount point is
+empty and reindex refuses without replacing anything (`reindex.rebuild` replaces the
+catalog only when it found at least one session). While the share is mounted it would
+replace the catalog with one built from this machine's folder alone, so every session
+still only in the local vault would lose the catalog row the next `ccw archive --to`
+files it from.
 
 Everything that writes to or reads the archive belongs inside the mounted window:
 
