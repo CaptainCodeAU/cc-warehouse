@@ -262,7 +262,7 @@ def _capture_locked(
     stem = build.session_stem(
         parsed.session_uuid or session_id, catalog.short_key(conn, digest)
     )
-    _archive_source(config, conn, project_id, data, stem)
+    owed = _archive_source(config, conn, project_id, data, stem)
     _archive_custom_title_of(config, conn, project_id, transcript_path, parsed.session_uuid)
     if not defer_companions:
         archive_companions(config, conn, project_id, transcript_path, parsed.session_uuid)
@@ -289,6 +289,10 @@ def _capture_locked(
     except Exception as exc:
         _log_stage_failure(config, digest, "add_session", exc)
         raise
+    if owed:
+        from cc_warehouse import archive
+
+        archive.mark_owed(config.root, datetime.now(UTC))
     elapsed = _elapsed_ms(start)
     try:
         _retry_on_lock_contention(
@@ -302,8 +306,13 @@ def _capture_locked(
 
 def _archive_source(
     config: Config, conn: sqlite3.Connection, project_id: int, data: bytes, stem: str
-) -> None:
+) -> bool:
     """Put the session's JSONL in its archive folder SYNCHRONOUSLY (slice 19k).
+
+    Returns True when the archive did NOT get it while the vault did (a
+    refusal or a failed write with `keep_objects`): the caller records an owed
+    build once the catalog row exists, so a build that reads its heads after
+    the record always sees this session (review finding 4, 28 Nov 2026).
 
     Runs inside the hook rather than in the detached render child, because the
     child is a renderer and must never be the thing that makes a session safe.
@@ -332,7 +341,7 @@ def _archive_source(
     quietly stopped growing and no line anywhere saying why.
     """
     if config.archive_root is None:
-        return
+        return False
     from cc_warehouse import archive
 
     try:
@@ -343,7 +352,7 @@ def _archive_source(
         if not config.keep_objects:
             raise
         _log_root_refusal(config, store.sha256_hex(data), exc)
-        return
+        return True
     try:
         row = conn.execute(
             "SELECT label FROM project WHERE id = ?", (project_id,)
@@ -360,8 +369,12 @@ def _archive_source(
     except Exception:
         if not config.keep_objects:
             raise
-        return
+        # The vault holds it; the archive does not yet. The sweep's
+        # pre-filter will skip this hash, so only the owed record makes the
+        # next sweep build it (archive.OWED_FILE).
+        return True
     _archive_project_file(config, conn, project_id)
+    return False
 
 
 def _archive_project_file(

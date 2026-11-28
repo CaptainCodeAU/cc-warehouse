@@ -1108,6 +1108,12 @@ def test_doctor_knows_every_batch_lock_the_code_takes() -> None:
     # archive.py: `session_lock`'s per-session `archive-<uuid>` lock
     # (W-20260929-A104), held for one JSONL decision, never a batch.
     assert computed == {"capture.py", "archive.py"}, computed
+    # archive.py: `mark_owed`'s `archive-owed` lock (28 Nov 2026), held for one
+    # read-max-replace of a small record, never a batch, so doctor must not
+    # read it as one running.
+    short = {"archive-owed"}
+    assert short <= batch, batch
+    batch -= short
     assert batch == {"sweep", "build", "import", "migrate", "relocate", "archive"}, batch
     assert set(doctor._BATCH_LOCK_NAMES) == batch  # pyright: ignore[reportPrivateUsage]
 

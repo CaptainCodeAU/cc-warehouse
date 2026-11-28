@@ -9,9 +9,11 @@ racing the hook harmless. Item failures are reported and the batch continues pas
 """
 
 import functools
+import json
 import os
 import re
 import sqlite3
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -231,6 +233,78 @@ def _repair_head_jsonl(
     except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
         return ItemOutcome(path.name, "error", f"repair: {type(exc).__name__}: {exc}")
     return ItemOutcome(path.name, REPAIRED_JSONL, str(jsonl))
+
+
+def _all_heads(root: Path) -> dict[str, tuple[str | None, str, str | None, str]]:
+    """head hash -> (session_uuid, label, first_ts, short) for EVERY head,
+    hidden ones included (the hook archives hidden sessions too). Read only
+    when a build is owed (`archive.archive_owed`), so a normal night pays
+    nothing for it. Ranked by the one head rule (`build._HEAD_RANK_CTE`, R9)."""
+    from cc_warehouse import build
+
+    conn = catalog.open_catalog(root)
+    try:
+        rows = cast(
+            list[tuple[str, str | None, str, str | None, str]],
+            conn.execute(
+                build._HEAD_RANK_CTE  # pyright: ignore[reportPrivateUsage]
+                + "SELECT hash, session_uuid, label, first_ts, short FROM ranked WHERE rn = 1"
+            ).fetchall(),
+        )
+    finally:
+        conn.close()
+    return {row[0]: (row[1], row[2], row[3], row[4]) for row in rows}
+
+
+# The outcome of `_file_owed_head`: a head's JSONL written into a folder the
+# archive lacked. Not in SIDECAR_ARCHIVED_ACTIONS: an owed build runs anyway.
+FILED_OWED = "filed-owed"
+
+
+def _owed_head_dir(config: Config, head: tuple[str | None, str, str | None, str]) -> Path:
+    from cc_warehouse import build
+
+    assert config.archive_root is not None
+    session_uuid, label, first_ts, short = head
+    return build.archive_dir(
+        config.archive_root,
+        label,
+        first_ts,
+        session_uuid,
+        config.archive_timezone,
+        fallback_stem=build.session_stem(session_uuid, short),
+    )
+
+
+def _file_owed_head(
+    config: Config, path: Path, head: tuple[str | None, str, str | None, str]
+) -> ItemOutcome | None:
+    """Write a head's JSONL into its archive folder when the folder is missing,
+    from the source file that hashes to that head (red-team R7, 28 Nov 2026).
+
+    WHY IN THE SESSION PASS. A session the hook kept in the vault (the archive
+    refused it) has no folder yet. The sub-agent pass runs next and files a
+    sub-agent whose parent folder is missing under `_orphaned-subagents/`,
+    where it stays (nothing deletes). Filing the parent here, before that
+    pass, puts its sub-agents where they belong; the owed build then renders
+    the folder. Same writer as the hook (`archive.write_source`), so the same
+    per-session lock and replace-if-larger rule apply."""
+    from cc_warehouse import archive, build
+
+    assert config.archive_root is not None
+    session_uuid, label, _first_ts, short = head
+    try:
+        written = archive.write_source(
+            config.archive_root,
+            label,
+            path.read_bytes(),
+            config.archive_timezone,
+            warehouse_root=config.root,
+            fallback_stem=build.session_stem(session_uuid, short),
+        )
+    except Exception as exc:  # noqa: BLE001 - R10: name it and carry on
+        return ItemOutcome(path.name, "error", f"owed: {type(exc).__name__}: {exc}")
+    return ItemOutcome(path.name, FILED_OWED, str(written))
 
 
 def _orphan_object_paths(root: Path, cataloged: frozenset[str]) -> list[Path]:
@@ -1410,6 +1484,11 @@ def sweep(
         )
         already_known = _cataloged_hashes(config.root)
         repair_heads = _multi_version_heads(config.root) if config.archive_root else {}
+        # Red-team R7: when a build is owed, file each head that has no
+        # archive folder during THIS pass, so the sub-agent pass below finds
+        # its parent. One stat per skipped head, and only on an owed night.
+        owed = config.archive_root is not None and archive.archive_owed(config.root)
+        owed_heads = _all_heads(config.root) if owed else {}
         # W-20261002-A72: every item that WRITES into the archive goes through
         # the root guard, which pauses the run while the share is away instead
         # of failing every item after it. Items that write nothing (the
@@ -1433,6 +1512,17 @@ def sweep(
                     outcomes.append(ItemOutcome(path.name, "skipped_unchanged", ""))
                     skipped += 1
                     skip_elapsed_ms += _elapsed_ms(start)
+                    owed_head = owed_heads.get(digest)
+                    if owed_head is not None and not _owed_head_dir(config, owed_head).is_dir():
+                        filed = guard.run(
+                            path.name,
+                            functools.partial(_file_owed_head, config, path, owed_head),
+                            _is_error,
+                        )
+                        if filed is not None:
+                            # One item, one outcome: it replaces this path's
+                            # `skipped_unchanged`, so the counts stay right.
+                            outcomes[-1] = filed
                     if digest in repair_heads:
                         repaired = guard.run(
                             path.name,
@@ -1617,7 +1707,12 @@ def _archive_memory(
         outcome = guard.run(
             project_dir.name,
             functools.partial(
-                _copy_memory, base, project_dir / sidecars.MEMORY_DIR, sub, project_dir.name
+                _copy_memory,
+                archive_root,
+                base,
+                project_dir / sidecars.MEMORY_DIR,
+                sub,
+                project_dir.name,
             ),
             _is_error,
         )
@@ -1626,10 +1721,12 @@ def _archive_memory(
     return outcomes
 
 
-def _copy_memory(base: Path, memory_dir: Path, sub: str, item: str) -> ItemOutcome:
+def _copy_memory(
+    archive_root: Path, base: Path, memory_dir: Path, sub: str, item: str
+) -> ItemOutcome:
     from cc_warehouse import archive
 
-    done = archive.archive_project_memory(base, memory_dir, sub)
+    done = archive.archive_project_memory(base, memory_dir, sub, archive_root=archive_root)
     if done.errors:
         return ItemOutcome(item, "error", "; ".join(done.errors))
     if not done.written and not done.versions:
@@ -1681,3 +1778,109 @@ def _known_folders(config: Config, guard: "archive.RootGuard") -> dict[str, Path
 
 def _always_recheck(_listing: object) -> bool:
     return True
+
+
+# ---------------------------------------------------------------------------
+# The heartbeat (Network_Plan close.md item 6, 28 Nov 2026)
+# ---------------------------------------------------------------------------
+
+HEARTBEAT_LOCAL = "heartbeat.json"
+SHARE_WRITTEN = "written"
+SHARE_UNREACHABLE = "unreachable"
+
+
+def _previous_heartbeat(path: Path) -> dict[str, object]:
+    """The last local heartbeat, or {} when there is none readable."""
+    try:
+        loaded: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return cast(dict[str, object], loaded) if isinstance(loaded, dict) else {}
+
+
+def write_heartbeat(
+    config: Config, *, items: int, stored: int, failed: int, unfiled: int | None
+) -> str:
+    """Write the heartbeat after a sweep that kept its archive root; return the
+    share state written ("written" or "unreachable").
+
+    THE CONTRACT (plan 2026-11-28-ccw-share-sweep-side.md, read by `ccw
+    doctor`): keys machine, at, ccw_version, items, stored, failed,
+    archive_root, share, and share_written_at (this sweep's `at` when the share
+    was written; carried from the previous LOCAL heartbeat when it was not;
+    absent when the share has never been written), and unfiled (heads whose
+    archive folder is not current after this sweep's build, from the build's
+    own outcomes; carried from the previous local heartbeat when this sweep
+    ran no build, since nothing was mirrored; absent when there is none).
+
+    TWO COPIES. `<archive_root>/_heartbeat.json` on the share, written only
+    while `root_problem` proves the root at that moment, so a bare mount point
+    is never written into; and `<warehouse root>/heartbeat.json`, the copy
+    doctor reads, written every time, even when the share write failed. A
+    failed share write is one line in capture.jsonl and never fails the sweep.
+    Both are written as a temp file then a replace (R2; never a `._` name)."""
+    import socket
+
+    import cc_warehouse
+    from cc_warehouse import archive
+
+    archive_root = config.archive_root
+    assert archive_root is not None
+    at = datetime.now(UTC).isoformat()
+    local = config.root / HEARTBEAT_LOCAL
+    before = _previous_heartbeat(local)
+    previous = before.get("share_written_at")
+    previous = previous if isinstance(previous, str) else None
+    if unfiled is None:
+        carried = before.get("unfiled")
+        unfiled = carried if isinstance(carried, int) else None
+    beat: dict[str, object] = {
+        "machine": socket.gethostname(),
+        "at": at,
+        "ccw_version": cc_warehouse.__version__,
+        "items": items,
+        "stored": stored,
+        "failed": failed,
+        "archive_root": str(archive_root),
+        "share": SHARE_WRITTEN,
+        "share_written_at": at,
+    }
+    if unfiled is not None:
+        beat["unfiled"] = unfiled
+    problem = archive.root_problem(
+        archive_root, config.archive_timezone, warehouse_root=config.root
+    )
+    if problem is None:
+        try:
+            store.atomic_write(
+                archive_root / archive.HEARTBEAT_REMOTE,
+                (json.dumps(beat, indent=2) + "\n").encode(),
+            )
+        except OSError as exc:
+            problem = str(exc)
+    if problem is not None:
+        beat["share"] = SHARE_UNREACHABLE
+        if previous is None:
+            del beat["share_written_at"]
+        else:
+            beat["share_written_at"] = previous
+        try:
+            notify.append_log(
+                config,
+                {
+                    "at": at,
+                    "status": "error",
+                    "session": None,
+                    "project": None,
+                    "message": f"sweep: {archive.HEARTBEAT_REMOTE} not written: {problem}",
+                    "elapsed_ms": None,
+                },
+            )
+        except Exception:  # noqa: BLE001 - a log sink may never fail the sweep
+            pass
+    try:
+        config.root.mkdir(parents=True, exist_ok=True)
+        store.atomic_write(local, (json.dumps(beat, indent=2) + "\n").encode())
+    except OSError as exc:
+        print(f"sweep: {HEARTBEAT_LOCAL}: not written: {exc}", file=sys.stderr)
+    return str(beat["share"])

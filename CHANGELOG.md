@@ -22,6 +22,31 @@ The per-slice retros live in `contract/HARNESS.md` section 8, and the decisions 
 
 ## Unreleased
 
+**`ccw sweep` is safe on a share mounted only while it runs (2026-11-28).** For machines
+whose archive folder is mounted for the sweep alone and is an empty folder in between
+(Network_Plan's design for every engage machine, items 5, 6 and 8). Three changes:
+
+- *The marker is checked when each folder is made.* The root was already checked before
+  every writing item; a write already under way when the share dropped could still make
+  the root again on the local disk, or write into the empty mount point it left. Every
+  archive writer now makes its folders through `archive.make_folder`, which checks
+  `_archive-root.json` at that moment and never makes the root itself.
+- *A session the archive refused at session end reaches it at the next sweep.* The hook
+  keeps such a session in the vault and records `archive-owed.json` in the warehouse
+  folder. The sweep files every owed session's JSONL during its session pass, before
+  sub-agents, so they nest under their parent and not in `_orphaned-subagents/`. It then
+  builds, and records `archive-built.json` after a build with no failed session. **The
+  first sweep after upgrading builds the whole archive once**, because no build record
+  exists yet; that also files anything refused by an earlier version.
+- *A heartbeat after each sweep that kept its root:* `<archive>/_heartbeat.json` and the
+  local `<warehouse>/heartbeat.json` (the copy `ccw doctor` reads), with `machine`
+  (the host name; there is no config key for it), `at`, `ccw_version`, `items`, `stored`,
+  `failed`, `unfiled` (sessions whose archive folder is still not current),
+  `archive_root`, `share` ("written" or "unreachable") and `share_written_at`. The share
+  copy is written only while the root's marker is there; a failed share write is logged
+  and never fails the sweep. A sweep refused at its start, or one that lost its root,
+  writes no heartbeat.
+
 **Page drawing has its own version number; a release no longer redraws every folder (2026-11-22).**
 Each archive folder's `manifest.json` stamps `renderer_version`, and a folder whose stamp
 differs is redrawn. That stamp was the package version, so every release redrew all

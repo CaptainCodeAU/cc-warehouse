@@ -38,6 +38,14 @@ STDOUT_NAME = "hook-9c2f1a7b-3d4e-5f60-8a91-b2c3d4e5f607-stdout.txt"
 STDOUT_BYTES = b"Output too large (132.9KB). Full output saved to: /home/alice/x\n"
 
 
+
+HEARTBEAT = "_heartbeat.json"
+
+
+def without_heartbeat(snapshot: dict[str, bytes]) -> dict[str, bytes]:
+    return {k: v for k, v in snapshot.items() if k != HEARTBEAT}
+
+
 def configure(env: dict[str, str], archive_root: Path, *, tool_results: bool | None = None) -> None:
     cfg = Path(env["HOME"]) / ".config" / "cc-warehouse"
     cfg.mkdir(parents=True, exist_ok=True)
@@ -162,19 +170,21 @@ def test_a_second_sweep_writes_nothing_anywhere_in_the_archive(
     plant_session(ccw_env)
     plant_tool_result(ccw_env)
     sweep(ccw_env)
-    before = tree_snapshot(archive_root)
+    # The heartbeat is rewritten by every sweep by design (Network_Plan
+    # close.md item 6); every other file must stay untouched.
+    before = without_heartbeat(tree_snapshot(archive_root))
     mtimes_before = {
         str(p.relative_to(archive_root)): p.stat().st_mtime_ns
         for p in sorted(archive_root.rglob("*"))
-        if p.is_file()
+        if p.is_file() and p.name != HEARTBEAT
     }
     sweep(ccw_env)
     mtimes_after = {
         str(p.relative_to(archive_root)): p.stat().st_mtime_ns
         for p in sorted(archive_root.rglob("*"))
-        if p.is_file()
+        if p.is_file() and p.name != HEARTBEAT
     }
-    assert tree_snapshot(archive_root) == before
+    assert without_heartbeat(tree_snapshot(archive_root)) == before
     assert mtimes_after == mtimes_before
 
 

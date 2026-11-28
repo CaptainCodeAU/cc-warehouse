@@ -391,7 +391,7 @@ def write_subagent(
         directory = parent / SUBAGENTS_DIR / build.subagent_folder_name(
             meta_parsed.first_ts, agent_id, timezone
         )
-    directory.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, directory)
 
     jsonl = directory / f"{agent_id}{_JSONL_SUFFIX}"
     replaced = refused_smaller = refused_equal_size = wrote = False
@@ -575,7 +575,9 @@ def _write_one(destination_dir: Path, relative: Path, data: bytes) -> str:
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError(f"a sidecar path may not escape its session folder: {relative}")
     target = destination_dir / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # Anchored at the session folder (or the stranded folder), which must
+    # exist already; `destination_dir` itself (tool-results/, todos/) may not.
+    make_below(destination_dir.parent, target.parent)
     return store.write_if_absent(target, data)
 
 
@@ -841,7 +843,7 @@ def write_stranded_sidecars(archive_root: Path, source_dir: Path) -> SidecarCopy
     folder full of tool output is filed under no session.
     """
     target = archive_root / NOT_SESSIONS_LABEL / STRANDED_DIR / build.component(source_dir.name)
-    target.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, target)
     copied = _mirror_tree(target, source_dir)
     note = {
         "schema": 1,
@@ -872,7 +874,7 @@ def write_stranded_file_history(archive_root: Path, source_dir: Path) -> Sidecar
         / STRANDED_FILE_HISTORY_DIR
         / build.component(source_dir.name)
     )
-    target.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, target)
     copied = _mirror_tree(target, source_dir)
     note = {
         "schema": 1,
@@ -1011,7 +1013,7 @@ def write_source(
         archive_root, label, meta.first_ts, meta.session_uuid, timezone,
         fallback_stem=fallback_stem,
     )
-    directory.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, directory)
     stem = meta.session_uuid or fallback_stem
     jsonl = directory / f"{stem}{_JSONL_SUFFIX}"
     with session_lock(warehouse_root, stem):
@@ -1059,7 +1061,7 @@ def write_not_a_session(archive_root: Path, data: bytes, *, stem: str) -> Path:
     back.
     """
     directory = archive_root / NOT_SESSIONS_LABEL / IMPORTED_DIR
-    directory.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, directory)
     target = directory / f"{store.sha256_hex(data)[:12]}_{stem}{_JSONL_SUFFIX}"
     if not target.exists():
         store.atomic_write(target, data)
@@ -1097,7 +1099,7 @@ def write_history_snapshot(archive_root: Path, data: bytes) -> Path:
     as Claude Code wrote it.
     """
     target = history_snapshot_path(archive_root, data)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, target.parent)
     if not target.exists():
         store.atomic_write(target, data)
     return target
@@ -1262,7 +1264,9 @@ MEMORY_NOT_SESSIONS_DIR = "memory"
 MEMORY_SHARED_PREFIX = "_from-"
 
 
-def _memory_version(base: Path, rel: Path, data: bytes) -> tuple[bool, str | None]:
+def _memory_version(
+    archive_root: Path, base: Path, rel: Path, data: bytes
+) -> tuple[bool, str | None]:
     """Keep these bytes as one version: `_memory-history/<rel>/<sha12><suffix>`.
 
     Content-addressed and `write_if_absent`, so a version once kept is never
@@ -1270,7 +1274,7 @@ def _memory_version(base: Path, rel: Path, data: bytes) -> tuple[bool, str | Non
     name, which is reported, never resolved by overwriting (R5)."""
     name = store.sha256_hex(data)[:_MEMORY_VERSION_HEX] + rel.suffix
     target = base / MEMORY_HISTORY_DIR / rel / name
-    target.parent.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, target.parent)
     outcome = store.write_if_absent(target, data)
     if outcome == "refused":
         return False, f"{rel}: history version {name} holds different bytes"
@@ -1293,7 +1297,9 @@ def memory_base(archive_root: Path, label: str | None, source_dir_name: str) -> 
     return archive_root / build.component(label)
 
 
-def archive_project_memory(base: Path, memory_dir: Path, sub: str = "") -> MemoryCopy:
+def archive_project_memory(
+    base: Path, memory_dir: Path, sub: str = "", *, archive_root: Path
+) -> MemoryCopy:
     """Copy one project's Claude Code memory under `base` (see `memory_base`).
 
     `sub` nests this source under `_memory/<sub>/` and `_memory-history/<sub>/`,
@@ -1318,17 +1324,17 @@ def archive_project_memory(base: Path, memory_dir: Path, sub: str = "") -> Memor
                 current = latest.read_bytes()
                 if current == data:
                     continue
-                added, problem = _memory_version(base, rel, current)
+                added, problem = _memory_version(archive_root, base, rel, current)
                 versions += added
                 if problem:
                     errors.append(problem)
                     continue
-            added, problem = _memory_version(base, rel, data)
+            added, problem = _memory_version(archive_root, base, rel, data)
             versions += added
             if problem:
                 errors.append(problem)
                 continue
-            latest.parent.mkdir(parents=True, exist_ok=True)
+            make_folder(archive_root, latest.parent)
             written += store.write_if_changed(latest, data)
         except OSError as exc:  # noqa: PERF203 - one bad file never costs the rest
             errors.append(f"{rel}: {exc}")
@@ -1573,7 +1579,7 @@ def write_session_folder(
         timezone,
         fallback_stem=fallback_stem,
     )
-    directory.mkdir(parents=True, exist_ok=True)
+    make_folder(archive_root, directory)
     stem = meta.session_uuid or fallback_stem
     jsonl = directory / f"{stem}{_JSONL_SUFFIX}"
 
@@ -1850,9 +1856,9 @@ def restore_from_sources(
                 archive_root / NOT_SESSIONS_LABEL / DISPLACED_DIR / session_dir.parent.name
                 / session_dir.name / f"{relative}.{store.sha256_hex(current)[:12]}"
             )
-            aside.parent.mkdir(parents=True, exist_ok=True)
+            make_folder(archive_root, aside.parent)
             store.write_if_absent(aside, current)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        make_below(session_dir, target.parent)
         store.atomic_write(target, data)
         restored.append(relative)
     return restored
@@ -2576,6 +2582,177 @@ ROOT_MARKER = "_archive-root.json"
 _MARKER_KIND = "archive_root"
 
 
+class RootGone(OSError):
+    """The archive root lost its marker (or vanished) at the moment a writer
+    was about to make a folder in it. An OSError on purpose: every batch path
+    already treats an OSError from a write as the item failing, and
+    `RootGuard.run` then asks `root_problem` whether the ROOT is the cause and
+    waits for it, exactly as for any other write the drop interrupts."""
+
+
+# Every archive root `root_problem` has passed in THIS process. Every entry
+# point that writes into the archive checks its root through it first (the
+# hook and the batch verbs by `require_root`, the detached companions child
+# and the custom-title copy directly, `RootGuard` per item), so in production
+# this holds the root before the first folder is made. A unit test that calls
+# a writer on a bare temp folder never proved one, and is not asked for a
+# marker.
+_PROVEN: set[Path] = set()
+
+
+def make_folder(archive_root: Path, directory: Path) -> None:
+    """Make `directory` and every level between it and `archive_root`, but
+    only while a root this process proved still carries its marker, and never
+    the root itself.
+
+    THE FAILURE THIS CLOSES (Network_Plan close.md item 8, 28 Nov 2026).
+    `RootGuard` checks the root before every writing item, so a share that
+    drops BETWEEN items is caught. The item IN FLIGHT was not: every writer
+    here did `mkdir(parents=True)`, so a root that vanished after the check was
+    created again as a plain local folder, and a bare mount point left behind
+    by the drop was written into. One stat of the marker, at the moment the
+    folder is made, closes that; the root itself is never created, so a
+    vanished root raises instead of coming back on the local disk.
+
+    `directory` outside `archive_root` is a caller's bug and raises ValueError
+    (F9). Read-only when the folder already exists, apart from the stat."""
+    if archive_root not in _PROVEN:
+        # Never proven here: a unit caller on a temp folder. The old
+        # behaviour, unchanged; no production entry point reaches this.
+        directory.relative_to(archive_root)
+        directory.mkdir(parents=True, exist_ok=True)
+        return
+    marker = archive_root / ROOT_MARKER
+    if not (marker.exists() or marker.is_symlink()):
+        raise RootGone(2, f"archive root has no {ROOT_MARKER} marker now", str(archive_root))
+    make_below(archive_root, directory)
+
+
+def make_below(anchor: Path, directory: Path) -> None:
+    """Make `directory` below an `anchor` that must ALREADY exist, never the
+    anchor or anything above it. For writers that put files inside an existing
+    session folder (sidecars, sub-agents): a session folder that vanished with
+    its share is never rebuilt from below. Raises FileNotFoundError when the
+    anchor is gone, ValueError when `directory` is not below it."""
+    relative = directory.relative_to(anchor)
+    if directory.is_dir():
+        return
+    if not anchor.is_dir():
+        raise FileNotFoundError(2, "the folder to write into is gone", str(anchor))
+    current = anchor
+    for part in relative.parts:
+        current = current / part
+        try:
+            current.mkdir()
+        except FileExistsError:
+            if not current.is_dir():
+                raise
+
+
+# ---------------------------------------------------------------------------
+# Owed builds: a hook capture the archive refused still reaches it
+# ---------------------------------------------------------------------------
+#
+# THE FAILURE THIS CLOSES (cc-warehouse-main's finding, 28 Nov 2026, checked
+# at 466d2ee). Between sweeps a box's mount point is empty, so the SessionEnd
+# capture stores the session in the vault and the archive refuses it. The next
+# sweep finds the hash already stored and skips it, and the sweep built only
+# when it stored something, so the session never reached the archive.
+#
+# TWO FILES, ONE WRITER EACH, in the warehouse root (local, never the share):
+# the capture path writes OWED_FILE {"last": <newest refusal, ISO UTC>}; the
+# sweep writes BUILT_FILE {"through": <start of a build that kept its root>}.
+# A build is owed while `last` is later than `through`. Nothing is deleted
+# (R4): "owed" is a comparison, never a flag that has to be removed.
+
+OWED_FILE = "archive-owed.json"
+BUILT_FILE = "archive-built.json"
+_OWED_LOCK = "archive-owed"
+OWED_LOCK_WAIT = 2.0
+
+
+def _stamp(path: Path, key: str) -> datetime | None:
+    """The time under `key` in a small JSON file; None when the file is absent.
+    Raises ValueError when it is present but unreadable as one."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    loaded: object = json.loads(raw)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path.name}: not a JSON object")
+    value = cast(dict[str, object], loaded).get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"{path.name}: no {key!r}")
+    return datetime.fromisoformat(value)
+
+
+def mark_owed(warehouse_root: Path, at: datetime) -> None:
+    """Record that an archive write was refused or failed at `at`.
+
+    Several hook captures can record at once, and the atomic replace makes the
+    last writer win, so `last` is the newer of the old and new values: a
+    slower writer carrying an older time never moves it backwards. An
+    unreadable old file is replaced. Best effort: never raises, because the
+    hook path that calls it must not fail on bookkeeping (SPEC 2.6)."""
+    try:
+        warehouse_root.mkdir(parents=True, exist_ok=True)
+        # Concurrent hooks: read, take the max and replace under one lock, or
+        # an older time could land last. Waits at most OWED_LOCK_WAIT seconds;
+        # past that it writes anyway, since a lost record costs a session and
+        # an older time at worst one extra build.
+        deadline = time.monotonic() + OWED_LOCK_WAIT
+        locked = store.acquire_lock(warehouse_root, _OWED_LOCK)
+        while not locked and time.monotonic() < deadline:
+            time.sleep(0.02)
+            locked = store.acquire_lock(warehouse_root, _OWED_LOCK)
+        try:
+            path = warehouse_root / OWED_FILE
+            try:
+                old = _stamp(path, "last")
+            except ValueError:
+                old = None
+            newest = at if old is None or at > old else old
+            store.atomic_write(path, (json.dumps({"last": newest.isoformat()}) + "\n").encode())
+        finally:
+            if locked:
+                store.release_lock(warehouse_root, _OWED_LOCK)
+    except Exception:  # noqa: BLE001 - best effort, like every log sink
+        return
+
+
+def mark_built(warehouse_root: Path, through: datetime) -> None:
+    """Record a build that started at `through` and did not lose its root."""
+    payload = json.dumps({"through": through.isoformat()}) + "\n"
+    store.atomic_write(warehouse_root / BUILT_FILE, payload.encode())
+
+
+def archive_owed(warehouse_root: Path) -> bool:
+    """True when a build is owed: no good build was ever recorded, or a
+    refused archive write is newer than the last one.
+
+    NO BUILD RECORD MEANS OWED (red-team R1, 28 Nov 2026). A catalog filled
+    before this record existed (codebox's sessions, stored by 0.1.4 with no
+    archive_root, so no refusal was ever written) holds sessions the archive
+    may lack, and nothing else would ever build them. The first sweep with an
+    archive therefore builds once. Fails toward building: an unreadable record
+    of either kind counts as owed, because an extra build costs time and a
+    skipped one costs a session."""
+    try:
+        built = _stamp(warehouse_root / BUILT_FILE, "through")
+        if built is None:
+            return True
+        last = _stamp(warehouse_root / OWED_FILE, "last")
+    except (OSError, ValueError):
+        return True
+    return last is not None and last > built
+
+
+# The heartbeat's name at the archive root (Network_Plan close.md item 6). A
+# FILE, so no walker reads it as a label (`walk_folders` lists folders only).
+HEARTBEAT_REMOTE = "_heartbeat.json"
+
+
 class ArchiveRootRefused(Exception):
     """A writer declined to touch `archive_root` because it cannot prove the
     directory is the archive it was configured as (ticket 44a).
@@ -2649,6 +2826,9 @@ def root_problem(archive_root: Path, zone: str, *, warehouse_root: Path | None) 
             f" {zone!r}; folder names are rendered in the zone, so writing here would"
             " fork the tree into two zones"
         )
+    # Proven: later folders made in this process re-check the marker
+    # (`make_folder`). Memory only; nothing on disk changes.
+    _PROVEN.add(archive_root)
     return None
 
 

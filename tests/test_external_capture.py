@@ -36,6 +36,14 @@ SNAP = "23527e7c@v1"
 SNAP_BYTES = b"--- a/widget.py\n+++ b/widget.py\n@@ -1 +1 @@\n-old\n+new\n"
 
 
+
+HEARTBEAT = "_heartbeat.json"
+
+
+def without_heartbeat(snapshot: dict[str, bytes]) -> dict[str, bytes]:
+    return {k: v for k, v in snapshot.items() if k != HEARTBEAT}
+
+
 def configure(env: dict[str, str], archive_root: Path, *, file_history: bool | None = None) -> None:
     cfg = Path(env["HOME"]) / ".config" / "cc-warehouse"
     cfg.mkdir(parents=True, exist_ok=True)
@@ -197,19 +205,21 @@ def test_a_second_sweep_writes_nothing_new(ccw_env: dict[str, str], tmp_path: Pa
     configure(ccw_env, archive_root)
     plant(ccw_env)
     sweep(ccw_env)
-    before = tree_snapshot(archive_root)
+    # The heartbeat is rewritten by every sweep by design (Network_Plan
+    # close.md item 6); every other file must stay untouched.
+    before = without_heartbeat(tree_snapshot(archive_root))
     mtimes = {
         str(p.relative_to(archive_root)): p.stat().st_mtime_ns
         for p in sorted(archive_root.rglob("*"))
-        if p.is_file()
+        if p.is_file() and p.name != HEARTBEAT
     }
     sweep(ccw_env)
     after_mtimes = {
         str(p.relative_to(archive_root)): p.stat().st_mtime_ns
         for p in sorted(archive_root.rglob("*"))
-        if p.is_file()
+        if p.is_file() and p.name != HEARTBEAT
     }
-    assert tree_snapshot(archive_root) == before
+    assert without_heartbeat(tree_snapshot(archive_root)) == before
     assert after_mtimes == mtimes
 
 

@@ -894,7 +894,17 @@ def _sweep_body(
     # A STOPPED run skips the build and the coverage record: the root they
     # write into is the thing that is missing, and the next sweep that stores
     # anything builds every head that is not current, these included.
-    if not lost and (stored or archived_sidecars):
+    #
+    # OWED (28 Nov 2026): a hook capture the archive refused (a box's empty
+    # mount point between sweeps) is in the vault and the catalog but not the
+    # archive, and this sweep skips its hash, so it stores 0. The owed record
+    # (archive.archive_owed) makes the build run for it; the build mirrors
+    # every head whose folder is not current. Not "always build": the build's
+    # check of every folder is most of a night's cost on the share.
+    owed = config.archive_root is not None and archive.archive_owed(config.root)
+    unfiled: int | None = None
+    if not lost and (stored or archived_sidecars or owed):
+        build_started = datetime.now(UTC)
         build_report = build.build(
             config, root_guard=archive.RootGuard(config, "sweep-triggered build")
         )
@@ -908,6 +918,27 @@ def _sweep_body(
             print(f"sweep stopped: projection: {outcome.detail}", file=sys.stderr)
         lost += build_lost
         paused += [o for o in build_report.outcomes if o.action == archive.ROOT_PAUSED]
+        # Heads whose folder is still not current: a failed head, or one held
+        # for `ccw repair`. The heartbeat carries the count, so a sweep never
+        # reads as good over sessions the archive lacks (red-team R1).
+        unfiled = sum(
+            1 for o in build_report.outcomes if o.action in ("error", build.HELD)
+        )
+        # A build that found its lock held built nothing: it is not recorded,
+        # and `unfiled` carries the last count (review finding 3). A build that
+        # ran IS recorded even when a head failed: the failure is counted in
+        # `unfiled` and retried by `ccw repair` or the next build, and one head
+        # that always fails must not make every night an owed night, with a
+        # stat on the share per session (review finding 5).
+        build_ran = not any(o.action == build.BUILD_LOCK_HELD for o in build_report.outcomes)
+        if not build_ran:
+            unfiled = None
+        if config.archive_root is not None and not build_lost and build_ran:
+            try:
+                archive.mark_built(config.root, build_started)
+            except OSError as exc:
+                # Not fatal: the next sweep builds once more than it needs to.
+                print(f"sweep: {archive.BUILT_FILE}: not recorded: {exc}", file=sys.stderr)
     # TICKET 44b, and LAST for a reason: the two corpus-wide coverage figures
     # `ccw doctor` used to walk the whole archive for at every SessionStart are
     # measured here, once per sweep, AFTER the build above has rendered the
@@ -921,6 +952,13 @@ def _sweep_body(
             detail = f"coverage not recorded: {exc}"
             print(f"sweep: {status.COVERAGE_NAME}: {detail}", file=sys.stderr)
             failures = failures + (ItemOutcome(status.COVERAGE_NAME, "error", detail),)
+    # THE HEARTBEAT (Network_Plan close.md item 6): after a sweep that kept
+    # its root, so `ccw doctor` can tell a machine that is off from one whose
+    # share is away. Never fails the sweep.
+    if config.archive_root is not None and not lost:
+        sweep.write_heartbeat(
+            config, items=items, stored=stored, failed=len(failures), unfiled=unfiled
+        )
     sidecar_note = f", {archived_sidecars} with sidecars" if archived_sidecars else ""
     pause_note = (
         f", paused {len(paused)} time(s) waiting for the archive root" if paused else ""
